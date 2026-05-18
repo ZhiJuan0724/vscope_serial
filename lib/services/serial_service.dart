@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -10,6 +11,35 @@ import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/serial_config.dart';
+
+class _OpenPortArgs {
+  final SendPort sendPort;
+  final String portName;
+  final int baudRate;
+  final int dataBits;
+  final int stopBits;
+  final int parity;
+  final bool rts;
+  final bool dtr;
+
+  _OpenPortArgs({
+    required this.sendPort,
+    required this.portName,
+    required this.baudRate,
+    required this.dataBits,
+    required this.stopBits,
+    required this.parity,
+    required this.rts,
+    required this.dtr,
+  });
+}
+
+class _OpenPortResult {
+  final bool success;
+  final String? error;
+
+  _OpenPortResult({required this.success, this.error});
+}
 
 /// 串口服务 - 全局单例
 class SerialService extends ChangeNotifier {
@@ -24,6 +54,7 @@ class SerialService extends ChangeNotifier {
   SerialPortReader? _reader;
   StreamSubscription? _subscription;
   bool isConnected = false;
+  bool isConnecting = false;
 
   // 当前连接的串口标识（用于判断是否需要清空数据）
   String? _lastConnectedPort;
@@ -53,9 +84,6 @@ class SerialService extends ChangeNotifier {
   CrcType crcType = CrcType.crc16;
   String crcPolyName = 'CRC-16/MODBUS';
 
-  // 状态
-  bool isError = false;
-
   void refreshPorts() {
     availablePorts = SerialPort.availablePorts;
     if (config.port != null && !availablePorts.contains(config.port)) {
@@ -66,20 +94,46 @@ class SerialService extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    AppLogger().trace('connect() 被调用', category: 'SERIAL');
     if (config.port == null) {
       AppLogger().error('请先选择串口', category: 'SERIAL');
       return;
     }
+    if (isConnecting || isConnected) {
+      AppLogger().trace('connect() 被忽略，isConnecting=$isConnecting, isConnected=$isConnected', category: 'SERIAL');
+      return;
+    }
+
+    isConnecting = true;
+    notifyListeners();
+    AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
 
     // 如果切换了串口，清空之前的数据
     if (_lastConnectedPort != null && _lastConnectedPort != config.port) {
       _clearAllData();
-      AppLogger().info('已切换串口，数据已清空', category: 'SERIAL');
+      AppLogger().trace('已切换串口，数据已清空', category: 'SERIAL');
     }
 
     try {
-      _serialPort = SerialPort(config.port!);
+      AppLogger().trace('启动 Isolate 探测串口可用性...', category: 'SERIAL');
+      final result = await _openPortInIsolate(
+        portName: config.port!,
+        baudRate: config.baudRate,
+        dataBits: config.dataBits,
+        stopBits: config.stopBits,
+        parity: config.parity,
+        rts: config.rts,
+        dtr: config.dtr,
+      );
+      AppLogger().trace('Isolate 返回结果: success=${result.success}', category: 'SERIAL');
 
+      if (!result.success) {
+        throw Exception(result.error ?? '无法打开串口');
+      }
+
+      // 在主线程重新打开串口（SerialPortReader 需要在主 Isolate）
+      AppLogger().trace('主线程重新打开串口...', category: 'SERIAL');
+      _serialPort = SerialPort(config.port!);
       final portConfig = SerialPortConfig();
       portConfig.baudRate = config.baudRate;
       portConfig.bits = config.dataBits;
@@ -88,33 +142,93 @@ class SerialService extends ChangeNotifier {
       portConfig.setFlowControl(SerialPortFlowControl.none);
       portConfig.rts = config.rts ? SerialPortRts.on : SerialPortRts.off;
       portConfig.dtr = config.dtr ? SerialPortDtr.on : SerialPortDtr.off;
-
       _serialPort!.config = portConfig;
 
       if (!_serialPort!.openReadWrite()) {
-        AppLogger().error('无法打开串口', category: 'SERIAL');
-        _serialPort!.dispose();
-        _serialPort = null;
-        return;
+        throw Exception('无法打开串口');
       }
+      AppLogger().trace('openReadWrite() 返回 true', category: 'SERIAL');
 
       _reader = SerialPortReader(_serialPort!);
       _subscription = _reader!.stream.listen(
         (data) => _onDataReceived(data),
         onError: (error) => AppLogger().error('读取错误: $error', category: 'SERIAL'),
       );
+      AppLogger().trace('SerialPortReader 创建完成', category: 'SERIAL');
 
       _lastConnectedPort = config.port;
       isConnected = true;
       AppLogger().info('串口已连接: ${config.port} @ ${config.baudRate}', category: 'SERIAL');
-      notifyListeners();
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
-      disconnect();
+      _cleanupPort();
+    } finally {
+      isConnecting = false;
+      AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
+      notifyListeners();
+    }
+  }
+
+  static Future<_OpenPortResult> _openPortInIsolate({
+    required String portName,
+    required int baudRate,
+    required int dataBits,
+    required int stopBits,
+    required int parity,
+    required bool rts,
+    required bool dtr,
+  }) async {
+    final receivePort = ReceivePort();
+    await Isolate.spawn(
+      _openPortIsolateEntry,
+      _OpenPortArgs(
+        sendPort: receivePort.sendPort,
+        portName: portName,
+        baudRate: baudRate,
+        dataBits: dataBits,
+        stopBits: stopBits,
+        parity: parity,
+        rts: rts,
+        dtr: dtr,
+      ),
+    );
+    return await receivePort.first as _OpenPortResult;
+  }
+
+  static void _openPortIsolateEntry(_OpenPortArgs args) {
+    try {
+      final port = SerialPort(args.portName);
+      final portConfig = SerialPortConfig();
+      portConfig.baudRate = args.baudRate;
+      portConfig.bits = args.dataBits;
+      portConfig.stopBits = args.stopBits;
+      portConfig.parity = args.parity;
+      portConfig.setFlowControl(SerialPortFlowControl.none);
+      portConfig.rts = args.rts ? SerialPortRts.on : SerialPortRts.off;
+      portConfig.dtr = args.dtr ? SerialPortDtr.on : SerialPortDtr.off;
+      port.config = portConfig;
+
+      final opened = port.openReadWrite();
+      port.close();
+      port.dispose();
+
+      args.sendPort.send(_OpenPortResult(success: opened));
+    } catch (e) {
+      args.sendPort.send(_OpenPortResult(success: false, error: e.toString()));
     }
   }
 
   void disconnect() {
+    if (isConnecting) {
+      AppLogger().warning('正在连接中，无法断开', category: 'SERIAL');
+      return;
+    }
+    _cleanupPort();
+    AppLogger().info('串口已断开', category: 'SERIAL');
+    notifyListeners();
+  }
+
+  void _cleanupPort() {
     _subscription?.cancel();
     _subscription = null;
     _reader?.close();
@@ -122,10 +236,7 @@ class SerialService extends ChangeNotifier {
     _serialPort?.close();
     _serialPort?.dispose();
     _serialPort = null;
-
     isConnected = false;
-    AppLogger().info('串口已断开', category: 'SERIAL');
-    notifyListeners();
   }
 
   void _onDataReceived(Uint8List data) {
@@ -244,7 +355,7 @@ class SerialService extends ChangeNotifier {
 
   /// 获取数据大小信息
   Map<String, String> get dataStats => {
-    '原始字节': '${_rawBytesSize} B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
+    '原始字节': '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
     '文本行数': '${receivedLines.length}',
     '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
   };

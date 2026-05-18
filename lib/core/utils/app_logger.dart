@@ -34,6 +34,13 @@ class LogEntry {
 
   static String levelFullName(String level) {
     switch (level) {
+      case 'TRACE': return 'TRACE';
+      case 'DEBUG': return 'DEBUG';
+      case 'INFO': return 'INFO';
+      case 'WARNING': return 'WARNING';
+      case 'ERROR': return 'ERROR';
+      case 'FATAL': return 'FATAL';
+      // 兼容旧单字母格式
       case 'T': return 'TRACE';
       case 'D': return 'DEBUG';
       case 'I': return 'INFO';
@@ -105,18 +112,18 @@ class MemoryLogOutput extends LogOutput {
   }
 
   LogEntry? _parseLine(String line) {
-    // SimplePrinter 格式（含 ANSI 颜色码）:
-    // \x1B[38;5;12m[I]\x1B[0m TIME: 2026-05-18T14:24:55.799686 [CATEGORY] message
+    // _AppLogPrinter 格式:
+    // [INFO] TIME: 2026-05-18T15:09:11.801621 [CATEGORY] message
     try {
       // 去除 ANSI 颜色码
       final cleanLine = line.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
 
-      // 解析 level: [I]
-      final levelMatch = RegExp(r'^\[(.)\]').firstMatch(cleanLine);
+      // 解析 level: [INFO]
+      final levelMatch = RegExp(r'^\[(\w+)\]\s+TIME:').firstMatch(cleanLine);
       if (levelMatch == null) return null;
       final level = levelMatch.group(1)!;
 
-      // 解析时间: TIME: 2026-05-18T14:24:55.799686
+      // 解析时间: TIME: 2026-05-18T15:09:11.801621
       final timeMatch = RegExp(r'TIME:\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)').firstMatch(cleanLine);
       if (timeMatch == null) return null;
       final timeStr = timeMatch.group(1)!;
@@ -149,6 +156,58 @@ class MemoryLogOutput extends LogOutput {
   }
 }
 
+/// 自定义日志打印机 - 使用完整级别名称 + ANSI 颜色
+class _AppLogPrinter extends LogPrinter {
+  static final _levelColors = {
+    Level.trace: AnsiColor.fg(AnsiColor.grey(0.5)),
+    Level.debug: AnsiColor.fg(6),
+    Level.info: AnsiColor.fg(2),
+    Level.warning: AnsiColor.fg(3),
+    Level.error: AnsiColor.fg(196),
+    Level.fatal: AnsiColor.fg(199),
+  };
+
+  @override
+  List<String> log(LogEvent event) {
+    final time = event.time.toIso8601String();
+    final level = _levelName(event.level);
+    final color = _levelColors[event.level] ?? AnsiColor.none();
+    final message = event.message;
+    final error = event.error;
+    final stackTrace = event.stackTrace;
+
+    final spaces = _levelSpaces(level);
+    String output = '${color('[$level]$spaces')} TIME: $time $message';
+
+    if (error != null) {
+      output += '\nERROR: $error';
+    }
+    if (stackTrace != null) {
+      output += '\n$stackTrace';
+    }
+
+    return [output];
+  }
+
+  static String _levelName(Level level) {
+    return switch (level) {
+      Level.trace => 'TRACE',
+      Level.debug => 'DEBUG',
+      Level.info => 'INFO',
+      Level.warning => 'WARNING',
+      Level.error => 'ERROR',
+      Level.fatal => 'FATAL',
+      _ => level.name.toUpperCase(),
+    };
+  }
+
+  static String _levelSpaces(String level) {
+    // 最长级别名称是 WARNING (7字符)
+    // 在 ] 后面补空格，让 TIME: 对齐
+    return ' ' * (7 - level.length);
+  }
+}
+
 /// 应用日志 - 全局单例，支持 ChangeNotifier 供 UI 监听
 class AppLogger extends ChangeNotifier {
   static final AppLogger _instance = AppLogger._internal();
@@ -165,12 +224,12 @@ class AppLogger extends ChangeNotifier {
     await _fileOutput.init();
     _logger = Logger(
       filter: ProductionFilter(),
-      printer: SimplePrinter(printTime: true),
+      printer: _AppLogPrinter(),
       output: MultiOutput([_fileOutput, _memoryOutput]),
     );
     _initialized = true;
     _memoryOutput._addEntry(LogEntry(
-      level: 'I',
+      level: 'INFO',
       timestamp: DateTime.now(),
       category: 'APP',
       message: '日志系统初始化完成',
@@ -184,11 +243,34 @@ class AppLogger extends ChangeNotifier {
     await _fileOutput.close();
   }
 
-  /// 最新日志条目
-  LogEntry? get latestLog => _memoryOutput.latest;
+  /// 是否显示 TRACE 调试日志（默认关闭）
+  bool showTraceLogs = false;
 
-  /// 所有日志条目
-  List<LogEntry> get allLogs => _memoryOutput.entries;
+  /// 最新日志条目（过滤 TRACE）
+  LogEntry? get latestLog {
+    final entries = _memoryOutput.entries;
+    if (showTraceLogs) return entries.isNotEmpty ? entries.last : null;
+    // 过滤掉 TRACE，找最后一个非 TRACE
+    for (var i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].level != 'TRACE') return entries[i];
+    }
+    return null;
+  }
+
+  /// 所有日志条目（过滤 TRACE）
+  List<LogEntry> get allLogs {
+    final entries = _memoryOutput.entries;
+    if (showTraceLogs) return entries;
+    return entries.where((e) => e.level != 'TRACE').toList();
+  }
+
+  /// 原始日志条目（不过滤，供日志弹窗使用）
+  List<LogEntry> get rawLogs => _memoryOutput.entries;
+
+  void setShowTraceLogs(bool value) {
+    showTraceLogs = value;
+    notifyListeners();
+  }
 
   void _log(String level, String msg, {String? category}) {
     final formatted = category != null ? '[$category] $msg' : msg;

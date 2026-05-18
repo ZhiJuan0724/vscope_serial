@@ -14,6 +14,7 @@ class ConnectViewModel extends BaseViewModel {
   bool get rts => serialService.config.rts;
   bool get dtr => serialService.config.dtr;
   bool get isConnected => serialService.isConnected;
+  bool get isConnecting => serialService.isConnecting;
 
   void selectPort(String? port) {
     serialService.config = serialService.config.copyWith(port: port);

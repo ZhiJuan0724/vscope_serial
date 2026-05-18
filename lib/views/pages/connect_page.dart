@@ -152,17 +152,32 @@ class _ConnectPageContent extends StatelessWidget {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton.icon(
-                  onPressed: vm.isConnected ? vm.disconnect : vm.connect,
-                  icon: Icon(
-                    vm.isConnected ? Icons.stop : Icons.play_arrow,
-                    size: 24,
-                  ),
+                  onPressed: vm.isConnecting
+                      ? null
+                      : (vm.isConnected ? vm.disconnect : vm.connect),
+                  icon: vm.isConnecting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          vm.isConnected ? Icons.stop : Icons.play_arrow,
+                          size: 24,
+                        ),
                   label: Text(
-                    vm.isConnected ? '断开连接' : '连接串口',
+                    vm.isConnecting
+                        ? '打开中...'
+                        : (vm.isConnected ? '断开连接' : '连接串口'),
                     style: const TextStyle(fontSize: 16),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: vm.isConnected ? Colors.red : Colors.green,
+                    backgroundColor: vm.isConnected
+                        ? Colors.red
+                        : (vm.isConnecting ? Colors.orange : Colors.green),
                     foregroundColor: Colors.white,
                   ),
                 ),

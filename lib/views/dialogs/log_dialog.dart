@@ -4,14 +4,22 @@ import 'package:provider/provider.dart';
 import '../../core/utils/app_logger.dart';
 
 /// 全部日志查看对话框
-class LogDialog extends StatelessWidget {
+class LogDialog extends StatefulWidget {
   const LogDialog({super.key});
 
+  @override
+  State<LogDialog> createState() => _LogDialogState();
+}
+
+class _LogDialogState extends State<LogDialog> {
   @override
   Widget build(BuildContext context) {
     return Consumer<AppLogger>(
       builder: (context, logger, child) {
-        final logs = logger.allLogs.toList().reversed.toList();
+        final logs = logger.rawLogs.toList().reversed.toList();
+        final filteredLogs = logger.showTraceLogs
+            ? logs
+            : logs.where((e) => e.level != 'TRACE').toList();
         return Dialog(
           child: Container(
             width: 800,
@@ -31,8 +39,22 @@ class LogDialog extends StatelessWidget {
                       ),
                     ),
                     const Spacer(),
+                    // 调试日志勾选框
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: logger.showTraceLogs,
+                          onChanged: (value) {
+                            logger.setShowTraceLogs(value!);
+                          },
+                        ),
+                        const Text('调试日志'),
+                      ],
+                    ),
+                    const SizedBox(width: 16),
                     Text(
-                      '共 ${logs.length} 条',
+                      '共 ${filteredLogs.length} 条',
                       style: TextStyle(
                         fontSize: 12,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -49,7 +71,7 @@ class LogDialog extends StatelessWidget {
                 const Divider(),
                 // 日志列表
                 Expanded(
-                  child: logs.isEmpty
+                  child: filteredLogs.isEmpty
                       ? const Center(
                           child: Text(
                             '暂无日志',
@@ -58,9 +80,9 @@ class LogDialog extends StatelessWidget {
                         )
                       : ListView.builder(
                           reverse: false,
-                          itemCount: logs.length,
+                          itemCount: filteredLogs.length,
                           itemBuilder: (context, index) {
-                            final log = logs[index];
+                            final log = filteredLogs[index];
                             return _buildLogItem(context, log);
                           },
                         ),
@@ -77,20 +99,20 @@ class LogDialog extends StatelessWidget {
     final levelFull = LogEntry.levelFullName(log.level);
     Color levelColor;
     switch (log.level) {
-      case 'T':
+      case 'TRACE':
         levelColor = Colors.grey;
         break;
-      case 'D':
+      case 'DEBUG':
         levelColor = Colors.blue;
         break;
-      case 'I':
+      case 'INFO':
         levelColor = Colors.green;
         break;
-      case 'W':
+      case 'WARNING':
         levelColor = Colors.orange;
         break;
-      case 'E':
-      case 'F':
+      case 'ERROR':
+      case 'FATAL':
         levelColor = Colors.red;
         break;
       default:
