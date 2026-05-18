@@ -17,6 +17,14 @@ class RawDataViewModel extends BaseViewModel {
   bool get enableCrc => serialService.enableCrc;
   CrcType get crcType => serialService.crcType;
   String get crcPolyName => serialService.crcPolyName;
+  bool get useRandomSource => serialService.useRandomSource;
+
+  /// 设置随机数据源开关
+  /// 当启用随机数据源且未开始绘图时，随机数据会显示在原始数据页面
+  void setUseRandomSource(bool value) {
+    serialService.useRandomSource = value;
+    serialService.notifyListeners();
+  }
 
   void setReceiveHex(bool value) {
     serialService.receiveHex = value;

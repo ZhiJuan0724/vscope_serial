@@ -134,6 +134,12 @@ class _RawDataPageState extends State<RawDataPage> {
                   const Text('自动滚动'),
                 ],
               ),
+              // 接收统计
+              Text(
+                '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+              const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: () => vm.clearData(),
                 icon: const Icon(Icons.clear, size: 18),

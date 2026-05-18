@@ -84,6 +84,12 @@ class SerialService extends ChangeNotifier {
   CrcType crcType = CrcType.crc16;
   String crcPolyName = 'CRC-16/MODBUS';
 
+  // 绘图选项
+  bool useRandomSource = false;
+
+  // 绘图状态标志
+  bool isPlotting = false;
+
   void refreshPorts() {
     availablePorts = SerialPort.availablePorts;
     if (config.port != null && !availablePorts.contains(config.port)) {
@@ -115,8 +121,9 @@ class SerialService extends ChangeNotifier {
     }
 
     try {
+      // 步骤1: 在 Isolate 中探测串口可用性（不阻塞UI）
       AppLogger().trace('启动 Isolate 探测串口可用性...', category: 'SERIAL');
-      final result = await _openPortInIsolate(
+      final probeResult = await _openPortInIsolate(
         portName: config.port!,
         baudRate: config.baudRate,
         dataBits: config.dataBits,
@@ -125,36 +132,38 @@ class SerialService extends ChangeNotifier {
         rts: config.rts,
         dtr: config.dtr,
       );
-      AppLogger().trace('Isolate 返回结果: success=${result.success}', category: 'SERIAL');
+      AppLogger().trace('Isolate 探测结果: success=${probeResult.success}', category: 'SERIAL');
 
-      if (!result.success) {
-        throw Exception(result.error ?? '无法打开串口');
+      if (probeResult.success) {
+        // Isolate 探测成功，在主线程打开（物理串口路径）
+        AppLogger().trace('Isolate 探测成功，主线程打开串口...', category: 'SERIAL');
+        await _openPortInMainThread();
+      } else {
+        // Isolate 探测失败，尝试直接在 Isolate 中打开并保持（虚拟串口路径）
+        AppLogger().trace('Isolate 探测失败，尝试虚拟串口路径...', category: 'SERIAL');
+        final virtualResult = await _openPortInIsolateKeepOpen(
+          portName: config.port!,
+          baudRate: config.baudRate,
+          dataBits: config.dataBits,
+          stopBits: config.stopBits,
+          parity: config.parity,
+          rts: config.rts,
+          dtr: config.dtr,
+        );
+        if (!virtualResult.success) {
+          throw Exception(virtualResult.error ?? '无法打开串口');
+        }
+        // 虚拟串口路径成功，但需要在主线程重新创建 SerialPortReader
+        // 由于虚拟串口已经在 Isolate 中打开，这里直接尝试主线程打开
+        // 如果失败，说明该虚拟串口不支持二次打开
+        try {
+          await _openPortInMainThread();
+        } catch (e) {
+          AppLogger().warning('虚拟串口主线程打开失败，尝试备用方案: $e', category: 'SERIAL');
+          // 备用方案：直接尝试主线程打开，忽略 Isolate 探测结果
+          await _openPortInMainThread(skipProbe: true);
+        }
       }
-
-      // 在主线程重新打开串口（SerialPortReader 需要在主 Isolate）
-      AppLogger().trace('主线程重新打开串口...', category: 'SERIAL');
-      _serialPort = SerialPort(config.port!);
-      final portConfig = SerialPortConfig();
-      portConfig.baudRate = config.baudRate;
-      portConfig.bits = config.dataBits;
-      portConfig.stopBits = config.stopBits;
-      portConfig.parity = config.parity;
-      portConfig.setFlowControl(SerialPortFlowControl.none);
-      portConfig.rts = config.rts ? SerialPortRts.on : SerialPortRts.off;
-      portConfig.dtr = config.dtr ? SerialPortDtr.on : SerialPortDtr.off;
-      _serialPort!.config = portConfig;
-
-      if (!_serialPort!.openReadWrite()) {
-        throw Exception('无法打开串口');
-      }
-      AppLogger().trace('openReadWrite() 返回 true', category: 'SERIAL');
-
-      _reader = SerialPortReader(_serialPort!);
-      _subscription = _reader!.stream.listen(
-        (data) => _onDataReceived(data),
-        onError: (error) => AppLogger().error('读取错误: $error', category: 'SERIAL'),
-      );
-      AppLogger().trace('SerialPortReader 创建完成', category: 'SERIAL');
 
       _lastConnectedPort = config.port;
       isConnected = true;
@@ -167,6 +176,32 @@ class SerialService extends ChangeNotifier {
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
       notifyListeners();
     }
+  }
+
+  /// 在主线程打开串口
+  Future<void> _openPortInMainThread({bool skipProbe = false}) async {
+    _serialPort = SerialPort(config.port!);
+    final portConfig = SerialPortConfig();
+    portConfig.baudRate = config.baudRate;
+    portConfig.bits = config.dataBits;
+    portConfig.stopBits = config.stopBits;
+    portConfig.parity = config.parity;
+    portConfig.setFlowControl(SerialPortFlowControl.none);
+    portConfig.rts = config.rts ? SerialPortRts.on : SerialPortRts.off;
+    portConfig.dtr = config.dtr ? SerialPortDtr.on : SerialPortDtr.off;
+    _serialPort!.config = portConfig;
+
+    if (!_serialPort!.openReadWrite()) {
+      throw Exception('无法打开串口');
+    }
+    AppLogger().trace('openReadWrite() 返回 true', category: 'SERIAL');
+
+    _reader = SerialPortReader(_serialPort!);
+    _subscription = _reader!.stream.listen(
+      (data) => _onDataReceived(data),
+      onError: (error) => AppLogger().error('读取错误: $error', category: 'SERIAL'),
+    );
+    AppLogger().trace('SerialPortReader 创建完成', category: 'SERIAL');
   }
 
   static Future<_OpenPortResult> _openPortInIsolate({
@@ -218,6 +253,60 @@ class SerialService extends ChangeNotifier {
     }
   }
 
+  /// 在 Isolate 中打开串口并保持打开状态（用于虚拟串口）
+  static Future<_OpenPortResult> _openPortInIsolateKeepOpen({
+    required String portName,
+    required int baudRate,
+    required int dataBits,
+    required int stopBits,
+    required int parity,
+    required bool rts,
+    required bool dtr,
+  }) async {
+    final receivePort = ReceivePort();
+    await Isolate.spawn(
+      _openPortIsolateKeepOpenEntry,
+      _OpenPortArgs(
+        sendPort: receivePort.sendPort,
+        portName: portName,
+        baudRate: baudRate,
+        dataBits: dataBits,
+        stopBits: stopBits,
+        parity: parity,
+        rts: rts,
+        dtr: dtr,
+      ),
+    );
+    return await receivePort.first as _OpenPortResult;
+  }
+
+  static void _openPortIsolateKeepOpenEntry(_OpenPortArgs args) {
+    try {
+      final port = SerialPort(args.portName);
+      final portConfig = SerialPortConfig();
+      portConfig.baudRate = args.baudRate;
+      portConfig.bits = args.dataBits;
+      portConfig.stopBits = args.stopBits;
+      portConfig.parity = args.parity;
+      portConfig.setFlowControl(SerialPortFlowControl.none);
+      portConfig.rts = args.rts ? SerialPortRts.on : SerialPortRts.off;
+      portConfig.dtr = args.dtr ? SerialPortDtr.on : SerialPortDtr.off;
+      port.config = portConfig;
+
+      final opened = port.openReadWrite();
+      if (opened) {
+        // 保持打开一小段时间，测试虚拟串口稳定性
+        sleep(const Duration(milliseconds: 100));
+        port.close();
+      }
+      port.dispose();
+
+      args.sendPort.send(_OpenPortResult(success: opened));
+    } catch (e) {
+      args.sendPort.send(_OpenPortResult(success: false, error: e.toString()));
+    }
+  }
+
   void disconnect() {
     if (isConnecting) {
       AppLogger().warning('正在连接中，无法断开', category: 'SERIAL');
@@ -252,28 +341,31 @@ class SerialService extends ChangeNotifier {
       _rawBytesSize--;
     }
 
-    // 同时保存为文本行（原始数据页面用）
-    String text;
-    if (receiveHex) {
-      text = packet.hex;
-    } else {
-      text = utf8.decode(data, allowMalformed: true);
+    // 绘图时不更新原始数据界面
+    if (!isPlotting) {
+      // 保存为文本行（原始数据页面用）
+      String text;
+      if (receiveHex) {
+        text = packet.hex;
+      } else {
+        text = utf8.decode(data, allowMalformed: true);
+      }
+
+      final ts = showTimestamp
+          ? '[${_formatTimestamp(packet.timestamp)}] '
+          : '';
+
+      final line = '$ts$text';
+      receivedLines.add(line);
+      _receivedTextBytes += line.length * 2; // UTF-16 编码估算
+
+      // 文本缓存限制
+      while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
+        final removed = receivedLines.removeAt(0);
+        _receivedTextBytes -= removed.length * 2;
+      }
+      notifyListeners();
     }
-
-    final ts = showTimestamp
-        ? '[${_formatTimestamp(packet.timestamp)}] '
-        : '';
-
-    final line = '$ts$text';
-    receivedLines.add(line);
-    _receivedTextBytes += line.length * 2; // UTF-16 编码估算
-
-    // 文本缓存限制
-    while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
-      final removed = receivedLines.removeAt(0);
-      _receivedTextBytes -= removed.length * 2;
-    }
-    notifyListeners();
   }
 
   String _formatTimestamp(DateTime dt) {
@@ -306,7 +398,7 @@ class SerialService extends ChangeNotifier {
       final dir = Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '${dir.path}/vscope_serial_${timestamp}.txt';
+      final path = '${dir.path}/vscope_serial_$timestamp.txt';
       final file = File(path);
       final content = receivedLines.join('\n');
       await file.writeAsString(content);
@@ -325,7 +417,7 @@ class SerialService extends ChangeNotifier {
       final dir = Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '${dir.path}/vscope_serial_${timestamp}.bin';
+      final path = '${dir.path}/vscope_serial_$timestamp.bin';
       final file = File(path);
 
       // 原始数据

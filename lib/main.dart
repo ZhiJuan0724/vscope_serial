@@ -76,6 +76,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final serialService = Provider.of<SerialService>(context);
+    final isPlotting = serialService.isPlotting;
+
     return Scaffold(
       body: Column(
         children: [
@@ -95,13 +98,18 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                 final index = entry.key;
                 final tab = entry.value;
                 final isSelected = index == _currentIndex;
+                // 绘图开启时禁止切换页面：非绘图页 Tab 置灰且不可点击
+                final isPlotTab = index == 2;
+                final canSwitch = !isPlotting || isPlotTab;
                 return Expanded(
                   child: InkWell(
-                    onTap: () {
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                    },
+                    onTap: canSwitch
+                        ? () {
+                            setState(() {
+                              _currentIndex = index;
+                            });
+                          }
+                        : null,
                     child: Container(
                       decoration: BoxDecoration(
                         border: Border(
@@ -121,7 +129,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                             size: 16,
                             color: isSelected
                                 ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                                : canSwitch
+                                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                                    : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
                           ),
                           const SizedBox(width: 4),
                           Text(
@@ -133,9 +143,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                   : FontWeight.normal,
                               color: isSelected
                                   ? Theme.of(context).colorScheme.primary
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                                  : canSwitch
+                                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                                      : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
                             ),
                           ),
                         ],

@@ -16,6 +16,9 @@ class ConnectViewModel extends BaseViewModel {
   bool get isConnected => serialService.isConnected;
   bool get isConnecting => serialService.isConnecting;
 
+  /// 是否使用随机数据源（用于绘图）
+  bool get useRandomSource => serialService.useRandomSource;
+
   void selectPort(String? port) {
     serialService.config = serialService.config.copyWith(port: port);
     serialService.notifyListeners();
@@ -43,6 +46,11 @@ class ConnectViewModel extends BaseViewModel {
 
   void setRts(bool value) => serialService.updateRts(value);
   void setDtr(bool value) => serialService.updateDtr(value);
+
+  void setUseRandomSource(bool value) {
+    serialService.useRandomSource = value;
+    serialService.notifyListeners();
+  }
 
   void refreshPorts() => serialService.refreshPorts();
   Future<void> connect() => serialService.connect();

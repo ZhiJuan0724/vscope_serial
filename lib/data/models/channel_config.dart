@@ -1,0 +1,127 @@
+import 'package:flutter/material.dart';
+
+/// 数据类型枚举
+enum DataType {
+  uint8('uint8', 1),
+  uint16('uint16', 2),
+  uint32('uint32', 4),
+  int8('int8', 1),
+  int16('int16', 2),
+  int32('int32', 4),
+  float('float', 4),
+  double('double', 8);
+
+  final String label;
+  final int byteSize;
+
+  const DataType(this.label, this.byteSize);
+
+  static DataType fromLabel(String label) {
+    return DataType.values.firstWhere(
+      (t) => t.label == label,
+      orElse: () => DataType.double,
+    );
+  }
+}
+
+/// 通道配置模型
+class ChannelConfig {
+  /// 通道索引 0-15
+  final int index;
+
+  /// 显示开关
+  bool visible;
+
+  /// 颜色
+  Color color;
+
+  /// 连线开关（默认 true）
+  bool showLine;
+
+  /// 点显示开关
+  bool showPoint;
+
+  /// 点直径
+  double pointSize;
+
+  /// 线粗细
+  double lineWidth;
+
+  /// Y 轴偏移（不改变实际值，仅用于显示）
+  double yOffset;
+
+  /// Y 轴缩放
+  double yScale;
+
+  /// 数据类型
+  DataType dataType;
+
+  ChannelConfig({
+    required this.index,
+    this.visible = true,
+    required this.color,
+    this.showLine = true,
+    this.showPoint = false,
+    this.pointSize = 3.0,
+    this.lineWidth = 1.5,
+    this.yOffset = 0.0,
+    this.yScale = 1.0,
+    this.dataType = DataType.double,
+  });
+
+  ChannelConfig copyWith({
+    bool? visible,
+    Color? color,
+    bool? showLine,
+    bool? showPoint,
+    double? pointSize,
+    double? lineWidth,
+    double? yOffset,
+    double? yScale,
+    DataType? dataType,
+  }) {
+    return ChannelConfig(
+      index: index,
+      visible: visible ?? this.visible,
+      color: color ?? this.color,
+      showLine: showLine ?? this.showLine,
+      showPoint: showPoint ?? this.showPoint,
+      pointSize: pointSize ?? this.pointSize,
+      lineWidth: lineWidth ?? this.lineWidth,
+      yOffset: yOffset ?? this.yOffset,
+      yScale: yScale ?? this.yScale,
+      dataType: dataType ?? this.dataType,
+    );
+  }
+
+  /// 默认 16 通道颜色
+  static final List<Color> defaultColors = [
+    const Color(0xFFE6194B), // 红
+    const Color(0xFF3CB44B), // 绿
+    const Color(0xFFFFE119), // 黄
+    const Color(0xFF4363D8), // 蓝
+    const Color(0xFFF58231), // 橙
+    const Color(0xFF911EB4), // 紫
+    const Color(0xFF42D4F4), // 青
+    const Color(0xFFF032E6), // 品红
+    const Color(0xFFBFEF45), // 黄绿
+    const Color(0xFF9A6324), // 棕
+    const Color(0xFF800000), // 深红
+    const Color(0xFF469990), // 青绿
+    const Color(0xFF000075), // 深蓝
+    const Color(0xFFE6BEFF), // 淡紫
+    const Color(0xFF808000), // 橄榄
+    const Color(0xFF000000), // 黑
+  ];
+
+  /// 创建默认 16 通道配置
+  static List<ChannelConfig> createDefaults() {
+    return List.generate(
+      16,
+      (i) => ChannelConfig(
+        index: i,
+        color: defaultColors[i],
+      ),
+    );
+  }
+}
