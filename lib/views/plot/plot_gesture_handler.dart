@@ -60,6 +60,9 @@ class PlotGestureHandler extends StatefulWidget {
   final void Function(double x)? onStatsX1Drag;
   /// S2 统计范围拖动回调
   final void Function(double x)? onStatsX2Drag;
+  /// 目标刷新帧率（fps），与高级设置中的绘图刷新帧率同步
+  final int refreshFps;
+
   const PlotGestureHandler({
     super.key,
     required this.viewport,
@@ -81,6 +84,7 @@ class PlotGestureHandler extends StatefulWidget {
     this.onYCursor2Drag,
     this.onStatsX1Drag,
     this.onStatsX2Drag,
+    this.refreshFps = 30,
   });
 
   @override
@@ -116,10 +120,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   /// 上次通知 UI 重绘的视口（用于节流）
   PlotViewport? _lastNotifiedViewport;
-  /// 节流间隔：至少 16ms（约 60fps）才通知一次
-  static const int _notifyIntervalMs = 16;
   /// 上次通知时间戳
   int _lastNotifyTime = 0;
+  /// 目标刷新帧率（fps），由外部传入，与高级设置同步
+  int _targetFps = 30;
 
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
@@ -261,7 +265,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _dragViewport = widget.viewport.copy();
       _lastNotifiedViewport = _dragViewport!.copy();
       _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-      AppLogger().trace('平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}', category: 'GESTURE');
+      _targetFps = widget.refreshFps.clamp(10, 60);
+      AppLogger().trace('平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}, targetFps=$_targetFps', category: 'GESTURE');
     }
   }
 
@@ -352,21 +357,21 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
       final dx = event.localPosition.dx - _lastPosition!.dx;
       final dy = event.localPosition.dy - _lastPosition!.dy;
-      final lastPos = _lastPosition!;
       _lastPosition = event.localPosition;
 
       // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
       _dragViewport = _dragViewport!.panX(dx, size.width);
       _dragViewport = _dragViewport!.panY(dy, size.height);
 
-      // 节流：每 16ms 或视口变化超过 1 像素才通知 UI
+      // 节流：根据目标帧率计算间隔，与高级设置同步
+      final notifyIntervalMs = (1000 / _targetFps).round();
       final now = DateTime.now().millisecondsSinceEpoch;
       final elapsed = now - _lastNotifyTime;
       final viewportChanged = _lastNotifiedViewport == null ||
           (_lastNotifiedViewport!.xMin - _dragViewport!.xMin).abs() > 1.0 ||
           (_lastNotifiedViewport!.yMin - _dragViewport!.yMin).abs() > 1.0;
 
-      if (elapsed >= _notifyIntervalMs && viewportChanged) {
+      if (elapsed >= notifyIntervalMs && viewportChanged) {
         _lastNotifiedViewport = _dragViewport!.copy();
         _lastNotifyTime = now;
         AppLogger().trace('平移拖动通知: dx=$dx,dy=$dy | viewport xMin=${_dragViewport!.xMin.toStringAsFixed(1)} | elapsed=${elapsed}ms', category: 'GESTURE');
