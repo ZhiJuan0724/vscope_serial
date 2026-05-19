@@ -26,7 +26,6 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => SerialService()),
-        ChangeNotifierProvider(create: (_) => AppLogger()),
       ],
       child: MaterialApp(
         title: 'VScope Serial',

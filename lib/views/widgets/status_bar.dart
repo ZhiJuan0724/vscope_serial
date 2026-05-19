@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/utils/app_logger.dart';
 import '../../services/serial_service.dart';
-import '../dialogs/log_dialog.dart';
 import '../dialogs/status_dialog.dart';
 
 /// 底部共享状态栏
@@ -12,9 +10,8 @@ class StatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer2<SerialService, AppLogger>(
-      builder: (context, service, logger, child) {
-        final log = logger.latestLog;
+    return Consumer<SerialService>(
+      builder: (context, service, child) {
         return Container(
           height: 26,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -28,7 +25,7 @@ class StatusBar extends StatelessWidget {
           ),
           child: Row(
             children: [
-              // 左侧：串口状态（可点击弹窗）
+              // 串口状态（可点击弹窗）
               InkWell(
                 onTap: () => _showStatusDialog(context),
                 child: Row(
@@ -66,33 +63,6 @@ class StatusBar extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 16),
-              // 分隔线
-              Container(
-                width: 1,
-                height: 14,
-                color: Theme.of(context).dividerColor,
-              ),
-              const SizedBox(width: 12),
-              // 右侧：最新日志（可点击查看全部）
-              Expanded(
-                child: InkWell(
-                  onTap: () => _showLogDialog(context),
-                  child: log != null
-                      ? Text(
-                          log.displayText,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: log.level == 'E' || log.level == 'F'
-                                ? Colors.red
-                                : Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        )
-                      : const SizedBox.shrink(),
-                ),
-              ),
             ],
           ),
         );
@@ -104,13 +74,6 @@ class StatusBar extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => const StatusDialog(),
-    );
-  }
-
-  void _showLogDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => const LogDialog(),
     );
   }
 }
