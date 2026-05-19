@@ -801,7 +801,10 @@ class PlotViewModel extends BaseViewModel {
   void setVCursorEnabled(bool value) {
     _vCursorEnabled = value;
     if (!value) {
-      _cursor = null;
+      // 关闭垂直光标时，如果 X-X/Y-Y 测量仍开启，保留 cursor 用于绘制测量线
+      if (!_xMeasurementEnabled && !_yMeasurementEnabled) {
+        _cursor = null;
+      }
     }
     Future.microtask(() => notifyListeners());
   }
@@ -925,7 +928,7 @@ class PlotViewModel extends BaseViewModel {
       // 开启时同步到 cursor，让 PlotPainter 绘制测量线
       _cursor = CursorState(
         x: _xCursor1 ?? 0,
-        y: _yCursor1!,
+        y: _yCursor1,
         mode: CursorMode.follow,
         xCursor2: _xCursor2,
         yCursor2: _yCursor2,
