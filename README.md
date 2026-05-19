@@ -1,16 +1,110 @@
-# vscope_serial
+# VScope Serial — 高性能串口波形助手
 
-A new Flutter project.
+一款基于 Flutter 开发的跨平台串口数据可视化工具，支持实时波形绘制、多通道数据分析、统计测量等功能。
 
-## Getting Started
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)
 
-This project is a starting point for a Flutter application.
+## 功能特性
 
-A few resources to get you started if this is your first Flutter project:
+### 串口通信
+- **串口连接**：支持 Windows 串口自动枚举与连接
+- **波特率配置**：常用波特率快速选择
+- **虚拟串口支持**：兼容 com0com 等虚拟串口工具
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+### 数据解析
+- **FireWater 格式**：CSV 风格文本协议，自动识别通道数
+- **定长帧格式**：自定义帧头、数据类型、通道数、校验方式
+- **实时解析**：流式解析，无数据堆积
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### 波形绘制
+- **多通道显示**：最多 16 通道，独立颜色/可见性控制
+- **高性能渲染**：CustomPainter 自绘，降采样 + 批量绘制
+- **抗锯齿控制**：默认开启，通道>8 自动关闭（可手动调整）
+- **网格系统**：稀疏/普通/密集三档密度
+
+### 交互操作
+- **滚轮缩放**：X/Y 轴独立缩放，Shift+滚轮精确控制
+- **拖拽平移**：鼠标拖拽移动视口
+- **框选放大**：框选区域放大，支持撤回
+- **自适应**：Y自适应 / X自适应 / 全自适应
+
+### 测量功能
+- **X-X 测量**：两条垂直线，显示 X1/X2/ΔX，吸附整数
+- **Y-Y 测量**：两条水平线，显示 Y1/Y2/ΔY
+- **统计测量**：各通道 Max/Min/Avg，支持范围限定
+- **可拖动信息框**：测量结果半透明窗口可拖动位置
+
+### 数据与导出
+- **CSV 导出**：可选导出路径，带通道数据
+- **配置持久化**：JSON 文件自动保存用户设置
+- **随机数据源**：内置正弦波测试源，频率可调
+
+## 快速开始
+
+### 环境要求
+- Flutter 3.x
+- Windows 10/11
+- Visual Studio 2022（Windows 桌面开发）
+
+### 运行
+```bash
+flutter pub get
+flutter run -d windows --release
+```
+
+### 构建 Release
+```bash
+flutter build windows --release
+```
+
+## 使用说明
+
+### 基本流程
+1. 连接串口或启用随机数据源
+2. 配置解析器格式（FireWater/定长帧）
+3. 点击"开始"按钮开始绘图
+4. 使用滚轮/拖拽/框选查看波形细节
+
+### 测量功能
+- **X-X/Y-Y**：点击工具栏按钮开启，拖动标签移动测量线
+- **统计**：点击"统计"按钮查看各通道统计值
+- **范围**：点击"范围"按钮限定统计区域，拖动 S1/S2 调整
+
+### 高级设置
+- 点击工具栏「⚙️」图标打开高级设置
+- 调整刷新帧率（10~60 fps）
+- 切换网格密度、抗锯齿开关
+
+## 项目结构
+
+```
+lib/
+├── core/           # 工具类、日志
+├── data/           # 数据模型、解析器、数据源
+├── services/       # 串口服务、配置持久化
+├── viewmodels/     # MVVM 视图模型
+├── views/          # UI 页面、绘图组件
+│   ├── plot/       # PlotPainter、PlotViewport、手势处理
+│   └── pages/      # 主页面
+└── main.dart
+```
+
+## 技术亮点
+
+- **Isolate 数据生成**：随机源在独立 Isolate 运行，避免阻塞 UI
+- **O(log n) 统计计算**：二分查找加速数据点定位
+- **UI 刷新降频**：数据全接收，UI 按 fps 批量刷新
+- **不可变视口**：避免 shouldRepaint 误判，精确控制重绘
+
+## 依赖
+
+- `flutter_libserialport` — 串口通信
+- `provider` — 状态管理
+- `path_provider` — 文件路径
+- `file_picker` — 文件选择
+- `logger` — 日志记录
+
+## License
+
+MIT

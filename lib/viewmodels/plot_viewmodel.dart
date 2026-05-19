@@ -12,34 +12,63 @@ import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
 import '../data/source/data_source_manager.dart';
+import '../services/app_settings.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
 
-/// 绘图页面 ViewModel
+/**
+ * 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
+ *
+ * 主要职责：
+ * - 管理数据源（串口/随机源）的启动与停止
+ * - 管理数据解析器（FireWater / 固定帧）的配置与切换
+ * - 维护数据缓冲区，控制最大点数限制（10万点）
+ * - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
+ * - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
+ * - 管理通道配置（可见性、颜色、缩放、偏移）
+ * - 控制 UI 刷新频率（10~60 fps），实现数据接收与 UI 刷新解耦
+ * - 统计测量（Max/Min/Avg）与 CSV 导出
+ * - 配置持久化（通过 AppSettings）
+ *
+ * 数据流：DataSourceManager → IDataParser → _dataPoints → PlotPainter
+ * UI 刷新：通过 notifyListeners() 驱动 Consumer<PlotViewModel> 重建
+ */
 class PlotViewModel extends BaseViewModel {
   // ========== 数据源 ==========
+  /// 数据源管理器，封装串口和随机数据源的统一接口
   late final DataSourceManager _sourceManager;
 
   // ========== 解析器 ==========
+  /// 当前使用的数据解析器（FireWater 或固定帧）
   IDataParser? _parser;
+  /// 数据源字节流的订阅，dispose 时需要取消
   StreamSubscription? _parseSubscription;
 
   // ========== 数据缓冲区 ==========
+  /// 所有接收到的数据点（按 index 递增排序）
   final List<PlotDataPoint> _dataPoints = [];
-  static const int _maxPoints = 100000; // 降低上限减少内存压力
+  /// 数据缓冲区最大点数，超过后从头部批量移除
+  static const int _maxPoints = 100000;
+  /// 下一个数据点的索引序号（单调递增）
   int _nextIndex = 0;
+  /// 绘图开始时间，用于计算时间戳
   DateTime? _startTime;
 
   // ========== 速率统计（基于计数器，避免遍历列表）==========
+  /// 速率统计样本列表，用于计算实时接收速率
   final List<_RateSample> _rateSamples = [];
-  static const int _maxRateSamples = 1000; // 最近1000个样本
+  /// 速率样本最大数量（最近1000个）
+  static const int _maxRateSamples = 1000;
+  /// 累计接收的数据包总数
   int _totalReceived = 0;
 
   // ========== 当前数据实际通道数 ==========
+  /// 当前数据中实际出现的最大通道数（用于动态显示通道面板）
   int _activeChannelCount = 0;
 
   // ========== 视口 ==========
+  /// 当前绘图视口，定义可见的 X/Y 数据范围
   PlotViewport viewport = PlotViewport(
     xMin: 0,
     xMax: 1000,
@@ -48,86 +77,180 @@ class PlotViewModel extends BaseViewModel {
   );
 
   // ========== 视口历史记录（用于撤回） ==========
+  /// 视口历史记录栈，每次缩放/平移前保存当前状态
   final List<PlotViewport> _viewportHistory = [];
+  /// 视口历史最大深度
   static const int _maxHistory = 50;
 
   // ========== 通道配置 ==========
+  /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
 
   // ========== 状态 ==========
+  /// 是否正在绘图（数据源运行中）
   bool _isPlotting = false;
+  /// 是否显示网格
   bool _showGrid = true;
+  /// 是否使用随机数据源（而非串口）
   bool _useRandomSource = false;
-  bool _followEnabled = false; // 最新点跟随在3/4宽度处
-  bool _vCursorEnabled = false; // 单垂直光标开关
+
+  // ========== 高级设置 ==========
+  /// UI 刷新帧率 (fps)，范围 10~60，默认 30
+  int _refreshFps = 30;
+  /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
+  String _gridDensity = 'normal';
+  /// 抗锯齿开关，默认开启，通道>8时自动关闭但可手动修改
+  bool _antiAliasEnabled = true;
+  /// 最新点跟随模式：最新数据点保持在视口 3/4 宽度处
+  bool _followEnabled = false;
+  /// 单垂直光标开关（鼠标悬停显示垂直线+tooltip）
+  bool _vCursorEnabled = false;
+  /// X-X 测量开关（两条垂直测量线）
+  bool _xMeasurementEnabled = false;
+  /// Y-Y 测量开关（两条水平测量线）
+  bool _yMeasurementEnabled = false;
+  /// 统计测量开关（Max/Min/Avg）
+  bool _statsEnabled = false;
+  /// 统计范围开关（限定统计的 X 范围）
+  bool _statsRangeEnabled = false;
+  /// 统计范围左边界
+  double? _statsX1;
+  /// 统计范围右边界
+  double? _statsX2;
+  /// 当前光标模式
   CursorMode _cursorMode = CursorMode.none;
+  /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
+  /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
+  /// 解析器配置（FireWater 和固定帧共用）
   final ParserConfig _parserConfig = ParserConfig.fireWaterDefault();
 
   // ========== 缩放按钮状态 ==========
+  /// 框选放大模式开关
   bool _boxZoomEnabled = false;
 
   // ========== 数据源配置 ==========
+  /// 数据源配置（串口/随机源切换、随机源频率等）
   final DataSourceConfig _sourceConfig = DataSourceConfig();
 
   // ========== x-x / y-y 光标 ==========
+  /// X-X 测量第一条垂直线位置（数据坐标）
   double? _xCursor1;
+  /// X-X 测量第二条垂直线位置（数据坐标）
   double? _xCursor2;
+  /// Y-Y 测量第一条水平线位置（数据坐标）
   double? _yCursor1;
+  /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
 
   // ========== 定时刷新 ==========
+  /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
-  static const int _refreshIntervalMs = 100; // 无数据时100ms刷新一次
+  /// 定时刷新间隔（ms），无数据时保持 UI 响应
+  static const int _refreshIntervalMs = 100;
 
   // ========== UI 刷新降频（数据不丢失）==========
+  /// 待刷新的数据包计数，达到批量大小后触发 UI 刷新
   int _pendingNotifyCount = 0;
-  // 动态批量大小：控制 UI 刷新频率，数据始终全部接收
-  // 目标：UI 刷新频率控制在约 15fps，平衡流畅度和性能
+  /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收
+  /// 根据 _refreshFps 计算：batchSize = targetRate / fps
   int get _notifyBatchSize {
     final intervalMs = _sourceConfig.randomIntervalMs;
-    if (intervalMs <= 1) return 66;      // >= 1000Hz: 每66包刷新UI (~15fps)
-    if (intervalMs <= 2) return 66;      // 500-1000Hz: 每66包刷新UI (~15fps)
-    if (intervalMs <= 5) return 66;      // 200-500Hz: 每66包刷新UI (~15fps)
-    if (intervalMs <= 10) return 50;     // 100-200Hz: 每50包刷新UI (~10fps)
-    if (intervalMs <= 50) return 10;     // 20-100Hz: 每10包刷新UI
-    return 1;                            // < 20Hz: 每包刷新UI
+    final targetRate = 1000.0 / intervalMs; // 每秒目标包数
+    final batch = (targetRate / _refreshFps).round().clamp(1, 1000);
+    return batch;
   }
+  /// Fallback 定时器：确保数据流中断时 UI 仍能刷新
   Timer? _notifyTimer;
 
+  /// 创建 PlotViewModel 并初始化数据源管理器、加载设置、启动定时刷新
   PlotViewModel(super.serialService) {
     _sourceManager = DataSourceManager(serialService);
+    _loadSettings();
     _startRefreshTimer();
   }
 
+  /// 从 AppSettings 加载绘图配置
+  void _loadSettings() {
+    final settings = AppSettings();
+    _refreshFps = settings.refreshFps;
+    _showGrid = settings.showGrid;
+    _gridDensity = settings.gridDensity;
+    _useRandomSource = settings.useRandomSource;
+    _followEnabled = settings.followEnabled;
+    _vCursorEnabled = settings.vCursorEnabled;
+    _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency).round().clamp(1, 1000);
+    viewport = PlotViewport(
+      xMin: settings.xMin,
+      xMax: settings.xMax,
+      yMin: settings.yMin,
+      yMax: settings.yMax,
+    );
+    // 同步到 serialService
+    serialService.useRandomSource = _useRandomSource;
+  }
+
+  /// 保存绘图配置到 AppSettings
+  void _saveSettings() {
+    final settings = AppSettings();
+    settings.refreshFps = _refreshFps;
+    settings.showGrid = _showGrid;
+    settings.gridDensity = _gridDensity;
+    settings.useRandomSource = _useRandomSource;
+    settings.randomFrequency = randomFrequency;
+    settings.followEnabled = _followEnabled;
+    settings.vCursorEnabled = _vCursorEnabled;
+    settings.xMin = viewport.xMin;
+    settings.xMax = viewport.xMax;
+    settings.yMin = viewport.yMin;
+    settings.yMax = viewport.yMax;
+    settings.save();
+  }
+
   // ========== Getters ==========
+  /// 不可修改的数据点列表（供 UI 读取）
   List<PlotDataPoint> get dataPoints => List.unmodifiable(_dataPoints);
   bool get isPlotting => _isPlotting;
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
+  int get refreshFps => _refreshFps;
+  String get gridDensity => _gridDensity;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
   bool get vCursorEnabled => _vCursorEnabled;
+  bool get xMeasurementEnabled => _xMeasurementEnabled;
+  bool get yMeasurementEnabled => _yMeasurementEnabled;
+  bool get statsEnabled => _statsEnabled;
+  bool get statsRangeEnabled => _statsRangeEnabled;
+  double? get statsX1 => _statsX1;
+  double? get statsX2 => _statsX2;
+  bool get antiAliasEnabled => _antiAliasEnabled;
   CursorMode get cursorMode => _cursorMode;
   CursorState? get cursor => _cursor;
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
+  /// 当前数据点总数
   int get pointCount => _dataPoints.length;
+  /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
-  
-  /// 随机源频率（Hz）
+
+  /// 随机源频率（Hz），由间隔毫秒数换算
   double get randomFrequency => 1000.0 / _sourceConfig.randomIntervalMs;
 
-  // 光标位置
+  /// X-X 测量第一条垂直线位置
   double? get xCursor1 => _xCursor1;
+  /// X-X 测量第二条垂直线位置
   double? get xCursor2 => _xCursor2;
+  /// Y-Y 测量第一条水平线位置
   double? get yCursor1 => _yCursor1;
+  /// Y-Y 测量第二条水平线位置
   double? get yCursor2 => _yCursor2;
 
   /// 是否有可撤回的视口历史
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
 
+  /// 状态栏文本，显示当前视口范围、数据点数、接收速率、运行状态
   String get statusText {
     final buffer = StringBuffer();
     buffer.write('X: ${viewport.xMin.toInt()}-${viewport.xMax.toInt()} ');
@@ -190,12 +313,17 @@ class PlotViewModel extends BaseViewModel {
     );
   }
 
+  /// 停止定时刷新器
   void _stopRefreshTimer() {
     _refreshTimer?.cancel();
     _refreshTimer = null;
   }
 
   // ========== 数据源控制 ==========
+  /// 切换随机数据源开关
+  ///
+  /// 如果正在绘图，会自动重启数据源以应用变更。
+  /// 同时同步更新 serialService 的随机源状态。
   void setUseRandomSource(bool value) {
     _useRandomSource = value;
     _sourceConfig.useRandom = value;
@@ -206,6 +334,7 @@ class PlotViewModel extends BaseViewModel {
         ? _parserConfig.fireWaterChannelCount
         : 4;
     _sourceManager.updateConfig(_sourceConfig);
+    _saveSettings();
 
     // 如果正在绘图，重启数据源
     if (_isPlotting) {
@@ -220,6 +349,7 @@ class PlotViewModel extends BaseViewModel {
     final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000);
     _sourceConfig.randomIntervalMs = intervalMs;
     _sourceManager.updateConfig(_sourceConfig);
+    _saveSettings();
 
     // 如果正在绘图，重启数据源以应用新频率
     if (_isPlotting) {
@@ -229,6 +359,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 解析器控制 ==========
+  /// 切换解析器类型（FireWater / 固定帧）
+  ///
+  /// 如果正在绘图，会自动重启以应用新解析器。
   void setParserType(ParserType type) {
     _parserType = type;
     _parserConfig.type = type;
@@ -239,6 +372,9 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  /// 更新解析器配置并同步到数据源
+  ///
+  /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
     _parserConfig.type = config.type;
     _parserConfig.frameHeaderLength = config.frameHeaderLength;
@@ -265,6 +401,14 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 绘图控制 ==========
+  /// 开始绘图
+  ///
+  /// 流程：
+  /// 1. 检查数据源可用性（串口已连接或随机源已启用）
+  /// 2. 清空旧数据、重置视口和光标
+  /// 3. 创建解析器并启动数据源
+  /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
+  /// 5. 启动定时刷新
   void startPlotting() {
     if (_isPlotting) return;
 
@@ -327,6 +471,10 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  /// 停止绘图
+  ///
+  /// 取消数据流订阅、停止数据源、释放解析器，但保持定时刷新运行
+  /// 以确保交互响应及时。
   void stopPlotting() {
     if (!_isPlotting) return;
 
@@ -347,11 +495,13 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  /// 重启绘图（用于配置变更时）
   void _restartPlotting() {
     stopPlotting();
     startPlotting();
   }
 
+  /// 清空所有数据、速率统计、视口和光标
   void clearData() {
     _dataPoints.clear();
     _rateSamples.clear();
@@ -369,6 +519,14 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 数据接收 ==========
+  /// 处理解析器输出的数据包
+  ///
+  /// 每包数据都处理（不丢失），但 UI 刷新按 [_notifyBatchSize] 批量触发：
+  /// - 添加数据点到缓冲区，超限时从头部批量移除
+  /// - 更新速率统计样本
+  /// - 更新实际通道数（>8时自动关闭抗锯齿）
+  /// - 跟随模式下自动平移视口
+  /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
   void _onParseResult(ParseResult result) {
     if (!result.success || result.values == null || result.values!.isEmpty) {
       return;
@@ -397,6 +555,10 @@ class PlotViewModel extends BaseViewModel {
     // 更新实际通道数
     if (point.channelCount > _activeChannelCount) {
       _activeChannelCount = point.channelCount;
+      // 通道数>8时自动关闭抗锯齿（用户可手动重新开启）
+      if (_activeChannelCount > 8 && _antiAliasEnabled) {
+        _antiAliasEnabled = false;
+      }
     }
 
     // 限制缓冲区大小（使用removeRange批量移除，比removeAt高效）
@@ -427,7 +589,7 @@ class PlotViewModel extends BaseViewModel {
       notifyListeners();
     } else if (_notifyTimer == null) {
       // fallback timer：确保即使数据流中断也能刷新UI
-      final delayMs = _sourceConfig.randomIntervalMs <= 10 ? 66 : 100;
+      final delayMs = (1000 / _refreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
@@ -436,6 +598,7 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  /// 根据当前解析器类型创建对应的解析器实例
   IDataParser _createParser() {
     switch (_parserType) {
       case ParserType.fireWater:
@@ -446,6 +609,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 视口控制（带历史记录） ==========
+  /// 保存当前视口到历史记录栈（用于撤回）
   void _saveViewport() {
     _viewportHistory.add(viewport.copy());
     if (_viewportHistory.length > _maxHistory) {
@@ -453,14 +617,19 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  /// 更新视口并保存到历史记录
   void updateViewport(PlotViewport newViewport) {
+    _saveViewport();
     viewport = newViewport.copy();
+    _saveSettings();
     notifyListeners();
   }
 
+  /// 重置视口到默认值并保存历史记录
   void resetViewport() {
     _saveViewport();
     viewport = viewport.reset();
+    _saveSettings();
     notifyListeners();
   }
 
@@ -469,6 +638,7 @@ class PlotViewModel extends BaseViewModel {
     if (_viewportHistory.isEmpty) return;
     final previous = _viewportHistory.removeLast();
     viewport = previous.copy();
+    _saveSettings();
     notifyListeners();
   }
 
@@ -477,6 +647,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = viewport.zoomX(0.8, centerX);
+    _saveSettings();
     notifyListeners();
   }
 
@@ -485,6 +656,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = viewport.zoomX(1.25, centerX);
+    _saveSettings();
     notifyListeners();
   }
 
@@ -493,6 +665,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerY = viewport.yMin + viewport.yRange / 2;
     viewport = viewport.zoomY(0.8, centerY);
+    _saveSettings();
     notifyListeners();
   }
 
@@ -501,6 +674,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerY = viewport.yMin + viewport.yRange / 2;
     viewport = viewport.zoomY(1.25, centerY);
+    _saveSettings();
     notifyListeners();
   }
 
@@ -510,9 +684,94 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
+  void fitYAxis() {
+    if (_dataPoints.isEmpty) return;
+    final visiblePoints = _dataPoints.where((p) {
+      return p.index >= viewport.xMin && p.index <= viewport.xMax;
+    }).toList();
+    if (visiblePoints.isEmpty) return;
+
+    double minY = double.infinity;
+    double maxY = double.negativeInfinity;
+    for (final point in visiblePoints) {
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        if (!channels[i].visible) continue;
+        final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
+        if (v < minY) minY = v;
+        if (v > maxY) maxY = v;
+      }
+    }
+    if (minY == double.infinity || maxY == double.negativeInfinity) return;
+
+    _saveViewport();
+    final padding = (maxY - minY) * 0.1;
+    viewport = viewport.copyWith(
+      yMin: minY - padding,
+      yMax: maxY + padding,
+    );
+    _saveSettings();
+    notifyListeners();
+  }
+
+  /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
+  void fitXAxis() {
+    if (_dataPoints.isEmpty) return;
+    final minX = _dataPoints.first.index.toDouble();
+    final maxX = _dataPoints.last.index.toDouble();
+
+    _saveViewport();
+    viewport = viewport.copyWith(
+      xMin: minX,
+      xMax: maxX + 1,
+    );
+    _saveSettings();
+    notifyListeners();
+  }
+
+  /// 全自适应：调整X和Y使所有可见通道数据完全显示
+  void fitAll() {
+    if (_dataPoints.isEmpty) return;
+
+    // X范围
+    final minX = _dataPoints.first.index.toDouble();
+    final maxX = _dataPoints.last.index.toDouble();
+
+    // Y范围（只计算可见通道）
+    double minY = double.infinity;
+    double maxY = double.negativeInfinity;
+    for (final point in _dataPoints) {
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        if (!channels[i].visible) continue;
+        final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
+        if (v < minY) minY = v;
+        if (v > maxY) maxY = v;
+      }
+    }
+
+    _saveViewport();
+    if (minY != double.infinity && maxY != double.negativeInfinity) {
+      final padding = (maxY - minY) * 0.1;
+      viewport = viewport.copyWith(
+        xMin: minX,
+        xMax: maxX + 1,
+        yMin: minY - padding,
+        yMax: maxY + padding,
+      );
+    } else {
+      viewport = viewport.copyWith(
+        xMin: minX,
+        xMax: maxX + 1,
+      );
+    }
+    _saveSettings();
+    notifyListeners();
+  }
+
   /// 设置跟随开关
   void setFollowEnabled(bool value) {
     _followEnabled = value;
+    _saveSettings();
     notifyListeners();
   }
 
@@ -522,34 +781,40 @@ class PlotViewModel extends BaseViewModel {
     if (!value) {
       _cursor = null;
     }
+    _saveSettings();
     notifyListeners();
   }
 
   // ========== 通道控制 ==========
+  /// 设置通道可见性
   void setChannelVisible(int index, bool visible) {
     if (index < 0 || index >= channels.length) return;
     channels[index].visible = visible;
     notifyListeners();
   }
 
+  /// 设置通道颜色
   void setChannelColor(int index, Color color) {
     if (index < 0 || index >= channels.length) return;
     channels[index].color = color;
     notifyListeners();
   }
 
+  /// 设置通道是否显示连线
   void setChannelShowLine(int index, bool show) {
     if (index < 0 || index >= channels.length) return;
     channels[index].showLine = show;
     notifyListeners();
   }
 
+  /// 设置通道 Y 轴偏移
   void setChannelYOffset(int index, double offset) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yOffset = offset;
     notifyListeners();
   }
 
+  /// 设置通道 Y 轴缩放
   void setChannelYScale(int index, double scale) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yScale = scale;
@@ -557,11 +822,158 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 显示控制 ==========
+  /// 设置网格显示开关
   void setShowGrid(bool show) {
     _showGrid = show;
+    _saveSettings();
     notifyListeners();
   }
 
+  /// 设置 UI 刷新帧率（10~60 fps）
+  void setRefreshFps(int fps) {
+    _refreshFps = fps.clamp(10, 60);
+    _saveSettings();
+    notifyListeners();
+  }
+
+  /// 设置网格密度（sparse/normal/dense）
+  void setGridDensity(String density) {
+    const valid = {'sparse', 'normal', 'dense'};
+    if (valid.contains(density)) {
+      _gridDensity = density;
+      _saveSettings();
+      notifyListeners();
+    }
+  }
+
+  /// 设置抗锯齿开关
+  void setAntiAlias(bool value) {
+    _antiAliasEnabled = value;
+    _saveSettings();
+    notifyListeners();
+  }
+
+  /// 切换 X-X 测量开关
+  ///
+  /// 开启时自动在视口中心初始化两条测量线，间隔为 X 范围的 1/4。
+  void toggleXMeasurement() {
+    _xMeasurementEnabled = !_xMeasurementEnabled;
+    if (_xMeasurementEnabled && _xCursor1 == null) {
+      // 自动初始化两条线，间隔为X范围的1/4
+      final range = viewport.xRange;
+      final center = viewport.xMin + range / 2;
+      _xCursor1 = center - range / 8;
+      _xCursor2 = center + range / 8;
+    }
+    if (!_xMeasurementEnabled) {
+      _xCursor1 = null;
+      _xCursor2 = null;
+    }
+    _updateMeasurementCursor();
+    notifyListeners();
+  }
+
+  /// 切换 Y-Y 测量开关
+  ///
+  /// 开启时自动在视口中心初始化两条测量线，Y2 在上（值更大）。
+  void toggleYMeasurement() {
+    _yMeasurementEnabled = !_yMeasurementEnabled;
+    if (_yMeasurementEnabled && _yCursor1 == null) {
+      // 自动初始化两条线，Y2在上（值更大），间隔为Y范围的1/4
+      final range = viewport.yRange;
+      final center = viewport.yMin + range / 2;
+      _yCursor1 = center - range / 8;  // 下方（值小）
+      _yCursor2 = center + range / 8;  // 上方（值大）
+    }
+    if (!_yMeasurementEnabled) {
+      _yCursor1 = null;
+      _yCursor2 = null;
+    }
+    _updateMeasurementCursor();
+    notifyListeners();
+  }
+
+  /// 切换统计测量开关
+  ///
+  /// 开启时默认统计整个波形（当前视口范围）。
+  void toggleStats() {
+    _statsEnabled = !_statsEnabled;
+    if (_statsEnabled && _statsX1 == null) {
+      // 默认统计整个波形，范围设为当前视口
+      _statsX1 = viewport.xMin;
+      _statsX2 = viewport.xMax;
+    }
+    if (!_statsEnabled) {
+      _statsX1 = null;
+      _statsX2 = null;
+      _statsRangeEnabled = false;
+    }
+    notifyListeners();
+  }
+
+  /// 切换统计范围开关
+  ///
+  /// 开启时 S1/S2 初始位置在视口 1/4 和 3/4 处；
+  /// 关闭时恢复为整个视口范围。
+  void toggleStatsRange() {
+    if (!_statsEnabled) return;
+    _statsRangeEnabled = !_statsRangeEnabled;
+    if (_statsRangeEnabled) {
+      // S1/S2 初始位置在 1/4 和 3/4 处
+      final range = viewport.xRange;
+      _statsX1 = viewport.xMin + range * 0.25;
+      _statsX2 = viewport.xMin + range * 0.75;
+    } else {
+      // 关闭范围时恢复为整个视口
+      _statsX1 = viewport.xMin;
+      _statsX2 = viewport.xMax;
+    }
+    notifyListeners();
+  }
+
+  /// 设置统计范围左边界
+  void setStatsX1(double x) {
+    _statsX1 = x;
+    notifyListeners();
+  }
+
+  /// 设置统计范围右边界
+  void setStatsX2(double x) {
+    _statsX2 = x;
+    notifyListeners();
+  }
+
+  void _updateMeasurementCursor() {
+    // 更新 CursorState 以反映当前测量状态
+    if (_xMeasurementEnabled && _yMeasurementEnabled) {
+      _cursor = CursorState(
+        x: _xCursor1 ?? 0,
+        y: _yCursor1 ?? 0,
+        mode: CursorMode.xCursor,
+        xCursor2: _xCursor2,
+        yCursor2: _yCursor2,
+      );
+    } else if (_xMeasurementEnabled) {
+      _cursor = CursorState(
+        x: _xCursor1 ?? 0,
+        mode: CursorMode.xCursor,
+        xCursor2: _xCursor2,
+      );
+    } else if (_yMeasurementEnabled) {
+      _cursor = CursorState(
+        x: 0,
+        y: _yCursor1 ?? 0,
+        mode: CursorMode.yCursor,
+        yCursor2: _yCursor2,
+      );
+    } else {
+      _cursor = null;
+    }
+  }
+
+  /// 设置光标模式
+  ///
+  /// 设置为 [CursorMode.none] 时清除所有光标和测量线。
   void setCursorMode(CursorMode mode) {
     _cursorMode = mode;
     if (mode == CursorMode.none) {
@@ -570,6 +982,8 @@ class PlotViewModel extends BaseViewModel {
       _xCursor2 = null;
       _yCursor1 = null;
       _yCursor2 = null;
+      _xMeasurementEnabled = false;
+      _yMeasurementEnabled = false;
     }
     notifyListeners();
   }
@@ -615,48 +1029,68 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
+  /// 更新光标状态（由外部直接设置）
   void updateCursor(CursorState? cursor) {
     _cursor = cursor;
     notifyListeners();
   }
 
   // ========== x-x / y-y 光标控制 ==========
-  void setXCursor(double x) {
-    if (_xCursor1 == null) {
-      _xCursor1 = x;
-    } else if (_xCursor2 == null) {
-      _xCursor2 = x;
-    } else {
-      // 重置并设置第一条
-      _xCursor1 = x;
-      _xCursor2 = null;
-    }
+  /// 设置 X1 光标位置（拖动时使用）
+  ///
+  /// 同时保留 xCursor2 和 yCursor2，避免拖动时覆盖另一组测量线。
+  void setXCursor1(double x) {
+    _xCursor1 = x;
     _cursor = CursorState(
-      x: _xCursor1 ?? x,
-      mode: CursorMode.xCursor,
+      x: _xCursor1!,
+      y: _yCursor1,
+      mode: _yMeasurementEnabled ? CursorMode.yCursor : CursorMode.xCursor,
       xCursor2: _xCursor2,
-    );
-    notifyListeners();
-  }
-
-  void setYCursor(double y) {
-    if (_yCursor1 == null) {
-      _yCursor1 = y;
-    } else if (_yCursor2 == null) {
-      _yCursor2 = y;
-    } else {
-      _yCursor1 = y;
-      _yCursor2 = null;
-    }
-    _cursor = CursorState(
-      x: 0,
-      y: _yCursor1 ?? y,
-      mode: CursorMode.yCursor,
       yCursor2: _yCursor2,
     );
     notifyListeners();
   }
 
+  /// 设置 X2 光标位置（拖动时使用）
+  void setXCursor2(double x) {
+    _xCursor2 = x;
+    _cursor = CursorState(
+      x: _xCursor1 ?? x,
+      y: _yCursor1,
+      mode: _yMeasurementEnabled ? CursorMode.yCursor : CursorMode.xCursor,
+      xCursor2: _xCursor2,
+      yCursor2: _yCursor2,
+    );
+    notifyListeners();
+  }
+
+  /// 设置 Y1 光标位置（拖动时使用）
+  void setYCursor1(double y) {
+    _yCursor1 = y;
+    _cursor = CursorState(
+      x: _xCursor1 ?? 0,
+      y: _yCursor1!,
+      mode: _xMeasurementEnabled ? CursorMode.xCursor : CursorMode.yCursor,
+      xCursor2: _xCursor2,
+      yCursor2: _yCursor2,
+    );
+    notifyListeners();
+  }
+
+  /// 设置 Y2 光标位置（拖动时使用）
+  void setYCursor2(double y) {
+    _yCursor2 = y;
+    _cursor = CursorState(
+      x: _xCursor1 ?? 0,
+      y: _yCursor1 ?? y,
+      mode: _xMeasurementEnabled ? CursorMode.xCursor : CursorMode.yCursor,
+      xCursor2: _xCursor2,
+      yCursor2: _yCursor2,
+    );
+    notifyListeners();
+  }
+
+  /// 清除所有光标和测量线
   void clearCursors() {
     _xCursor1 = null;
     _xCursor2 = null;
@@ -666,19 +1100,100 @@ class PlotViewModel extends BaseViewModel {
     notifyListeners();
   }
 
-  String? get cursorDeltaText {
-    if (_cursorMode == CursorMode.xCursor && _xCursor1 != null && _xCursor2 != null) {
-      final delta = (_xCursor2! - _xCursor1!).abs();
-      return 'ΔX = ${delta.toStringAsFixed(2)}';
+  /// 测量信息文本，显示 X1/X2/Y1/Y2 值和 delta
+  String? get measurementText {
+    final buffer = StringBuffer();
+    bool hasData = false;
+    
+    if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
+      final dx = _xCursor2! - _xCursor1!;
+      buffer.writeln('X1 = ${_xCursor1!.toStringAsFixed(1)}');
+      buffer.writeln('X2 = ${_xCursor2!.toStringAsFixed(1)}');
+      buffer.writeln('ΔX = ${dx.toStringAsFixed(1)}');
+      hasData = true;
     }
-    if (_cursorMode == CursorMode.yCursor && _yCursor1 != null && _yCursor2 != null) {
-      final delta = (_yCursor2! - _yCursor1!).abs();
-      return 'ΔY = ${delta.toStringAsFixed(2)}';
+    
+    if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
+      final dy = _yCursor2! - _yCursor1!;
+      if (hasData) buffer.writeln('---');
+      buffer.writeln('Y1 = ${_yCursor1!.toStringAsFixed(1)}');
+      buffer.writeln('Y2 = ${_yCursor2!.toStringAsFixed(1)}');
+      buffer.writeln('ΔY = ${dy.toStringAsFixed(1)}');
+      hasData = true;
     }
-    return null;
+    
+    return hasData ? buffer.toString().trim() : null;
+  }
+
+  /// 统计测量信息文本，显示各通道最大值、最小值、平均值
+  String? get statsText {
+    if (!_statsEnabled || _dataPoints.isEmpty) return null;
+
+    final xMin = _statsRangeEnabled && _statsX1 != null && _statsX2 != null
+        ? (_statsX1! < _statsX2! ? _statsX1! : _statsX2!)
+        : null;
+    final xMax = _statsRangeEnabled && _statsX1 != null && _statsX2 != null
+        ? (_statsX1! > _statsX2! ? _statsX1! : _statsX2!)
+        : null;
+
+    final buffer = StringBuffer();
+    bool hasVisibleChannel = false;
+    int commonCount = 0;
+
+    // 先计算统一的样本数（所有可见通道在范围内的点数应该相同）
+    for (final point in _dataPoints) {
+      if (xMin != null && point.index < xMin) continue;
+      if (xMax != null && point.index > xMax) continue;
+      commonCount++;
+    }
+
+    if (commonCount == 0) return null;
+
+    for (int i = 0; i < channels.length; i++) {
+      if (!channels[i].visible) continue;
+
+      double? maxVal, minVal, sum;
+      int count = 0;
+
+      for (final point in _dataPoints) {
+        if (i >= point.channelCount) continue;
+        if (xMin != null && point.index < xMin) continue;
+        if (xMax != null && point.index > xMax) continue;
+
+        final val = point.values[i];
+        maxVal = maxVal == null || val > maxVal ? val : maxVal;
+        minVal = minVal == null || val < minVal ? val : minVal;
+        sum = (sum ?? 0) + val;
+        count++;
+      }
+
+      if (count == 0) continue;
+      if (hasVisibleChannel) buffer.writeln('---');
+      hasVisibleChannel = true;
+
+      buffer.writeln('Ch${i + 1}:');
+      buffer.writeln('  Max: ${maxVal!.toStringAsFixed(2)}');
+      buffer.writeln('  Min: ${minVal!.toStringAsFixed(2)}');
+      buffer.writeln('  Avg: ${(sum! / count).toStringAsFixed(2)}');
+    }
+
+    if (!hasVisibleChannel) return null;
+
+    // 统一显示 N 和 Range
+    buffer.writeln('---');
+    buffer.writeln('N: $commonCount');
+    if (_statsRangeEnabled && _statsX1 != null && _statsX2 != null) {
+      buffer.writeln('Range: ${xMin!.toStringAsFixed(1)} ~ ${xMax!.toStringAsFixed(1)}');
+    }
+
+    return buffer.toString().trim();
   }
 
   // ========== 导出 ==========
+  /// 导出数据到 CSV 文件
+  ///
+  /// [selectedPath] 为 null 时，自动保存到可执行文件目录下的 exports 文件夹。
+  /// 返回实际保存的文件路径，失败返回 null。
   Future<String?> exportToCsv(String? selectedPath) async {
     try {
       if (_dataPoints.isEmpty) {
@@ -730,6 +1245,7 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  /// 释放所有资源：取消订阅、停止数据源、释放解析器、停止定时器
   @override
   void dispose() {
     _parseSubscription?.cancel();

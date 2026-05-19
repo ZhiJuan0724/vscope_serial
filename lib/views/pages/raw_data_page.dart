@@ -346,6 +346,7 @@ class _RawDataPageState extends State<RawDataPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         title: const Text('保存数据'),
         content: Column(
           mainAxisSize: MainAxisSize.min,

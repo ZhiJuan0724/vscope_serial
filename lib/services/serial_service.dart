@@ -11,6 +11,7 @@ import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/serial_config.dart';
+import 'app_settings.dart';
 
 class _OpenPortArgs {
   final SendPort sendPort;
@@ -90,6 +91,21 @@ class SerialService extends ChangeNotifier {
   // 绘图状态标志
   bool isPlotting = false;
 
+  /// 从 AppSettings 加载配置
+  void loadSettings() {
+    final settings = AppSettings();
+    config = settings.saveToSerialConfig();
+    useRandomSource = settings.useRandomSource;
+  }
+
+  /// 保存配置到 AppSettings
+  void _saveSettings() {
+    final settings = AppSettings();
+    settings.loadFromSerialConfig(config);
+    settings.useRandomSource = useRandomSource;
+    settings.save();
+  }
+
   void refreshPorts() {
     availablePorts = SerialPort.availablePorts;
     if (config.port != null && !availablePorts.contains(config.port)) {
@@ -167,6 +183,7 @@ class SerialService extends ChangeNotifier {
 
       _lastConnectedPort = config.port;
       isConnected = true;
+      _saveSettings(); // 保存连接成功的串口配置
       AppLogger().info('串口已连接: ${config.port} @ ${config.baudRate}', category: 'SERIAL');
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
@@ -509,6 +526,7 @@ class SerialService extends ChangeNotifier {
 
   void updateRts(bool value) {
     config = config.copyWith(rts: value);
+    _saveSettings();
     if (isConnected && _serialPort != null) {
       final cfg = _serialPort!.config;
       cfg.rts = value ? SerialPortRts.on : SerialPortRts.off;
@@ -520,6 +538,7 @@ class SerialService extends ChangeNotifier {
 
   void updateDtr(bool value) {
     config = config.copyWith(dtr: value);
+    _saveSettings();
     if (isConnected && _serialPort != null) {
       final cfg = _serialPort!.config;
       cfg.dtr = value ? SerialPortDtr.on : SerialPortDtr.off;

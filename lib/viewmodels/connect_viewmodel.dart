@@ -1,4 +1,4 @@
-import '../services/serial_service.dart';
+import '../services/app_settings.dart';
 import 'base_viewmodel.dart';
 
 /// 连接页面 ViewModel
@@ -19,28 +19,40 @@ class ConnectViewModel extends BaseViewModel {
   /// 是否使用随机数据源（用于绘图）
   bool get useRandomSource => serialService.useRandomSource;
 
+  void _saveSettings() {
+    final settings = AppSettings();
+    settings.loadFromSerialConfig(serialService.config);
+    settings.useRandomSource = serialService.useRandomSource;
+    settings.save();
+  }
+
   void selectPort(String? port) {
     serialService.config = serialService.config.copyWith(port: port);
+    _saveSettings();
     serialService.notifyListeners();
   }
 
   void setBaudRate(int rate) {
     serialService.config = serialService.config.copyWith(baudRate: rate);
+    _saveSettings();
     serialService.notifyListeners();
   }
 
   void setDataBits(int bits) {
     serialService.config = serialService.config.copyWith(dataBits: bits);
+    _saveSettings();
     serialService.notifyListeners();
   }
 
   void setStopBits(int bits) {
     serialService.config = serialService.config.copyWith(stopBits: bits);
+    _saveSettings();
     serialService.notifyListeners();
   }
 
   void setParity(int p) {
     serialService.config = serialService.config.copyWith(parity: p);
+    _saveSettings();
     serialService.notifyListeners();
   }
 
@@ -49,6 +61,7 @@ class ConnectViewModel extends BaseViewModel {
 
   void setUseRandomSource(bool value) {
     serialService.useRandomSource = value;
+    _saveSettings();
     serialService.notifyListeners();
   }
 

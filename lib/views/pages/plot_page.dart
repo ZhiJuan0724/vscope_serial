@@ -1,4 +1,5 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,7 +12,12 @@ import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/common_widgets.dart';
 
-/// 绘图页面
+/**
+ * 绘图页面入口
+ *
+ * 使用 [ChangeNotifierProvider] 创建 [PlotViewModel]，
+ * 子组件通过 [Consumer] 或 [Provider.of] 访问 ViewModel。
+ */
 class PlotPage extends StatelessWidget {
   const PlotPage({super.key});
 
@@ -25,6 +31,14 @@ class PlotPage extends StatelessWidget {
   }
 }
 
+/**
+ * 绘图页面内容主体
+ *
+ * 页面布局（从上到下）：
+ * - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
+ * - 主区域：左侧通道面板 + 右侧绘图区域
+ * - 状态栏：视口范围、数据点数、光标信息
+ */
 class _PlotPageContent extends StatelessWidget {
   const _PlotPageContent();
 
@@ -58,6 +72,7 @@ class _PlotPageContent extends StatelessWidget {
   }
 
   // ========== 工具栏 ==========
+  /// 构建顶部工具栏
   Widget _buildToolbar(BuildContext context, PlotViewModel vm) {
     return Container(
       height: 40,
@@ -152,19 +167,7 @@ class _PlotPageContent extends StatelessWidget {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 12),
-          // 网格开关
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Checkbox(
-                value: vm.showGrid,
-                onChanged: (value) => vm.setShowGrid(value!),
-              ),
-              const Text('网格', style: TextStyle(fontSize: 12)),
-            ],
-          ),
-          const SizedBox(width: 8),
+          const Spacer(),
           // 单垂直光标开关
           Tooltip(
             message: '单垂直光标',
@@ -192,39 +195,109 @@ class _PlotPageContent extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          // X-X / Y-Y 光标模式
-          SizedBox(
-            width: 80,
-            child: NoAnimDropdown<CursorMode>(
-              value: vm.cursorMode,
-              hint: '测量',
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                border: OutlineInputBorder(),
+          // X-X 测量按钮（独立开关）
+          Tooltip(
+            message: 'X-X 测量',
+            child: TextButton.icon(
+              onPressed: () => vm.toggleXMeasurement(),
+              icon: Icon(
+                Icons.vertical_align_center,
+                size: 16,
+                color: vm.xMeasurementEnabled ? Colors.blue : null,
               ),
-              items: [
-                const DropdownMenuItem(
-                  value: CursorMode.none,
-                  child: Text('关闭', style: TextStyle(fontSize: 12)),
+              label: Text(
+                'X-X',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: vm.xMeasurementEnabled ? Colors.blue : null,
                 ),
-                const DropdownMenuItem(
-                  value: CursorMode.xCursor,
-                  child: Text('X-X', style: TextStyle(fontSize: 12)),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor: vm.xMeasurementEnabled
+                    ? Colors.blue.withValues(alpha: 0.15)
+                    : null,
+              ),
+            ),
+          ),
+          // Y-Y 测量按钮（独立开关）
+          Tooltip(
+            message: 'Y-Y 测量',
+            child: TextButton.icon(
+              onPressed: () => vm.toggleYMeasurement(),
+              icon: Icon(
+                Icons.horizontal_rule,
+                size: 16,
+                color: vm.yMeasurementEnabled ? Colors.blue : null,
+              ),
+              label: Text(
+                'Y-Y',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: vm.yMeasurementEnabled ? Colors.blue : null,
                 ),
-                const DropdownMenuItem(
-                  value: CursorMode.yCursor,
-                  child: Text('Y-Y', style: TextStyle(fontSize: 12)),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor: vm.yMeasurementEnabled
+                    ? Colors.blue.withValues(alpha: 0.15)
+                    : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // 统计测量按钮
+          Tooltip(
+            message: '统计测量（Max/Min/Avg）',
+            child: TextButton.icon(
+              onPressed: () => vm.toggleStats(),
+              icon: Icon(
+                Icons.analytics,
+                size: 16,
+                color: vm.statsEnabled ? Colors.blue : null,
+              ),
+              label: Text(
+                '统计',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: vm.statsEnabled ? Colors.blue : null,
                 ),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  vm.setCursorMode(value);
-                  if (value == CursorMode.none) {
-                    vm.clearCursors();
-                  }
-                }
-              },
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor: vm.statsEnabled
+                    ? Colors.blue.withValues(alpha: 0.15)
+                    : null,
+              ),
+            ),
+          ),
+          // 统计范围按钮（仅在统计开启时可用）
+          Tooltip(
+            message: '统计范围',
+            child: TextButton.icon(
+              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
+              icon: Icon(
+                Icons.straighten,
+                size: 16,
+                color: vm.statsRangeEnabled ? Colors.blue : null,
+              ),
+              label: Text(
+                '范围',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: vm.statsRangeEnabled ? Colors.blue : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor: vm.statsRangeEnabled
+                    ? Colors.blue.withValues(alpha: 0.15)
+                    : null,
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -331,6 +404,40 @@ class _PlotPageContent extends StatelessWidget {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
           const SizedBox(width: 8),
+          // Y轴自适应
+          Tooltip(
+            message: 'Y轴自适应',
+            child: IconButton(
+              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
+              icon: const Icon(Icons.vertical_align_center, size: 18),
+              tooltip: 'Y轴自适应',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
+          // X轴自适应
+          Tooltip(
+            message: 'X轴自适应',
+            child: IconButton(
+              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
+              icon: const Icon(Icons.horizontal_rule, size: 18),
+              tooltip: 'X轴自适应',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
+          // 全自适应
+          Tooltip(
+            message: '全自适应',
+            child: IconButton(
+              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
+              icon: const Icon(Icons.fit_screen, size: 18),
+              tooltip: '全自适应',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
+          const SizedBox(width: 8),
           // 清空数据
           IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
@@ -339,12 +446,31 @@ class _PlotPageContent extends StatelessWidget {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
+          const SizedBox(width: 8),
+          // 高级设置
+          Tooltip(
+            message: '高级设置',
+            child: IconButton(
+              onPressed: () => _showAdvancedSettingsDialog(context, vm),
+              icon: const Icon(Icons.tune, size: 18),
+              tooltip: '高级设置',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ),
         ],
       ),
     );
   }
 
   // ========== 通道面板 ==========
+  /// 构建左侧通道设置面板
+  ///
+  /// 只显示实际有数据的通道（[activeChannelCount]），包含：
+  /// - 通道颜色指示器
+  /// - 通道名称
+  /// - 可见性开关
+  /// - 连线显示开关
   Widget _buildChannelPanel(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
@@ -397,6 +523,12 @@ class _PlotPageContent extends StatelessWidget {
   }
 
   // ========== 绘图区域 ==========
+  /// 构建右侧绘图区域
+  ///
+  /// 无数据时显示提示，有数据时显示：
+  /// - [PlotGestureHandler]：处理手势交互
+  /// - [PlotPainter]：绘制波形
+  /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
     if (vm.dataPoints.isEmpty) {
       return const Center(
@@ -412,65 +544,66 @@ class _PlotPageContent extends StatelessWidget {
       );
     }
 
-    return GestureDetector(
-      onTapUp: (details) {
-        // x-x / y-y 光标点击放置
-        if (vm.cursorMode == CursorMode.xCursor) {
-          final size = context.size ?? Size.zero;
-          if (size.isEmpty) return;
-          final x = vm.viewport.screenToDataX(
-            details.localPosition.dx.clamp(
-              PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+    return Stack(
+      children: [
+        PlotGestureHandler(
+          viewport: vm.viewport,
+          cursorMode: vm.cursorMode,
+          vCursorEnabled: vm.vCursorEnabled,
+          boxZoomEnabled: vm.boxZoomEnabled,
+          onViewportChanged: (viewport) => vm.updateViewport(viewport),
+          onCursorChanged: (cursor) {
+            if (cursor != null && cursor.mode == CursorMode.follow) {
+              vm.updateFollowCursor(cursor.x, cursor.y ?? 0,
+                cursor.screenPosition ?? Offset.zero);
+            } else {
+              vm.updateCursor(cursor);
+            }
+          },
+          // 测量线位置
+          xCursor1: vm.xCursor1,
+          xCursor2: vm.xCursor2,
+          yCursor1: vm.yCursor1,
+          yCursor2: vm.yCursor2,
+          // 测量线拖动回调
+          onXCursor1Drag: vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
+          onXCursor2Drag: vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
+          onYCursor1Drag: vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
+          onYCursor2Drag: vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
+          // 统计范围位置
+          statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
+          statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
+          // 统计范围拖动回调
+          onStatsX1Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
+          onStatsX2Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+          child: CustomPaint(
+            painter: PlotPainter(
+              viewport: vm.viewport,
+              data: vm.dataPoints,
+              channels: vm.channels,
+              showGrid: vm.showGrid,
+              gridDensity: _parseGridDensity(vm.gridDensity),
+              cursor: vm.cursor,
+              statsEnabled: vm.statsEnabled,
+              statsRangeEnabled: vm.statsRangeEnabled,
+              statsX1: vm.statsX1,
+              statsX2: vm.statsX2,
+              antiAliasEnabled: vm.antiAliasEnabled,
             ),
-            size.width,
-          );
-          // X吸附到整数
-          vm.setXCursor(x.round().toDouble());
-        } else if (vm.cursorMode == CursorMode.yCursor) {
-          final size = context.size ?? Size.zero;
-          if (size.isEmpty) return;
-          final y = vm.viewport.screenToDataY(
-            details.localPosition.dy.clamp(
-              PlotViewport().marginTop,
-              size.height - PlotViewport().marginBottom,
-            ),
-            size.height,
-          );
-          // Y吸附到整数
-          vm.setYCursor(y.round().toDouble());
-        }
-      },
-      child: PlotGestureHandler(
-        viewport: vm.viewport,
-        cursorMode: vm.cursorMode,
-        vCursorEnabled: vm.vCursorEnabled,
-        boxZoomEnabled: vm.boxZoomEnabled,
-        onViewportChanged: (viewport) => vm.updateViewport(viewport),
-        onCursorChanged: (cursor) {
-          // 如果是单垂直光标模式，使用增强版光标更新
-          if (cursor != null && cursor.mode == CursorMode.follow) {
-            vm.updateFollowCursor(cursor.x, cursor.y ?? 0, 
-              cursor.screenPosition ?? Offset.zero);
-          } else {
-            vm.updateCursor(cursor);
-          }
-        },
-        child: CustomPaint(
-          painter: PlotPainter(
-            viewport: vm.viewport,
-            data: vm.dataPoints,
-            channels: vm.channels,
-            showGrid: vm.showGrid,
-            cursor: vm.cursor,
+            size: Size.infinite,
           ),
-          size: Size.infinite,
         ),
-      ),
+        // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
+        if (vm.measurementText != null || vm.statsText != null)
+          _buildCombinedInfoBox(context, vm),
+      ],
     );
   }
 
   // ========== 状态栏 ==========
+  /// 构建底部状态栏
+  ///
+  /// 显示视口范围、数据点数、接收速率、运行状态及光标信息。
   Widget _buildStatusBar(BuildContext context, PlotViewModel vm) {
     return Container(
       height: 24,
@@ -488,12 +621,6 @@ class _PlotPageContent extends StatelessWidget {
             style: const TextStyle(fontSize: 11, color: Colors.grey),
           ),
           const Spacer(),
-          // 光标 delta 显示
-          if (vm.cursorDeltaText != null)
-            Text(
-              vm.cursorDeltaText!,
-              style: const TextStyle(fontSize: 11, color: Colors.yellow),
-            ),
           const SizedBox(width: 8),
           // 垂直光标信息（显示当前X位置的所有通道Y值）
           if (vm.cursor != null && vm.cursorMode == CursorMode.follow)
@@ -503,6 +630,9 @@ class _PlotPageContent extends StatelessWidget {
     );
   }
 
+  /// 构建光标信息文本（状态栏右侧）
+  ///
+  /// 显示当前 X 位置及最近数据点各通道的 Y 值。
   Widget _buildCursorInfo(PlotViewModel vm) {
     final cursor = vm.cursor!;
     final buffer = StringBuffer();
@@ -528,6 +658,7 @@ class _PlotPageContent extends StatelessWidget {
   }
 
   // ========== 对话框 ==========
+  /// 显示解析器配置对话框
   void _showParserConfigDialog(BuildContext context, PlotViewModel vm) {
     showDialog(
       context: context,
@@ -535,6 +666,7 @@ class _PlotPageContent extends StatelessWidget {
     );
   }
 
+  /// 显示随机源频率设置对话框
   void _showRandomFreqDialog(BuildContext context, PlotViewModel vm) {
     final controller = TextEditingController(
       text: vm.randomFrequency.toStringAsFixed(1),
@@ -542,6 +674,7 @@ class _PlotPageContent extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         title: const Text('随机源频率'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -583,6 +716,9 @@ class _PlotPageContent extends StatelessWidget {
     );
   }
 
+  /// 导出数据到 CSV 文件
+  ///
+  /// 弹出文件保存对话框，导出完成后显示 SnackBar 提示。
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
     // 选择保存路径
     final result = await FilePicker.saveFile(
@@ -600,9 +736,293 @@ class _PlotPageContent extends StatelessWidget {
       );
     }
   }
+
+  /// 将字符串网格密度转换为 [GridDensity] 枚举
+  GridDensity _parseGridDensity(String density) {
+    return switch (density) {
+      'sparse' => GridDensity.sparse,
+      'dense' => GridDensity.dense,
+      _ => GridDensity.normal,
+    };
+  }
+
+  /// 构建网格密度选择按钮
+  Widget _buildDensityButton(String label, String density, PlotViewModel vm, StateSetter setState) {
+    final isSelected = vm.gridDensity == density;
+    return Expanded(
+      child: TextButton(
+        onPressed: () {
+          vm.setGridDensity(density);
+          setState(() {});
+        },
+        style: TextButton.styleFrom(
+          backgroundColor: isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: const Size(0, 32),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: isSelected ? Colors.blue : null,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 构建合并的信息框（X-X/Y-Y + 统计信息在同一框内，从左到右排列）
+  Widget _buildCombinedInfoBox(BuildContext context, PlotViewModel vm) {
+    final children = <Widget>[];
+
+    // 第一列：X-X / Y-Y 测量值
+    if (vm.measurementText != null) {
+      children.add(
+        Text(
+          vm.measurementText!,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontFamily: 'monospace',
+            height: 1.5,
+          ),
+        ),
+      );
+    }
+
+    // 分隔线
+    if (vm.measurementText != null && vm.statsText != null) {
+      children.add(
+        Container(
+          width: 1,
+          margin: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF8888AA).withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(0.5),
+          ),
+        ),
+      );
+    }
+
+    // 第二列及以后：统计信息（多列）
+    if (vm.statsText != null) {
+      children.add(_buildStatsContent(vm.statsText!));
+    }
+
+    return _DraggableInfoBox(
+      initialRight: 16,
+      initialTop: 16,
+      borderColor: vm.statsText != null
+          ? Colors.green.withValues(alpha: 0.5)
+          : const Color(0xFF8888AA),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
+  }
+
+  /// 构建统计信息内容，支持多列布局
+  ///
+  /// 当通道数超过 4 个时，自动分为多列显示以避免信息框过高。
+  Widget _buildStatsContent(String text) {
+    final lines = text.split('\n');
+    final channelBlocks = <List<String>>[];
+    List<String> currentBlock = [];
+
+    // 按 --- 分割成各通道块
+    for (final line in lines) {
+      if (line == '---') {
+        if (currentBlock.isNotEmpty) {
+          channelBlocks.add(List.from(currentBlock));
+          currentBlock.clear();
+        }
+      } else {
+        currentBlock.add(line);
+      }
+    }
+    if (currentBlock.isNotEmpty) {
+      channelBlocks.add(currentBlock);
+    }
+
+    // 计算列数：每列最多 4 个通道（避免过高）
+    const maxChannelsPerColumn = 4;
+    final columnCount = (channelBlocks.length / maxChannelsPerColumn).ceil().clamp(1, 4);
+
+    if (columnCount == 1) {
+      return Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontFamily: 'monospace',
+          height: 1.5,
+        ),
+      );
+    }
+
+    // 多列布局
+    final columns = <Widget>[];
+    final itemsPerColumn = (channelBlocks.length / columnCount).ceil();
+
+    for (int col = 0; col < columnCount; col++) {
+      final start = col * itemsPerColumn;
+      final end = (start + itemsPerColumn).clamp(0, channelBlocks.length);
+      if (start >= end) break;
+
+      final colBlocks = channelBlocks.sublist(start, end);
+      final colText = StringBuffer();
+      for (int i = 0; i < colBlocks.length; i++) {
+        if (i > 0) colText.writeln('---');
+        for (final line in colBlocks[i]) {
+          colText.writeln(line);
+        }
+      }
+
+      columns.add(
+        Text(
+          colText.toString().trim(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontFamily: 'monospace',
+            height: 1.5,
+          ),
+        ),
+      );
+
+      if (col < columnCount - 1) {
+        columns.add(const SizedBox(width: 16));
+      }
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: columns,
+    );
+  }
+
+  /// 显示高级设置对话框
+  ///
+  /// 包含：网格开关、网格密度、刷新帧率、抗锯齿开关。
+  void _showAdvancedSettingsDialog(BuildContext context, PlotViewModel vm) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        title: const Text('高级设置'),
+        content: SizedBox(
+          width: 300,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 网格开关
+                  Row(
+                    children: [
+                      const Text('显示网格', style: TextStyle(fontSize: 14)),
+                      const Spacer(),
+                      Switch(
+                        value: vm.showGrid,
+                        onChanged: (value) {
+                          vm.setShowGrid(value);
+                          setState(() {}); // 刷新对话框内部状态
+                        },
+                      ),
+                    ],
+                  ),
+                  // 网格密度
+                  if (vm.showGrid) ...[
+                    const SizedBox(height: 8),
+                    const Text('网格密度', style: TextStyle(fontSize: 14)),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        _buildDensityButton('稀疏', 'sparse', vm, setState),
+                        const SizedBox(width: 8),
+                        _buildDensityButton('普通', 'normal', vm, setState),
+                        const SizedBox(width: 8),
+                        _buildDensityButton('密集', 'dense', vm, setState),
+                      ],
+                    ),
+                  ],
+                  const Divider(),
+                  // 刷新帧率
+                  const Text('绘图刷新帧率', style: TextStyle(fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Text('${vm.refreshFps} fps', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      const Spacer(),
+                      Text('${(1000 / vm.refreshFps).round()}ms', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ],
+                  ),
+                  Slider(
+                    value: vm.refreshFps.toDouble(),
+                    min: 10,
+                    max: 60,
+                    divisions: 50,
+                    label: '${vm.refreshFps} fps',
+                    onChanged: (value) {
+                      vm.setRefreshFps(value.round());
+                      setState(() {}); // 刷新对话框内部状态
+                    },
+                  ),
+                  const Text(
+                    '范围: 10~60 fps，默认 30 fps\n值越高绘图越流畅，但可能降低数据接收速率',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                  const Divider(),
+                  // 抗锯齿开关
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('抗锯齿', style: TextStyle(fontSize: 14)),
+                            Text(
+                              '默认开启，通道>8时自动关闭',
+                              style: TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: vm.antiAliasEnabled,
+                        onChanged: (value) {
+                          vm.setAntiAlias(value);
+                          setState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-/// 通道项目（有状态，支持offset实时更新）
+/**
+ * 通道列表项
+ *
+ * 显示单个通道的颜色、名称、可见性开关和连线开关。
+ */
 class _ChannelItem extends StatelessWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
@@ -683,7 +1103,11 @@ class _ChannelItem extends StatelessWidget {
   }
 }
 
-/// 解析器配置对话框
+/**
+ * 解析器配置对话框
+ *
+ * 根据当前解析器类型显示 FireWater 或固定帧的配置界面。
+ */
 class _ParserConfigDialog extends StatefulWidget {
   final PlotViewModel vm;
 
@@ -693,18 +1117,36 @@ class _ParserConfigDialog extends StatefulWidget {
   State<_ParserConfigDialog> createState() => _ParserConfigDialogState();
 }
 
+/**
+ * [_ParserConfigDialog] 的状态类
+ */
 class _ParserConfigDialogState extends State<_ParserConfigDialog> {
+  /// 解析器配置的本地副本（确定后才同步到 ViewModel）
   late ParserConfig _config;
+  /// FireWater 通道数输入控制器
+  late final TextEditingController _fireWaterController;
+  /// 固定帧通道数输入控制器
+  late final TextEditingController _fixedFrameController;
 
   @override
   void initState() {
     super.initState();
     _config = widget.vm.parserConfig.copyWith();
+    _fireWaterController = TextEditingController(text: _config.fireWaterChannelCount.toString());
+    _fixedFrameController = TextEditingController(text: _config.channelCount.toString());
+  }
+
+  @override
+  void dispose() {
+    _fireWaterController.dispose();
+    _fixedFrameController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       title: const Text('解析器配置'),
       content: SizedBox(
         width: 300,
@@ -728,6 +1170,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
     );
   }
 
+  /// 构建 FireWater 解析器配置界面
   Widget _buildFireWaterConfig() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -744,9 +1187,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const Text('通道数:'),
             const SizedBox(width: 8),
             SizedBox(
-              width: 60,
+              width: 80,
               child: TextField(
-                controller: TextEditingController(text: _config.fireWaterChannelCount.toString()),
+                controller: _fireWaterController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   isDense: true,
@@ -769,6 +1212,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
     );
   }
 
+  /// 构建固定帧解析器配置界面
+  ///
+  /// 包含帧头长度、帧头值、数据类型、通道数设置。
   Widget _buildFixedFrameConfig() {
     return SingleChildScrollView(
       child: Column(
@@ -879,9 +1325,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               const Text('通道数:'),
               const SizedBox(width: 8),
               SizedBox(
-                width: 60,
+                width: 80,
                 child: TextField(
-                  controller: TextEditingController(text: _config.channelCount.toString()),
+                  controller: _fixedFrameController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     isDense: true,
@@ -899,6 +1345,88 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/**
+ * 可拖动的信息框组件
+ *
+ * 支持用户拖动改变位置，位置保存在 State 中。
+ * 用于显示测量信息和统计信息。
+ */
+class _DraggableInfoBox extends StatefulWidget {
+  final double initialRight;
+  final double initialTop;
+  final Color borderColor;
+  final Widget child;
+
+  const _DraggableInfoBox({
+    required this.initialRight,
+    required this.initialTop,
+    required this.borderColor,
+    required this.child,
+  });
+
+  @override
+  State<_DraggableInfoBox> createState() => _DraggableInfoBoxState();
+}
+
+/**
+ * [_DraggableInfoBox] 的状态类
+ */
+class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
+  /// 当前右边距（null 时使用初始值）
+  double? _right;
+  /// 当前上边距（null 时使用初始值）
+  double? _top;
+  /// 是否正在拖动
+  bool _isDragging = false;
+  /// 拖动起始指针位置
+  Offset? _dragStart;
+  /// 拖动起始右边距
+  double? _dragStartRight;
+  /// 拖动起始上边距
+  double? _dragStartTop;
+
+  @override
+  Widget build(BuildContext context) {
+    final right = _right ?? widget.initialRight;
+    final top = _top ?? widget.initialTop;
+
+    return Positioned(
+      right: right,
+      top: top,
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.buttons != kPrimaryButton) return;
+          _isDragging = true;
+          _dragStart = event.position;
+          _dragStartRight = right;
+          _dragStartTop = top;
+        },
+        onPointerMove: (event) {
+          if (!_isDragging || _dragStart == null) return;
+          final dx = _dragStart!.dx - event.position.dx;
+          final dy = event.position.dy - _dragStart!.dy;
+          setState(() {
+            _right = (_dragStartRight! + dx).clamp(0.0, double.infinity);
+            _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
+          });
+        },
+        onPointerUp: (_) => _isDragging = false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xDD1A1A2E),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: widget.borderColor),
+          ),
+          child: IntrinsicHeight(
+            child: widget.child,
+          ),
+        ),
       ),
     );
   }

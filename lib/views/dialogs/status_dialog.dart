@@ -28,6 +28,7 @@ class _StatusDialogState extends State<StatusDialog> {
     return Consumer<SerialService>(
       builder: (context, service, child) {
         return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
           title: const Text('串口连接'),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(

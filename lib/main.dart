@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/utils/app_logger.dart';
+import 'services/app_settings.dart';
 import 'services/serial_service.dart';
 import 'views/pages/connect_page.dart';
 import 'views/pages/plot_page.dart';
@@ -13,6 +14,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
+  await AppSettings().init();
   runApp(const MyApp());
 }
 

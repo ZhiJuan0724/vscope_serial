@@ -21,6 +21,7 @@ class _LogDialogState extends State<LogDialog> {
             ? logs
             : logs.where((e) => e.level != 'TRACE').toList();
         return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
           child: Container(
             width: 800,
             height: 600,

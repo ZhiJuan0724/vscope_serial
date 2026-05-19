@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../data/models/channel_config.dart';
@@ -50,20 +52,57 @@ class CursorState {
 
 enum CursorMode { none, follow, xCursor, yCursor }
 
-/// 绘图 CustomPainter
+/**
+ * 网格密度枚举
+ *
+ * - [sparse]: 每 160px 一条线（最稀疏）
+ * - [normal]: 每 80px 一条线（默认）
+ * - [dense]: 每 40px 一条线（最密集）
+ */
+enum GridDensity { sparse, normal, dense }
+
+/**
+ * 绘图 CustomPainter
+ *
+ * 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
+ * [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
+ */
 class PlotPainter extends CustomPainter {
+  /// 当前绘图视口
   final PlotViewport viewport;
+  /// 数据点列表
   final List<PlotDataPoint> data;
+  /// 通道配置列表
   final List<ChannelConfig> channels;
+  /// 是否显示网格
   final bool showGrid;
+  /// 网格密度
+  final GridDensity gridDensity;
+  /// 光标状态
   final CursorState? cursor;
+  /// 统计测量开关
+  final bool statsEnabled;
+  /// 统计范围开关
+  final bool statsRangeEnabled;
+  /// 统计范围左边界
+  final double? statsX1;
+  /// 统计范围右边界
+  final double? statsX2;
+  /// 抗锯齿开关
+  final bool antiAliasEnabled;
 
   PlotPainter({
     required this.viewport,
     required this.data,
     required this.channels,
     this.showGrid = true,
+    this.gridDensity = GridDensity.normal,
     this.cursor,
+    this.statsEnabled = false,
+    this.statsRangeEnabled = false,
+    this.statsX1,
+    this.statsX2,
+    this.antiAliasEnabled = true,
   });
 
   /// 判断两个视口是否相等（用于重绘判断）
@@ -73,24 +112,23 @@ class PlotPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 绘制背景
+    // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 光标 → 统计范围
     _drawBackground(canvas, size);
 
-    // 绘制网格
     if (showGrid) {
       _drawGrid(canvas, size);
     }
 
-    // 绘制通道数据
     _drawChannels(canvas, size);
-
-    // 绘制坐标轴
     _drawAxes(canvas, size);
-
-    // 绘制光标（单垂直光标或X-X/Y-Y测量光标）
     _drawCursor(canvas, size);
+
+    if (statsEnabled && statsRangeEnabled && statsX1 != null && statsX2 != null) {
+      _drawStatsRange(canvas, size);
+    }
   }
 
+  /// 绘制深色背景
   void _drawBackground(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = const Color(0xFF1A1A2E)
@@ -101,10 +139,12 @@ class PlotPainter extends CustomPainter {
     );
   }
 
+  /// 绘制网格线和 Y=0 基准线
   void _drawGrid(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = const Color(0xFF2D2D44)
-      ..strokeWidth = 0.5;
+      ..strokeWidth = 0.5
+      ..isAntiAlias = antiAliasEnabled;
 
     final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
@@ -113,38 +153,70 @@ class PlotPainter extends CustomPainter {
     final xGridCount = _calculateGridCount(plotW, 80);
     final yGridCount = _calculateGridCount(plotH, 60);
 
+    // 批量绘制网格线：先收集所有线，用 drawRawPoints 或 Path 优化
+    final gridPath = Path();
+
     // 垂直网格线
     for (int i = 0; i <= xGridCount; i++) {
       final x = PlotViewport().marginLeft + plotW * i / xGridCount;
-      canvas.drawLine(
-        Offset(x, PlotViewport().marginTop),
-        Offset(x, PlotViewport().marginTop + plotH),
-        paint,
-      );
+      gridPath.moveTo(x, PlotViewport().marginTop);
+      gridPath.lineTo(x, PlotViewport().marginTop + plotH);
     }
 
     // 水平网格线
     for (int i = 0; i <= yGridCount; i++) {
       final y = PlotViewport().marginTop + plotH * i / yGridCount;
-      canvas.drawLine(
-        Offset(PlotViewport().marginLeft, y),
-        Offset(PlotViewport().marginLeft + plotW, y),
-        paint,
-      );
+      gridPath.moveTo(PlotViewport().marginLeft, y);
+      gridPath.lineTo(PlotViewport().marginLeft + plotW, y);
+    }
+
+    canvas.drawPath(gridPath, paint);
+
+    // Y=0 基准线（高亮显示）
+    if (viewport.yMin <= 0 && viewport.yMax >= 0) {
+      final zeroY = viewport.dataToScreenY(0, size.height);
+      // 确保在绘图区域内
+      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
+        final zeroPaint = Paint()
+          ..color = const Color(0xFF666688)
+          ..strokeWidth = 1.5;
+        canvas.drawLine(
+          Offset(PlotViewport().marginLeft, zeroY),
+          Offset(PlotViewport().marginLeft + plotW, zeroY),
+          zeroPaint,
+        );
+      }
     }
   }
 
+  /// 根据网格密度计算网格间距（像素）
+  double _getGridSpacing() {
+    return switch (gridDensity) {
+      GridDensity.sparse => 160,  // 稀疏: 每160px一条线
+      GridDensity.normal => 80,   // 普通: 每80px一条线
+      GridDensity.dense => 40,    // 密集: 每40px一条线
+    };
+  }
+
   int _calculateGridCount(double length, double minSpacing) {
-    final count = (length / minSpacing).floor();
+    final densitySpacing = _getGridSpacing();
+    final effectiveSpacing = minSpacing > densitySpacing ? minSpacing : densitySpacing;
+    final count = (length / effectiveSpacing).floor();
     if (count < 2) return 2;
-    if (count > 20) return 20;
+    if (count > 50) return 50; // 密集模式上限更高
     return count;
   }
 
-  // 缓存可见范围，避免每帧重复二分查找
+  /// 缓存的可见数据范围，避免每帧重复二分查找
   _Range? _cachedVisibleRange;
+  /// 缓存视口引用，用于判断缓存是否有效
   PlotViewport? _cachedViewport;
 
+  /// 绘制所有可见通道的数据波形
+  ///
+  /// 1. 获取可见范围内的数据索引（带缓存）
+  /// 2. 根据像素宽度计算降采样步长
+  /// 3. 逐通道批量绘制（Path + 点）
   void _drawChannels(Canvas canvas, Size size) {
     if (data.isEmpty) return;
 
@@ -157,15 +229,17 @@ class PlotPainter extends CustomPainter {
     final dataCount = visibleIndices.end - visibleIndices.start;
     final step = dataCount > plotW * 2 ? (dataCount / (plotW * 2)).ceil() : 1;
 
+    // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length; ch++) {
       final channel = channels[ch];
       if (!channel.visible) continue;
       if (ch >= data.first.values.length) continue;
 
-      _drawChannel(canvas, size, ch, channel, visibleIndices, step);
+      _drawChannelOptimized(canvas, size, ch, channel, visibleIndices, step);
     }
   }
 
+  /// 获取可见数据范围（带缓存）
   _Range _getVisibleRange() {
     if (_cachedVisibleRange != null && _cachedViewport != null &&
         _viewportEquals(_cachedViewport!, viewport)) {
@@ -176,7 +250,12 @@ class PlotPainter extends CustomPainter {
     return _cachedVisibleRange!;
   }
 
-  void _drawChannel(
+  /// 优化绘制单个通道的数据
+  ///
+  /// - 预分配固定大小点列表，避免动态扩容
+  /// - Y 值限制在绘图区域内
+  /// - 根据配置绘制连线和/或点
+  void _drawChannelOptimized(
     Canvas canvas,
     Size size,
     int channelIndex,
@@ -184,7 +263,13 @@ class PlotPainter extends CustomPainter {
     _Range visibleRange,
     int step,
   ) {
-    final points = <Offset>[];
+    // 预分配固定大小列表，避免动态扩容
+    final maxPoints = ((visibleRange.end - visibleRange.start) / step).ceil() + 1;
+    final points = List<Offset?>.filled(maxPoints, null);
+    var count = 0;
+
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
 
     for (int i = visibleRange.start; i < visibleRange.end; i += step) {
       final point = data[i];
@@ -197,41 +282,49 @@ class PlotPainter extends CustomPainter {
       );
 
       // 限制在绘图区域内
-      y = y.clamp(viewport.marginTop, size.height - viewport.marginBottom);
+      if (y < marginTop) y = marginTop;
+      if (y > marginBottom) y = marginBottom;
 
-      points.add(Offset(x, y));
+      points[count++] = Offset(x, y);
     }
 
-    if (points.isEmpty) return;
+    if (count == 0) return;
 
-    // 绘制连线
-    if (channel.showLine && points.length > 1) {
+    // 绘制连线（根据设置决定是否开启抗锯齿）
+    if (channel.showLine && count > 1) {
       final linePaint = Paint()
         ..color = channel.color
         ..strokeWidth = channel.lineWidth
         ..style = PaintingStyle.stroke
-        ..isAntiAlias = true;
+        ..isAntiAlias = antiAliasEnabled;
 
       final path = Path();
-      path.moveTo(points.first.dx, points.first.dy);
-      for (int i = 1; i < points.length; i++) {
-        path.lineTo(points[i].dx, points[i].dy);
+      final first = points[0]!;
+      path.moveTo(first.dx, first.dy);
+      for (int i = 1; i < count; i++) {
+        final p = points[i]!;
+        path.lineTo(p.dx, p.dy);
       }
       canvas.drawPath(path, linePaint);
     }
 
-    // 绘制点
-    if (channel.showPoint || points.length < 100) {
+    // 绘制点（只在需要时）
+    final shouldShowPoints = channel.showPoint ||
+        count < 100 ||
+        (!channel.showLine && channel.visible);
+    if (shouldShowPoints) {
       final pointPaint = Paint()
         ..color = channel.color
         ..style = PaintingStyle.fill;
 
-      for (final p in points) {
+      for (int i = 0; i < count; i++) {
+        final p = points[i]!;
         canvas.drawCircle(p, channel.pointSize, pointPaint);
       }
     }
   }
 
+  /// 绘制坐标轴、刻度线和刻度值
   void _drawAxes(Canvas canvas, Size size) {
     final axisPaint = Paint()
       ..color = const Color(0xFF8888AA)
@@ -307,8 +400,41 @@ class PlotPainter extends CustomPainter {
         alignRight: true,
       );
     }
+
+    // Y=0 轴线（始终明显显示，如果在可见范围内）
+    if (viewport.yMin <= 0 && viewport.yMax >= 0) {
+      final zeroY = viewport.dataToScreenY(0, size.height);
+      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
+        // 轴线：白色半透明，较粗
+        final zeroAxisPaint = Paint()
+          ..color = const Color(0x99FFFFFF)
+          ..strokeWidth = 2.0;
+        canvas.drawLine(
+          Offset(PlotViewport().marginLeft, zeroY),
+          Offset(PlotViewport().marginLeft + plotW, zeroY),
+          zeroAxisPaint,
+        );
+
+        // 刻度值：Y=0
+        final zeroTextStyle = const TextStyle(
+          color: Color(0xFFCCCCDD),
+          fontSize: 10,
+          fontFamily: 'monospace',
+          fontWeight: FontWeight.bold,
+        );
+        _drawText(
+          canvas,
+          '0',
+          Offset(PlotViewport().marginLeft - 8, zeroY),
+          zeroTextStyle,
+          alignRight: true,
+          alignVerticalCenter: true,
+        );
+      }
+    }
   }
 
+  /// 绘制光标（垂直跟随 / X-X / Y-Y 测量）
   void _drawCursor(Canvas canvas, Size size) {
     if (cursor == null) return;
 
@@ -320,78 +446,25 @@ class PlotPainter extends CustomPainter {
     final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
 
-    switch (cursor!.mode) {
-      case CursorMode.follow:
-        final sx = viewport.dataToScreenX(cursor!.x, size.width);
-        // 垂直线：在绘图区域内绘制
-        canvas.drawLine(
-          Offset(sx, PlotViewport().marginTop),
-          Offset(sx, size.height - PlotViewport().marginBottom),
-          cursorPaint,
-        );
+    // follow 模式：垂直光标 + tooltip
+    if (cursor!.mode == CursorMode.follow) {
+      final sx = viewport.dataToScreenX(cursor!.x, size.width);
+      canvas.drawLine(
+        Offset(sx, PlotViewport().marginTop),
+        Offset(sx, size.height - PlotViewport().marginBottom),
+        cursorPaint,
+      );
+      _drawCursorTooltip(canvas, size, sx);
+    }
 
-        // 绘制鼠标旁各通道Y值tooltip
-        _drawCursorTooltip(canvas, size, sx);
-        break;
+    // X-X 测量：两条垂直线（独立于 mode，直接判断 xCursor2 是否存在）
+    if (cursor!.xCursor2 != null) {
+      _drawXMeasurement(canvas, size, plotH);
+    }
 
-      case CursorMode.xCursor:
-        // x-x 光标：两条垂直线
-        final sx1 = viewport.dataToScreenX(cursor!.x, size.width);
-        if (sx1 >= PlotViewport().marginLeft && sx1 <= PlotViewport().marginLeft + plotW) {
-          canvas.drawLine(
-            Offset(sx1, PlotViewport().marginTop),
-            Offset(sx1, PlotViewport().marginTop + plotH),
-            cursorPaint,
-          );
-        }
-        // 第二条线
-        if (cursor!.xCursor2 != null) {
-          final sx2 = viewport.dataToScreenX(cursor!.xCursor2!, size.width);
-          if (sx2 >= PlotViewport().marginLeft && sx2 <= PlotViewport().marginLeft + plotW) {
-            final paint2 = Paint()
-              ..color = Colors.yellow
-              ..strokeWidth = 1.0
-              ..style = PaintingStyle.stroke;
-            canvas.drawLine(
-              Offset(sx2, PlotViewport().marginTop),
-              Offset(sx2, PlotViewport().marginTop + plotH),
-              paint2,
-            );
-          }
-        }
-        break;
-
-      case CursorMode.yCursor:
-        // y-y 光标：两条水平线
-        if (cursor!.y != null) {
-          final sy1 = viewport.dataToScreenY(cursor!.y!, size.height);
-          if (sy1 >= PlotViewport().marginTop && sy1 <= PlotViewport().marginTop + plotH) {
-            canvas.drawLine(
-              Offset(PlotViewport().marginLeft, sy1),
-              Offset(PlotViewport().marginLeft + plotW, sy1),
-              cursorPaint,
-            );
-          }
-        }
-        // 第二条线
-        if (cursor!.yCursor2 != null) {
-          final sy2 = viewport.dataToScreenY(cursor!.yCursor2!, size.height);
-          if (sy2 >= PlotViewport().marginTop && sy2 <= PlotViewport().marginTop + plotH) {
-            final paint2 = Paint()
-              ..color = Colors.yellow
-              ..strokeWidth = 1.0
-              ..style = PaintingStyle.stroke;
-            canvas.drawLine(
-              Offset(PlotViewport().marginLeft, sy2),
-              Offset(PlotViewport().marginLeft + plotW, sy2),
-              paint2,
-          );
-          }
-        }
-        break;
-
-      case CursorMode.none:
-        break;
+    // Y-Y 测量：两条水平线（独立于 mode，直接判断 yCursor2 是否存在）
+    if (cursor!.yCursor2 != null) {
+      _drawYMeasurement(canvas, size, plotW);
     }
   }
 
@@ -526,6 +599,7 @@ class PlotPainter extends CustomPainter {
     }
   }
 
+  /// 绘制文本，支持水平居中、右对齐、垂直居中
   void _drawText(
     Canvas canvas,
     String text,
@@ -533,6 +607,7 @@ class PlotPainter extends CustomPainter {
     TextStyle style, {
     bool alignCenter = false,
     bool alignRight = false,
+    bool alignVerticalCenter = false,
   }) {
     final textSpan = TextSpan(text: text, style: style);
     final textPainter = TextPainter(
@@ -548,9 +623,18 @@ class PlotPainter extends CustomPainter {
       dx -= textPainter.width;
     }
 
-    textPainter.paint(canvas, Offset(dx, position.dy));
+    var dy = position.dy;
+    if (alignVerticalCenter) {
+      dy -= textPainter.height / 2;
+    }
+
+    textPainter.paint(canvas, Offset(dx, dy));
   }
 
+  /// 格式化刻度数值
+  ///
+  /// - X 轴：始终显示整数
+  /// - Y 轴：绝对值>1000或接近整数时显示整数，否则保留2位小数
   String _formatNumber(double value, bool isY) {
     // Y 轴：如果全是整数则不显示小数
     // X 轴：全局不显示小数
@@ -568,7 +652,117 @@ class PlotPainter extends CustomPainter {
     return value.toStringAsFixed(2);
   }
 
-  /// 找到可见范围内的数据索引
+  // ========== X-X / Y-Y 测量绘制 ==========
+  /// 绘制 X-X 测量两条垂直线及标签
+  void _drawXMeasurement(Canvas canvas, Size size, double plotH) {
+    final line1Paint = Paint()
+      ..color = Colors.cyan
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    final line2Paint = Paint()
+      ..color = Colors.yellow
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    // 第一条线
+    final sx1 = viewport.dataToScreenX(cursor!.x, size.width);
+    if (sx1 >= PlotViewport().marginLeft && sx1 <= size.width - PlotViewport().marginRight) {
+      canvas.drawLine(
+        Offset(sx1, PlotViewport().marginTop),
+        Offset(sx1, PlotViewport().marginTop + plotH),
+        line1Paint,
+      );
+      // 标签背景
+      _drawMeasurementLabel(canvas, 'X1', sx1, PlotViewport().marginTop + 10, Colors.cyan);
+    }
+
+    // 第二条线
+    if (cursor!.xCursor2 != null) {
+      final sx2 = viewport.dataToScreenX(cursor!.xCursor2!, size.width);
+      if (sx2 >= PlotViewport().marginLeft && sx2 <= size.width - PlotViewport().marginRight) {
+        canvas.drawLine(
+          Offset(sx2, PlotViewport().marginTop),
+          Offset(sx2, PlotViewport().marginTop + plotH),
+          line2Paint,
+        );
+        _drawMeasurementLabel(canvas, 'X2', sx2, PlotViewport().marginTop + 10, Colors.yellow);
+      }
+    }
+  }
+
+  /// 绘制 Y-Y 测量两条水平线及标签
+  void _drawYMeasurement(Canvas canvas, Size size, double plotW) {
+    final line1Paint = Paint()
+      ..color = Colors.cyan
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    final line2Paint = Paint()
+      ..color = Colors.yellow
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    // 第一条线
+    if (cursor!.y != null) {
+      final sy1 = viewport.dataToScreenY(cursor!.y!, size.height);
+      if (sy1 >= PlotViewport().marginTop && sy1 <= size.height - PlotViewport().marginBottom) {
+        canvas.drawLine(
+          Offset(PlotViewport().marginLeft, sy1),
+          Offset(PlotViewport().marginLeft + plotW, sy1),
+          line1Paint,
+        );
+        _drawMeasurementLabel(canvas, 'Y1', PlotViewport().marginLeft + 10, sy1, Colors.cyan);
+      }
+    }
+
+    // 第二条线
+    if (cursor!.yCursor2 != null) {
+      final sy2 = viewport.dataToScreenY(cursor!.yCursor2!, size.height);
+      if (sy2 >= PlotViewport().marginTop && sy2 <= size.height - PlotViewport().marginBottom) {
+        canvas.drawLine(
+          Offset(PlotViewport().marginLeft, sy2),
+          Offset(PlotViewport().marginLeft + plotW, sy2),
+          line2Paint,
+        );
+        _drawMeasurementLabel(canvas, 'Y2', PlotViewport().marginLeft + 10, sy2, Colors.yellow);
+      }
+    }
+  }
+
+  /// 绘制测量线标签（带背景框）
+  void _drawMeasurementLabel(Canvas canvas, String label, double x, double y, Color color) {
+    final textStyle = TextStyle(
+      color: color,
+      fontSize: 10,
+      fontWeight: FontWeight.bold,
+      fontFamily: 'monospace',
+    );
+    final textSpan = TextSpan(text: label, style: textStyle);
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+
+    // 背景
+    final bgRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(x - textPainter.width / 2 - 3, y - textPainter.height / 2 - 2, textPainter.width + 6, textPainter.height + 4),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(
+      bgRect,
+      Paint()..color = const Color(0xDD1A1A2E)..style = PaintingStyle.fill,
+    );
+    canvas.drawRRect(
+      bgRect,
+      Paint()..color = color..strokeWidth = 1.0..style = PaintingStyle.stroke,
+    );
+
+    textPainter.paint(canvas, Offset(x - textPainter.width / 2, y - textPainter.height / 2));
+  }
+
+  /// 通过二分查找确定可见范围内的数据索引
+  ///
+  /// 数据按 index 递增排序，使用二分查找定位起始和结束位置。
   _Range _findVisibleRange() {
     int start = 0;
     int end = data.length;
@@ -601,15 +795,92 @@ class PlotPainter extends CustomPainter {
     return _Range(start, end);
   }
 
+  /// 绘制统计测量范围框（半透明高亮区域 + 虚线边界 + S1/S2 标签）
+  void _drawStatsRange(Canvas canvas, Size size) {
+    final sx1 = viewport.dataToScreenX(statsX1!, size.width)
+        .clamp(PlotViewport().marginLeft, size.width - PlotViewport().marginRight);
+    final sx2 = viewport.dataToScreenX(statsX2!, size.width)
+        .clamp(PlotViewport().marginLeft, size.width - PlotViewport().marginRight);
+
+    if ((sx2 - sx1).abs() < 2) return;
+
+    final left = sx1 < sx2 ? sx1 : sx2;
+    final right = sx1 < sx2 ? sx2 : sx1;
+
+    final rect = Rect.fromLTRB(
+      left,
+      PlotViewport().marginTop,
+      right,
+      size.height - PlotViewport().marginBottom,
+    );
+
+    // 半透明填充
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = Colors.green.withValues(alpha: 0.08)
+        ..style = PaintingStyle.fill,
+    );
+
+    // 左右边界虚线
+    final borderPaint = Paint()
+      ..color = Colors.green.withValues(alpha: 0.5)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+
+    // 左边界
+    _drawDashedLine(canvas, Offset(left, PlotViewport().marginTop),
+        Offset(left, size.height - PlotViewport().marginBottom), borderPaint);
+    // 右边界
+    _drawDashedLine(canvas, Offset(right, PlotViewport().marginTop),
+        Offset(right, size.height - PlotViewport().marginBottom), borderPaint);
+
+    // 绘制 S1/S2 标签（底部，带背景框）
+    _drawMeasurementLabel(canvas, 'S1', left, size.height - PlotViewport().marginBottom - 10, Colors.green);
+    _drawMeasurementLabel(canvas, 'S2', right, size.height - PlotViewport().marginBottom - 10, Colors.green);
+  }
+
+  /// 绘制虚线（5px 实线 + 3px 间隙）
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final distance = math.sqrt(dx * dx + dy * dy);
+    const dashLength = 5.0;
+    const gapLength = 3.0;
+    final dashCount = (distance / (dashLength + gapLength)).floor();
+
+    for (int i = 0; i < dashCount; i++) {
+      final t1 = i * (dashLength + gapLength) / distance;
+      final t2 = (i * (dashLength + gapLength) + dashLength) / distance;
+      canvas.drawLine(
+        Offset(start.dx + dx * t1, start.dy + dy * t1),
+        Offset(start.dx + dx * t2.clamp(0.0, 1.0), start.dy + dy * t2.clamp(0.0, 1.0)),
+        paint,
+      );
+    }
+  }
+
+  /// 判断是否需要重绘
+  ///
+  /// 比较视口、数据长度、光标、网格、统计范围等关键属性。
   @override
   bool shouldRepaint(covariant PlotPainter oldDelegate) {
     return !_viewportEquals(oldDelegate.viewport, viewport) ||
         oldDelegate.data.length != data.length ||
         oldDelegate.cursor != cursor ||
-        oldDelegate.showGrid != showGrid;
+        oldDelegate.showGrid != showGrid ||
+        oldDelegate.statsEnabled != statsEnabled ||
+        oldDelegate.statsRangeEnabled != statsRangeEnabled ||
+        oldDelegate.statsX1 != statsX1 ||
+        oldDelegate.statsX2 != statsX2;
   }
 }
 
+/**
+ * 数据索引范围
+ *
+ * [start] 包含，[end] 不包含（左闭右开）。
+ */
 class _Range {
   final int start;
   final int end;

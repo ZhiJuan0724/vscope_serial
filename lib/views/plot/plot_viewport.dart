@@ -1,34 +1,44 @@
-/// 绘图视口管理
-/// 
-/// 管理可见区域和坐标转换。所有修改操作（pan/zoom/reset等）均返回新的实例，
-/// 保持不可变语义。这样 PlotPainter 的 shouldRepaint 可以通过引用比较
-/// 准确判断视口是否变化，避免原地修改导致的重绘失效问题。
+/**
+ * 绘图视口管理
+ *
+ * 管理可见的数据区域和屏幕/数据坐标转换。
+ *
+ * 设计原则：
+ * - 所有修改操作（pan/zoom/reset 等）均返回新的实例，保持不可变语义
+ * - [PlotPainter.shouldRepaint] 可通过引用比较准确判断视口是否变化
+ * - 避免原地修改导致的重绘失效问题
+ */
 class PlotViewport {
   /// X 轴最小值（数据点序号）
   double xMin;
 
-  /// X 轴最大值
+  /// X 轴最大值（数据点序号）
   double xMax;
 
-  /// Y 轴最小值（全局）
+  /// Y 轴最小值（数据坐标）
   double yMin;
 
-  /// Y 轴最大值（全局）
+  /// Y 轴最大值（数据坐标）
   double yMax;
 
-  /// 是否自动缩放 Y 轴
+  /// 是否自动缩放 Y 轴（预留功能）
   bool autoScaleY;
 
-  /// 绘图区域边距
+  /// 绘图区域左边距（留给 Y 轴刻度）
   final double marginLeft = 60;
+  /// 绘图区域右边距
   final double marginRight = 20;
+  /// 绘图区域上边距
   final double marginTop = 20;
+  /// 绘图区域下边距（留给 X 轴刻度）
   final double marginBottom = 40;
 
-  /// X 轴缩放限制
+  /// X 轴最小显示范围
   static const double minXRange = 10;
+  /// X 轴最大显示范围
   static const double maxXRange = 600000;
 
+  /// 创建视口，使用默认值（X: 0~1000, Y: 0~32768）
   PlotViewport({
     this.xMin = 0,
     this.xMax = 1000,
@@ -37,50 +47,52 @@ class PlotViewport {
     this.autoScaleY = false,
   });
 
-  /// X 轴宽度
+  /// X 轴显示范围宽度
   double get xRange => xMax - xMin;
 
-  /// Y 轴高度
+  /// Y 轴显示范围高度
   double get yRange => yMax - yMin;
 
-  /// 有效绘图区域宽度
+  /// 有效绘图区域宽度（去除边距）
   double plotWidth(double canvasWidth) => canvasWidth - marginLeft - marginRight;
 
-  /// 有效绘图区域高度
+  /// 有效绘图区域高度（去除边距）
   double plotHeight(double canvasHeight) => canvasHeight - marginTop - marginBottom;
 
-  /// 数据 X → 屏幕 X
+  /// 数据 X 坐标 → 屏幕 X 坐标
   double dataToScreenX(double x, double canvasWidth) {
     final w = plotWidth(canvasWidth);
     if (xRange <= 0) return marginLeft;
     return marginLeft + (x - xMin) / xRange * w;
   }
 
-  /// 数据 Y → 屏幕 Y（Y 轴向下为正，需要翻转）
+  /// 数据 Y 坐标 → 屏幕 Y 坐标（Y 轴向下为正，需要翻转）
   double dataToScreenY(double y, double canvasHeight) {
     final h = plotHeight(canvasHeight);
     if (yRange <= 0) return marginTop + h;
     return marginTop + h - (y - yMin) / yRange * h;
   }
 
-  /// 屏幕 X → 数据 X
+  /// 屏幕 X 坐标 → 数据 X 坐标
   double screenToDataX(double sx, double canvasWidth) {
     final w = plotWidth(canvasWidth);
     if (w <= 0) return xMin;
     return xMin + (sx - marginLeft) / w * xRange;
   }
 
-  /// 屏幕 Y → 数据 Y
+  /// 屏幕 Y 坐标 → 数据 Y 坐标
   double screenToDataY(double sy, double canvasHeight) {
     final h = plotHeight(canvasHeight);
     if (h <= 0) return yMin;
     return yMin + (marginTop + h - sy) / h * yRange;
   }
 
-  /// 判断数据点是否在可见范围内
+  /// 判断 X 坐标是否在可见范围内
   bool isVisibleX(double x) => x >= xMin && x <= xMax;
 
-  /// 缩放 X 轴（以中心点为基准），返回新的视口
+  /// 以指定中心点缩放 X 轴，返回新的视口
+  ///
+  /// [factor] < 1 为放大，> 1 为缩小。结果受 [minXRange] 和 [maxXRange] 限制。
   PlotViewport zoomX(double factor, double centerX) {
     final oldRange = xRange;
     var newRange = oldRange * factor;
@@ -96,7 +108,7 @@ class PlotViewport {
     );
   }
 
-  /// 缩放 Y 轴，返回新的视口
+  /// 以指定中心点缩放 Y 轴，返回新的视口
   PlotViewport zoomY(double factor, double centerY) {
     final oldRange = yRange;
     final newRange = oldRange * factor;
@@ -107,7 +119,9 @@ class PlotViewport {
     );
   }
 
-  /// 平移 X 轴，返回新的视口
+  /// 水平平移 X 轴，返回新的视口
+  ///
+  /// [deltaX] 为屏幕像素位移，正数向右平移（数据向左移动）。
   PlotViewport panX(double deltaX, double canvasWidth) {
     final w = plotWidth(canvasWidth);
     if (w <= 0) return copy();
@@ -118,7 +132,9 @@ class PlotViewport {
     );
   }
 
-  /// 平移 Y 轴，返回新的视口
+  /// 垂直平移 Y 轴，返回新的视口
+  ///
+  /// [deltaY] 为屏幕像素位移，正数向下平移（数据向上移动）。
   PlotViewport panY(double deltaY, double canvasHeight) {
     final h = plotHeight(canvasHeight);
     if (h <= 0) return copy();
@@ -129,7 +145,7 @@ class PlotViewport {
     );
   }
 
-  /// 重置为默认视图，返回新的视口
+  /// 重置为默认视图（X: 0~1000, Y: 0~32768），返回新的视口
   PlotViewport reset() {
     return PlotViewport(
       xMin: 0,
@@ -140,7 +156,9 @@ class PlotViewport {
     );
   }
 
-  /// 缩放到指定范围，返回新的视口
+  /// 缩放到指定的数据范围，返回新的视口
+  ///
+  /// 用于框选放大功能。X 轴范围受 [minXRange] 和 [maxXRange] 限制。
   PlotViewport zoomTo(double x1, double x2, double y1, double y2) {
     var newXRange = (x2 - x1).abs();
     if (newXRange < minXRange) newXRange = minXRange;
@@ -154,7 +172,9 @@ class PlotViewport {
     );
   }
 
-  /// 限制 X 轴范围，返回新的视口
+  /// 将 X 轴限制在允许范围内，返回新的视口
+  ///
+  /// 如果视口超出边界，整体平移使其回到边界内。
   PlotViewport clampX(double minAllowed, double maxAllowed) {
     double newXMin = xMin;
     double newXMax = xMax;
@@ -173,6 +193,7 @@ class PlotViewport {
     return copyWith(xMin: newXMin, xMax: newXMax);
   }
 
+  /// 复制视口并修改指定属性，返回新的实例
   PlotViewport copyWith({
     double? xMin,
     double? xMax,
@@ -189,6 +210,7 @@ class PlotViewport {
     );
   }
 
+  /// 创建视口的深拷贝
   PlotViewport copy() {
     final vp = PlotViewport(
       xMin: xMin,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/app_settings.dart';
 import '../../services/serial_service.dart';
 import '../../viewmodels/connect_viewmodel.dart';
 import '../widgets/common_widgets.dart';
@@ -20,8 +21,36 @@ class ConnectPage extends StatelessWidget {
   }
 }
 
-class _ConnectPageContent extends StatelessWidget {
+class _ConnectPageContent extends StatefulWidget {
   const _ConnectPageContent();
+
+  @override
+  State<_ConnectPageContent> createState() => _ConnectPageContentState();
+}
+
+class _ConnectPageContentState extends State<_ConnectPageContent> {
+  bool _settingsLoaded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_settingsLoaded) {
+      _settingsLoaded = true;
+      _loadLastPort();
+    }
+  }
+
+  void _loadLastPort() {
+    final vm = Provider.of<ConnectViewModel>(context, listen: false);
+    final settings = AppSettings();
+    vm.serialService.loadSettings();
+    // 刷新串口列表，检查上次连接的串口是否仍然可用
+    vm.refreshPorts();
+    final lastPort = settings.lastPort;
+    if (lastPort != null && vm.availablePorts.contains(lastPort)) {
+      vm.selectPort(lastPort);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
