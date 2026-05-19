@@ -104,7 +104,7 @@ class ParserConfig {
       frameHeader: frameHeader ?? List.from(this.frameHeader),
       dataType: dataType ?? this.dataType,
       channelCount: channelCount ?? this.channelCount,
-      fireWaterChannelCount: fireWaterChannelCount ?? this.fireWaterChannelCount,
+      fireWaterChannelCount: fireWaterChannelCount,
       hasChecksum: hasChecksum ?? this.hasChecksum,
       checksumType: checksumType ?? this.checksumType,
       checksumBytes: checksumBytes ?? this.checksumBytes,

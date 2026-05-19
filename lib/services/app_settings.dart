@@ -5,17 +5,15 @@ import 'package:path_provider/path_provider.dart';
 
 import '../data/models/serial_config.dart';
 
-/**
- * 应用设置 - 全局单例，负责配置的持久化
- *
- * 配置文件存储在用户文档目录下：
- * - Windows: `C:\Users\<用户名>\Documents\vscope_serial\settings.json`
- * - macOS: `~/Documents/vscope_serial/settings.json`
- * - Linux: `~/Documents/vscope_serial/settings.json`
- *
- * 使用单例模式确保全局唯一实例，通过 [AppSettings()] 访问。
- * 首次使用前需调用 [init] 加载配置，修改后调用 [save] 持久化。
- */
+/// 应用设置 - 全局单例，负责配置的持久化
+///
+/// 配置文件存储在用户文档目录下：
+/// - Windows: `C:\Users\<用户名>\Documents\vscope_serial\settings.json`
+/// - macOS: `~/Documents/vscope_serial/settings.json`
+/// - Linux: `~/Documents/vscope_serial/settings.json`
+///
+/// 使用单例模式确保全局唯一实例，通过 [AppSettings()] 访问。
+/// 首次使用前需调用 [init] 加载配置，修改后调用 [save] 持久化。
 class AppSettings {
   static final AppSettings _instance = AppSettings._internal();
   factory AppSettings() => _instance;

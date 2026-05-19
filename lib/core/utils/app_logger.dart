@@ -269,7 +269,7 @@ class AppLogger extends ChangeNotifier {
 
   void setShowTraceLogs(bool value) {
     showTraceLogs = value;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   void _log(String level, String msg, {String? category}) {
@@ -294,7 +294,8 @@ class AppLogger extends ChangeNotifier {
         _logger.f(formatted);
         break;
     }
-    notifyListeners();
+    // 使用微任务延迟通知，避免在构建阶段触发 setState
+    Future.microtask(() => notifyListeners());
   }
 
   void trace(String msg, {String? category}) => _log('T', msg, category: category);

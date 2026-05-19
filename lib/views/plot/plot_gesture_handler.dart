@@ -5,19 +5,17 @@ import 'package:flutter/services.dart';
 import 'plot_painter.dart';
 import 'plot_viewport.dart';
 
-/**
- * 绘图手势处理器
- *
- * 负责处理绘图区域的所有用户交互：
- * - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，Shift+滚轮根据鼠标位置缩放 X/Y 轴
- * - **拖拽平移**：鼠标左键拖动平移视口
- * - **框选放大**：开启框选模式后，鼠标左键拖拽框选区域并放大
- * - **垂直光标悬停**：鼠标移动时更新垂直光标位置
- * - **测量线拖动**：点击并拖动 X-X/Y-Y 测量线标签或统计范围标签
- *
- * 拖动使用 [Listener] 的原始指针事件（onPointerDown/Move/Up）而非 [GestureDetector] 的 pan，
- * 避免 GestureDetector 在快速移动时合并/丢帧导致拖动距离丢失的问题。
- */
+/// 绘图手势处理器
+///
+/// 负责处理绘图区域的所有用户交互：
+/// - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，Shift+滚轮根据鼠标位置缩放 X/Y 轴
+/// - **拖拽平移**：鼠标左键拖动平移视口
+/// - **框选放大**：开启框选模式后，鼠标左键拖拽框选区域并放大
+/// - **垂直光标悬停**：鼠标移动时更新垂直光标位置
+/// - **测量线拖动**：点击并拖动 X-X/Y-Y 测量线标签或统计范围标签
+///
+/// 拖动使用 [Listener] 的原始指针事件（onPointerDown/Move/Up）而非 [GestureDetector] 的 pan，
+/// 避免 GestureDetector 在快速移动时合并/丢帧导致拖动距离丢失的问题。
 class PlotGestureHandler extends StatefulWidget {
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -25,8 +23,6 @@ class PlotGestureHandler extends StatefulWidget {
   final void Function(PlotViewport viewport) onViewportChanged;
   /// 光标变化回调（悬停、测量线拖动）
   final void Function(CursorState? cursor) onCursorChanged;
-  /// 光标模式
-  final CursorMode cursorMode;
   /// 单垂直光标开关
   final bool vCursorEnabled;
   /// 框选放大模式开关
@@ -62,7 +58,6 @@ class PlotGestureHandler extends StatefulWidget {
     required this.viewport,
     required this.onViewportChanged,
     required this.onCursorChanged,
-    this.cursorMode = CursorMode.none,
     this.vCursorEnabled = false,
     this.boxZoomEnabled = false,
     required this.child,
@@ -84,18 +79,14 @@ class PlotGestureHandler extends StatefulWidget {
   State<PlotGestureHandler> createState() => _PlotGestureHandlerState();
 }
 
-/**
- * 测量线拖动目标枚举
- *
- * 标识当前正在拖动的测量线或统计范围边界。
- */
+/// 测量线拖动目标枚举
+///
+/// 标识当前正在拖动的测量线或统计范围边界。
 enum _DragTarget { none, xCursor1, xCursor2, yCursor1, yCursor2, statsX1, statsX2 }
 
-/**
- * [PlotGestureHandler] 的状态类
- *
- * 管理拖动状态、框选状态、测量线拖动目标等。
- */
+/// [PlotGestureHandler] 的状态类
+///
+/// 管理拖动状态、框选状态、测量线拖动目标等。
 class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 是否正在拖拽平移
   bool _isDragging = false;
@@ -116,30 +107,26 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   @override
   Widget build(BuildContext context) {
-    return Listener(
-      onPointerSignal: _handlePointerSignal,
-      onPointerDown: _handlePointerDown,
-      onPointerMove: _handlePointerMove,
-      onPointerUp: _handlePointerUp,
-      child: MouseRegion(
-        onHover: _handleHover,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          // 双击功能已移除（用户反馈误触干扰）
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              widget.child,
-              if (_isBoxSelecting && _boxStart != null && _boxEnd != null)
-                CustomPaint(
-                  painter: _BoxSelectionPainter(
-                    start: _boxStart!,
-                    end: _boxEnd!,
-                  ),
-                  size: Size.infinite,
+    return MouseRegion(
+      onHover: _handleHover,
+      child: Listener(
+        onPointerSignal: _handlePointerSignal,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerUp,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            widget.child,
+            if (_isBoxSelecting && _boxStart != null && _boxEnd != null)
+              CustomPaint(
+                painter: _BoxSelectionPainter(
+                  start: _boxStart!,
+                  end: _boxEnd!,
                 ),
-            ],
-          ),
+                size: Size.infinite,
+              ),
+          ],
         ),
       ),
     );
@@ -206,27 +193,20 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 单垂直光标优先（通过开关控制）
     if (widget.vCursorEnabled) {
-      widget.onCursorChanged(CursorState(
-        x: x,
-        y: y,
-        mode: CursorMode.follow,
-        screenPosition: event.localPosition,
-      ));
+      // 使用 WidgetsBinding 避免在指针事件回调中直接触发 setState
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.onCursorChanged(CursorState(
+          x: x,
+          y: y,
+          mode: CursorMode.follow,
+          screenPosition: event.localPosition,
+        ));
+      });
       return;
     }
 
-    switch (widget.cursorMode) {
-      case CursorMode.xCursor:
-        // x-x 光标：点击放置第一条线，再次点击放置第二条线
-        break;
-      case CursorMode.yCursor:
-        // y-y 光标
-        break;
-      case CursorMode.none:
-      case CursorMode.follow:
-        // 不处理
-        break;
-    }
+
   }
 
   // ===== 原始指针事件处理拖动 =====
@@ -334,9 +314,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (size.isEmpty) return;
 
     if (_isBoxSelecting) {
-      setState(() {
-        _boxEnd = event.localPosition;
-      });
+      _boxEnd = event.localPosition;
+      if (mounted) setState(() {});
     } else if (_isDragging && _lastPosition != null) {
       // 拖动测量标签
       if (_dragTarget != _DragTarget.none) {
@@ -471,23 +450,20 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       widget.onViewportChanged(newViewport);
     }
 
-    setState(() {
-      _isDragging = false;
-      _isBoxSelecting = false;
-      _lastPosition = null;
-      _boxStart = null;
-      _boxEnd = null;
-      _dragTarget = _DragTarget.none;
-    });
+    _isDragging = false;
+    _isBoxSelecting = false;
+    _lastPosition = null;
+    _boxStart = null;
+    _boxEnd = null;
+    _dragTarget = _DragTarget.none;
+    if (mounted) setState(() {});
   }
 
 }
 
-/**
- * 框选区域绘制器
- *
- * 在框选过程中实时绘制半透明蓝色矩形，显示当前框选范围。
- */
+/// 框选区域绘制器
+///
+/// 在框选过程中实时绘制半透明蓝色矩形，显示当前框选范围。
 class _BoxSelectionPainter extends CustomPainter {
   final Offset start;
   final Offset end;

@@ -112,7 +112,8 @@ class SerialService extends ChangeNotifier {
       config = config.copyWith(port: null);
     }
     AppLogger().info('已刷新串口列表', category: 'SERIAL');
-    notifyListeners();
+    // 使用微任务延迟通知，避免在构建阶段触发 setState
+    Future.microtask(() => notifyListeners());
   }
 
   Future<void> connect() async {
@@ -127,7 +128,7 @@ class SerialService extends ChangeNotifier {
     }
 
     isConnecting = true;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
 
     // 如果切换了串口，清空之前的数据
@@ -191,7 +192,7 @@ class SerialService extends ChangeNotifier {
     } finally {
       isConnecting = false;
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
-      notifyListeners();
+      Future.microtask(() => notifyListeners());
     }
   }
 
@@ -331,7 +332,7 @@ class SerialService extends ChangeNotifier {
     }
     _cleanupPort();
     AppLogger().info('串口已断开', category: 'SERIAL');
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   void _cleanupPort() {
@@ -381,7 +382,7 @@ class SerialService extends ChangeNotifier {
         final removed = receivedLines.removeAt(0);
         _receivedTextBytes -= removed.length * 2;
       }
-      notifyListeners();
+      Future.microtask(() => notifyListeners());
     }
   }
 
@@ -399,7 +400,7 @@ class SerialService extends ChangeNotifier {
     _rawBytesSize = 0;
     receivedLines.clear();
     _receivedTextBytes = 0;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 手动清空数据
@@ -533,7 +534,7 @@ class SerialService extends ChangeNotifier {
       _serialPort!.config = cfg;
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   void updateDtr(bool value) {
@@ -545,7 +546,7 @@ class SerialService extends ChangeNotifier {
       _serialPort!.config = cfg;
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   @override

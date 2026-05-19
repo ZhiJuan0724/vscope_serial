@@ -60,7 +60,7 @@ class _StatusDialogState extends State<StatusDialog> {
                             : (value) {
                                 service.config = service.config.copyWith(port: value);
                                 // ignore: invalid_use_of_protected_member
-                                service.notifyListeners();
+                                Future.microtask(() => service.notifyListeners());
                               },
                       ),
                     ),
@@ -122,7 +122,7 @@ class _StatusDialogState extends State<StatusDialog> {
                                 service.config = service.config.copyWith(
                                     dataBits: value);
                                 // ignore: invalid_use_of_protected_member
-                                service.notifyListeners();
+                                Future.microtask(() => service.notifyListeners());
                               },
                       ),
                     ),
@@ -149,7 +149,7 @@ class _StatusDialogState extends State<StatusDialog> {
                                 service.config = service.config.copyWith(
                                     stopBits: value);
                                 // ignore: invalid_use_of_protected_member
-                                service.notifyListeners();
+                                Future.microtask(() => service.notifyListeners());
                               },
                       ),
                     ),
@@ -184,7 +184,7 @@ class _StatusDialogState extends State<StatusDialog> {
                                 service.config = service.config.copyWith(
                                     parity: value);
                                 // ignore: invalid_use_of_protected_member
-                                service.notifyListeners();
+                                Future.microtask(() => service.notifyListeners());
                               },
                       ),
                     ),

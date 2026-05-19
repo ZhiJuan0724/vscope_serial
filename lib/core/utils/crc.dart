@@ -1,5 +1,6 @@
 /// CRC 校验计算库
 /// 支持 CRC-8, CRC-16, CRC-32 多种算法和多项式
+library;
 
 import 'dart:typed_data';
 

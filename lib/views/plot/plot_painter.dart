@@ -50,23 +50,19 @@ class CursorState {
   double? get deltaY => yCursor2 != null && y != null ? (yCursor2! - y!).abs() : null;
 }
 
-enum CursorMode { none, follow, xCursor, yCursor }
+enum CursorMode { follow }
 
-/**
- * 网格密度枚举
- *
- * - [sparse]: 每 160px 一条线（最稀疏）
- * - [normal]: 每 80px 一条线（默认）
- * - [dense]: 每 40px 一条线（最密集）
- */
+/// 网格密度枚举
+///
+/// - [sparse]: 每 160px 一条线（最稀疏）
+/// - [normal]: 每 80px 一条线（默认）
+/// - [dense]: 每 40px 一条线（最密集）
 enum GridDensity { sparse, normal, dense }
 
-/**
- * 绘图 CustomPainter
- *
- * 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
- * [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
- */
+/// 绘图 CustomPainter
+///
+/// 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
+/// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
 class PlotPainter extends CustomPainter {
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -876,11 +872,9 @@ class PlotPainter extends CustomPainter {
   }
 }
 
-/**
- * 数据索引范围
- *
- * [start] 包含，[end] 不包含（左闭右开）。
- */
+/// 数据索引范围
+///
+/// [start] 包含，[end] 不包含（左闭右开）。
 class _Range {
   final int start;
   final int end;

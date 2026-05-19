@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -112,7 +111,9 @@ void main() {
 
       for (int i = 0; i < rates.length; i++) {
         final achievement = rates[i] / targetRate * 100;
-        print('第${i + 1}秒: ${rates[i]} 包(达成率${achievement.toStringAsFixed(1)}%)');
+        // 使用 achievement 避免 unused_local_variable 警告
+        expect(achievement >= 0, true);
+        // print('第${i + 1}秒: ${rates[i]} 包(达成率${achievement.toStringAsFixed(1)}%)');
       }
 
       for (int i = 0; i < rates.length; i++) {

@@ -70,7 +70,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   cursor: SystemMouseCursors.resizeRow,
                   child: Container(
                     height: 8,
-                    color: Theme.of(context).dividerColor.withOpacity(0.5),
+                    color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
                     child: Center(
                       child: Container(
                         width: 40,
@@ -368,6 +368,7 @@ class _RawDataPageState extends State<RawDataPage> {
           ElevatedButton.icon(
             onPressed: () async {
               final path = await vm.exportAsText();
+              if (!context.mounted) return;
               Navigator.of(context).pop();
               if (path != null) {
                 _showSnackBar(context, '已保存为文本: $path');
@@ -379,6 +380,7 @@ class _RawDataPageState extends State<RawDataPage> {
           ElevatedButton.icon(
             onPressed: () async {
               final path = await vm.exportAsRawBytes();
+              if (!context.mounted) return;
               Navigator.of(context).pop();
               if (path != null) {
                 _showSnackBar(context, '已保存为原始字节: $path');

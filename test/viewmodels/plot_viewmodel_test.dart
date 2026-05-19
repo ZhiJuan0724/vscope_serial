@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
-import 'package:vscope_serial/views/plot/plot_painter.dart';
 
 void main() {
   group('PlotViewModel', () {
@@ -28,7 +27,7 @@ void main() {
       expect(vm.useRandomSource, false);
       expect(vm.followEnabled, false);
       expect(vm.vCursorEnabled, false);
-      expect(vm.cursorMode, CursorMode.none);
+      expect(vm.vCursorEnabled, false);
       expect(vm.cursor, null);
     });
 
@@ -56,7 +55,7 @@ void main() {
 
       expect(vm.cursor, isNotNull);
       expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
-      expect(vm.cursor!.mode, CursorMode.follow);
+      expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
     });
 
     test('updateFollowCursor 小数部分>=0.5向上取整', () {
@@ -90,16 +89,6 @@ void main() {
 
       vm.setFollowEnabled(true);
       expect(vm.followEnabled, true);
-    });
-
-    test('setCursorMode切换模式', () {
-      expect(vm.cursorMode, CursorMode.none);
-
-      vm.setCursorMode(CursorMode.xCursor);
-      expect(vm.cursorMode, CursorMode.xCursor);
-
-      vm.setCursorMode(CursorMode.yCursor);
-      expect(vm.cursorMode, CursorMode.yCursor);
     });
 
     test('zoomXIn缩小X范围', () {

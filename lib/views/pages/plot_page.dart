@@ -1,5 +1,4 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,15 +8,12 @@ import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
-import '../plot/plot_viewport.dart';
 import '../widgets/common_widgets.dart';
 
-/**
- * 绘图页面入口
- *
- * 使用 [ChangeNotifierProvider] 创建 [PlotViewModel]，
- * 子组件通过 [Consumer] 或 [Provider.of] 访问 ViewModel。
- */
+/// 绘图页面入口
+///
+/// 使用 [ChangeNotifierProvider] 创建 [PlotViewModel]，
+/// 子组件通过 [Consumer] 或 [Provider.of] 访问 ViewModel。
 class PlotPage extends StatelessWidget {
   const PlotPage({super.key});
 
@@ -31,14 +27,12 @@ class PlotPage extends StatelessWidget {
   }
 }
 
-/**
- * 绘图页面内容主体
- *
- * 页面布局（从上到下）：
- * - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
- * - 主区域：左侧通道面板 + 右侧绘图区域
- * - 状态栏：视口范围、数据点数、光标信息
- */
+/// 绘图页面内容主体
+///
+/// 页面布局（从上到下）：
+/// - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
+/// - 主区域：左侧通道面板 + 右侧绘图区域
+/// - 状态栏：视口范围、数据点数、光标信息
 class _PlotPageContent extends StatelessWidget {
   const _PlotPageContent();
 
@@ -548,16 +542,15 @@ class _PlotPageContent extends StatelessWidget {
       children: [
         PlotGestureHandler(
           viewport: vm.viewport,
-          cursorMode: vm.cursorMode,
           vCursorEnabled: vm.vCursorEnabled,
           boxZoomEnabled: vm.boxZoomEnabled,
           onViewportChanged: (viewport) => vm.updateViewport(viewport),
           onCursorChanged: (cursor) {
-            if (cursor != null && cursor.mode == CursorMode.follow) {
+            if (cursor != null) {
               vm.updateFollowCursor(cursor.x, cursor.y ?? 0,
                 cursor.screenPosition ?? Offset.zero);
             } else {
-              vm.updateCursor(cursor);
+              vm.updateCursor(null);
             }
           },
           // 测量线位置
@@ -623,7 +616,7 @@ class _PlotPageContent extends StatelessWidget {
           const Spacer(),
           const SizedBox(width: 8),
           // 垂直光标信息（显示当前X位置的所有通道Y值）
-          if (vm.cursor != null && vm.cursorMode == CursorMode.follow)
+          if (vm.cursor != null && vm.vCursorEnabled)
             _buildCursorInfo(vm),
         ],
       ),
@@ -1018,11 +1011,9 @@ class _PlotPageContent extends StatelessWidget {
   }
 }
 
-/**
- * 通道列表项
- *
- * 显示单个通道的颜色、名称、可见性开关和连线开关。
- */
+/// 通道列表项
+///
+/// 显示单个通道的颜色、名称、可见性开关和连线开关。
 class _ChannelItem extends StatelessWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
@@ -1103,11 +1094,9 @@ class _ChannelItem extends StatelessWidget {
   }
 }
 
-/**
- * 解析器配置对话框
- *
- * 根据当前解析器类型显示 FireWater 或固定帧的配置界面。
- */
+/// 解析器配置对话框
+///
+/// 根据当前解析器类型显示 FireWater 或固定帧的配置界面。
 class _ParserConfigDialog extends StatefulWidget {
   final PlotViewModel vm;
 
@@ -1117,9 +1106,7 @@ class _ParserConfigDialog extends StatefulWidget {
   State<_ParserConfigDialog> createState() => _ParserConfigDialogState();
 }
 
-/**
- * [_ParserConfigDialog] 的状态类
- */
+/// [_ParserConfigDialog] 的状态类
 class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   /// 解析器配置的本地副本（确定后才同步到 ViewModel）
   late ParserConfig _config;
@@ -1350,12 +1337,10 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   }
 }
 
-/**
- * 可拖动的信息框组件
- *
- * 支持用户拖动改变位置，位置保存在 State 中。
- * 用于显示测量信息和统计信息。
- */
+/// 可拖动的信息框组件
+///
+/// 支持用户拖动改变位置，位置保存在 State 中。
+/// 用于显示测量信息和统计信息。
 class _DraggableInfoBox extends StatefulWidget {
   final double initialRight;
   final double initialTop;
@@ -1373,9 +1358,7 @@ class _DraggableInfoBox extends StatefulWidget {
   State<_DraggableInfoBox> createState() => _DraggableInfoBoxState();
 }
 
-/**
- * [_DraggableInfoBox] 的状态类
- */
+/// [_DraggableInfoBox] 的状态类
 class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
   /// 当前右边距（null 时使用初始值）
   double? _right;
@@ -1398,24 +1381,24 @@ class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
     return Positioned(
       right: right,
       top: top,
-      child: Listener(
-        onPointerDown: (event) {
-          if (event.buttons != kPrimaryButton) return;
+      child: GestureDetector(
+        onPanStart: (details) {
           _isDragging = true;
-          _dragStart = event.position;
+          _dragStart = details.globalPosition;
           _dragStartRight = right;
           _dragStartTop = top;
         },
-        onPointerMove: (event) {
+        onPanUpdate: (details) {
           if (!_isDragging || _dragStart == null) return;
-          final dx = _dragStart!.dx - event.position.dx;
-          final dy = event.position.dy - _dragStart!.dy;
+          final dx = _dragStart!.dx - details.globalPosition.dx;
+          final dy = details.globalPosition.dy - _dragStart!.dy;
           setState(() {
             _right = (_dragStartRight! + dx).clamp(0.0, double.infinity);
             _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
           });
         },
-        onPointerUp: (_) => _isDragging = false,
+        onPanEnd: (_) => _isDragging = false,
+        onPanCancel: () => _isDragging = false,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(

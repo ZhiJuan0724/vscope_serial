@@ -29,31 +29,31 @@ class ConnectViewModel extends BaseViewModel {
   void selectPort(String? port) {
     serialService.config = serialService.config.copyWith(port: port);
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setBaudRate(int rate) {
     serialService.config = serialService.config.copyWith(baudRate: rate);
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setDataBits(int bits) {
     serialService.config = serialService.config.copyWith(dataBits: bits);
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setStopBits(int bits) {
     serialService.config = serialService.config.copyWith(stopBits: bits);
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setParity(int p) {
     serialService.config = serialService.config.copyWith(parity: p);
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setRts(bool value) => serialService.updateRts(value);
@@ -62,7 +62,7 @@ class ConnectViewModel extends BaseViewModel {
   void setUseRandomSource(bool value) {
     serialService.useRandomSource = value;
     _saveSettings();
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void refreshPorts() => serialService.refreshPorts();

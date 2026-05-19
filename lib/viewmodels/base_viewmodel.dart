@@ -11,7 +11,7 @@ abstract class BaseViewModel extends ChangeNotifier {
   }
 
   void _onServiceChanged() {
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   @override

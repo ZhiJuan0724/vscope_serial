@@ -17,23 +17,21 @@ import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
 
-/**
- * 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
- *
- * 主要职责：
- * - 管理数据源（串口/随机源）的启动与停止
- * - 管理数据解析器（FireWater / 固定帧）的配置与切换
- * - 维护数据缓冲区，控制最大点数限制（10万点）
- * - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
- * - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
- * - 管理通道配置（可见性、颜色、缩放、偏移）
- * - 控制 UI 刷新频率（10~60 fps），实现数据接收与 UI 刷新解耦
- * - 统计测量（Max/Min/Avg）与 CSV 导出
- * - 配置持久化（通过 AppSettings）
- *
- * 数据流：DataSourceManager → IDataParser → _dataPoints → PlotPainter
- * UI 刷新：通过 notifyListeners() 驱动 Consumer<PlotViewModel> 重建
- */
+/// 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
+///
+/// 主要职责：
+/// - 管理数据源（串口/随机源）的启动与停止
+/// - 管理数据解析器（FireWater / 固定帧）的配置与切换
+/// - 维护数据缓冲区，控制最大点数限制（10万点）
+/// - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
+/// - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
+/// - 管理通道配置（可见性、颜色、缩放、偏移）
+/// - 控制 UI 刷新频率（10~60 fps），实现数据接收与 UI 刷新解耦
+/// - 统计测量（Max/Min/Avg）与 CSV 导出
+/// - 配置持久化（通过 AppSettings）
+///
+/// 数据流：DataSourceManager → IDataParser → _dataPoints → PlotPainter
+/// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建
 class PlotViewModel extends BaseViewModel {
   // ========== 数据源 ==========
   /// 数据源管理器，封装串口和随机数据源的统一接口
@@ -60,8 +58,7 @@ class PlotViewModel extends BaseViewModel {
   final List<_RateSample> _rateSamples = [];
   /// 速率样本最大数量（最近1000个）
   static const int _maxRateSamples = 1000;
-  /// 累计接收的数据包总数
-  int _totalReceived = 0;
+
 
   // ========== 当前数据实际通道数 ==========
   /// 当前数据中实际出现的最大通道数（用于动态显示通道面板）
@@ -118,7 +115,7 @@ class PlotViewModel extends BaseViewModel {
   /// 统计范围右边界
   double? _statsX2;
   /// 当前光标模式
-  CursorMode _cursorMode = CursorMode.none;
+  // cursorMode 已废弃，保留 CursorMode.follow 用于垂直光标标识
   /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
   /// 当前解析器类型
@@ -226,7 +223,6 @@ class PlotViewModel extends BaseViewModel {
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
-  CursorMode get cursorMode => _cursorMode;
   CursorState? get cursor => _cursor;
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
@@ -307,7 +303,7 @@ class PlotViewModel extends BaseViewModel {
       (_) {
         // 光标模式下定时刷新（让垂直光标跟随鼠标）
         if (_vCursorEnabled && _cursor != null) {
-          notifyListeners();
+          Future.microtask(() => notifyListeners());
         }
       },
     );
@@ -340,7 +336,7 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       _restartPlotting();
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置随机源频率（Hz），范围 1~10000
@@ -355,7 +351,7 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       _restartPlotting();
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 解析器控制 ==========
@@ -369,7 +365,7 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       _restartPlotting();
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 更新解析器配置并同步到数据源
@@ -397,7 +393,7 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       _restartPlotting();
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 绘图控制 ==========
@@ -465,10 +461,10 @@ class PlotViewModel extends BaseViewModel {
 
     _isPlotting = true;
     serialService.isPlotting = true;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
     _startRefreshTimer();
     AppLogger().info('开始绘图', category: 'PLOT');
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 停止绘图
@@ -486,13 +482,13 @@ class PlotViewModel extends BaseViewModel {
 
     _isPlotting = false;
     serialService.isPlotting = false;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 重启绘图（用于配置变更时）
@@ -505,7 +501,6 @@ class PlotViewModel extends BaseViewModel {
   void clearData() {
     _dataPoints.clear();
     _rateSamples.clear();
-    _totalReceived = 0;
     _nextIndex = 0;
     _activeChannelCount = 0;
     _startTime = null;
@@ -515,7 +510,7 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 数据接收 ==========
@@ -550,7 +545,7 @@ class PlotViewModel extends BaseViewModel {
     while (_rateSamples.length > _maxRateSamples) {
       _rateSamples.removeAt(0);
     }
-    _totalReceived++;
+
 
     // 更新实际通道数
     if (point.channelCount > _activeChannelCount) {
@@ -586,14 +581,14 @@ class PlotViewModel extends BaseViewModel {
       _pendingNotifyCount = 0;
       _notifyTimer?.cancel();
       _notifyTimer = null;
-      notifyListeners();
+      Future.microtask(() => notifyListeners());
     } else if (_notifyTimer == null) {
       // fallback timer：确保即使数据流中断也能刷新UI
       final delayMs = (1000 / _refreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
-        notifyListeners();
+        Future.microtask(() => notifyListeners());
       });
     }
   }
@@ -622,7 +617,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     viewport = newViewport.copy();
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 重置视口到默认值并保存历史记录
@@ -630,7 +625,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     viewport = viewport.reset();
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 撤回上次缩放
@@ -639,7 +634,7 @@ class PlotViewModel extends BaseViewModel {
     final previous = _viewportHistory.removeLast();
     viewport = previous.copy();
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// X 轴放大
@@ -648,7 +643,7 @@ class PlotViewModel extends BaseViewModel {
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = viewport.zoomX(0.8, centerX);
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// X 轴缩小
@@ -657,7 +652,7 @@ class PlotViewModel extends BaseViewModel {
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = viewport.zoomX(1.25, centerX);
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// Y 轴放大
@@ -666,7 +661,7 @@ class PlotViewModel extends BaseViewModel {
     final centerY = viewport.yMin + viewport.yRange / 2;
     viewport = viewport.zoomY(0.8, centerY);
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// Y 轴缩小
@@ -675,13 +670,13 @@ class PlotViewModel extends BaseViewModel {
     final centerY = viewport.yMin + viewport.yRange / 2;
     viewport = viewport.zoomY(1.25, centerY);
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置框选放大开关
   void setBoxZoomEnabled(bool value) {
     _boxZoomEnabled = value;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
@@ -711,7 +706,7 @@ class PlotViewModel extends BaseViewModel {
       yMax: maxY + padding,
     );
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
@@ -726,7 +721,7 @@ class PlotViewModel extends BaseViewModel {
       xMax: maxX + 1,
     );
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
@@ -765,14 +760,14 @@ class PlotViewModel extends BaseViewModel {
       );
     }
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置跟随开关
   void setFollowEnabled(bool value) {
     _followEnabled = value;
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置单垂直光标开关
@@ -782,7 +777,7 @@ class PlotViewModel extends BaseViewModel {
       _cursor = null;
     }
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 通道控制 ==========
@@ -790,35 +785,35 @@ class PlotViewModel extends BaseViewModel {
   void setChannelVisible(int index, bool visible) {
     if (index < 0 || index >= channels.length) return;
     channels[index].visible = visible;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置通道颜色
   void setChannelColor(int index, Color color) {
     if (index < 0 || index >= channels.length) return;
     channels[index].color = color;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置通道是否显示连线
   void setChannelShowLine(int index, bool show) {
     if (index < 0 || index >= channels.length) return;
     channels[index].showLine = show;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置通道 Y 轴偏移
   void setChannelYOffset(int index, double offset) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yOffset = offset;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置通道 Y 轴缩放
   void setChannelYScale(int index, double scale) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yScale = scale;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 显示控制 ==========
@@ -826,14 +821,14 @@ class PlotViewModel extends BaseViewModel {
   void setShowGrid(bool show) {
     _showGrid = show;
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置 UI 刷新帧率（10~60 fps）
   void setRefreshFps(int fps) {
     _refreshFps = fps.clamp(10, 60);
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置网格密度（sparse/normal/dense）
@@ -842,7 +837,7 @@ class PlotViewModel extends BaseViewModel {
     if (valid.contains(density)) {
       _gridDensity = density;
       _saveSettings();
-      notifyListeners();
+      Future.microtask(() => notifyListeners());
     }
   }
 
@@ -850,7 +845,7 @@ class PlotViewModel extends BaseViewModel {
   void setAntiAlias(bool value) {
     _antiAliasEnabled = value;
     _saveSettings();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 切换 X-X 测量开关
@@ -869,8 +864,7 @@ class PlotViewModel extends BaseViewModel {
       _xCursor1 = null;
       _xCursor2 = null;
     }
-    _updateMeasurementCursor();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 切换 Y-Y 测量开关
@@ -889,8 +883,7 @@ class PlotViewModel extends BaseViewModel {
       _yCursor1 = null;
       _yCursor2 = null;
     }
-    _updateMeasurementCursor();
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 切换统计测量开关
@@ -908,7 +901,7 @@ class PlotViewModel extends BaseViewModel {
       _statsX2 = null;
       _statsRangeEnabled = false;
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 切换统计范围开关
@@ -928,64 +921,19 @@ class PlotViewModel extends BaseViewModel {
       _statsX1 = viewport.xMin;
       _statsX2 = viewport.xMax;
     }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置统计范围左边界
   void setStatsX1(double x) {
     _statsX1 = x;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置统计范围右边界
   void setStatsX2(double x) {
     _statsX2 = x;
-    notifyListeners();
-  }
-
-  void _updateMeasurementCursor() {
-    // 更新 CursorState 以反映当前测量状态
-    if (_xMeasurementEnabled && _yMeasurementEnabled) {
-      _cursor = CursorState(
-        x: _xCursor1 ?? 0,
-        y: _yCursor1 ?? 0,
-        mode: CursorMode.xCursor,
-        xCursor2: _xCursor2,
-        yCursor2: _yCursor2,
-      );
-    } else if (_xMeasurementEnabled) {
-      _cursor = CursorState(
-        x: _xCursor1 ?? 0,
-        mode: CursorMode.xCursor,
-        xCursor2: _xCursor2,
-      );
-    } else if (_yMeasurementEnabled) {
-      _cursor = CursorState(
-        x: 0,
-        y: _yCursor1 ?? 0,
-        mode: CursorMode.yCursor,
-        yCursor2: _yCursor2,
-      );
-    } else {
-      _cursor = null;
-    }
-  }
-
-  /// 设置光标模式
-  ///
-  /// 设置为 [CursorMode.none] 时清除所有光标和测量线。
-  void setCursorMode(CursorMode mode) {
-    _cursorMode = mode;
-    if (mode == CursorMode.none) {
-      _cursor = null;
-      _xCursor1 = null;
-      _xCursor2 = null;
-      _yCursor1 = null;
-      _yCursor2 = null;
-      _xMeasurementEnabled = false;
-      _yMeasurementEnabled = false;
-    }
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 更新垂直光标（跟随鼠标模式）
@@ -1026,13 +974,15 @@ class PlotViewModel extends BaseViewModel {
       channelValues: channelValues,
       hasData: hasData,
     );
-    notifyListeners();
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
   }
 
   /// 更新光标状态（由外部直接设置）
   void updateCursor(CursorState? cursor) {
     _cursor = cursor;
-    notifyListeners();
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
   }
 
   // ========== x-x / y-y 光标控制 ==========
@@ -1044,11 +994,11 @@ class PlotViewModel extends BaseViewModel {
     _cursor = CursorState(
       x: _xCursor1!,
       y: _yCursor1,
-      mode: _yMeasurementEnabled ? CursorMode.yCursor : CursorMode.xCursor,
+      mode: CursorMode.follow,
       xCursor2: _xCursor2,
       yCursor2: _yCursor2,
     );
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置 X2 光标位置（拖动时使用）
@@ -1057,11 +1007,11 @@ class PlotViewModel extends BaseViewModel {
     _cursor = CursorState(
       x: _xCursor1 ?? x,
       y: _yCursor1,
-      mode: _yMeasurementEnabled ? CursorMode.yCursor : CursorMode.xCursor,
+      mode: CursorMode.follow,
       xCursor2: _xCursor2,
       yCursor2: _yCursor2,
     );
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y1 光标位置（拖动时使用）
@@ -1070,11 +1020,11 @@ class PlotViewModel extends BaseViewModel {
     _cursor = CursorState(
       x: _xCursor1 ?? 0,
       y: _yCursor1!,
-      mode: _xMeasurementEnabled ? CursorMode.xCursor : CursorMode.yCursor,
+      mode: CursorMode.follow,
       xCursor2: _xCursor2,
       yCursor2: _yCursor2,
     );
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y2 光标位置（拖动时使用）
@@ -1083,11 +1033,11 @@ class PlotViewModel extends BaseViewModel {
     _cursor = CursorState(
       x: _xCursor1 ?? 0,
       y: _yCursor1 ?? y,
-      mode: _xMeasurementEnabled ? CursorMode.xCursor : CursorMode.yCursor,
+      mode: CursorMode.follow,
       xCursor2: _xCursor2,
       yCursor2: _yCursor2,
     );
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 清除所有光标和测量线
@@ -1097,7 +1047,7 @@ class PlotViewModel extends BaseViewModel {
     _yCursor1 = null;
     _yCursor2 = null;
     _cursor = null;
-    notifyListeners();
+    Future.microtask(() => notifyListeners());
   }
 
   /// 测量信息文本，显示 X1/X2/Y1/Y2 值和 delta

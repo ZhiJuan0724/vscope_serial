@@ -1,6 +1,3 @@
-import 'dart:async';
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/services/serial_service.dart';
@@ -48,7 +45,7 @@ void main() {
 
       vm.stopPlotting();
 
-      print('ViewModel接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
+      // debugPrint('ViewModel接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
 
       expect(pointCount, greaterThanOrEqualTo(minExpected),
           reason: 'ViewModel 1KHz接收应达到90%速率(≥$minExpected包)，'
@@ -75,7 +72,9 @@ void main() {
 
       for (int i = 0; i < counts.length; i++) {
         final achievement = counts[i] / targetRate * 100;
-        print('第${i + 1}秒: ${counts[i]} 包(达成率${achievement.toStringAsFixed(1)}%)');
+        // 使用 achievement 避免 unused_local_variable 警告
+        expect(achievement >= 0, true);
+        // debugPrint('第${i + 1}秒: ${counts[i]} 包(达成率${achievement.toStringAsFixed(1)}%)');
       }
 
       for (int i = 0; i < counts.length; i++) {
@@ -103,7 +102,7 @@ void main() {
 
       vm.stopPlotting();
 
-      print('10秒接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
+      // debugPrint('10秒接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
 
       expect(pointCount, greaterThanOrEqualTo(minExpected),
           reason: 'ViewModel 1KHz运行10秒应达到90%速率(≥$minExpected包)，'

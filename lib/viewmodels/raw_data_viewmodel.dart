@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../core/utils/crc.dart';
-import '../services/serial_service.dart';
 import 'base_viewmodel.dart';
 
 /// 原始数据页面 ViewModel
@@ -23,33 +22,33 @@ class RawDataViewModel extends BaseViewModel {
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在原始数据页面
   void setUseRandomSource(bool value) {
     serialService.useRandomSource = value;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setReceiveHex(bool value) {
     serialService.receiveHex = value;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setShowTimestamp(bool value) {
     serialService.showTimestamp = value;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setAutoScroll(bool value) {
     serialService.autoScroll = value;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setSendHex(bool value) {
     serialService.sendHex = value;
     if (!value) serialService.enableCrc = false;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setEnableCrc(bool value) {
     serialService.enableCrc = value;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setCrcType(CrcType type) {
@@ -58,12 +57,12 @@ class RawDataViewModel extends BaseViewModel {
     if (polys.isNotEmpty) {
       serialService.crcPolyName = polys.keys.first;
     }
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setCrcPolyName(String name) {
     serialService.crcPolyName = name;
-    serialService.notifyListeners();
+    Future.microtask(() => serialService.notifyListeners());
   }
 
   void clearData() => serialService.clearReceivedData();
