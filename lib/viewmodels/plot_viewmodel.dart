@@ -889,6 +889,17 @@ class PlotViewModel extends BaseViewModel {
     if (!_xMeasurementEnabled) {
       _xCursor1 = null;
       _xCursor2 = null;
+      // 如果垂直光标也关闭，清除 cursor
+      if (!_vCursorEnabled) _cursor = null;
+    } else {
+      // 开启时同步到 cursor，让 PlotPainter 绘制测量线
+      _cursor = CursorState(
+        x: _xCursor1!,
+        y: _yCursor1,
+        mode: CursorMode.follow,
+        xCursor2: _xCursor2,
+        yCursor2: _yCursor2,
+      );
     }
     Future.microtask(() => notifyListeners());
   }
@@ -908,6 +919,17 @@ class PlotViewModel extends BaseViewModel {
     if (!_yMeasurementEnabled) {
       _yCursor1 = null;
       _yCursor2 = null;
+      // 如果垂直光标也关闭，清除 cursor
+      if (!_vCursorEnabled) _cursor = null;
+    } else {
+      // 开启时同步到 cursor，让 PlotPainter 绘制测量线
+      _cursor = CursorState(
+        x: _xCursor1 ?? 0,
+        y: _yCursor1!,
+        mode: CursorMode.follow,
+        xCursor2: _xCursor2,
+        yCursor2: _yCursor2,
+      );
     }
     Future.microtask(() => notifyListeners());
   }
