@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/utils/app_logger.dart';
 import 'plot_painter.dart';
 import 'plot_viewport.dart';
 
@@ -20,7 +21,13 @@ class PlotGestureHandler extends StatefulWidget {
   /// 当前绘图视口
   final PlotViewport viewport;
   /// 视口变化回调（缩放、平移、框选放大）
-  final void Function(PlotViewport viewport) onViewportChanged;
+  ///
+  /// [fromDrag] 为 true 时表示来自用户拖动，回调方可据此优化通知策略。
+  final void Function(PlotViewport viewport, {bool fromDrag}) onViewportChanged;
+  /// 拖动结束回调
+  ///
+  /// 平移拖动结束时调用，用于保存视口配置和历史记录。
+  final VoidCallback? onDragEnd;
   /// 光标变化回调（悬停、测量线拖动）
   final void Function(CursorState? cursor) onCursorChanged;
   /// 单垂直光标开关
@@ -60,6 +67,7 @@ class PlotGestureHandler extends StatefulWidget {
     required this.onCursorChanged,
     this.vCursorEnabled = false,
     this.boxZoomEnabled = false,
+    this.onDragEnd,
     required this.child,
     this.xCursor1,
     this.xCursor2,
@@ -100,6 +108,18 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   Offset? _boxEnd;
   /// 当前拖动的测量线目标
   _DragTarget _dragTarget = _DragTarget.none;
+
+  /// 拖动期间的本地视口副本
+  ///
+  /// 避免在快速拖动时依赖 widget.viewport 的实时更新。
+  PlotViewport? _dragViewport;
+
+  /// 上次通知 UI 重绘的视口（用于节流）
+  PlotViewport? _lastNotifiedViewport;
+  /// 节流间隔：至少 16ms（约 60fps）才通知一次
+  static const int _notifyIntervalMs = 16;
+  /// 上次通知时间戳
+  int _lastNotifyTime = 0;
 
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
@@ -177,7 +197,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         newViewport = newViewport.zoomX(zoomFactor, centerX);
       }
 
-      widget.onViewportChanged(newViewport);
+      widget.onViewportChanged(newViewport, fromDrag: false);
     }
   }
 
@@ -226,6 +246,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _dragTarget = dragTarget;
       _isDragging = true;
       _lastPosition = event.localPosition;
+      AppLogger().trace('测量拖动开始: target=$_dragTarget, pos=${event.localPosition}', category: 'GESTURE');
       return;
     }
 
@@ -233,9 +254,14 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _isBoxSelecting = true;
       _boxStart = event.localPosition;
       _boxEnd = event.localPosition;
+      AppLogger().trace('框选开始: pos=${event.localPosition}', category: 'GESTURE');
     } else {
       _isDragging = true;
       _lastPosition = event.localPosition;
+      _dragViewport = widget.viewport.copy();
+      _lastNotifiedViewport = _dragViewport!.copy();
+      _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
+      AppLogger().trace('平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}', category: 'GESTURE');
     }
   }
 
@@ -326,12 +352,26 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
       final dx = event.localPosition.dx - _lastPosition!.dx;
       final dy = event.localPosition.dy - _lastPosition!.dy;
+      final lastPos = _lastPosition!;
       _lastPosition = event.localPosition;
 
-      // 实时更新视口（使用 delta 累积，避免每帧通知）
-      var newViewport = widget.viewport.panX(dx, size.width);
-      newViewport = newViewport.panY(dy, size.height);
-      widget.onViewportChanged(newViewport);
+      // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
+      _dragViewport = _dragViewport!.panX(dx, size.width);
+      _dragViewport = _dragViewport!.panY(dy, size.height);
+
+      // 节流：每 16ms 或视口变化超过 1 像素才通知 UI
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final elapsed = now - _lastNotifyTime;
+      final viewportChanged = _lastNotifiedViewport == null ||
+          (_lastNotifiedViewport!.xMin - _dragViewport!.xMin).abs() > 1.0 ||
+          (_lastNotifiedViewport!.yMin - _dragViewport!.yMin).abs() > 1.0;
+
+      if (elapsed >= _notifyIntervalMs && viewportChanged) {
+        _lastNotifiedViewport = _dragViewport!.copy();
+        _lastNotifyTime = now;
+        AppLogger().trace('平移拖动通知: dx=$dx,dy=$dy | viewport xMin=${_dragViewport!.xMin.toStringAsFixed(1)} | elapsed=${elapsed}ms', category: 'GESTURE');
+        widget.onViewportChanged(_dragViewport!, fromDrag: true);
+      }
     }
   }
 
@@ -405,6 +445,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   ///
   /// 框选结束时，将框选区域转换为数据坐标并回调 [onViewportChanged]。
   void _handlePointerUp(PointerUpEvent event) {
+    AppLogger().trace('拖动结束: box=$_isBoxSelecting, drag=$_isDragging, target=$_dragTarget', category: 'GESTURE');
+
     if (_isBoxSelecting && _boxStart != null && _boxEnd != null) {
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
@@ -447,15 +489,22 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         y1 < y2 ? y2 : y1,
       );
 
-      widget.onViewportChanged(newViewport);
+      widget.onViewportChanged(newViewport, fromDrag: false);
     }
 
+    if (_isDragging && _dragTarget == _DragTarget.none && _dragViewport != null) {
+      // 平移拖动结束，确保最终视口被应用并保存
+      widget.onViewportChanged(_dragViewport!, fromDrag: true);
+      widget.onDragEnd?.call();
+    }
     _isDragging = false;
     _isBoxSelecting = false;
     _lastPosition = null;
     _boxStart = null;
     _boxEnd = null;
     _dragTarget = _DragTarget.none;
+    _dragViewport = null;
+    _lastNotifiedViewport = null;
     if (mounted) setState(() {});
   }
 

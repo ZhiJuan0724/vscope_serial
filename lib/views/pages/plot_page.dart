@@ -544,7 +544,7 @@ class _PlotPageContent extends StatelessWidget {
           viewport: vm.viewport,
           vCursorEnabled: vm.vCursorEnabled,
           boxZoomEnabled: vm.boxZoomEnabled,
-          onViewportChanged: (viewport) => vm.updateViewport(viewport),
+          onViewportChanged: (viewport, {fromDrag = false}) => vm.updateViewport(viewport, fromDrag: fromDrag),
           onCursorChanged: (cursor) {
             if (cursor != null) {
               vm.updateFollowCursor(cursor.x, cursor.y ?? 0,

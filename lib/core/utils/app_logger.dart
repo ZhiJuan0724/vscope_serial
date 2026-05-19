@@ -52,19 +52,73 @@ class LogEntry {
   }
 }
 
-/// 自定义文件输出 - 使用 RandomAccessFile 保持打开，性能更好
+/// 自定义文件输出 - 每次启动新建日志，旧日志自动归档，最多保留20份
 class FileLogOutput extends LogOutput {
   RandomAccessFile? _raf;
   File? _file;
+  static const int _maxLogFiles = 20;
+  static const String _latestName = 'latest.log';
 
   @override
   Future<void> init() async {
     final exeDir = File(Platform.resolvedExecutable).parent;
     final logDir = Directory('${exeDir.path}/logs');
     await logDir.create(recursive: true);
-    _file = File('${logDir.path}/latest.log');
-    _raf = await _file!.open(mode: FileMode.append);
+
+    // 归档旧日志
+    await _archiveOldLog(logDir);
+    // 清理超期日志
+    await _cleanupOldLogs(logDir);
+
+    // 新建 latest.log
+    _file = File('${logDir.path}/$_latestName');
+    _raf = await _file!.open(mode: FileMode.write);
   }
+
+  /// 将已有的 latest.log 重命名为带时间戳的归档文件
+  Future<void> _archiveOldLog(Directory logDir) async {
+    final latest = File('${logDir.path}/$_latestName');
+    if (!await latest.exists()) return;
+
+    final now = DateTime.now();
+    final timestamp =
+        '${now.year}${_two(now.month)}${_two(now.day)}_${_two(now.hour)}${_two(now.minute)}${_two(now.second)}';
+    final archiveName = 'vscope_log_$timestamp.log';
+    final archive = File('${logDir.path}/$archiveName');
+
+    try {
+      await latest.rename(archive.path);
+    } catch (_) {
+      // 重命名失败则忽略（可能被占用）
+    }
+  }
+
+  /// 清理超期日志，只保留最新的 _maxLogFiles 份
+  Future<void> _cleanupOldLogs(Directory logDir) async {
+    final entities = await logDir
+        .list()
+        .where((e) =>
+            e is File &&
+            e.path.split(Platform.pathSeparator).last.startsWith('vscope_log_'))
+        .toList();
+
+    if (entities.length <= _maxLogFiles) return;
+
+    // 按修改时间排序，旧的在前
+    entities.sort((a, b) => a.statSync().modified.compareTo(b.statSync().modified));
+
+    // 删除多余的旧日志，确保归档后总数不超过 _maxLogFiles
+    final toDelete = entities.length - _maxLogFiles;
+    for (var i = 0; i < toDelete; i++) {
+      try {
+        await entities[i].delete();
+      } catch (_) {
+        // 删除失败忽略
+      }
+    }
+  }
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
 
   @override
   void output(OutputEvent event) {

@@ -614,11 +614,35 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 更新视口并保存到历史记录
-  void updateViewport(PlotViewport newViewport) {
-    _saveViewport();
+  ///
+  /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
+  /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
+  void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
+    final oldXMin = viewport.xMin;
+    if (!fromDrag) {
+      _saveViewport();
+    }
     viewport = newViewport.copy();
+    if (!fromDrag) {
+      _saveSettings();
+    }
+    AppLogger().trace('updateViewport: oldXMin=${oldXMin.toStringAsFixed(1)} → newXMin=${viewport.xMin.toStringAsFixed(1)} | delta=${(oldXMin - viewport.xMin).toStringAsFixed(1)} | fromDrag=$fromDrag', category: 'PLOT');
+    if (fromDrag) {
+      // 拖动时同步通知，避免微任务堆积
+      notifyListeners();
+    } else {
+      Future.microtask(() => notifyListeners());
+    }
+  }
+
+  /// 拖动结束后保存视口配置
+  ///
+  /// 在 PlotGestureHandler._handlePointerUp 中调用，将拖动期间的
+  /// 最终视口保存到配置和历史记录。
+  void saveDragViewport() {
+    _saveViewport();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    AppLogger().trace('saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}', category: 'PLOT');
   }
 
   /// 重置视口到默认值并保存历史记录

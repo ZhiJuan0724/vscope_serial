@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../core/utils/app_logger.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_viewport.dart';
@@ -108,6 +109,7 @@ class PlotPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    AppLogger().trace('PlotPainter.paint: viewport xMin=${viewport.xMin.toStringAsFixed(1)} xMax=${viewport.xMax.toStringAsFixed(1)}', category: 'PAINT');
     // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 光标 → 统计范围
     _drawBackground(canvas, size);
 
@@ -861,14 +863,19 @@ class PlotPainter extends CustomPainter {
   /// 比较视口、数据长度、光标、网格、统计范围等关键属性。
   @override
   bool shouldRepaint(covariant PlotPainter oldDelegate) {
-    return !_viewportEquals(oldDelegate.viewport, viewport) ||
-        oldDelegate.data.length != data.length ||
+    final viewportChanged = !_viewportEquals(oldDelegate.viewport, viewport);
+    final dataChanged = oldDelegate.data.length != data.length;
+    final result = viewportChanged || dataChanged ||
         oldDelegate.cursor != cursor ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.statsEnabled != statsEnabled ||
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
         oldDelegate.statsX2 != statsX2;
+    if (viewportChanged) {
+      AppLogger().trace('shouldRepaint=true: viewport xMin ${oldDelegate.viewport.xMin.toStringAsFixed(1)} → ${viewport.xMin.toStringAsFixed(1)}', category: 'PAINT');
+    }
+    return result;
   }
 }
 
