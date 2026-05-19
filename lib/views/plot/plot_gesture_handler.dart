@@ -223,7 +223,6 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         widget.onCursorChanged(CursorState(
           x: x,
           y: y,
-          mode: CursorMode.follow,
           screenPosition: event.localPosition,
         ));
       });

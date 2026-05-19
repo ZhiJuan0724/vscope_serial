@@ -894,15 +894,6 @@ class PlotViewModel extends BaseViewModel {
       _xCursor2 = null;
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
-    } else {
-      // 开启时同步到 cursor，让 PlotPainter 绘制测量线
-      _cursor = CursorState(
-        x: _xCursor1!,
-        y: _yCursor1,
-        mode: CursorMode.follow,
-        xCursor2: _xCursor2,
-        yCursor2: _yCursor2,
-      );
     }
     Future.microtask(() => notifyListeners());
   }
@@ -924,15 +915,6 @@ class PlotViewModel extends BaseViewModel {
       _yCursor2 = null;
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
-    } else {
-      // 开启时同步到 cursor，让 PlotPainter 绘制测量线
-      _cursor = CursorState(
-        x: _xCursor1 ?? 0,
-        y: _yCursor1,
-        mode: CursorMode.follow,
-        xCursor2: _xCursor2,
-        yCursor2: _yCursor2,
-      );
     }
     Future.microtask(() => notifyListeners());
   }
@@ -1020,7 +1002,6 @@ class PlotViewModel extends BaseViewModel {
     _cursor = CursorState(
       x: snappedX,
       y: y,
-      mode: CursorMode.follow,
       screenPosition: screenPosition,
       channelValues: channelValues,
       hasData: hasData,
@@ -1042,52 +1023,24 @@ class PlotViewModel extends BaseViewModel {
   /// 同时保留 xCursor2 和 yCursor2，避免拖动时覆盖另一组测量线。
   void setXCursor1(double x) {
     _xCursor1 = x;
-    _cursor = CursorState(
-      x: _xCursor1!,
-      y: _yCursor1,
-      mode: CursorMode.follow,
-      xCursor2: _xCursor2,
-      yCursor2: _yCursor2,
-    );
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 X2 光标位置（拖动时使用）
   void setXCursor2(double x) {
     _xCursor2 = x;
-    _cursor = CursorState(
-      x: _xCursor1 ?? x,
-      y: _yCursor1,
-      mode: CursorMode.follow,
-      xCursor2: _xCursor2,
-      yCursor2: _yCursor2,
-    );
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y1 光标位置（拖动时使用）
   void setYCursor1(double y) {
     _yCursor1 = y;
-    _cursor = CursorState(
-      x: _xCursor1 ?? 0,
-      y: _yCursor1!,
-      mode: CursorMode.follow,
-      xCursor2: _xCursor2,
-      yCursor2: _yCursor2,
-    );
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y2 光标位置（拖动时使用）
   void setYCursor2(double y) {
     _yCursor2 = y;
-    _cursor = CursorState(
-      x: _xCursor1 ?? 0,
-      y: _yCursor1 ?? y,
-      mode: CursorMode.follow,
-      xCursor2: _xCursor2,
-      yCursor2: _yCursor2,
-    );
     Future.microtask(() => notifyListeners());
   }
 

@@ -7,22 +7,13 @@ import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_viewport.dart';
 
-/// 光标状态
+/// 垂直光标状态（鼠标悬停跟随）
 class CursorState {
   /// 光标 X 位置（数据坐标）
   final double x;
 
   /// 光标 Y 位置（数据坐标）
   final double? y;
-
-  /// 光标模式
-  final CursorMode mode;
-
-  /// x-x 光标的第二条线位置
-  final double? xCursor2;
-
-  /// y-y 光标的第二条线位置
-  final double? yCursor2;
 
   /// 鼠标屏幕位置（用于显示tooltip）
   final Offset? screenPosition;
@@ -36,22 +27,11 @@ class CursorState {
   CursorState({
     required this.x,
     this.y,
-    required this.mode,
-    this.xCursor2,
-    this.yCursor2,
     this.screenPosition,
     this.channelValues,
     this.hasData = true,
   });
-
-  /// 计算 deltaX（x-x 光标）
-  double? get deltaX => xCursor2 != null ? (xCursor2! - x).abs() : null;
-
-  /// 计算 deltaY（y-y 光标）
-  double? get deltaY => yCursor2 != null && y != null ? (yCursor2! - y!).abs() : null;
 }
-
-enum CursorMode { follow }
 
 /// 网格密度枚举
 ///
@@ -75,8 +55,16 @@ class PlotPainter extends CustomPainter {
   final bool showGrid;
   /// 网格密度
   final GridDensity gridDensity;
-  /// 光标状态
+  /// 垂直光标状态（鼠标悬停跟随）
   final CursorState? cursor;
+  /// X-X 测量第一条线位置
+  final double? xCursor1;
+  /// X-X 测量第二条线位置
+  final double? xCursor2;
+  /// Y-Y 测量第一条线位置
+  final double? yCursor1;
+  /// Y-Y 测量第二条线位置
+  final double? yCursor2;
   /// 统计测量开关
   final bool statsEnabled;
   /// 统计范围开关
@@ -95,6 +83,10 @@ class PlotPainter extends CustomPainter {
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
     this.cursor,
+    this.xCursor1,
+    this.xCursor2,
+    this.yCursor1,
+    this.yCursor2,
     this.statsEnabled = false,
     this.statsRangeEnabled = false,
     this.statsX1,
@@ -119,8 +111,21 @@ class PlotPainter extends CustomPainter {
 
     _drawChannels(canvas, size);
     _drawAxes(canvas, size);
+
+    // 垂直光标（鼠标悬停跟随）
     _drawCursor(canvas, size);
 
+    // X-X 测量线（独立绘制，不依赖 cursor）
+    if (xCursor1 != null || xCursor2 != null) {
+      _drawXMeasurement(canvas, size, xCursor1, xCursor2, viewport.plotHeight(size.height));
+    }
+
+    // Y-Y 测量线（独立绘制，不依赖 cursor）
+    if (yCursor1 != null || yCursor2 != null) {
+      _drawYMeasurement(canvas, size, yCursor1, yCursor2, viewport.plotWidth(size.width));
+    }
+
+    // 统计范围框（独立绘制）
     if (statsEnabled && statsRangeEnabled && statsX1 != null && statsX2 != null) {
       _drawStatsRange(canvas, size);
     }
@@ -432,7 +437,7 @@ class PlotPainter extends CustomPainter {
     }
   }
 
-  /// 绘制光标（垂直跟随 / X-X / Y-Y 测量）
+  /// 绘制垂直光标（鼠标悬停跟随）
   void _drawCursor(Canvas canvas, Size size) {
     if (cursor == null) return;
 
@@ -441,29 +446,13 @@ class PlotPainter extends CustomPainter {
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 
-    final plotW = viewport.plotWidth(size.width);
-    final plotH = viewport.plotHeight(size.height);
-
-    // follow 模式：垂直光标 + tooltip
-    if (cursor!.mode == CursorMode.follow) {
-      final sx = viewport.dataToScreenX(cursor!.x, size.width);
-      canvas.drawLine(
-        Offset(sx, PlotViewport().marginTop),
-        Offset(sx, size.height - PlotViewport().marginBottom),
-        cursorPaint,
-      );
-      _drawCursorTooltip(canvas, size, sx);
-    }
-
-    // X-X 测量：两条垂直线（独立于 mode，直接判断 xCursor2 是否存在）
-    if (cursor!.xCursor2 != null) {
-      _drawXMeasurement(canvas, size, plotH);
-    }
-
-    // Y-Y 测量：两条水平线（独立于 mode，直接判断 yCursor2 是否存在）
-    if (cursor!.yCursor2 != null) {
-      _drawYMeasurement(canvas, size, plotW);
-    }
+    final sx = viewport.dataToScreenX(cursor!.x, size.width);
+    canvas.drawLine(
+      Offset(sx, PlotViewport().marginTop),
+      Offset(sx, size.height - PlotViewport().marginBottom),
+      cursorPaint,
+    );
+    _drawCursorTooltip(canvas, size, sx);
   }
 
   /// 绘制垂直光标旁的各通道 Y 值 tooltip
@@ -652,7 +641,9 @@ class PlotPainter extends CustomPainter {
 
   // ========== X-X / Y-Y 测量绘制 ==========
   /// 绘制 X-X 测量两条垂直线及标签
-  void _drawXMeasurement(Canvas canvas, Size size, double plotH) {
+  void _drawXMeasurement(Canvas canvas, Size size, double? x1, double? x2, double plotH) {
+    if (x1 == null && x2 == null) return;
+
     final line1Paint = Paint()
       ..color = Colors.cyan
       ..strokeWidth = 1.5
@@ -663,20 +654,21 @@ class PlotPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     // 第一条线
-    final sx1 = viewport.dataToScreenX(cursor!.x, size.width);
-    if (sx1 >= PlotViewport().marginLeft && sx1 <= size.width - PlotViewport().marginRight) {
-      canvas.drawLine(
-        Offset(sx1, PlotViewport().marginTop),
-        Offset(sx1, PlotViewport().marginTop + plotH),
-        line1Paint,
-      );
-      // 标签背景
-      _drawMeasurementLabel(canvas, 'X1', sx1, PlotViewport().marginTop + 10, Colors.cyan);
+    if (x1 != null) {
+      final sx1 = viewport.dataToScreenX(x1, size.width);
+      if (sx1 >= PlotViewport().marginLeft && sx1 <= size.width - PlotViewport().marginRight) {
+        canvas.drawLine(
+          Offset(sx1, PlotViewport().marginTop),
+          Offset(sx1, PlotViewport().marginTop + plotH),
+          line1Paint,
+        );
+        _drawMeasurementLabel(canvas, 'X1', sx1, PlotViewport().marginTop + 10, Colors.cyan);
+      }
     }
 
     // 第二条线
-    if (cursor!.xCursor2 != null) {
-      final sx2 = viewport.dataToScreenX(cursor!.xCursor2!, size.width);
+    if (x2 != null) {
+      final sx2 = viewport.dataToScreenX(x2, size.width);
       if (sx2 >= PlotViewport().marginLeft && sx2 <= size.width - PlotViewport().marginRight) {
         canvas.drawLine(
           Offset(sx2, PlotViewport().marginTop),
@@ -689,7 +681,9 @@ class PlotPainter extends CustomPainter {
   }
 
   /// 绘制 Y-Y 测量两条水平线及标签
-  void _drawYMeasurement(Canvas canvas, Size size, double plotW) {
+  void _drawYMeasurement(Canvas canvas, Size size, double? y1, double? y2, double plotW) {
+    if (y1 == null && y2 == null) return;
+
     final line1Paint = Paint()
       ..color = Colors.cyan
       ..strokeWidth = 1.5
@@ -700,8 +694,8 @@ class PlotPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     // 第一条线
-    if (cursor!.y != null) {
-      final sy1 = viewport.dataToScreenY(cursor!.y!, size.height);
+    if (y1 != null) {
+      final sy1 = viewport.dataToScreenY(y1, size.height);
       if (sy1 >= PlotViewport().marginTop && sy1 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
           Offset(PlotViewport().marginLeft, sy1),
@@ -713,8 +707,8 @@ class PlotPainter extends CustomPainter {
     }
 
     // 第二条线
-    if (cursor!.yCursor2 != null) {
-      final sy2 = viewport.dataToScreenY(cursor!.yCursor2!, size.height);
+    if (y2 != null) {
+      final sy2 = viewport.dataToScreenY(y2, size.height);
       if (sy2 >= PlotViewport().marginTop && sy2 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
           Offset(PlotViewport().marginLeft, sy2),
@@ -872,10 +866,15 @@ class PlotPainter extends CustomPainter {
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
         oldDelegate.statsX2 != statsX2;
-    if (viewportChanged) {
+    final cursorChanged = oldDelegate.cursor != cursor ||
+        oldDelegate.xCursor1 != xCursor1 ||
+        oldDelegate.xCursor2 != xCursor2 ||
+        oldDelegate.yCursor1 != yCursor1 ||
+        oldDelegate.yCursor2 != yCursor2;
+    if (viewportChanged || cursorChanged) {
       AppLogger().trace('shouldRepaint=true: viewport xMin ${oldDelegate.viewport.xMin.toStringAsFixed(1)} → ${viewport.xMin.toStringAsFixed(1)}', category: 'PAINT');
     }
-    return result;
+    return result || cursorChanged;
   }
 }
 
