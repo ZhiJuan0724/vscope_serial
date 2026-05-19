@@ -58,8 +58,6 @@ class AppSettings {
   double randomFrequency = 1000.0;
   /// 最新点跟随模式开关
   bool followEnabled = false;
-  /// 单垂直光标开关
-  bool vCursorEnabled = false;
   /// 解析器类型名称（'fireWater' 或 'fixedFrame'）
   String parserType = 'fireWater';
 
@@ -117,7 +115,6 @@ class AppSettings {
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
-      vCursorEnabled = json['vCursorEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
 
       // 视口设置
@@ -153,7 +150,6 @@ class AppSettings {
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
-      'vCursorEnabled': vCursorEnabled,
       'parserType': parserType,
 
       // 视口设置

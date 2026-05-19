@@ -176,7 +176,6 @@ class PlotViewModel extends BaseViewModel {
     _gridDensity = settings.gridDensity;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
-    _vCursorEnabled = settings.vCursorEnabled;
     _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency).round().clamp(1, 1000);
     viewport = PlotViewport(
       xMin: settings.xMin,
@@ -197,7 +196,7 @@ class PlotViewModel extends BaseViewModel {
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
-    settings.vCursorEnabled = _vCursorEnabled;
+    // vCursorEnabled 不持久化
     settings.xMin = viewport.xMin;
     settings.xMax = viewport.xMax;
     settings.yMin = viewport.yMin;
@@ -424,7 +423,9 @@ class PlotViewModel extends BaseViewModel {
     viewport = viewport.reset();
     _viewportHistory.clear();
 
-    // 重置光标
+    // 重置光标（垂直光标为临时功能，每次开始绘图时关闭）
+    _vCursorEnabled = false;
+    _cursor = null;
     _xCursor1 = null;
     _xCursor2 = null;
     _yCursor1 = null;
@@ -771,12 +772,13 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 设置单垂直光标开关
+  ///
+  /// 光标开关为临时功能，不保存到配置。
   void setVCursorEnabled(bool value) {
     _vCursorEnabled = value;
     if (!value) {
       _cursor = null;
     }
-    _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
