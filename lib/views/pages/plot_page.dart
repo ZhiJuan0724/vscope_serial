@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -91,7 +92,7 @@ class _PlotPageContent extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // 随机数据源
+          // 随机数据源 + 频率设置
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -99,7 +100,24 @@ class _PlotPageContent extends StatelessWidget {
                 value: vm.useRandomSource,
                 onChanged: (value) => vm.setUseRandomSource(value!),
               ),
-              const Text('随机数据源', style: TextStyle(fontSize: 12)),
+              const Text('随机源', style: TextStyle(fontSize: 12)),
+              // 频率设置齿轮按钮
+              Tooltip(
+                message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+                child: InkWell(
+                  onTap: () => _showRandomFreqDialog(context, vm),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.settings,
+                      size: 16,
+                      color: vm.useRandomSource
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(width: 12),
@@ -517,8 +535,65 @@ class _PlotPageContent extends StatelessWidget {
     );
   }
 
+  void _showRandomFreqDialog(BuildContext context, PlotViewModel vm) {
+    final controller = TextEditingController(
+      text: vm.randomFrequency.toStringAsFixed(1),
+    );
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('随机源频率'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: '频率 (Hz)',
+                hintText: '1 ~ 10000',
+                suffixText: 'Hz',
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '当前: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () {
+              final hz = double.tryParse(controller.text);
+              if (hz != null) {
+                vm.setRandomFrequency(hz);
+              }
+              Navigator.pop(context);
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
-    final path = await vm.exportToCsv();
+    // 选择保存路径
+    final result = await FilePicker.saveFile(
+      dialogTitle: '保存 CSV 文件',
+      fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.csv',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+    if (result == null) return; // 用户取消
+
+    final path = await vm.exportToCsv(result);
     if (path != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已导出: $path')),

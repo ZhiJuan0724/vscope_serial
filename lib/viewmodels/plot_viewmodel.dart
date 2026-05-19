@@ -27,9 +27,14 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 数据缓冲区 ==========
   final List<PlotDataPoint> _dataPoints = [];
-  static const int _maxPoints = 600000;
+  static const int _maxPoints = 100000; // 降低上限减少内存压力
   int _nextIndex = 0;
   DateTime? _startTime;
+
+  // ========== 速率统计（基于计数器，避免遍历列表）==========
+  final List<_RateSample> _rateSamples = [];
+  static const int _maxRateSamples = 1000; // 最近1000个样本
+  int _totalReceived = 0;
 
   // ========== 当前数据实际通道数 ==========
   int _activeChannelCount = 0;
@@ -76,9 +81,19 @@ class PlotViewModel extends BaseViewModel {
   Timer? _refreshTimer;
   static const int _refreshIntervalMs = 100; // 无数据时100ms刷新一次
 
-  // ========== 数据接收降频 ==========
+  // ========== UI 刷新降频（数据不丢失）==========
   int _pendingNotifyCount = 0;
-  static const int _notifyBatchSize = 5; // 每5个数据包刷新一次
+  // 动态批量大小：控制 UI 刷新频率，数据始终全部接收
+  // 目标：UI 刷新频率控制在约 15fps，平衡流畅度和性能
+  int get _notifyBatchSize {
+    final intervalMs = _sourceConfig.randomIntervalMs;
+    if (intervalMs <= 1) return 66;      // >= 1000Hz: 每66包刷新UI (~15fps)
+    if (intervalMs <= 2) return 66;      // 500-1000Hz: 每66包刷新UI (~15fps)
+    if (intervalMs <= 5) return 66;      // 200-500Hz: 每66包刷新UI (~15fps)
+    if (intervalMs <= 10) return 50;     // 100-200Hz: 每50包刷新UI (~10fps)
+    if (intervalMs <= 50) return 10;     // 20-100Hz: 每10包刷新UI
+    return 1;                            // < 20Hz: 每包刷新UI
+  }
   Timer? _notifyTimer;
 
   PlotViewModel(super.serialService) {
@@ -100,6 +115,9 @@ class PlotViewModel extends BaseViewModel {
   ParserConfig get parserConfig => _parserConfig;
   int get pointCount => _dataPoints.length;
   int get activeChannelCount => _activeChannelCount;
+  
+  /// 随机源频率（Hz）
+  double get randomFrequency => 1000.0 / _sourceConfig.randomIntervalMs;
 
   // 光标位置
   double? get xCursor1 => _xCursor1;
@@ -114,11 +132,43 @@ class PlotViewModel extends BaseViewModel {
     final buffer = StringBuffer();
     buffer.write('X: ${viewport.xMin.toInt()}-${viewport.xMax.toInt()} ');
     buffer.write('Y: ${viewport.yMin.toInt()}-${viewport.yMax.toInt()} ');
-    buffer.write('点数: $_nextIndex');
+    // 计算每秒点数
+    final pointsPerSecond = _calculatePointsPerSecond();
+    if (pointsPerSecond != null) {
+      buffer.write('点数: $_nextIndex (${pointsPerSecond.toStringAsFixed(1)}/s)');
+    } else {
+      buffer.write('点数: $_nextIndex');
+    }
     if (_isPlotting) {
       buffer.write(' [运行中]');
     }
     return buffer.toString();
+  }
+
+  /// 计算每秒点数，基于最近500ms的数据（响应更快）
+  /// 使用计数器方式，避免遍历整个数据列表
+  double? _calculatePointsPerSecond() {
+    if (_rateSamples.length < 2 || _startTime == null) return null;
+    final now = DateTime.now();
+    final nowMs = now.difference(_startTime!).inMilliseconds;
+    final cutoffMs = nowMs - 500; // 最近500ms
+
+    // 二分查找找到500ms前的样本位置
+    int left = 0, right = _rateSamples.length - 1;
+    int startIdx = 0;
+    while (left <= right) {
+      final mid = (left + right) ~/ 2;
+      if (_rateSamples[mid].timestampMs < cutoffMs) {
+        startIdx = mid + 1;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+
+    final recentCount = _rateSamples.length - startIdx;
+    if (recentCount < 2) return null;
+    return recentCount * 2.0; // 500ms * 2 = 1s
   }
 
   // ========== 定时刷新 ==========
@@ -158,6 +208,20 @@ class PlotViewModel extends BaseViewModel {
     _sourceManager.updateConfig(_sourceConfig);
 
     // 如果正在绘图，重启数据源
+    if (_isPlotting) {
+      _restartPlotting();
+    }
+    notifyListeners();
+  }
+
+  /// 设置随机源频率（Hz），范围 1~10000
+  void setRandomFrequency(double hz) {
+    final clampedHz = hz.clamp(1.0, 10000.0);
+    final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000);
+    _sourceConfig.randomIntervalMs = intervalMs;
+    _sourceManager.updateConfig(_sourceConfig);
+
+    // 如果正在绘图，重启数据源以应用新频率
     if (_isPlotting) {
       _restartPlotting();
     }
@@ -290,6 +354,8 @@ class PlotViewModel extends BaseViewModel {
 
   void clearData() {
     _dataPoints.clear();
+    _rateSamples.clear();
+    _totalReceived = 0;
     _nextIndex = 0;
     _activeChannelCount = 0;
     _startTime = null;
@@ -321,44 +387,48 @@ class PlotViewModel extends BaseViewModel {
 
     _dataPoints.add(point);
 
+    // 记录速率统计样本
+    _rateSamples.add(_RateSample(_nextIndex - 1, timestamp.toInt()));
+    while (_rateSamples.length > _maxRateSamples) {
+      _rateSamples.removeAt(0);
+    }
+    _totalReceived++;
+
     // 更新实际通道数
     if (point.channelCount > _activeChannelCount) {
       _activeChannelCount = point.channelCount;
     }
 
-    // 限制缓冲区大小
-    while (_dataPoints.length > _maxPoints) {
-      _dataPoints.removeAt(0);
+    // 限制缓冲区大小（使用removeRange批量移除，比removeAt高效）
+    if (_dataPoints.length > _maxPoints) {
+      final removeCount = _dataPoints.length - _maxPoints;
+      _dataPoints.removeRange(0, removeCount);
     }
 
-    // 自动跟随最新数据
-    if (_isPlotting && _dataPoints.length > 1) {
+    // 自动跟随最新数据（仅跟随模式开启时）
+    if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
       final lastIndex = _dataPoints.last.index;
-      if (_followEnabled) {
-        // 最新点在 3/4 宽度处
-        final range = viewport.xRange;
-        viewport = viewport.copyWith(
-          xMin: (lastIndex - range * 0.75).toDouble(),
-          xMax: (lastIndex + range * 0.25).toDouble(),
-        );
-      } else if (lastIndex > viewport.xMax - viewport.xRange * 0.1) {
-        // 默认：最新点在右侧 10% 处
-        final range = viewport.xRange;
-        viewport = viewport.copyWith(
-          xMin: (lastIndex - range + range * 0.1).toDouble(),
-          xMax: (lastIndex + range * 0.1).toDouble(),
-        );
-      }
+      // 最新点在 3/4 宽度处
+      final range = viewport.xRange;
+      viewport = viewport.copyWith(
+        xMin: (lastIndex - range * 0.75).toDouble(),
+        xMax: (lastIndex + range * 0.25).toDouble(),
+      );
     }
 
-    // 降频刷新：批量通知
+    // 数据接收：每包数据都处理，不丢失
+    // UI 刷新降频：只控制重绘频率，不影响数据接收和统计
     _pendingNotifyCount++;
-    if (_pendingNotifyCount >= _notifyBatchSize) {
+    final batchSize = _notifyBatchSize;
+    if (_pendingNotifyCount >= batchSize) {
       _pendingNotifyCount = 0;
+      _notifyTimer?.cancel();
+      _notifyTimer = null;
       notifyListeners();
-    } else {
-      // 启动延迟通知定时器，确保数据不会延迟太久
-      _notifyTimer ??= Timer(const Duration(milliseconds: 50), () {
+    } else if (_notifyTimer == null) {
+      // fallback timer：确保即使数据流中断也能刷新UI
+      final delayMs = _sourceConfig.randomIntervalMs <= 10 ? 66 : 100;
+      _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
         notifyListeners();
@@ -609,18 +679,23 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 导出 ==========
-  Future<String?> exportToCsv() async {
+  Future<String?> exportToCsv(String? selectedPath) async {
     try {
       if (_dataPoints.isEmpty) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
 
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}/exports');
-      await dir.create(recursive: true);
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '${dir.path}/vscope_plot_$timestamp.csv';
+      String path;
+      if (selectedPath != null) {
+        path = selectedPath;
+      } else {
+        final exeDir = File(Platform.resolvedExecutable).parent;
+        final dir = Directory('${exeDir.path}/exports');
+        await dir.create(recursive: true);
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        path = '${dir.path}/vscope_plot_$timestamp.csv';
+      }
       final file = File(path);
 
       // 构建 CSV 内容
@@ -671,4 +746,11 @@ class PlotViewModel extends BaseViewModel {
     _sourceManager.dispose();
     super.dispose();
   }
+}
+
+/// 速率统计样本
+class _RateSample {
+  final int index;
+  final int timestampMs;
+  _RateSample(this.index, this.timestampMs);
 }

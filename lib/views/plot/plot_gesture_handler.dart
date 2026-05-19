@@ -76,7 +76,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   void _handlePointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
       final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
-      final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
+      // final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
 
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
@@ -107,11 +107,6 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           newViewport = newViewport.zoomX(zoomFactor, centerX);
           newViewport = newViewport.zoomY(zoomFactor, centerY);
         }
-      }
-      // Ctrl + 滚轮 = 缩放 X 轴
-      else if (isCtrlPressed) {
-        final centerX = widget.viewport.screenToDataX(localPosition.dx, size.width);
-        newViewport = newViewport.zoomX(zoomFactor, centerX);
       }
       // 普通滚轮 = X 轴缩放
       else {
