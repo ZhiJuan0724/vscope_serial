@@ -67,6 +67,12 @@ class _PlotPageContent extends StatelessWidget {
 
   // ========== 工具栏 ==========
   /// 构建顶部工具栏
+  ///
+  /// 使用 [LayoutBuilder] 实现响应式布局：根据可用宽度动态决定哪些工具组平铺显示、
+  /// 哪些折叠到下拉菜单。折叠顺序从右到左，即最右边的组最先被折叠。
+  ///
+  /// 显示顺序：光标 | 缩放 | 自适应 | 文件 | 清空+设置
+  /// 折叠顺序：清空+设置 → 文件 → 自适应 → 缩放 → 光标
   Widget _buildToolbar(BuildContext context, PlotViewModel vm) {
     return Container(
       height: 40,
@@ -77,383 +83,758 @@ class _PlotPageContent extends StatelessWidget {
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
-      child: Row(
-        children: [
-          // 开始/停止按钮
-          ElevatedButton.icon(
-            onPressed: () {
-              if (vm.isPlotting) {
-                vm.stopPlotting();
-              } else {
-                vm.startPlotting();
-              }
-            },
-            icon: Icon(
-              vm.isPlotting ? Icons.stop : Icons.play_arrow,
-              size: 16,
-            ),
-            label: Text(vm.isPlotting ? '停止' : '开始'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: vm.isPlotting ? Colors.red : Colors.green,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
-          ),
-          const SizedBox(width: 12),
-          // 随机数据源 + 频率设置
-          Row(
-            mainAxisSize: MainAxisSize.min,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const groupSpacing = 8.0;
+          const menuButtonWidth = 40.0;
+
+          // 左侧固定区域估算宽度
+          const leftWidth = 360.0;
+
+          // 各右侧组的估算宽度（留 10% 余量防止溢出）
+          const groupWidths = {
+            _ToolbarGroup.cursor: 396.0,
+            _ToolbarGroup.zoom: 255.0,
+            _ToolbarGroup.fit: 119.0,
+            _ToolbarGroup.file: 80.0,
+            _ToolbarGroup.clearSettings: 88.0,
+          };
+
+          // 右侧所有组的总宽度（含间距）
+          final totalRightWidth = groupWidths.values.reduce((a, b) => a + b) + groupSpacing * 5;
+
+          // 可用宽度（扣除左侧和菜单按钮）
+          final availableWidth = constraints.maxWidth - leftWidth - menuButtonWidth;
+
+          // 计算需要折叠多少组：从右边开始，空间不够就折叠
+          // 所有组默认显示（按显示顺序排列）
+          final groups = <_ToolbarGroup>[
+            _ToolbarGroup.cursor,
+            _ToolbarGroup.zoom,
+            _ToolbarGroup.fit,
+            _ToolbarGroup.file,
+            _ToolbarGroup.clearSettings,
+          ];
+
+          // 如果总宽度超过可用宽度，从右边开始逐个折叠
+          var currentWidth = totalRightWidth;
+          while (currentWidth > availableWidth && groups.isNotEmpty) {
+            // 移除最右边的组
+            final removed = groups.removeLast();
+            currentWidth -= (groupWidths[removed] ?? 0) + groupSpacing;
+          }
+
+          final hasCollapsed = groups.length < 5;
+
+          return Row(
             children: [
-              Checkbox(
-                value: vm.useRandomSource,
-                onChanged: (value) => vm.setUseRandomSource(value!),
-              ),
-              const Text('随机源', style: TextStyle(fontSize: 12)),
-              // 频率设置齿轮按钮
-              Tooltip(
-                message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
-                child: InkWell(
-                  onTap: () => _showRandomFreqDialog(context, vm),
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Icon(
-                      Icons.settings,
-                      size: 16,
-                      color: vm.useRandomSource
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey,
-                    ),
-                  ),
-                ),
-              ),
+              // ===== 左侧：开始/停止、数据源、解析器（始终显示） =====
+              _buildStartStopButton(context, vm),
+              const SizedBox(width: 12),
+              _buildRandomSourceToggle(context, vm),
+              const SizedBox(width: 12),
+              _buildParserSelector(context, vm),
+              const Spacer(),
+
+              // ===== 右侧工具组（动态决定哪些平铺、哪些折叠） =====
+              if (groups.contains(_ToolbarGroup.cursor)) ...[
+                _buildCursorTools(context, vm),
+                const SizedBox(width: groupSpacing),
+              ],
+              if (groups.contains(_ToolbarGroup.zoom)) ...[
+                _buildZoomTools(context, vm),
+                const SizedBox(width: groupSpacing),
+              ],
+              if (groups.contains(_ToolbarGroup.fit)) ...[
+                _buildFitTools(context, vm),
+                const SizedBox(width: groupSpacing),
+              ],
+              if (groups.contains(_ToolbarGroup.file)) ...[
+                _buildFileTools(context, vm),
+                const SizedBox(width: groupSpacing),
+              ],
+              if (groups.contains(_ToolbarGroup.clearSettings)) ...[
+                _buildClearAndSettings(context, vm),
+                const SizedBox(width: groupSpacing),
+              ],
+              // 有折叠的组时显示下拉菜单
+              if (hasCollapsed)
+                _buildCollapsedMenu(context, vm, visibleGroups: groups),
             ],
-          ),
-          const SizedBox(width: 12),
-          // 解析器选择
-          SizedBox(
-            width: 120,
-            child: NoAnimDropdown<ParserType>(
-              value: vm.parserType,
-              hint: '解析器',
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                border: OutlineInputBorder(),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 开始/停止按钮
+  Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
+    return ElevatedButton.icon(
+      onPressed: () {
+        if (vm.isPlotting) {
+          vm.stopPlotting();
+        } else {
+          vm.startPlotting();
+        }
+      },
+      icon: Icon(
+        vm.isPlotting ? Icons.stop : Icons.play_arrow,
+        size: 16,
+      ),
+      label: Text(vm.isPlotting ? '停止' : '开始'),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: vm.isPlotting ? Colors.red : Colors.green,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        minimumSize: const Size(0, 28),
+      ),
+    );
+  }
+
+  /// 随机数据源 + 频率设置
+  Widget _buildRandomSourceToggle(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Checkbox(
+          value: vm.useRandomSource,
+          onChanged: (value) => vm.setUseRandomSource(value!),
+        ),
+        const Text('随机源', style: TextStyle(fontSize: 12)),
+        Tooltip(
+          message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+          child: InkWell(
+            onTap: () => _showRandomFreqDialog(context, vm),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.settings,
+                size: 16,
+                color: vm.useRandomSource
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.grey,
               ),
-              items: ParserType.values.map((type) {
-                return DropdownMenuItem(
-                  value: type,
-                  child: Text(type.label, style: const TextStyle(fontSize: 12)),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) vm.setParserType(value);
-              },
             ),
           ),
-          const SizedBox(width: 8),
-          // 解析器配置按钮
-          IconButton(
-            onPressed: () => _showParserConfigDialog(context, vm),
-            icon: const Icon(Icons.settings, size: 18),
-            tooltip: '解析器配置',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        ),
+      ],
+    );
+  }
+
+  /// 解析器选择 + 配置按钮
+  Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 120,
+          child: NoAnimDropdown<ParserType>(
+            value: vm.parserType,
+            hint: '解析器',
+            decoration: const InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              border: OutlineInputBorder(),
+            ),
+            items: ParserType.values.map((type) {
+              return DropdownMenuItem(
+                value: type,
+                child: Text(type.label, style: const TextStyle(fontSize: 12)),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) vm.setParserType(value);
+            },
           ),
-          const Spacer(),
-          // 单垂直光标开关
-          Tooltip(
-            message: '单垂直光标',
-            child: TextButton.icon(
-              onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-              icon: Icon(
-                Icons.vertical_align_center,
-                size: 16,
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          onPressed: () => _showParserConfigDialog(context, vm),
+          icon: const Icon(Icons.settings, size: 18),
+          tooltip: '解析器配置',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        ),
+      ],
+    );
+  }
+
+  /// 光标和测量工具组
+  ///
+  /// 顺序：垂直光标 | X-X | Y-Y | 统计 | 范围 | 跟随
+  Widget _buildCursorTools(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 垂直光标开关
+        Tooltip(
+          message: '垂直光标',
+          child: TextButton.icon(
+            onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+            icon: Icon(
+              Icons.vertical_align_center,
+              size: 16,
+              color: vm.vCursorEnabled ? Colors.orange : null,
+            ),
+            label: Text(
+              '光标',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.vCursorEnabled ? Colors.orange : null,
               ),
-              label: Text(
-                '光标',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.vCursorEnabled ? Colors.orange : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.vCursorEnabled
-                    ? Colors.orange.withValues(alpha: 0.1)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.vCursorEnabled
+                  ? Colors.orange.withValues(alpha: 0.1)
+                  : null,
             ),
           ),
-          const SizedBox(width: 8),
-          // X-X 测量按钮（独立开关）
-          Tooltip(
-            message: 'X-X 测量',
-            child: TextButton.icon(
-              onPressed: () => vm.toggleXMeasurement(),
-              icon: Icon(
-                Icons.vertical_align_center,
-                size: 16,
+        ),
+        const SizedBox(width: 8),
+        // X-X 测量
+        Tooltip(
+          message: 'X-X 测量',
+          child: TextButton.icon(
+            onPressed: () => vm.toggleXMeasurement(),
+            icon: Icon(
+              Icons.vertical_align_center,
+              size: 16,
+              color: vm.xMeasurementEnabled ? Colors.blue : null,
+            ),
+            label: Text(
+              'X-X',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.xMeasurementEnabled ? Colors.blue : null,
               ),
-              label: Text(
-                'X-X',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.xMeasurementEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.xMeasurementEnabled
-                    ? Colors.blue.withValues(alpha: 0.15)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.xMeasurementEnabled
+                  ? Colors.blue.withValues(alpha: 0.15)
+                  : null,
             ),
           ),
-          // Y-Y 测量按钮（独立开关）
-          Tooltip(
-            message: 'Y-Y 测量',
-            child: TextButton.icon(
-              onPressed: () => vm.toggleYMeasurement(),
-              icon: Icon(
-                Icons.horizontal_rule,
-                size: 16,
+        ),
+        // Y-Y 测量
+        Tooltip(
+          message: 'Y-Y 测量',
+          child: TextButton.icon(
+            onPressed: () => vm.toggleYMeasurement(),
+            icon: Icon(
+              Icons.horizontal_rule,
+              size: 16,
+              color: vm.yMeasurementEnabled ? Colors.blue : null,
+            ),
+            label: Text(
+              'Y-Y',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.yMeasurementEnabled ? Colors.blue : null,
               ),
-              label: Text(
-                'Y-Y',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.yMeasurementEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.yMeasurementEnabled
-                    ? Colors.blue.withValues(alpha: 0.15)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.yMeasurementEnabled
+                  ? Colors.blue.withValues(alpha: 0.15)
+                  : null,
             ),
           ),
-          const SizedBox(width: 4),
-          // 统计测量按钮
-          Tooltip(
-            message: '统计测量（Max/Min/Avg）',
-            child: TextButton.icon(
-              onPressed: () => vm.toggleStats(),
-              icon: Icon(
-                Icons.analytics,
-                size: 16,
+        ),
+        const SizedBox(width: 4),
+        // 统计测量
+        Tooltip(
+          message: '统计测量（Max/Min/Avg）',
+          child: TextButton.icon(
+            onPressed: () => vm.toggleStats(),
+            icon: Icon(
+              Icons.analytics,
+              size: 16,
+              color: vm.statsEnabled ? Colors.blue : null,
+            ),
+            label: Text(
+              '统计',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.statsEnabled ? Colors.blue : null,
               ),
-              label: Text(
-                '统计',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.statsEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.statsEnabled
-                    ? Colors.blue.withValues(alpha: 0.15)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.statsEnabled
+                  ? Colors.blue.withValues(alpha: 0.15)
+                  : null,
             ),
           ),
-          // 统计范围按钮（仅在统计开启时可用）
-          Tooltip(
-            message: '统计范围',
-            child: TextButton.icon(
-              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
-              icon: Icon(
-                Icons.straighten,
-                size: 16,
+        ),
+        // 统计范围
+        Tooltip(
+          message: '统计范围',
+          child: TextButton.icon(
+            onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
+            icon: Icon(
+              Icons.straighten,
+              size: 16,
+              color: vm.statsRangeEnabled ? Colors.blue : null,
+            ),
+            label: Text(
+              '范围',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.statsRangeEnabled ? Colors.blue : null,
               ),
-              label: Text(
-                '范围',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.statsRangeEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.statsRangeEnabled
-                    ? Colors.blue.withValues(alpha: 0.15)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.statsRangeEnabled
+                  ? Colors.blue.withValues(alpha: 0.15)
+                  : null,
             ),
           ),
-          const SizedBox(width: 12),
-          // 最新点跟随（3/4宽度处）
-          Tooltip(
-            message: '最新点跟随在 3/4 宽度处',
-            child: TextButton.icon(
-              onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
-              icon: Icon(
-                Icons.trending_flat,
-                size: 16,
+        ),
+        const SizedBox(width: 12),
+        // 最新点跟随
+        Tooltip(
+          message: '最新点跟随在 3/4 宽度处',
+          child: TextButton.icon(
+            onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
+            icon: Icon(
+              Icons.trending_flat,
+              size: 16,
+              color: vm.followEnabled ? Colors.blue : null,
+            ),
+            label: Text(
+              '跟随',
+              style: TextStyle(
+                fontSize: 11,
                 color: vm.followEnabled ? Colors.blue : null,
               ),
-              label: Text(
-                '跟随',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: vm.followEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor: vm.followEnabled
-                    ? Colors.blue.withValues(alpha: 0.1)
-                    : null,
-              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor: vm.followEnabled
+                  ? Colors.blue.withValues(alpha: 0.1)
+                  : null,
             ),
           ),
-          const SizedBox(width: 8),
-          // 框选放大开关
-          Tooltip(
-            message: '框选放大',
-            child: IconButton(
-              onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
-              icon: Icon(
-                Icons.crop_free,
-                size: 18,
-                color: vm.boxZoomEnabled ? Colors.blue : null,
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+      ],
+    );
+  }
+
+  /// 缩放和框选工具组
+  ///
+  /// 顺序：撤回缩放 | 框选 | X缩 | X放 | Y缩 | Y放
+  Widget _buildZoomTools(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 撤回缩放
+        Tooltip(
+          message: '撤回缩放',
+          child: IconButton(
+            onPressed: vm.canUndoZoom ? () => vm.undoZoom() : null,
+            icon: const Icon(Icons.undo, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 4),
-          // 撤回缩放
-          Tooltip(
-            message: '撤回缩放',
-            child: IconButton(
-              onPressed: vm.canUndoZoom ? () => vm.undoZoom() : null,
-              icon: const Icon(Icons.undo, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        ),
+        const SizedBox(width: 4),
+        // 框选放大
+        Tooltip(
+          message: '框选放大',
+          child: IconButton(
+            onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+            icon: Icon(
+              Icons.crop_free,
+              size: 18,
+              color: vm.boxZoomEnabled ? Colors.blue : null,
             ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 4),
-          // X 轴缩小
-          Tooltip(
-            message: 'X 轴缩小',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
-              icon: const Icon(Icons.zoom_out, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+        const SizedBox(width: 4),
+        // X 轴缩小
+        Tooltip(
+          message: 'X 轴缩小',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
+            icon: const Icon(Icons.zoom_out, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          // X 轴放大
-          Tooltip(
-            message: 'X 轴放大',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXIn(),
-              icon: const Icon(Icons.zoom_in, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+        // X 轴放大
+        Tooltip(
+          message: 'X 轴放大',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXIn(),
+            icon: const Icon(Icons.zoom_in, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          // Y 轴缩小
-          Tooltip(
-            message: 'Y 轴缩小',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
-              icon: const Icon(Icons.vertical_align_bottom, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+        // Y 轴缩小
+        Tooltip(
+          message: 'Y 轴缩小',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
+            icon: const Icon(Icons.vertical_align_bottom, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          // Y 轴放大
-          Tooltip(
-            message: 'Y 轴放大',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYIn(),
-              icon: const Icon(Icons.vertical_align_top, size: 18),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+        // Y 轴放大
+        Tooltip(
+          message: 'Y 轴放大',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYIn(),
+            icon: const Icon(Icons.vertical_align_top, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 8),
-          // 导出 CSV
-          IconButton(
+        ),
+      ],
+    );
+  }
+
+  /// 文件工具组
+  ///
+  /// 顺序：导入 CSV | 导出 CSV
+  Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 导入 CSV
+        Tooltip(
+          message: '导入 CSV（最大16通道）',
+          child: IconButton(
+            onPressed: () => _importCsv(context, vm),
+            icon: const Icon(Icons.file_upload, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ),
+        // 导出 CSV
+        Tooltip(
+          message: '导出 CSV',
+          child: IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => _exportCsv(context, vm),
             icon: const Icon(Icons.save, size: 18),
-            tooltip: '导出 CSV',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 8),
-          // Y轴自适应
-          Tooltip(
-            message: 'Y轴自适应',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
-              icon: const Icon(Icons.vertical_align_center, size: 18),
-              tooltip: 'Y轴自适应',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          ),
-          // X轴自适应
-          Tooltip(
-            message: 'X轴自适应',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
-              icon: const Icon(Icons.horizontal_rule, size: 18),
-              tooltip: 'X轴自适应',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          ),
-          // 全自适应
-          Tooltip(
-            message: '全自适应',
-            child: IconButton(
-              onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
-              icon: const Icon(Icons.fit_screen, size: 18),
-              tooltip: '全自适应',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // 清空数据
-          IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
-            icon: const Icon(Icons.clear, size: 18),
-            tooltip: '清空数据',
+        ),
+      ],
+    );
+  }
+
+  /// 自适应工具组
+  ///
+  /// 顺序：Y自适应 | X自适应 | 全自适应
+  Widget _buildFitTools(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: 'Y轴自适应',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
+            icon: const Icon(Icons.vertical_align_center, size: 18),
+            tooltip: 'Y轴自适应',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-          const SizedBox(width: 8),
-          // 高级设置
-          Tooltip(
-            message: '高级设置',
-            child: IconButton(
-              onPressed: () => _showAdvancedSettingsDialog(context, vm),
-              icon: const Icon(Icons.tune, size: 18),
-              tooltip: '高级设置',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
+        ),
+        Tooltip(
+          message: 'X轴自适应',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
+            icon: const Icon(Icons.horizontal_rule, size: 18),
+            tooltip: 'X轴自适应',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
-        ],
+        ),
+        Tooltip(
+          message: '全自适应',
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
+            icon: const Icon(Icons.fit_screen, size: 18),
+            tooltip: '全自适应',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 清空 + 高级设置
+  Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
+          icon: const Icon(Icons.clear, size: 18),
+          tooltip: '清空数据',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        ),
+        const SizedBox(width: 8),
+        Tooltip(
+          message: '高级设置',
+          child: IconButton(
+            onPressed: () => _showAdvancedSettingsDialog(context, vm),
+            icon: const Icon(Icons.tune, size: 18),
+            tooltip: '高级设置',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 折叠菜单：只显示未平铺的组
+  Widget _buildCollapsedMenu(
+    BuildContext context,
+    PlotViewModel vm, {
+    required List<_ToolbarGroup> visibleGroups,
+  }) {
+    return PopupMenuButton<String>(
+      tooltip: '更多工具',
+      icon: const Icon(Icons.more_vert, size: 20),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      itemBuilder: (context) {
+        final items = <PopupMenuEntry<String>>[];
+
+        // 光标组（如果未平铺）
+        if (!visibleGroups.contains(_ToolbarGroup.cursor)) {
+          items.add(_buildMenuHeader('光标与测量'));
+          items.add(PopupMenuItem(
+            value: 'vCursor',
+            child: _buildMenuItem(
+              icon: Icons.vertical_align_center,
+              label: '垂直光标',
+              active: vm.vCursorEnabled,
+              activeColor: Colors.orange,
+            ),
+            onTap: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+          ));
+          items.add(PopupMenuItem(
+            value: 'xMeasurement',
+            child: _buildMenuItem(
+              icon: Icons.vertical_align_center,
+              label: 'X-X 测量',
+              active: vm.xMeasurementEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.toggleXMeasurement(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'yMeasurement',
+            child: _buildMenuItem(
+              icon: Icons.horizontal_rule,
+              label: 'Y-Y 测量',
+              active: vm.yMeasurementEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.toggleYMeasurement(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'stats',
+            child: _buildMenuItem(
+              icon: Icons.analytics,
+              label: '统计测量',
+              active: vm.statsEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.toggleStats(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'statsRange',
+            enabled: vm.statsEnabled,
+            child: _buildMenuItem(
+              icon: Icons.straighten,
+              label: '统计范围',
+              active: vm.statsRangeEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.toggleStatsRange(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'follow',
+            child: _buildMenuItem(
+              icon: Icons.trending_flat,
+              label: '最新点跟随',
+              active: vm.followEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.setFollowEnabled(!vm.followEnabled),
+          ));
+        }
+
+        // 缩放组（如果未平铺）
+        if (!visibleGroups.contains(_ToolbarGroup.zoom)) {
+          if (items.isNotEmpty) items.add(const PopupMenuDivider());
+          items.add(_buildMenuHeader('缩放'));
+          items.add(PopupMenuItem(
+            value: 'undoZoom',
+            enabled: vm.canUndoZoom,
+            child: _buildMenuItem(icon: Icons.undo, label: '撤回缩放'),
+            onTap: () => vm.undoZoom(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'boxZoom',
+            child: _buildMenuItem(
+              icon: Icons.crop_free,
+              label: '框选放大',
+              active: vm.boxZoomEnabled,
+              activeColor: Colors.blue,
+            ),
+            onTap: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+          ));
+          items.add(PopupMenuItem(
+            value: 'zoomXOut',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.zoom_out, label: 'X 轴缩小'),
+            onTap: () => vm.zoomXOut(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'zoomXIn',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.zoom_in, label: 'X 轴放大'),
+            onTap: () => vm.zoomXIn(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'zoomYOut',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.vertical_align_bottom, label: 'Y 轴缩小'),
+            onTap: () => vm.zoomYOut(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'zoomYIn',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.vertical_align_top, label: 'Y 轴放大'),
+            onTap: () => vm.zoomYIn(),
+          ));
+        }
+
+        // 文件组（如果未平铺）
+        if (!visibleGroups.contains(_ToolbarGroup.file)) {
+          if (items.isNotEmpty) items.add(const PopupMenuDivider());
+          items.add(_buildMenuHeader('文件'));
+          items.add(PopupMenuItem(
+            value: 'importCsv',
+            child: _buildMenuItem(icon: Icons.file_upload, label: '导入 CSV'),
+            onTap: () => _importCsv(context, vm),
+          ));
+          items.add(PopupMenuItem(
+            value: 'exportCsv',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.save, label: '导出 CSV'),
+            onTap: () => _exportCsv(context, vm),
+          ));
+        }
+
+        // 自适应组（如果未平铺）
+        if (!visibleGroups.contains(_ToolbarGroup.fit)) {
+          if (items.isNotEmpty) items.add(const PopupMenuDivider());
+          items.add(_buildMenuHeader('自适应'));
+          items.add(PopupMenuItem(
+            value: 'fitY',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.vertical_align_center, label: 'Y轴自适应'),
+            onTap: () => vm.fitYAxis(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'fitX',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.horizontal_rule, label: 'X轴自适应'),
+            onTap: () => vm.fitXAxis(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'fitAll',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.fit_screen, label: '全自适应'),
+            onTap: () => vm.fitAll(),
+          ));
+        }
+
+        // 清空+设置组（如果未平铺）
+        if (!visibleGroups.contains(_ToolbarGroup.clearSettings)) {
+          if (items.isNotEmpty) items.add(const PopupMenuDivider());
+          items.add(_buildMenuHeader('操作'));
+          items.add(PopupMenuItem(
+            value: 'clear',
+            enabled: vm.dataPoints.isNotEmpty,
+            child: _buildMenuItem(icon: Icons.clear, label: '清空数据'),
+            onTap: () => vm.clearData(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'settings',
+            child: _buildMenuItem(icon: Icons.tune, label: '高级设置'),
+            onTap: () => _showAdvancedSettingsDialog(context, vm),
+          ));
+        }
+
+        return items;
+      },
+    );
+  }
+
+  /// 构建菜单分组标题
+  PopupMenuItem<String> _buildMenuHeader(String label) {
+    return PopupMenuItem(
+      value: 'header_$label',
+      enabled: false,
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          color: Colors.grey.shade600,
+          fontWeight: FontWeight.bold,
+        ),
       ),
+    );
+  }
+
+  /// 构建下拉菜单项（带图标和文字）
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String label,
+    bool active = false,
+    Color? activeColor,
+  }) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 18,
+          color: active ? activeColor : null,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: active ? activeColor : null,
+          ),
+        ),
+      ],
     );
   }
 
@@ -732,6 +1113,36 @@ class _PlotPageContent extends StatelessWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已导出: $path')),
       );
+    }
+  }
+
+  /// 从 CSV 文件导入数据
+  ///
+  /// 支持格式：表头 x,y1,y2,...，最大16通道。
+  /// 导入成功后会清空现有数据并替换。
+  void _importCsv(BuildContext context, PlotViewModel vm) async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '选择 CSV 文件',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      allowMultiple: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final filePath = result.files.single.path;
+    if (filePath == null) return;
+
+    final error = await vm.importFromCsv(filePath);
+    if (context.mounted) {
+      if (error == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('CSV 导入成功')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('导入失败: $error')),
+        );
+      }
     }
   }
 
@@ -1340,6 +1751,17 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       ),
     );
   }
+}
+
+/// 工具栏分组枚举
+///
+/// 用于动态折叠计算，按优先级排序。
+enum _ToolbarGroup {
+  cursor,       // 光标与测量
+  zoom,         // 缩放与框选
+  file,         // 文件导入导出
+  fit,          // 自适应
+  clearSettings,// 清空与设置
 }
 
 /// 可拖动的信息框组件

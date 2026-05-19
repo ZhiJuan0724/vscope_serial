@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/utils/app_logger.dart';
 import 'services/app_settings.dart';
@@ -10,11 +11,32 @@ import 'views/pages/protocol_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/widgets/status_bar.dart';
 
+/// 主窗口最小宽度：保证左侧控件 + 一个下拉菜单按钮能放下
+const double kMinWindowWidth = 520;
+/// 主窗口默认宽度：刚好容纳所有工具组平铺显示
+const double kDefaultWindowWidth = 1250;
+/// 主窗口默认高度
+const double kDefaultWindowHeight = 800;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
   await AppSettings().init();
+
+  // 初始化窗口管理
+  await windowManager.ensureInitialized();
+  final windowOptions = WindowOptions(
+    size: const Size(kDefaultWindowWidth, kDefaultWindowHeight),
+    minimumSize: const Size(kMinWindowWidth, 600),
+    center: true,
+    title: 'VScope Serial',
+  );
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
+
   runApp(const MyApp());
 }
 

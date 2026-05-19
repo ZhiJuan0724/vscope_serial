@@ -35,6 +35,10 @@ class PlotViewport {
   static const double minXRange = 10;
   /// X 轴最大显示范围
   static const double maxXRange = 600000;
+  /// Y 轴最小显示范围
+  static const double minYRange = 1;
+  /// Y 轴最大显示范围
+  static const double maxYRange = 1000000000;
 
   /// 创建视口，使用默认值（X: 0~1000, Y: 0~32768）
   PlotViewport({
@@ -107,9 +111,16 @@ class PlotViewport {
   }
 
   /// 以指定中心点缩放 Y 轴，返回新的视口
+  ///
+  /// [factor] < 1 为放大，> 1 为缩小。结果受 [minYRange] 和 [maxYRange] 限制。
   PlotViewport zoomY(double factor, double centerY) {
     final oldRange = yRange;
-    final newRange = oldRange * factor;
+    var newRange = oldRange * factor;
+
+    // 限制 Y 轴范围
+    if (newRange < minYRange) newRange = minYRange;
+    if (newRange > maxYRange) newRange = maxYRange;
+
     final ratio = (centerY - yMin) / oldRange;
     return copyWith(
       yMin: centerY - ratio * newRange,

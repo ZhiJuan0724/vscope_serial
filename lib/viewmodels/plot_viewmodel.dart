@@ -1194,6 +1194,135 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  // ========== 导入 ==========
+  /// 从 CSV 文件导入数据
+  ///
+  /// 支持格式：表头 x,y1,y2,...，最大16通道。
+  /// 导入成功后会清空现有数据并替换，返回 null；失败返回错误信息。
+  Future<String?> importFromCsv(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        return '文件不存在';
+      }
+
+      final lines = await file.readAsLines();
+      if (lines.isEmpty) {
+        return '文件为空';
+      }
+
+      // 解析表头
+      final header = lines.first.trim();
+      if (!header.toLowerCase().startsWith('x')) {
+        return '表头格式错误，第一列应为 x';
+      }
+
+      final headerParts = header.split(',');
+      final channelCount = headerParts.length - 1; // 减去 x 列
+      if (channelCount < 1) {
+        return '至少需要 1 个数据列';
+      }
+      if (channelCount > 16) {
+        return '通道数超过限制（最大16通道）';
+      }
+
+      // 解析数据行
+      final importedPoints = <PlotDataPoint>[];
+      int index = 0;
+      for (int i = 1; i < lines.length; i++) {
+        final line = lines[i].trim();
+        if (line.isEmpty) continue;
+
+        final parts = line.split(',');
+        if (parts.length < 2) continue;
+
+        final xValue = double.tryParse(parts[0].trim());
+        if (xValue == null) continue;
+
+        final values = <double>[];
+        for (int c = 1; c < parts.length && c <= channelCount; c++) {
+          final v = double.tryParse(parts[c].trim());
+          if (v != null) {
+            values.add(v);
+          } else {
+            values.add(0);
+          }
+        }
+
+        // 如果某行列数不足，补零
+        while (values.length < channelCount) {
+          values.add(0);
+        }
+
+        importedPoints.add(PlotDataPoint(
+          index: index,
+          timestamp: xValue,
+          values: values,
+        ));
+        index++;
+      }
+
+      if (importedPoints.isEmpty) {
+        return '未找到有效数据行';
+      }
+
+      // 清空现有数据并替换
+      _dataPoints.clear();
+      _dataPoints.addAll(importedPoints);
+      _nextIndex = importedPoints.length;
+      _activeChannelCount = channelCount;
+      _startTime = null;
+
+      // 重置视口以显示全部数据
+      viewport = PlotViewport(
+        xMin: 0,
+        xMax: importedPoints.length.toDouble(),
+        yMin: _calculateMinY(importedPoints),
+        yMax: _calculateMaxY(importedPoints),
+      );
+      _viewportHistory.clear();
+
+      // 重置光标
+      _cursor = null;
+      _xCursor1 = null;
+      _xCursor2 = null;
+      _yCursor1 = null;
+      _yCursor2 = null;
+
+      AppLogger().info(
+        'CSV 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
+        category: 'PLOT',
+      );
+      Future.microtask(() => notifyListeners());
+      return null;
+    } catch (e) {
+      AppLogger().error('CSV 导入失败: $e', category: 'PLOT');
+      return '解析错误: $e';
+    }
+  }
+
+  /// 计算数据点列表的最小 Y 值
+  double _calculateMinY(List<PlotDataPoint> points) {
+    double min = double.infinity;
+    for (final p in points) {
+      for (final v in p.values) {
+        if (v < min) min = v;
+      }
+    }
+    return min == double.infinity ? 0 : min;
+  }
+
+  /// 计算数据点列表的最大 Y 值
+  double _calculateMaxY(List<PlotDataPoint> points) {
+    double max = double.negativeInfinity;
+    for (final p in points) {
+      for (final v in p.values) {
+        if (v > max) max = v;
+      }
+    }
+    return max == double.negativeInfinity ? 1 : max;
+  }
+
   /// 释放所有资源：取消订阅、停止数据源、释放解析器、停止定时器
   @override
   void dispose() {
