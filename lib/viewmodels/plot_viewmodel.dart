@@ -800,12 +800,7 @@ class PlotViewModel extends BaseViewModel {
   /// 光标开关为临时功能，不保存到配置。
   void setVCursorEnabled(bool value) {
     _vCursorEnabled = value;
-    if (!value) {
-      // 关闭垂直光标时，如果 X-X/Y-Y 测量仍开启，保留 cursor 用于绘制测量线
-      if (!_xMeasurementEnabled && !_yMeasurementEnabled) {
-        _cursor = null;
-      }
-    }
+    _cursor = null;
     Future.microtask(() => notifyListeners());
   }
 
