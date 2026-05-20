@@ -6,9 +6,10 @@ VScope Serial Windows Release 打包工具
 1. flutter analyze - 静态分析
 2. flutter test - 运行单元测试
 3. flutter build windows --release - Release 构建
-4. 打包两种版本：
-   - 标准版：仅包含 exe + 依赖 DLL（需要系统安装 VC++ Redistributable）
-   - 便携版：包含 exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
+4. 打包三种版本：
+   - 标准版：exe + 依赖 DLL（需要系统安装 VC++ Redistributable）
+   - 便携版：标准版 + VC++ 运行时 DLL（开箱即用）
+   - 单文件版：只有一个 exe，所有资源自解压到临时目录运行
 
 使用方法：
     python tools/build_release.py
@@ -16,7 +17,8 @@ VScope Serial Windows Release 打包工具
 输出目录：
     build/releases/
     ├── vscope_serial-x.x.x-standard/     # 标准版
-    └── vscope_serial-x.x.x-portable/     # 便携版（含VC++运行时）
+    ├── vscope_serial-x.x.x-portable/     # 便携版（含VC++运行时）
+    └── vscope_serial-x.x.x-single.exe    # 单文件版
 
 依赖：
     - Flutter SDK
@@ -50,18 +52,6 @@ VC_RUNTIME_DLLS = [
     # "ucrtbase.dll",  # 注释掉：UCRT 是 Windows 系统组件，不建议单独分发
 ]
 
-# UCRT 相关 DLL（api-ms-win-crt-*）- 这些是 ucrtbase 的转发器
-# 在 Windows 10+ 上通常不需要单独打包，因为它们通过 ucrtbase.dll 解析
-# 但为了兼容旧系统（如 Windows 7/8），可以一并打包
-UCRT_FORWARDER_DLLS = [
-    "api-ms-win-crt-heap-l1-1-0.dll",
-    "api-ms-win-crt-locale-l1-1-0.dll",
-    "api-ms-win-crt-math-l1-1-0.dll",
-    "api-ms-win-crt-runtime-l1-1-0.dll",
-    "api-ms-win-crt-stdio-l1-1-0.dll",
-    "api-ms-win-crt-string-l1-1-0.dll",
-]
-
 # 需要排除的文件（不打包）
 EXCLUDE_FILES = {
     "logs",           # 日志目录
@@ -69,6 +59,15 @@ EXCLUDE_FILES = {
     ".flutter-plugins-dependencies",
     "native_assets.json",
 }
+
+# SFX 模块配置（用于单文件版）
+# 7-Zip SFX 模块路径（如果安装了 7-Zip）
+SFX_MODULE_PATHS = [
+    Path("C:/Program Files/7-Zip/7z.sfx"),
+    Path("C:/Program Files (x86)/7-Zip/7z.sfx"),
+    Path(os.path.expanduser("~/scoop/apps/7zip/current/7z.sfx")),
+    Path(os.path.expanduser("~/scoop/shims/7z.sfx")),
+]
 
 
 # ========== 颜色输出 ==========
@@ -217,6 +216,84 @@ def create_zip(source_dir: Path, zip_path: Path):
         )
 
 
+def find_sfx_module() -> Path | None:
+    """查找 7-Zip SFX 模块"""
+    for path in SFX_MODULE_PATHS:
+        if path.exists():
+            return path
+    return None
+
+
+def create_single_exe(portable_dir: Path, output_exe: Path):
+    """创建单文件 exe（使用 7-Zip SFX）
+    
+    原理：
+    1. 将便携版目录打包为 7z 压缩包
+    2. 拼接 7-Zip SFX 模块 + 7z 压缩包 + 配置脚本
+    3. 生成一个自解压 exe，运行时自动解压到临时目录并启动
+    
+    生成的 exe 运行流程：
+    1. 自解压到 %TEMP%\\vscope_serial_xxxx
+    2. 运行 vscope_serial.exe
+    3. 程序退出后自动清理临时目录
+    """
+    seven_zip = shutil.which("7z")
+    if not seven_zip:
+        warn("未找到 7-Zip，无法创建单文件版")
+        return False
+    
+    sfx_module = find_sfx_module()
+    if not sfx_module:
+        warn("未找到 7-Zip SFX 模块 (7z.sfx)，无法创建单文件版")
+        warn("请安装 7-Zip: https://www.7-zip.org/")
+        return False
+    
+    info(f"使用 SFX 模块: {sfx_module}")
+    
+    # 创建临时 7z 压缩包
+    temp_7z = output_exe.with_suffix(".tmp.7z")
+    
+    try:
+        # 打包为 7z（比 zip 压缩率更高）
+        run_cmd([
+            seven_zip, "a", "-t7z", "-mx=9", "-m0=LZMA2", str(temp_7z), f"{portable_dir}/*"
+        ])
+        
+        # 创建 SFX 配置文件
+        sfx_config = output_exe.with_suffix(".tmp.txt")
+        sfx_config.write_text(""";!@Install@!UTF-8!
+Title="VScope Serial"
+BeginPrompt="正在启动 VScope Serial..."
+RunProgram="vscope_serial.exe"
+AutoInstall=1
+ExtractPathText=""
+ExtractTitle=""
+GUIMode="2"
+;!@InstallEnd@!UTF-8!
+""", encoding="utf-8")
+        
+        # 拼接: SFX模块 + 配置 + 7z压缩包
+        with open(output_exe, "wb") as out:
+            out.write(sfx_module.read_bytes())
+            out.write(sfx_config.read_bytes())
+            out.write(temp_7z.read_bytes())
+        
+        success(f"单文件版已生成: {output_exe}")
+        
+        # 清理临时文件
+        temp_7z.unlink(missing_ok=True)
+        sfx_config.unlink(missing_ok=True)
+        
+        return True
+        
+    except Exception as e:
+        error(f"创建单文件版失败: {e}")
+        # 清理临时文件
+        temp_7z.unlink(missing_ok=True)
+        sfx_config.unlink(missing_ok=True)
+        return False
+
+
 # ========== 主流程 ==========
 
 def main():
@@ -234,6 +311,7 @@ def main():
     parser.add_argument("--skip-test", action="store_true", help="跳过 flutter test")
     parser.add_argument("--skip-build", action="store_true", help="跳过 flutter build")
     parser.add_argument("--no-zip", action="store_true", help="不生成 zip 压缩包")
+    parser.add_argument("--no-single", action="store_true", help="不生成单文件版")
     parser.add_argument("--version", "-v", help="指定版本号（默认从 pubspec.yaml 读取）")
     
     args = parser.parse_args()
@@ -308,6 +386,8 @@ def main():
     success(f"便携版打包完成: {portable_dir}")
     
     # 生成 zip
+    standard_zip = None
+    portable_zip = None
     if not args.no_zip:
         info("生成 zip 压缩包...")
         
@@ -320,6 +400,14 @@ def main():
         create_zip(portable_dir, portable_zip)
         success(f"便携版 zip: {portable_zip}")
     
+    # 单文件版
+    single_exe = None
+    if not args.no_single:
+        info("生成单文件版...")
+        single_name = f"vscope_serial-{version}-single.exe"
+        single_exe = RELEASE_DIR / single_name
+        create_single_exe(portable_dir, single_exe)
+    
     # ========== 输出汇总 ==========
     print(f"\n{Colors.BOLD}{Colors.GREEN}{'='*60}{Colors.END}")
     print(f"{Colors.BOLD}{Colors.GREEN}  打包完成！{Colors.END}")
@@ -329,21 +417,29 @@ def main():
     
     print(f"{Colors.BOLD}标准版{Colors.END}（需要系统安装 VC++ Redistributable）:")
     print(f"  目录: {standard_dir}")
-    if not args.no_zip:
+    if standard_zip:
         print(f"  Zip:  {standard_zip}")
     
     print(f"\n{Colors.BOLD}便携版{Colors.END}（开箱即用，包含 VC++ 运行时）:")
     print(f"  目录: {portable_dir}")
-    if not args.no_zip:
+    if portable_zip:
         print(f"  Zip:  {portable_zip}")
     
+    if single_exe and single_exe.exists():
+        print(f"\n{Colors.BOLD}单文件版{Colors.END}（只有一个 exe，自解压运行）:")
+        print(f"  Exe:  {single_exe}")
+    
     # 显示文件大小
-    if not args.no_zip:
+    print(f"\n文件大小:")
+    if standard_zip and standard_zip.exists():
         standard_size = standard_zip.stat().st_size / (1024 * 1024)
+        print(f"  标准版 zip: {standard_size:.1f} MB")
+    if portable_zip and portable_zip.exists():
         portable_size = portable_zip.stat().st_size / (1024 * 1024)
-        print(f"\n文件大小:")
-        print(f"  标准版: {standard_size:.1f} MB")
-        print(f"  便携版: {portable_size:.1f} MB")
+        print(f"  便携版 zip: {portable_size:.1f} MB")
+    if single_exe and single_exe.exists():
+        single_size = single_exe.stat().st_size / (1024 * 1024)
+        print(f"  单文件版:   {single_size:.1f} MB")
     
     print()
 
