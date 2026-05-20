@@ -156,14 +156,34 @@ class PlotViewModel extends BaseViewModel {
   int _pendingNotifyCount = 0;
   /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收
   /// 根据 _refreshFps 计算：batchSize = targetRate / fps
+  /// 串口数据源使用固定批量大小（1000Hz / 30fps ≈ 33），避免依赖 randomIntervalMs
   int get _notifyBatchSize {
-    final intervalMs = _sourceConfig.randomIntervalMs;
-    final targetRate = 1000.0 / intervalMs; // 每秒目标包数
-    final batch = (targetRate / _refreshFps).round().clamp(1, 1000);
-    return batch;
+    if (_useRandomSource) {
+      // 随机数据源：根据配置的频率计算
+      final intervalMs = _sourceConfig.randomIntervalMs;
+      final targetRate = 1000.0 / intervalMs; // 每秒目标包数
+      final batch = (targetRate / _refreshFps).round().clamp(1, 1000);
+      return batch;
+    } else {
+      // 串口数据源：使用固定批量，假设典型速率 1000Hz
+      // 1000Hz / 30fps = 33 帧/刷新
+      const assumedRate = 1000.0;
+      final batch = (assumedRate / _refreshFps).round().clamp(10, 200);
+      return batch;
+    }
   }
   /// Fallback 定时器：确保数据流中断时 UI 仍能刷新
   Timer? _notifyTimer;
+
+  // ========== 接收速率调试统计 ==========
+  /// 上次日志报告时间
+  DateTime? _lastRateLogTime;
+  /// 上次日志报告时的 _nextIndex
+  int _lastRateLogIndex = 0;
+  /// 接收字节数统计（用于排查串口读取性能）
+  int _totalReceivedBytes = 0;
+  /// 上次日志报告时的接收字节数
+  int _lastRateLogBytes = 0;
 
   /// 创建 PlotViewModel 并初始化数据源管理器、加载设置、启动定时刷新
   PlotViewModel(super.serialService) {
@@ -419,9 +439,16 @@ class PlotViewModel extends BaseViewModel {
 
     // 清空旧数据
     _dataPoints.clear();
+    _rateSamples.clear();
     _nextIndex = 0;
     _activeChannelCount = 0;
     _startTime = DateTime.now();
+
+    // 重置速率统计
+    _lastRateLogTime = null;
+    _lastRateLogIndex = 0;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
 
     // 重置视口
     viewport = viewport.reset();
@@ -469,6 +496,10 @@ class PlotViewModel extends BaseViewModel {
 
     _isPlotting = true;
     serialService.isPlotting = true;
+    // 开始绘图时自动停止原始数据接收
+    if (serialService.isRawReceiving) {
+      serialService.stopRawReceiving();
+    }
     Future.microtask(() => serialService.notifyListeners());
     _startRefreshTimer();
     AppLogger().info('开始绘图', category: 'PLOT');
@@ -490,7 +521,7 @@ class PlotViewModel extends BaseViewModel {
 
     _isPlotting = false;
     serialService.isPlotting = false;
-    Future.microtask(() => serialService.notifyListeners());
+    serialService.notifyListeners();
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;
@@ -512,6 +543,10 @@ class PlotViewModel extends BaseViewModel {
     _nextIndex = 0;
     _activeChannelCount = 0;
     _startTime = null;
+    _lastRateLogTime = null;
+    _lastRateLogIndex = 0;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
     viewport = viewport.reset();
     _viewportHistory.clear();
     _xCursor1 = null;
@@ -547,6 +582,9 @@ class PlotViewModel extends BaseViewModel {
     );
 
     _dataPoints.add(point);
+
+    // 统计接收字节数
+    _totalReceivedBytes += result.bytesConsumed;
 
     // 记录速率统计样本
     _rateSamples.add(_RateSample(_nextIndex - 1, timestamp.toInt()));
@@ -585,6 +623,28 @@ class PlotViewModel extends BaseViewModel {
     // UI 刷新降频：只控制重绘频率，不影响数据接收和统计
     _pendingNotifyCount++;
     final batchSize = _notifyBatchSize;
+
+    // 每秒输出一次接收速率日志（调试用）
+    if (_lastRateLogTime == null) {
+      _lastRateLogTime = now;
+      _lastRateLogIndex = _nextIndex;
+      _lastRateLogBytes = _totalReceivedBytes;
+    } else if (now.difference(_lastRateLogTime!).inMilliseconds >= 1000) {
+      final elapsedMs = now.difference(_lastRateLogTime!).inMilliseconds;
+      final receivedPoints = _nextIndex - _lastRateLogIndex;
+      final receivedBytes = _totalReceivedBytes - _lastRateLogBytes;
+      final rate = receivedPoints * 1000.0 / elapsedMs;
+      AppLogger().info(
+        '接收统计: ${rate.toStringAsFixed(1)} 点/s | '
+        '$_pendingNotifyCount 待刷新 | batch=$batchSize | '
+        '${receivedBytes}B/s | 缓冲区=${_dataPoints.length}点',
+        category: 'PLOT',
+      );
+      _lastRateLogTime = now;
+      _lastRateLogIndex = _nextIndex;
+      _lastRateLogBytes = _totalReceivedBytes;
+    }
+
     if (_pendingNotifyCount >= batchSize) {
       _pendingNotifyCount = 0;
       _notifyTimer?.cancel();
@@ -1243,7 +1303,7 @@ class PlotViewModel extends BaseViewModel {
       if (hasVisibleChannel) buffer.writeln('---');
       hasVisibleChannel = true;
 
-      buffer.writeln('Ch${i + 1}:');
+      buffer.writeln('Ch$i:');
       buffer.writeln('  Max: ${maxVal!.toStringAsFixed(2)}');
       buffer.writeln('  Min: ${minVal!.toStringAsFixed(2)}');
       buffer.writeln('  Avg: ${(sum! / count).toStringAsFixed(2)}');
@@ -1447,6 +1507,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 释放所有资源：取消订阅、停止数据源、释放解析器、停止定时器
+  /// 
+  /// 注意：全局单例模式下不修改 serialService.isPlotting，
+  /// 避免页面切换时误停绘图状态。
   @override
   void dispose() {
     _parseSubscription?.cancel();
@@ -1455,7 +1518,8 @@ class PlotViewModel extends BaseViewModel {
     _parser?.dispose();
     _parser = null;
     _isPlotting = false;
-    serialService.isPlotting = false;
+    // 全局单例模式下不重置 serialService.isPlotting
+    // serialService.isPlotting = false;
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;

@@ -53,6 +53,59 @@ def build_frame(data_bytes: bytes) -> bytes:
     return data_bytes + struct.pack('<H', crc)
 
 
+# ========== 高精度定时器 ==========
+
+class HighPrecisionTimer:
+    """Windows高精度定时器，使用busy-wait实现亚毫秒精度"""
+    
+    def __init__(self, interval_ms: float):
+        self.interval_ms = interval_ms
+        self.interval_sec = interval_ms / 1000.0
+        self._last_time = None
+        self._send_count = 0
+        self._last_report_time = None
+    
+    def start(self):
+        """开始计时"""
+        self._last_time = time.perf_counter()
+        self._last_report_time = self._last_time
+        self._send_count = 0
+    
+    def wait(self) -> float:
+        """
+        等待到下一个发送时刻，返回实际间隔(ms)
+        使用busy-wait实现高精度定时
+        """
+        self._send_count += 1
+        
+        # 计算下一个目标时间
+        target_time = self._last_time + self.interval_sec
+        
+        # busy-wait直到目标时间（精度约0.1ms）
+        while time.perf_counter() < target_time:
+            pass
+        
+        now = time.perf_counter()
+        actual_interval = (now - self._last_time) * 1000.0  # ms
+        self._last_time = now
+        
+        # 每秒报告一次发送速率
+        if now - self._last_report_time >= 1.0:
+            elapsed = now - self._last_report_time
+            rate = self._send_count / elapsed
+            print(f"[统计] 发送速率: {rate:.1f} 帧/s | 目标: {1000.0/self.interval_ms:.1f}Hz | "
+                  f"实际间隔: {actual_interval:.3f}ms")
+            self._send_count = 0
+            self._last_report_time = now
+        
+        return actual_interval
+    
+    def set_interval(self, interval_ms: float):
+        """动态修改发送间隔"""
+        self.interval_ms = interval_ms
+        self.interval_sec = interval_ms / 1000.0
+
+
 # ========== 数据生成器 ==========
 
 class DataGenerator:
@@ -117,6 +170,8 @@ class JackFourChannelDevice:
         self.configured = False
         self.running = False
         self.data_gen = DataGenerator(mode=data_mode)
+        self.timer = HighPrecisionTimer(interval_ms)
+        self.verbose = False  # 是否打印每帧数据（高频率时关闭）
     
     def open(self) -> bool:
         """打开串口"""
@@ -186,7 +241,8 @@ class JackFourChannelDevice:
         self.serial.write(frame)
         self.serial.flush()
         
-        print(f"[设备] 发送数据: {[f'0x{v:04X}' for v in values]} | CRC=0x{struct.unpack('<H', frame[8:10])[0]:04X}")
+        if self.verbose:
+            print(f"[设备] 发送数据: {[f'0x{v:04X}' for v in values]} | CRC=0x{struct.unpack('<H', frame[8:10])[0]:04X}")
     
     def run(self):
         """主循环：接收配置 → 发送数据"""
@@ -212,6 +268,11 @@ class JackFourChannelDevice:
                             self.configured = True
                             buffer = buffer[10:]
                             print("[设备] 配置完成，开始发送数据...")
+                            # 高频率时关闭逐帧打印
+                            if self.interval_ms < 5:
+                                self.verbose = False
+                                print(f"[设备] 发送间隔 {self.interval_ms}ms (<5ms)，关闭逐帧打印")
+                            self.timer.start()
                             break
                         else:
                             # CRC失败，滑动窗口
@@ -220,7 +281,7 @@ class JackFourChannelDevice:
                 # 如果已配置，周期性发送数据
                 if self.configured:
                     self._send_data_frame()
-                    time.sleep(self.interval_ms / 1000.0)
+                    self.timer.wait()
                 else:
                     time.sleep(0.01)  # 10ms轮询
                     

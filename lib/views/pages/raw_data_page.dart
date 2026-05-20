@@ -103,6 +103,37 @@ class _RawDataPageState extends State<RawDataPage> {
             children: [
               const Text('接收数据',
                   style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 8),
+              // 开始/停止接收按钮
+              ElevatedButton.icon(
+                onPressed: vm.isConnected && !vm.isRawReceiving
+                    ? () => vm.startReceiving()
+                    : null,
+                icon: const Icon(Icons.play_arrow, size: 16),
+                label: const Text('开始接收'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              const SizedBox(width: 4),
+              ElevatedButton.icon(
+                onPressed: vm.isRawReceiving
+                    ? () => vm.stopReceiving()
+                    : null,
+                icon: const Icon(Icons.stop, size: 16),
+                label: const Text('停止接收'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
               const Spacer(),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -134,11 +165,6 @@ class _RawDataPageState extends State<RawDataPage> {
                   const Text('自动滚动'),
                 ],
               ),
-              // 接收统计
-              Text(
-                '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
-              ),
               const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: () => vm.clearData(),
@@ -161,18 +187,63 @@ class _RawDataPageState extends State<RawDataPage> {
               border: Border.all(color: Colors.grey),
               borderRadius: BorderRadius.circular(4.0),
             ),
-            child: ListView.builder(
-              controller: _scrollController,
-              itemCount: vm.receivedLines.length,
-              itemBuilder: (context, index) {
-                return SelectableText(
-                  vm.receivedLines[index],
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 13,
+            child: Stack(
+              children: [
+                // 数据列表或提示文字
+                vm.isRawReceiving || vm.receivedLines.isNotEmpty
+                    ? ListView.builder(
+                        controller: _scrollController,
+                        itemCount: vm.receivedLines.length,
+                        itemBuilder: (context, index) {
+                          // 交替背景色区分每包数据
+                          final bgColor = index.isEven
+                              ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.5)
+                              : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3);
+                          return Container(
+                            color: bgColor,
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            child: SelectableText(
+                              vm.receivedLines[index],
+                              style: const TextStyle(
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                              ),
+                            ),
+                          );
+                        },
+                      )
+                    : const Center(
+                        child: Text(
+                          '点击"开始接收"按钮以接收数据',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                // 右下角统计信息
+                Positioned(
+                  bottom: 4,
+                  right: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    child: Text(
+                      '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
-                );
-              },
+                ),
+              ],
             ),
           ),
         ),

@@ -110,10 +110,8 @@ class JackFourChannelParser extends IDataParser {
           _controller.add(result);
         }
 
-        AppLogger().trace(
-          'JACK四通道解析成功: values=${result.values?.map((v) => v.toStringAsFixed(1)).join(',')}',
-          category: 'PARSER',
-        );
+        // 高频场景下禁用逐帧trace日志，避免性能瓶颈
+        // AppLogger().trace(...)
       } else {
         // CRC失败，尝试下一个位置（滑动窗口）
         // 保留最后 _frameLength - 1 字节，可能包含下一帧的部分数据
@@ -143,13 +141,6 @@ class JackFourChannelParser extends IDataParser {
 
     // 计算CRC（注意：crc.dart的crcToBytes返回大端序，但协议是小端序）
     final calculatedCrc = calculateCrc(dataBytes, _crcPoly);
-
-    AppLogger().trace(
-      'JACK四通道尝试解析: index=$index, data=${_bytesToHex(dataBytes)}, '
-      'receivedCRC=0x${receivedCrc.toRadixString(16).padLeft(4, '0')}, '
-      'calculatedCRC=0x${calculatedCrc.toRadixString(16).padLeft(4, '0')}',
-      category: 'PARSER',
-    );
 
     if (calculatedCrc != receivedCrc) {
       _consecutiveFailures++;

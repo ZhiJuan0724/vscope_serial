@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 
 import '../../data/models/channel_config.dart';
 import '../../data/models/parser_config.dart';
-import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
@@ -12,18 +11,14 @@ import '../widgets/common_widgets.dart';
 
 /// 绘图页面入口
 ///
-/// 使用 [ChangeNotifierProvider] 创建 [PlotViewModel]，
-/// 子组件通过 [Consumer] 或 [Provider.of] 访问 ViewModel。
+/// PlotViewModel 已提升为全局 Provider（在 main.dart 中注册），
+/// 此处直接消费全局实例，确保页面切换后数据不丢失。
 class PlotPage extends StatelessWidget {
   const PlotPage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final service = Provider.of<SerialService>(context, listen: false);
-    return ChangeNotifierProvider(
-      create: (_) => PlotViewModel(service),
-      child: const _PlotPageContent(),
-    );
+    return const _PlotPageContent();
   }
 }
 
@@ -131,8 +126,10 @@ class _PlotPageContent extends StatelessWidget {
               // ===== 左侧：开始/停止、数据源、解析器（始终显示） =====
               _buildStartStopButton(context, vm),
               const SizedBox(width: 12),
-              _buildRandomSourceToggle(context, vm),
-              const SizedBox(width: 12),
+              if (vm.parserType == ParserType.fireWater) ...[
+                _buildRandomSourceToggle(context, vm),
+                const SizedBox(width: 12),
+              ],
               _buildParserSelector(context, vm),
               const Spacer(),
 
@@ -1457,17 +1454,61 @@ class _PlotPageContent extends StatelessWidget {
 /// 通道列表项
 ///
 /// 显示单个通道的颜色、名称/别名、绘图开关和编辑按钮。
-class _ChannelItem extends StatelessWidget {
+/// 支持双击通道名直接编辑别名，JACK四通道模式下支持直接编辑ID。
+class _ChannelItem extends StatefulWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
 
   const _ChannelItem({super.key, required this.vm, required this.ch});
 
+  @override
+  State<_ChannelItem> createState() => _ChannelItemState();
+}
+
+class _ChannelItemState extends State<_ChannelItem> {
+  bool _isEditingName = false;
+  bool _isEditingId = false;
+  late final TextEditingController _nameController;
+  late final TextEditingController _idController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _idController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _idController.dispose();
+    super.dispose();
+  }
+
   /// 获取显示名称（别名优先，空则回退到 ChN）
-  String get _displayName => ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+  String get _displayName => widget.ch.alias.isNotEmpty ? widget.ch.alias : 'Ch${widget.ch.index}';
+
+  void _saveAlias() {
+    final text = _nameController.text.trim();
+    // 空输入则恢复默认名称（清空别名）
+    widget.vm.setChannelAlias(widget.ch.index, text);
+    setState(() => _isEditingName = false);
+  }
+
+  void _saveJackId() {
+    final text = _idController.text.trim();
+    final hex = text.replaceAll('0x', '').replaceAll('0X', '');
+    final id = int.tryParse(hex, radix: 16);
+    if (id != null && id >= 0 && id <= 0xFFFF) {
+      widget.vm.setJackFourChannelId(widget.ch.index, id);
+    }
+    setState(() => _isEditingId = false);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isJackMode = widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -1479,49 +1520,107 @@ class _ChannelItem extends StatelessWidget {
         children: [
           // 颜色指示器（点击打开编辑弹窗）
           InkWell(
-            onTap: () => _showChannelEditDialog(context, vm, ch),
+            onTap: () => _showChannelEditDialog(context),
             child: Container(
               width: 10,
               height: 10,
               decoration: BoxDecoration(
-                color: ch.color,
+                color: widget.ch.color,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
           ),
           const SizedBox(width: 4),
-          // 通道名/别名 + JACK四通道通道号
+          // 通道名/别名（双击编辑）+ JACK四通道ID（直接编辑）并排显示
           Expanded(
-            child: Column(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  _displayName,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: ch.visible ? null : Colors.grey,
-                    decoration: ch.visible ? null : TextDecoration.lineThrough,
+                // 通道名称：双击进入编辑模式
+                if (_isEditingName)
+                  SizedBox(
+                    width: 70,
+                    height: 22,
+                    child: TextField(
+                      controller: _nameController..text = _displayName,
+                      autofocus: true,
+                      style: const TextStyle(fontSize: 13),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 0),
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _saveAlias(),
+                      onEditingComplete: _saveAlias,
+                      onTapOutside: (_) => _saveAlias(),
+                    ),
+                  )
+                else
+                  GestureDetector(
+                    onDoubleTap: () {
+                      setState(() {
+                        _isEditingName = true;
+                        _nameController.text = _displayName;
+                      });
+                    },
+                    child: Text(
+                      _displayName,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: widget.ch.visible ? null : Colors.grey,
+                        decoration: widget.ch.visible ? null : TextDecoration.lineThrough,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                // JACK四通道模式下显示通道号
-                if (vm.parserType == ParserType.jackFourChannel && ch.index < 4)
-                  Text(
-                    'ID: 0x${vm.parserConfig.jackFourChannelIds[ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
-                    style: const TextStyle(fontSize: 9, color: Colors.grey),
-                  ),
+                // JACK四通道模式下显示地址（直接编辑），与名称并排
+                if (isJackMode) ...[
+                  const SizedBox(width: 6),
+                  if (_isEditingId)
+                    SizedBox(
+                      width: 64,
+                      height: 24,
+                      child: TextField(
+                        controller: _idController
+                          ..text = '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                        autofocus: true,
+                        style: const TextStyle(fontSize: 12),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 0),
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (_) => _saveJackId(),
+                        onEditingComplete: _saveJackId,
+                        onTapOutside: (_) => _saveJackId(),
+                      ),
+                    )
+                  else
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _isEditingId = true;
+                          _idController.text = '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}';
+                        });
+                      },
+                      child: Text(
+                        '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
           // 绘图开关
           Tooltip(
-            message: ch.visible ? '点击隐藏通道' : '点击显示通道',
+            message: widget.ch.visible ? '点击隐藏通道' : '点击显示通道',
             child: SizedBox(
               width: 22,
               child: Checkbox(
-                value: ch.visible,
-                onChanged: (value) => vm.setChannelVisible(ch.index, value!),
+                value: widget.ch.visible,
+                onChanged: (value) => widget.vm.setChannelVisible(widget.ch.index, value!),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
             ),
@@ -1530,7 +1629,7 @@ class _ChannelItem extends StatelessWidget {
           Tooltip(
             message: '编辑通道',
             child: InkWell(
-              onTap: () => _showChannelEditDialog(context, vm, ch),
+              onTap: () => _showChannelEditDialog(context),
               child: const Padding(
                 padding: EdgeInsets.all(2),
                 child: Icon(Icons.edit, size: 14),
@@ -1543,10 +1642,10 @@ class _ChannelItem extends StatelessWidget {
   }
 
   /// 显示通道编辑弹窗
-  void _showChannelEditDialog(BuildContext context, PlotViewModel vm, ChannelConfig ch) {
+  void _showChannelEditDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => _ChannelEditDialog(vm: vm, ch: ch),
+      builder: (context) => _ChannelEditDialog(vm: widget.vm, ch: widget.ch),
     );
   }
 }
@@ -1717,7 +1816,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       spacing: 8,
       runSpacing: 8,
       children: ChannelConfig.defaultColors.map((color) {
-        final isSelected = color.value == _selectedColor.value;
+        final isSelected = color.toARGB32() == _selectedColor.toARGB32();
         return InkWell(
           onTap: () => setState(() => _selectedColor = color),
           child: Container(
@@ -1933,19 +2032,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             );
           }),
           const SizedBox(height: 8),
-          // 启动时发送配置开关
-          Row(
-            children: [
-              const Text('启动时发送配置', style: TextStyle(fontSize: 12)),
-              const Spacer(),
-              Switch(
-                value: _config.jackFourChannelSendOnStart,
-                onChanged: (value) {
-                  setState(() => _config.jackFourChannelSendOnStart = value);
-                },
-              ),
-            ],
-          ),
+          // JACK四通道协议固定发送配置，无需开关
         ],
       ),
     );

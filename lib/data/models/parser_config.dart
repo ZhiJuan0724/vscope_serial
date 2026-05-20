@@ -69,9 +69,6 @@ class ParserConfig {
   /// 4个通道的数据类型（可单独设置uint16/int16）
   List<DataType> jackFourChannelTypes;
 
-  /// 开始时是否发送通道配置数据
-  bool jackFourChannelSendOnStart;
-
   ParserConfig({
     this.type = ParserType.fireWater,
     this.frameHeaderLength = 2,
@@ -86,7 +83,6 @@ class ParserConfig {
     this.frameTail,
     List<int>? jackFourChannelIds,
     List<DataType>? jackFourChannelTypes,
-    this.jackFourChannelSendOnStart = true,
   }) : frameHeader = frameHeader ?? [0xAA, 0x55],
        jackFourChannelIds = jackFourChannelIds ?? [0x0001, 0x0002, 0x0003, 0x0004],
        jackFourChannelTypes = jackFourChannelTypes ?? [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
@@ -115,7 +111,6 @@ class ParserConfig {
     List<int>? frameTail,
     List<int>? jackFourChannelIds,
     List<DataType>? jackFourChannelTypes,
-    bool? jackFourChannelSendOnStart,
   }) {
     return ParserConfig(
       type: type ?? this.type,
@@ -131,7 +126,6 @@ class ParserConfig {
       frameTail: frameTail ?? (this.frameTail != null ? List.from(this.frameTail!) : null),
       jackFourChannelIds: jackFourChannelIds ?? List.from(this.jackFourChannelIds),
       jackFourChannelTypes: jackFourChannelTypes ?? List.from(this.jackFourChannelTypes),
-      jackFourChannelSendOnStart: jackFourChannelSendOnStart ?? this.jackFourChannelSendOnStart,
     );
   }
 
@@ -160,7 +154,6 @@ class ParserConfig {
       type: ParserType.jackFourChannel,
       jackFourChannelIds: [0x0001, 0x0002, 0x0003, 0x0004],
       jackFourChannelTypes: [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16],
-      jackFourChannelSendOnStart: true,
     );
   }
 }

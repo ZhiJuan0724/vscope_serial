@@ -73,6 +73,8 @@ class SerialService extends ChangeNotifier {
   final List<String> receivedLines = [];
   int _receivedTextBytes = 0;
   static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
+  // 虚拟滚动窗口：最多保留500行在内存中用于显示，超出时按FIFO丢弃
+  static const int _maxDisplayLines = 500;
 
   // 显示选项
   bool receiveHex = false;
@@ -90,6 +92,9 @@ class SerialService extends ChangeNotifier {
 
   // 绘图状态标志
   bool isPlotting = false;
+
+  // 原始数据接收开关（独立于串口连接和绘图状态）
+  bool isRawReceiving = false;
 
   /// 从 AppSettings 加载配置
   void loadSettings() {
@@ -112,8 +117,13 @@ class SerialService extends ChangeNotifier {
       config = config.copyWith(port: null);
     }
     AppLogger().info('已刷新串口列表', category: 'SERIAL');
-    // 使用微任务延迟通知，避免在构建阶段触发 setState
-    Future.microtask(() => notifyListeners());
+    notifyListeners();
+  }
+
+  /// 更新串口配置并通知监听者（供外部调用）
+  void updateConfig(SerialConfig newConfig) {
+    config = newConfig;
+    notifyListeners();
   }
 
   Future<void> connect() async {
@@ -344,14 +354,21 @@ class SerialService extends ChangeNotifier {
     _serialPort?.dispose();
     _serialPort = null;
     isConnected = false;
+    // 断开串口时自动关闭原始数据接收
+    if (isRawReceiving) {
+      isRawReceiving = false;
+    }
   }
 
   void _onDataReceived(Uint8List data) {
     final packet = DataPacket(data: data);
-    AppLogger().debug('接收 ${data.length} bytes', category: 'DATA');
+    // 绘图时禁用逐包debug日志，避免性能瓶颈（PlotViewModel有自己的统计）
+    if (!isPlotting) {
+      AppLogger().debug('接收 ${data.length} bytes', category: 'DATA');
+    }
     _dataController.add(packet);
 
-    // 保存原始字节
+    // 保存原始字节（始终保存，用于导出）
     _rawBytes.addAll(data);
     _rawBytesSize += data.length;
     while (_rawBytesSize > _maxRawBytes && _rawBytes.isNotEmpty) {
@@ -359,8 +376,9 @@ class SerialService extends ChangeNotifier {
       _rawBytesSize--;
     }
 
-    // 绘图时不更新原始数据界面
-    if (!isPlotting) {
+    // 原始数据文本接收条件：串口已连接 + 用户开启接收 + 不在绘图状态
+    final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
+    if (shouldReceiveRaw) {
       // 保存为文本行（原始数据页面用）
       String text;
       if (receiveHex) {
@@ -373,17 +391,59 @@ class SerialService extends ChangeNotifier {
           ? '[${_formatTimestamp(packet.timestamp)}] '
           : '';
 
-      final line = '$ts$text';
-      receivedLines.add(line);
-      _receivedTextBytes += line.length * 2; // UTF-16 编码估算
+      // 每包数据独立一行显示
+      final lines = _splitPacketIntoLines(ts, text);
+      for (final line in lines) {
+        receivedLines.add(line);
+        _receivedTextBytes += line.length * 2; // UTF-16 编码估算
+      }
 
-      // 文本缓存限制
+      // 文本缓存限制（按字节）
       while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
+        final removed = receivedLines.removeAt(0);
+        _receivedTextBytes -= removed.length * 2;
+      }
+      // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
+      while (receivedLines.length > _maxDisplayLines) {
         final removed = receivedLines.removeAt(0);
         _receivedTextBytes -= removed.length * 2;
       }
       Future.microtask(() => notifyListeners());
     }
+  }
+
+  /// 将接收到的数据按包拆分为独立行
+  ///
+  /// 对于HEX模式：如果数据包含空格分隔的多组hex，按每组拆分为一行
+  /// 对于文本模式：按换行符拆分，每行独立显示
+  List<String> _splitPacketIntoLines(String ts, String text) {
+    final lines = <String>[];
+    if (receiveHex) {
+      // HEX模式：如果text包含空格，按空格拆分为多行
+      final parts = text.trim().split(' ');
+      if (parts.length > 1 && parts.every((p) => p.length == 2)) {
+        // 看起来是 "01 02 03 ..." 格式，整包作为一行
+        lines.add('$ts$text');
+      } else {
+        lines.add('$ts$text');
+      }
+    } else {
+      // 文本模式：按换行符拆分
+      final parts = text.split('\n');
+      for (var i = 0; i < parts.length; i++) {
+        final part = parts[i];
+        if (part.isEmpty && i == parts.length - 1) continue; // 末尾空行忽略
+        // 移除回车符
+        final clean = part.replaceAll('\r', '');
+        if (clean.isEmpty && i < parts.length - 1) {
+          lines.add('$ts[空行]');
+        } else if (clean.isNotEmpty) {
+          lines.add('$ts$clean');
+        }
+      }
+      if (lines.isEmpty) lines.add('$ts$text');
+    }
+    return lines;
   }
 
   String _formatTimestamp(DateTime dt) {
@@ -546,6 +606,30 @@ class SerialService extends ChangeNotifier {
       _serialPort!.config = cfg;
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
+    Future.microtask(() => notifyListeners());
+  }
+
+  // ========== 原始数据接收控制 ==========
+
+  /// 开始接收原始数据
+  void startRawReceiving() {
+    if (!isConnected) {
+      AppLogger().warning('串口未连接，无法开始接收', category: 'SERIAL');
+      return;
+    }
+    if (isPlotting) {
+      AppLogger().warning('正在绘图中，无法开始接收原始数据', category: 'SERIAL');
+      return;
+    }
+    isRawReceiving = true;
+    AppLogger().info('开始接收原始数据', category: 'SERIAL');
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 停止接收原始数据
+  void stopRawReceiving() {
+    isRawReceiving = false;
+    AppLogger().info('停止接收原始数据', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
   }
 

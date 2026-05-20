@@ -58,9 +58,7 @@ class _StatusDialogState extends State<StatusDialog> {
                         onChanged: service.isConnected
                             ? null
                             : (value) {
-                                service.config = service.config.copyWith(port: value);
-                                // ignore: invalid_use_of_protected_member
-                                Future.microtask(() => service.notifyListeners());
+                                service.updateConfig(service.config.copyWith(port: value));
                               },
                       ),
                     ),
@@ -119,10 +117,7 @@ class _StatusDialogState extends State<StatusDialog> {
                         onChanged: service.isConnected
                             ? null
                             : (value) {
-                                service.config = service.config.copyWith(
-                                    dataBits: value);
-                                // ignore: invalid_use_of_protected_member
-                                Future.microtask(() => service.notifyListeners());
+                                service.updateConfig(service.config.copyWith(dataBits: value));
                               },
                       ),
                     ),
@@ -146,10 +141,7 @@ class _StatusDialogState extends State<StatusDialog> {
                         onChanged: service.isConnected
                             ? null
                             : (value) {
-                                service.config = service.config.copyWith(
-                                    stopBits: value);
-                                // ignore: invalid_use_of_protected_member
-                                Future.microtask(() => service.notifyListeners());
+                                service.updateConfig(service.config.copyWith(stopBits: value));
                               },
                       ),
                     ),
@@ -181,10 +173,7 @@ class _StatusDialogState extends State<StatusDialog> {
                         onChanged: service.isConnected
                             ? null
                             : (value) {
-                                service.config = service.config.copyWith(
-                                    parity: value);
-                                // ignore: invalid_use_of_protected_member
-                                Future.microtask(() => service.notifyListeners());
+                                service.updateConfig(service.config.copyWith(parity: value));
                               },
                       ),
                     ),

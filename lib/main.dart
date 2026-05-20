@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/utils/app_logger.dart';
 import 'services/app_settings.dart';
 import 'services/serial_service.dart';
+import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/connect_page.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/protocol_page.dart';
@@ -48,6 +49,9 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => SerialService()),
+        ChangeNotifierProvider(
+          create: (context) => PlotViewModel(context.read<SerialService>()),
+        ),
       ],
       child: MaterialApp(
         title: 'VScope Serial',

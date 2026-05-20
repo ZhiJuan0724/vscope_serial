@@ -11,6 +11,11 @@ class FileLogOutput extends LogOutput {
   File? _file;
   static const int _maxLogFiles = 20;
   static const String _latestName = 'latest.log';
+  
+  /// 批量flush：累计一定量或定时flush，减少磁盘IO
+  static const int _flushThresholdBytes = 4096;
+  int _pendingBytes = 0;
+  DateTime? _lastFlushTime;
 
   @override
   Future<void> init() async {
@@ -76,13 +81,23 @@ class FileLogOutput extends LogOutput {
   @override
   void output(OutputEvent event) {
     if (_raf == null) return;
+    final now = DateTime.now();
     for (final line in event.lines) {
       // 写入文件时去除 ANSI 颜色码
       final cleanLine = line.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '');
       debugPrint(line);
-      _raf!.writeStringSync('$cleanLine\n');
+      final lineBytes = '$cleanLine\n';
+      _raf!.writeStringSync(lineBytes);
+      _pendingBytes += lineBytes.length;
     }
-    _raf!.flushSync();
+    // 批量flush策略：超过阈值或超过100ms未flush
+    final shouldFlush = _pendingBytes >= _flushThresholdBytes ||
+        (_lastFlushTime != null && now.difference(_lastFlushTime!).inMilliseconds > 100);
+    if (shouldFlush) {
+      _raf!.flushSync();
+      _pendingBytes = 0;
+      _lastFlushTime = now;
+    }
   }
 
   /// 关闭文件（程序退出时调用）
