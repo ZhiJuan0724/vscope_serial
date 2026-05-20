@@ -239,16 +239,16 @@ def main():
         epilog="""
 示例:
   python jack_four_channel_device.py --port COM14
-  python jack_four_channel_device.py --port COM14 --baud 115200 --mode sine --interval 50
-  python jack_four_channel_device.py --port COM14 --mode random --interval 100
+  python jack_four_channel_device.py --port COM14 --baud 115200 --mode sine --interval 1
+  python jack_four_channel_device.py --port COM14 --mode random --interval 1
         """
     )
     parser.add_argument('--port', '-p', required=True, help='串口号 (如 COM14)')
     parser.add_argument('--baud', '-b', type=int, default=115200, help='波特率 (默认115200)')
     parser.add_argument('--mode', '-m', choices=['sine', 'random', 'ramp', 'fixed'], 
                         default='sine', help='数据模式 (默认sine)')
-    parser.add_argument('--interval', '-i', type=float, default=50.0, 
-                        help='发送间隔毫秒 (默认50ms = 20Hz)')
+    parser.add_argument('--interval', '-i', type=float, default=1.0, 
+                        help='发送间隔毫秒 (默认1ms = 1000Hz)')
     parser.add_argument('--amplitude', '-a', type=int, default=10000,
                         help='数据幅度 (默认10000)')
     
@@ -260,7 +260,7 @@ def main():
     print(f"串口: {args.port}")
     print(f"波特率: {args.baud}")
     print(f"数据模式: {args.mode}")
-    print(f"发送间隔: {args.interval}ms")
+    print(f"发送间隔: {args.interval}ms ({1000.0/args.interval:.0f}Hz)")
     print("=" * 50)
     
     device = JackFourChannelDevice(
