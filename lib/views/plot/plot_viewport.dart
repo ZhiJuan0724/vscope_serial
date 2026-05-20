@@ -24,8 +24,23 @@ class PlotViewport {
 
   /// 绘图区域左边距（留给 Y 轴刻度）
   final double marginLeft = 60;
-  /// 绘图区域右边距
-  final double marginRight = 20;
+  /// 绘图区域基础右边距
+  static const double _baseMarginRight = 20;
+  /// 每列偏移 Y 轴宽度
+  static const double offsetAxisColumnWidth = 42;
+  /// 可见的偏移通道数量（用于动态计算右边距）
+  int _offsetChannelCount = 0;
+
+  /// 获取当前偏移通道数量（供外部保存/恢复）
+  int get offsetChannelCount => _offsetChannelCount;
+
+  /// 绘图区域右边距（动态：基础边距 + 偏移通道列宽）
+  double get marginRight => _baseMarginRight + _offsetChannelCount * offsetAxisColumnWidth;
+
+  /// 设置偏移通道数量
+  void setOffsetChannelCount(int count) {
+    _offsetChannelCount = count.clamp(0, 20);
+  }
   /// 绘图区域上边距
   final double marginTop = 20;
   /// 绘图区域下边距（留给 X 轴刻度）

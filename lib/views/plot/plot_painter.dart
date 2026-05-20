@@ -112,6 +112,9 @@ class PlotPainter extends CustomPainter {
     _drawChannels(canvas, size);
     _drawAxes(canvas, size);
 
+    // 通道偏移基准线和标签（绘制在数据层之上，坐标轴之下）
+    _drawChannelOffsetBaselines(canvas, size);
+
     // 垂直光标（鼠标悬停跟随）
     _drawCursor(canvas, size);
 
@@ -147,6 +150,7 @@ class PlotPainter extends CustomPainter {
     final paint = Paint()
       ..color = const Color(0xFF2D2D44)
       ..strokeWidth = 0.5
+      ..style = PaintingStyle.stroke
       ..isAntiAlias = antiAliasEnabled;
 
     final plotW = viewport.plotWidth(size.width);
@@ -174,22 +178,6 @@ class PlotPainter extends CustomPainter {
     }
 
     canvas.drawPath(gridPath, paint);
-
-    // Y=0 基准线（高亮显示）
-    if (viewport.yMin <= 0 && viewport.yMax >= 0) {
-      final zeroY = viewport.dataToScreenY(0, size.height);
-      // 确保在绘图区域内
-      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
-        final zeroPaint = Paint()
-          ..color = const Color(0xFF666688)
-          ..strokeWidth = 1.5;
-        canvas.drawLine(
-          Offset(PlotViewport().marginLeft, zeroY),
-          Offset(PlotViewport().marginLeft + plotW, zeroY),
-          zeroPaint,
-        );
-      }
-    }
   }
 
   /// 根据网格密度计算网格间距（像素）
@@ -335,7 +323,7 @@ class PlotPainter extends CustomPainter {
 
     final textStyle = const TextStyle(
       color: Color(0xFF8888AA),
-      fontSize: 10,
+      fontSize: 12,
       fontFamily: 'monospace',
     );
 
@@ -380,48 +368,55 @@ class PlotPainter extends CustomPainter {
       );
     }
 
-    // Y 轴刻度
+    // Y 轴刻度（使用 nice number 取整）
     final yGridCount = _calculateGridCount(plotH, 60);
-    for (int i = 0; i <= yGridCount; i++) {
-      final yRatio = i / yGridCount;
-      final y = PlotViewport().marginTop + plotH * (1 - yRatio);
-      final yValue = viewport.yMin + viewport.yRange * yRatio;
+    final roughStep = viewport.yRange / yGridCount;
+    final step = _niceNumber(roughStep, true);
+    final Set<double> drawnValues = {};
+    if (step > 0) {
+      final startValue = (viewport.yMin / step).floor() * step;
+      for (double value = startValue; value <= viewport.yMax + step * 0.5; value += step) {
+        if (value < viewport.yMin || value > viewport.yMax) continue;
 
-      // 刻度线
-      canvas.drawLine(
-        Offset(PlotViewport().marginLeft - 5, y),
-        Offset(PlotViewport().marginLeft, y),
-        axisPaint,
-      );
+        final y = viewport.dataToScreenY(value, size.height);
+        if (y < PlotViewport().marginTop || y > PlotViewport().marginTop + plotH) continue;
 
-      // 刻度值
-      _drawText(
-        canvas,
-        _formatNumber(yValue, true),
-        Offset(PlotViewport().marginLeft - 8, y),
-        textStyle,
-        alignRight: true,
-      );
-    }
+        drawnValues.add(value);
 
-    // Y=0 轴线（始终明显显示，如果在可见范围内）
-    if (viewport.yMin <= 0 && viewport.yMax >= 0) {
-      final zeroY = viewport.dataToScreenY(0, size.height);
-      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
-        // 轴线：白色半透明，较粗
-        final zeroAxisPaint = Paint()
-          ..color = const Color(0x99FFFFFF)
-          ..strokeWidth = 2.0;
+        // 刻度线
         canvas.drawLine(
-          Offset(PlotViewport().marginLeft, zeroY),
-          Offset(PlotViewport().marginLeft + plotW, zeroY),
-          zeroAxisPaint,
+          Offset(PlotViewport().marginLeft - 5, y),
+          Offset(PlotViewport().marginLeft, y),
+          axisPaint,
         );
 
-        // 刻度值：Y=0
+        // 刻度值
+        _drawText(
+          canvas,
+          _formatNumber(value, true),
+          Offset(PlotViewport().marginLeft - 8, y),
+          textStyle,
+          alignRight: true,
+          alignVerticalCenter: true,
+        );
+      }
+    }
+
+    // 常驻 Y=0 刻度（如果 0 在可见范围内且尚未绘制）
+    if (viewport.yMin <= 0 && viewport.yMax >= 0 && !drawnValues.contains(0.0)) {
+      final zeroY = viewport.dataToScreenY(0, size.height);
+      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
+        // 刻度线（稍长，突出显示）
+        canvas.drawLine(
+          Offset(PlotViewport().marginLeft - 8, zeroY),
+          Offset(PlotViewport().marginLeft, zeroY),
+          axisPaint,
+        );
+
+        // 刻度值：Y=0（加粗）
         final zeroTextStyle = const TextStyle(
           color: Color(0xFFCCCCDD),
-          fontSize: 10,
+          fontSize: 12,
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,
         );
@@ -435,6 +430,198 @@ class PlotPainter extends CustomPainter {
         );
       }
     }
+  }
+
+  /// 绘制通道偏移基准线、标签和独立 Y 轴
+  ///
+  /// 为每个开启偏移功能的可见通道：
+  /// - 绘制水平虚线表示该通道的 Y=0 位置
+  /// - 在左侧绘制可拖动标签（通道颜色背景 + 名称）
+  /// - 在右侧绘制独立的 Y 轴刻度（颜色与通道一致，密度受全局网格设置影响）
+  /// - 多通道时分多列显示，每列向右偏移 [PlotViewport.offsetAxisColumnWidth]
+  void _drawChannelOffsetBaselines(Canvas canvas, Size size) {
+    final plotW = viewport.plotWidth(size.width);
+    final plotH = viewport.plotHeight(size.height);
+    final left = PlotViewport().marginLeft;
+    final right = left + plotW;
+
+    // 收集所有可见且开启偏移的通道，分配列索引
+    final offsetChannels = <ChannelConfig>[];
+    for (final ch in channels) {
+      if (ch.visible && ch.offsetEnabled) {
+        offsetChannels.add(ch);
+      }
+    }
+
+    for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
+      final ch = offsetChannels[colIndex];
+
+      // 该通道 Y=0 的屏幕位置（数据值 0 经过 yScale 和 yOffset 后的位置）
+      final zeroDataY = 0.0 * ch.yScale + ch.yOffset;
+      final zeroY = viewport.dataToScreenY(zeroDataY, size.height);
+
+      // 标签和基准线只在 Y=0 位置在绘图区域内时绘制
+      final labelVisible = zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH;
+
+      if (labelVisible) {
+        // 绘制水平虚线（通道颜色，半透明）
+        final dashPaint = Paint()
+          ..color = ch.color.withValues(alpha: 0.4)
+          ..strokeWidth = 1.0;
+
+        const dashLen = 6.0;
+        const gapLen = 4.0;
+        var x = left;
+        while (x < right) {
+          final endX = (x + dashLen).clamp(left, right);
+          canvas.drawLine(Offset(x, zeroY), Offset(endX, zeroY), dashPaint);
+          x += dashLen + gapLen;
+        }
+
+        // 绘制左侧标签
+        final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+        final labelStyle = TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        );
+
+        // 标签背景
+        const labelPadding = EdgeInsets.symmetric(horizontal: 4, vertical: 1);
+        final textSpan = TextSpan(text: displayName, style: labelStyle);
+        final textPainter = TextPainter(
+          text: textSpan,
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+
+        final labelW = textPainter.width + labelPadding.horizontal;
+        final labelH = textPainter.height + labelPadding.vertical;
+        final labelX = left - labelW - 2;
+        final labelY = zeroY - labelH / 2;
+
+        // 标签背景圆角矩形
+        final bgRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(labelX, labelY, labelW, labelH),
+          const Radius.circular(2),
+        );
+        canvas.drawRRect(
+          bgRect,
+          Paint()..color = ch.color,
+        );
+
+        // 标签文字
+        textPainter.paint(
+          canvas,
+          Offset(labelX + labelPadding.left, labelY + labelPadding.top),
+        );
+      }
+
+      // 绘制右侧独立 Y 轴刻度（多列，每列向右偏移）—— 始终绘制，不依赖标签可见性
+      final axisX = right + colIndex * PlotViewport.offsetAxisColumnWidth;
+      _drawChannelYAxis(canvas, size, ch, axisX);
+    }
+  }
+
+  /// 绘制单个通道的独立 Y 轴刻度
+  ///
+  /// 在绘图区右侧绘制该通道的 Y 轴刻度线和刻度值，
+  /// 刻度密度受全局网格设置影响，刻度值取整为 nice number。
+  void _drawChannelYAxis(Canvas canvas, Size size, ChannelConfig ch, double axisX) {
+    final plotH = viewport.plotHeight(size.height);
+    final top = PlotViewport().marginTop;
+    final bottom = top + plotH;
+
+    // 计算 nice number 步长
+    final yRange = viewport.yRange;
+    final yGridCount = _calculateGridCount(plotH, 60);
+    final roughStep = yRange / yGridCount;
+    final step = _niceNumber(roughStep, true);
+    if (step <= 0) return;
+
+    final tickPaint = Paint()
+      ..color = ch.color.withValues(alpha: 0.6)
+      ..strokeWidth = 0.5;
+
+    final textStyle = TextStyle(
+      color: ch.color,
+      fontSize: 11,
+      fontFamily: 'monospace',
+    );
+
+    // 第一个刻度值：从 yMin 向上取整到 step 的倍数
+    final startValue = (viewport.yMin / step).floor() * step;
+    final Set<double> drawnValues = {};
+
+    for (double value = startValue; value <= viewport.yMax + step * 0.5; value += step) {
+      if (value < viewport.yMin || value > viewport.yMax) continue;
+
+      // 该刻度值对应的屏幕 Y（数据坐标 → 屏幕坐标）
+      final y = viewport.dataToScreenY(value, size.height);
+      if (y < top || y > bottom) continue;
+
+      drawnValues.add(value);
+
+      // 还原为原始数据值：(显示值 - yOffset) / yScale
+      final originalValue = (value - ch.yOffset) / ch.yScale;
+
+      // 刻度线（向右伸出）
+      canvas.drawLine(
+        Offset(axisX, y),
+        Offset(axisX + 5, y),
+        tickPaint,
+      );
+
+      // 刻度值
+      _drawText(
+        canvas,
+        _formatNumber(originalValue, true),
+        Offset(axisX + 7, y),
+        textStyle,
+        alignVerticalCenter: true,
+      );
+    }
+
+    // 常驻 Y=0 刻度（强制绘制，即使 0 不在 nice number 序列中）
+    // 注意：这里判断的是"显示值"0（即数据值 y=0 在视口坐标系中的位置）
+    // 而不是原始数据值 0，因为偏置通道的刻度显示的是视口坐标系中的值
+    final zeroScreenY = viewport.dataToScreenY(0, size.height);
+    if (zeroScreenY >= top && zeroScreenY <= bottom && !drawnValues.contains(0.0)) {
+      // 还原为原始数据值
+      final originalZeroValue = (0.0 - ch.yOffset) / ch.yScale;
+
+      // 刻度线（稍长，突出显示）
+      canvas.drawLine(
+        Offset(axisX, zeroScreenY),
+        Offset(axisX + 8, zeroScreenY),
+        tickPaint,
+      );
+
+      // 刻度值（加粗）
+      final zeroTextStyle = TextStyle(
+        color: ch.color,
+        fontSize: 11,
+        fontFamily: 'monospace',
+        fontWeight: FontWeight.bold,
+      );
+      _drawText(
+        canvas,
+        _formatNumber(originalZeroValue, true),
+        Offset(axisX + 10, zeroScreenY),
+        zeroTextStyle,
+        alignVerticalCenter: true,
+      );
+    }
+
+    // 绘制轴线
+    final axisPaint = Paint()
+      ..color = ch.color.withValues(alpha: 0.3)
+      ..strokeWidth = 1.0;
+    canvas.drawLine(
+      Offset(axisX, top),
+      Offset(axisX, bottom),
+      axisPaint,
+    );
   }
 
   /// 绘制垂直光标（鼠标悬停跟随）
@@ -567,8 +754,9 @@ class PlotPainter extends CustomPainter {
         Paint()..color = color..style = PaintingStyle.fill,
       );
 
-      // 通道名和值
-      final valueText = 'Ch$i: ${values[i].toStringAsFixed(2)}';
+      // 通道名和值（优先显示别名）
+      final displayName = channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
+      final valueText = '$displayName: ${values[i].toStringAsFixed(2)}';
 
       final valueStyle = TextStyle(
         color: color,
@@ -612,31 +800,80 @@ class PlotPainter extends CustomPainter {
 
     var dy = position.dy;
     if (alignVerticalCenter) {
+      // 让文字几何中心与 position.dy 对齐
       dy -= textPainter.height / 2;
     }
 
     textPainter.paint(canvas, Offset(dx, dy));
   }
 
+  /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
+  double _niceNumber(double value, bool round) {
+    if (value <= 0) return 0;
+    final exponent = (math.log(value) / math.ln10).floor();
+    final fraction = value / math.pow(10, exponent);
+
+    double niceFraction;
+    if (round) {
+      if (fraction < 1.5) {
+        niceFraction = 1;
+      } else if (fraction < 3) {
+        niceFraction = 2;
+      } else if (fraction < 7) {
+        niceFraction = 5;
+      } else {
+        niceFraction = 10;
+      }
+    } else {
+      if (fraction <= 1) {
+        niceFraction = 1;
+      } else if (fraction <= 2) {
+        niceFraction = 2;
+      } else if (fraction <= 5) {
+        niceFraction = 5;
+      } else {
+        niceFraction = 10;
+      }
+    }
+    return niceFraction * math.pow(10, exponent);
+  }
+
   /// 格式化刻度数值
   ///
   /// - X 轴：始终显示整数
-  /// - Y 轴：绝对值>1000或接近整数时显示整数，否则保留2位小数
+  /// - Y 轴：绝对值>1000或接近整数时显示整数，否则保留合适精度
   String _formatNumber(double value, bool isY) {
-    // Y 轴：如果全是整数则不显示小数
     // X 轴：全局不显示小数
     if (!isY) {
       return value.toInt().toString();
     }
 
-    // 检查是否接近整数
-    if (value.abs() > 1000) {
-      return value.toInt().toString();
+    final absValue = value.abs();
+
+    // 大数值使用 k/M 后缀
+    if (absValue >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
     }
+    if (absValue >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}k';
+    }
+
+    // 整数直接显示
     if (value == value.roundToDouble()) {
       return value.toInt().toString();
     }
-    return value.toStringAsFixed(2);
+
+    // 根据大小决定精度
+    if (absValue >= 100) {
+      return value.toStringAsFixed(0);
+    }
+    if (absValue >= 1) {
+      return value.toStringAsFixed(1);
+    }
+    if (absValue >= 0.01) {
+      return value.toStringAsFixed(2);
+    }
+    return value.toStringAsFixed(3);
   }
 
   // ========== X-X / Y-Y 测量绘制 ==========

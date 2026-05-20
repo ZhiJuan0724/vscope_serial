@@ -35,6 +35,9 @@ class ChannelConfig {
   /// 颜色
   Color color;
 
+  /// 通道别名（用户自定义名称，空则显示默认 ChN）
+  String alias;
+
   /// 连线开关（默认 true）
   bool showLine;
 
@@ -50,6 +53,9 @@ class ChannelConfig {
   /// Y 轴偏移（不改变实际值，仅用于显示）
   double yOffset;
 
+  /// 偏移功能开关（开启后才应用 yOffset 并显示独立基准线）
+  bool offsetEnabled;
+
   /// Y 轴缩放
   double yScale;
 
@@ -60,11 +66,13 @@ class ChannelConfig {
     required this.index,
     this.visible = true,
     required this.color,
+    this.alias = '',
     this.showLine = true,
     this.showPoint = false,
     this.pointSize = 3.0,
     this.lineWidth = 1.5,
     this.yOffset = 0.0,
+    this.offsetEnabled = false,
     this.yScale = 1.0,
     this.dataType = DataType.double,
   });
@@ -72,11 +80,13 @@ class ChannelConfig {
   ChannelConfig copyWith({
     bool? visible,
     Color? color,
+    String? alias,
     bool? showLine,
     bool? showPoint,
     double? pointSize,
     double? lineWidth,
     double? yOffset,
+    bool? offsetEnabled,
     double? yScale,
     DataType? dataType,
   }) {
@@ -84,11 +94,13 @@ class ChannelConfig {
       index: index,
       visible: visible ?? this.visible,
       color: color ?? this.color,
+      alias: alias ?? this.alias,
       showLine: showLine ?? this.showLine,
       showPoint: showPoint ?? this.showPoint,
       pointSize: pointSize ?? this.pointSize,
       lineWidth: lineWidth ?? this.lineWidth,
       yOffset: yOffset ?? this.yOffset,
+      offsetEnabled: offsetEnabled ?? this.offsetEnabled,
       yScale: yScale ?? this.yScale,
       dataType: dataType ?? this.dataType,
     );

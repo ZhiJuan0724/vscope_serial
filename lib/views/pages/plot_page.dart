@@ -843,9 +843,9 @@ class _PlotPageContent extends StatelessWidget {
   ///
   /// 只显示实际有数据的通道（[activeChannelCount]），包含：
   /// - 通道颜色指示器
-  /// - 通道名称
-  /// - 可见性开关
-  /// - 连线显示开关
+  /// - 通道名称/别名
+  /// - 绘图开关
+  /// - 编辑按钮（修改颜色/别名/连线）
   Widget _buildChannelPanel(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
@@ -867,18 +867,32 @@ class _PlotPageContent extends StatelessWidget {
                 bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
             ),
-            child: const Row(
+            child: Row(
               children: [
-                Text('通道', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                Spacer(),
+                const Text('通道', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                const Spacer(),
+                // 全选/全不选勾选框
                 Tooltip(
-                  message: '显示通道',
-                  child: Text('显示', style: TextStyle(fontSize: 10)),
-                ),
-                SizedBox(width: 4),
-                Tooltip(
-                  message: '连线显示',
-                  child: Text('连线', style: TextStyle(fontSize: 10)),
+                  message: vm.channels.every((ch) => ch.visible) ? '点击隐藏全部' : '点击显示全部',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        child: Checkbox(
+                          value: vm.channels.every((ch) => ch.visible),
+                          tristate: true,
+                          onChanged: (_) {
+                            // 点击时切换：如果当前全显则全隐，否则全显
+                            final allVisible = vm.channels.every((ch) => ch.visible);
+                            vm.setAllChannelsVisible(!allVisible);
+                          },
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                      const Text('绘图', style: TextStyle(fontSize: 10)),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -919,6 +933,10 @@ class _PlotPageContent extends StatelessWidget {
       );
     }
 
+    // 计算可见的偏移通道数量，同步到视口以动态调整右边距
+    final offsetChannelCount = vm.channels.where((c) => c.visible && c.offsetEnabled).length;
+    vm.viewport.setOffsetChannelCount(offsetChannelCount);
+
     return Stack(
       children: [
         PlotGestureHandler(
@@ -926,6 +944,7 @@ class _PlotPageContent extends StatelessWidget {
           vCursorEnabled: vm.vCursorEnabled,
           boxZoomEnabled: vm.boxZoomEnabled,
           refreshFps: vm.refreshFps,
+          channels: vm.channels,
           onViewportChanged: (viewport, {fromDrag = false}) => vm.updateViewport(viewport, fromDrag: fromDrag),
           onCursorChanged: (cursor) {
             if (cursor != null) {
@@ -951,6 +970,10 @@ class _PlotPageContent extends StatelessWidget {
           // 统计范围拖动回调
           onStatsX1Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
           onStatsX2Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+          // 通道偏移拖动回调
+          onChannelOffsetDrag: (index, yOffset) => vm.setChannelYOffset(index, yOffset),
+          // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
+          onChannelYScaleZoom: (index, scaleDelta) => vm.zoomChannelYScale(index, scaleDelta),
           child: CustomPaint(
             painter: PlotPainter(
               viewport: vm.viewport,
@@ -1429,12 +1452,15 @@ class _PlotPageContent extends StatelessWidget {
 
 /// 通道列表项
 ///
-/// 显示单个通道的颜色、名称、可见性开关和连线开关。
+/// 显示单个通道的颜色、名称/别名、绘图开关和编辑按钮。
 class _ChannelItem extends StatelessWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
 
   const _ChannelItem({super.key, required this.vm, required this.ch});
+
+  /// 获取显示名称（别名优先，空则回退到 ChN）
+  String get _displayName => ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
 
   @override
   Widget build(BuildContext context) {
@@ -1447,65 +1473,215 @@ class _ChannelItem extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // 颜色指示器
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: ch.color,
-              borderRadius: BorderRadius.circular(2),
+          // 颜色指示器（点击打开编辑弹窗）
+          InkWell(
+            onTap: () => _showChannelEditDialog(context, vm, ch),
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: ch.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
           const SizedBox(width: 4),
-          // 通道名
-          SizedBox(
-            width: 40,
+          // 通道名/别名
+          Expanded(
             child: Text(
-              'Ch${ch.index}',
-              style: const TextStyle(fontSize: 10),
+              _displayName,
+              style: TextStyle(
+                fontSize: 10,
+                color: ch.visible ? null : Colors.grey,
+                decoration: ch.visible ? null : TextDecoration.lineThrough,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const Spacer(),
-          // 可见开关 + 文字提示
+          // 绘图开关
           Tooltip(
             message: ch.visible ? '点击隐藏通道' : '点击显示通道',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 22,
-                  child: Checkbox(
-                    value: ch.visible,
-                    onChanged: (value) => vm.setChannelVisible(ch.index, value!),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-                const Text('显示', style: TextStyle(fontSize: 9)),
-              ],
+            child: SizedBox(
+              width: 22,
+              child: Checkbox(
+                value: ch.visible,
+                onChanged: (value) => vm.setChannelVisible(ch.index, value!),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             ),
           ),
-          const SizedBox(width: 4),
-          // 连线开关 + 文字提示
+          // 编辑按钮
           Tooltip(
-            message: ch.showLine ? '点击关闭连线' : '点击开启连线',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 22,
-                  child: Checkbox(
-                    value: ch.showLine,
-                    onChanged: (value) => vm.setChannelShowLine(ch.index, value!),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-                const Text('连线', style: TextStyle(fontSize: 9)),
-              ],
+            message: '编辑通道',
+            child: InkWell(
+              onTap: () => _showChannelEditDialog(context, vm, ch),
+              child: const Padding(
+                padding: EdgeInsets.all(2),
+                child: Icon(Icons.edit, size: 14),
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// 显示通道编辑弹窗
+  void _showChannelEditDialog(BuildContext context, PlotViewModel vm, ChannelConfig ch) {
+    showDialog(
+      context: context,
+      builder: (context) => _ChannelEditDialog(vm: vm, ch: ch),
+    );
+  }
+}
+
+/// 通道编辑对话框
+///
+/// 可修改通道颜色、别名、连线开关。
+class _ChannelEditDialog extends StatefulWidget {
+  final PlotViewModel vm;
+  final ChannelConfig ch;
+
+  const _ChannelEditDialog({required this.vm, required this.ch});
+
+  @override
+  State<_ChannelEditDialog> createState() => _ChannelEditDialogState();
+}
+
+class _ChannelEditDialogState extends State<_ChannelEditDialog> {
+  late Color _selectedColor;
+  late String _alias;
+  late bool _showLine;
+  late bool _offsetEnabled;
+  late final TextEditingController _aliasController;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedColor = widget.ch.color;
+    _alias = widget.ch.alias;
+    _showLine = widget.ch.showLine;
+    _offsetEnabled = widget.ch.offsetEnabled;
+    _aliasController = TextEditingController(text: _alias);
+  }
+
+  @override
+  void dispose() {
+    _aliasController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: Text('编辑 Ch${widget.ch.index}'),
+      content: SizedBox(
+        width: 280,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 颜色选择
+            const Text('颜色', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            _buildColorPicker(),
+            const SizedBox(height: 16),
+            // 别名输入
+            const Text('别名', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _aliasController,
+              maxLength: 16,
+              decoration: const InputDecoration(
+                hintText: '输入通道别名',
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                counterText: '',
+              ),
+              style: const TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            // 连线开关
+            Row(
+              children: [
+                const Text('连线显示', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Switch(
+                  value: _showLine,
+                  onChanged: (value) => setState(() => _showLine = value),
+                ),
+              ],
+            ),
+            // 偏移开关
+            Row(
+              children: [
+                const Text('偏移显示', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Switch(
+                  value: _offsetEnabled,
+                  onChanged: (value) => setState(() => _offsetEnabled = value),
+                ),
+              ],
+            ),
+            if (_offsetEnabled) ...[
+              const SizedBox(height: 4),
+              Text(
+                '提示：开启后可在绘图区拖动通道标签调整偏移位置',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            widget.vm.setChannelColor(widget.ch.index, _selectedColor);
+            widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
+            widget.vm.setChannelShowLine(widget.ch.index, _showLine);
+            widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
+            Navigator.pop(context);
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    );
+  }
+
+  /// 构建颜色选择器（16色 4×4 网格）
+  Widget _buildColorPicker() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: ChannelConfig.defaultColors.map((color) {
+        final isSelected = color.value == _selectedColor.value;
+        return InkWell(
+          onTap: () => setState(() => _selectedColor = color),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(4),
+              border: isSelected
+                  ? Border.all(color: Colors.white, width: 2)
+                  : null,
+              boxShadow: isSelected
+                  ? [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 4)]
+                  : null,
+            ),
+            child: isSelected
+                ? const Icon(Icons.check, size: 16, color: Colors.white)
+                : null,
+          ),
+        );
+      }).toList(),
     );
   }
 }

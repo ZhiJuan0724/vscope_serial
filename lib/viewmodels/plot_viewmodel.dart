@@ -619,10 +619,13 @@ class PlotViewModel extends BaseViewModel {
   /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
     final oldXMin = viewport.xMin;
+    // 保存当前的偏移通道数量，避免 copy() 丢失
+    final offsetChannelCount = viewport.offsetChannelCount;
     if (!fromDrag) {
       _saveViewport();
     }
     viewport = newViewport.copy();
+    viewport.setOffsetChannelCount(offsetChannelCount);
     if (!fromDrag) {
       _saveSettings();
     }
@@ -826,6 +829,21 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  /// 一键设置所有通道的显示状态
+  void setAllChannelsVisible(bool visible) {
+    for (final ch in channels) {
+      ch.visible = visible;
+    }
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置通道别名
+  void setChannelAlias(int index, String alias) {
+    if (index < 0 || index >= channels.length) return;
+    channels[index].alias = alias;
+    Future.microtask(() => notifyListeners());
+  }
+
   /// 设置通道 Y 轴偏移
   void setChannelYOffset(int index, double offset) {
     if (index < 0 || index >= channels.length) return;
@@ -833,10 +851,30 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  /// 设置通道偏移功能开关
+  void setChannelOffsetEnabled(int index, bool enabled) {
+    if (index < 0 || index >= channels.length) return;
+    channels[index].offsetEnabled = enabled;
+    if (!enabled) {
+      // 关闭偏置时，偏移和缩放都归位
+      channels[index].yOffset = 0;
+      channels[index].yScale = 1.0;
+    }
+    Future.microtask(() => notifyListeners());
+  }
+
   /// 设置通道 Y 轴缩放
   void setChannelYScale(int index, double scale) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yScale = scale;
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 缩放通道 Y 轴（滚轮缩放，按比例调整）
+  void zoomChannelYScale(int index, double scaleDelta) {
+    if (index < 0 || index >= channels.length) return;
+    final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
+    channels[index].yScale = newScale;
     Future.microtask(() => notifyListeners());
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/utils/app_logger.dart';
+import '../../data/models/channel_config.dart';
 import 'plot_painter.dart';
 import 'plot_viewport.dart';
 
@@ -60,6 +61,12 @@ class PlotGestureHandler extends StatefulWidget {
   final void Function(double x)? onStatsX1Drag;
   /// S2 统计范围拖动回调
   final void Function(double x)? onStatsX2Drag;
+  /// 通道配置列表（用于偏移标签拖动检测）
+  final List<ChannelConfig> channels;
+  /// 通道偏移拖动回调
+  final void Function(int channelIndex, double yOffset)? onChannelOffsetDrag;
+  /// 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴区域时触发）
+  final void Function(int channelIndex, double scaleDelta)? onChannelYScaleZoom;
   /// 目标刷新帧率（fps），与高级设置中的绘图刷新帧率同步
   final int refreshFps;
 
@@ -84,6 +91,9 @@ class PlotGestureHandler extends StatefulWidget {
     this.onYCursor2Drag,
     this.onStatsX1Drag,
     this.onStatsX2Drag,
+    required this.channels,
+    this.onChannelOffsetDrag,
+    this.onChannelYScaleZoom,
     this.refreshFps = 30,
   });
 
@@ -93,8 +103,8 @@ class PlotGestureHandler extends StatefulWidget {
 
 /// 测量线拖动目标枚举
 ///
-/// 标识当前正在拖动的测量线或统计范围边界。
-enum _DragTarget { none, xCursor1, xCursor2, yCursor1, yCursor2, statsX1, statsX2 }
+/// 标识当前正在拖动的测量线、统计范围边界或通道偏移标签。
+enum _DragTarget { none, xCursor1, xCursor2, yCursor1, yCursor2, statsX1, statsX2, channelOffset }
 
 /// [PlotGestureHandler] 的状态类
 ///
@@ -128,6 +138,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
   static const double _labelHeight = 20;
+
+  /// 当前拖动的通道偏移索引
+  int _offsetChannelIndex = -1;
 
   @override
   Widget build(BuildContext context) {
@@ -175,12 +188,20 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final inYAxisArea = localPosition.dx < widget.viewport.marginLeft;
       final inXAxisArea = localPosition.dy > size.height - widget.viewport.marginBottom;
 
+      // 判断是否在某个偏置 Y 轴列上
+      final offsetChannelIndex = _hitTestOffsetAxisColumn(localPosition, size);
+
       var newViewport = widget.viewport;
 
       // Shift + 滚轮：根据鼠标位置决定缩放轴
       if (isShiftPressed) {
-        if (inYAxisArea) {
-          // 鼠标在 Y 轴区域 -> 缩放 Y 轴
+        if (offsetChannelIndex != null && widget.onChannelYScaleZoom != null) {
+          // 鼠标在偏置 Y 轴列上 -> 单独缩放该通道的 yScale
+          final scaleDelta = event.scrollDelta.dy > 0 ? 0.9 : 1.1;
+          widget.onChannelYScaleZoom!(offsetChannelIndex, scaleDelta);
+          return;
+        } else if (inYAxisArea) {
+          // 鼠标在默认 Y 轴区域 -> 缩放全局 Y 轴
           final centerY = widget.viewport.screenToDataY(localPosition.dy, size.height);
           newViewport = newViewport.zoomY(zoomFactor, centerY);
         } else if (inXAxisArea) {
@@ -242,6 +263,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   void _handlePointerDown(PointerDownEvent event) {
     // 只处理鼠标左键（kPrimaryButton）
     if (event.buttons != kPrimaryButton) return;
+
+    // 检测是否点击在通道偏移标签上
+    final offsetHit = _hitTestOffsetLabel(event.localPosition);
+    if (offsetHit != null) {
+      _dragTarget = _DragTarget.channelOffset;
+      _offsetChannelIndex = offsetHit;
+      _isDragging = true;
+      _lastPosition = event.localPosition;
+      AppLogger().trace('偏移拖动开始: channel=$_offsetChannelIndex, pos=${event.localPosition}', category: 'GESTURE');
+      return;
+    }
 
     // 检测是否点击在测量标签上
     final dragTarget = _hitTestMeasurementLabel(event.localPosition);
@@ -336,6 +368,83 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     }
 
     return _DragTarget.none;
+  }
+
+  /// 检测点击位置是否在通道偏移标签上
+  ///
+  /// 返回命中的通道索引，未命中返回 null。
+  int? _hitTestOffsetLabel(Offset pos) {
+    final size = context.size ?? Size.zero;
+    if (size.isEmpty) return null;
+
+    final left = PlotViewport().marginLeft;
+
+    for (final ch in widget.channels) {
+      if (!ch.visible || !ch.offsetEnabled) continue;
+
+      // 计算标签位置（与 PlotPainter 中一致）
+      final zeroDataY = 0.0 * ch.yScale + ch.yOffset;
+      final zeroY = widget.viewport.dataToScreenY(zeroDataY, size.height);
+      final plotH = widget.viewport.plotHeight(size.height);
+
+      if (zeroY < PlotViewport().marginTop || zeroY > PlotViewport().marginTop + plotH) continue;
+
+      final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+      final textPainter = TextPainter(
+        text: TextSpan(text: displayName, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+
+      const labelPadding = EdgeInsets.symmetric(horizontal: 4, vertical: 1);
+      final labelW = textPainter.width + labelPadding.horizontal;
+      final labelH = textPainter.height + labelPadding.vertical;
+      final labelX = left - labelW - 2;
+      final labelY = zeroY - labelH / 2;
+
+      // 扩大命中区域，方便拖动
+      const hitPadding = 4.0;
+      if (pos.dx >= labelX - hitPadding &&
+          pos.dx <= labelX + labelW + hitPadding &&
+          pos.dy >= labelY - hitPadding &&
+          pos.dy <= labelY + labelH + hitPadding) {
+        return ch.index;
+      }
+    }
+
+    return null;
+  }
+
+  /// 检测鼠标位置是否在偏置 Y 轴列上
+  ///
+  /// 返回命中的通道索引，未命中返回 null。
+  /// 偏置 Y 轴列位于绘图区右侧，每列宽度为 [PlotViewport.offsetAxisColumnWidth]。
+  int? _hitTestOffsetAxisColumn(Offset pos, Size size) {
+    final plotW = widget.viewport.plotWidth(size.width);
+    final left = PlotViewport().marginLeft;
+    final right = left + plotW;
+
+    // 收集可见且开启偏移的通道
+    final offsetChannels = <ChannelConfig>[];
+    for (final ch in widget.channels) {
+      if (ch.visible && ch.offsetEnabled) {
+        offsetChannels.add(ch);
+      }
+    }
+
+    for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
+      final axisX = right + colIndex * PlotViewport.offsetAxisColumnWidth;
+      final colLeft = axisX - 2;
+      final colRight = axisX + PlotViewport.offsetAxisColumnWidth - 2;
+
+      if (pos.dx >= colLeft && pos.dx <= colRight &&
+          pos.dy >= PlotViewport().marginTop &&
+          pos.dy <= size.height - PlotViewport().marginBottom) {
+        return offsetChannels[colIndex].index;
+      }
+    }
+
+    return null;
   }
 
   /// 处理指针移动（拖拽平移、框选、测量线拖动）
@@ -440,6 +549,16 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           widget.onStatsX2Drag!(x.round().toDouble());
         }
         break;
+      case _DragTarget.channelOffset:
+        if (widget.onChannelOffsetDrag != null && _offsetChannelIndex >= 0) {
+          final y = widget.viewport.screenToDataY(
+            pos.dy.clamp(PlotViewport().marginTop, size.height - PlotViewport().marginBottom),
+            size.height,
+          );
+          // yOffset = 数据Y - 0 * yScale = 数据Y
+          widget.onChannelOffsetDrag!(_offsetChannelIndex, y);
+        }
+        break;
       case _DragTarget.none:
         break;
     }
@@ -450,6 +569,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 框选结束时，将框选区域转换为数据坐标并回调 [onViewportChanged]。
   void _handlePointerUp(PointerUpEvent event) {
     AppLogger().trace('拖动结束: box=$_isBoxSelecting, drag=$_isDragging, target=$_dragTarget', category: 'GESTURE');
+
+    // 偏移拖动结束，清空状态
+    if (_dragTarget == _DragTarget.channelOffset) {
+      _offsetChannelIndex = -1;
+    }
 
     if (_isBoxSelecting && _boxStart != null && _boxEnd != null) {
       final size = context.size ?? Size.zero;
