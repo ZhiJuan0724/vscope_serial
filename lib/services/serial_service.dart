@@ -581,6 +581,10 @@ class SerialService extends ChangeNotifier {
   }
 
   void send(Uint8List data) {
+    if (_serialPort == null || !isConnected) {
+      AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
+      throw StateError('串口未连接');
+    }
     _serialPort!.write(data);
     AppLogger().info('发送 ${data.length} bytes', category: 'DATA');
   }

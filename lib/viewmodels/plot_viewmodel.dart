@@ -369,7 +369,7 @@ class PlotViewModel extends BaseViewModel {
   void setUseRandomSource(bool value) {
     _useRandomSource = value;
     _sourceConfig.useRandom = value;
-    _sourceConfig.useSerial = serialService.isConnected || !value;
+    _sourceConfig.useSerial = serialService.isConnected;
     // 根据 FireWater 配置的通道数设置随机数据源通道数
     // 如果 fireWaterChannelCount 为 0，则默认输出 4 通道
     _sourceConfig.randomChannelCount = _parserConfig.fireWaterChannelCount > 0
@@ -460,6 +460,10 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
 
+    // 再次确认数据源配置与实际状态一致
+    _sourceConfig.useSerial = serialService.isConnected;
+    _sourceConfig.useRandom = _useRandomSource;
+
     // 清空旧数据
     _dataPoints.clear();
     _rateSamples.clear();
@@ -492,8 +496,7 @@ class PlotViewModel extends BaseViewModel {
     _sendProtocolInitData();
 
     // 配置并启动数据源
-    _sourceConfig.useSerial = serialService.isConnected;
-    _sourceConfig.useRandom = _useRandomSource;
+    // 注意：useSerial/useRandom 已在开头同步
     // 根据 FireWater 配置设置随机数据源通道数
     _sourceConfig.randomChannelCount = _parserConfig.fireWaterChannelCount > 0
         ? _parserConfig.fireWaterChannelCount
@@ -717,6 +720,12 @@ class PlotViewModel extends BaseViewModel {
   /// [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
   /// 前8字节为4个通道号（小端序uint16），后2字节为前8字节的CRC16/MODBUS（小端序）
   Future<bool> _sendJackFourChannelInitData() async {
+    // 串口未连接时不发送初始化数据
+    if (!serialService.isConnected) {
+      AppLogger().debug('串口未连接，跳过JACK四通道初始化数据发送', category: 'PLOT');
+      return false;
+    }
+
     try {
       // 构造 10 字节数据
       final bytes = Uint8List(10);
