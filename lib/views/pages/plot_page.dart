@@ -8,6 +8,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/plot_status_bar.dart';
 
 /// 绘图页面入口
 ///
@@ -53,7 +54,7 @@ class _PlotPageContent extends StatelessWidget {
               ),
             ),
             // 状态栏
-            _buildStatusBar(context, vm),
+            const PlotStatusBar(),
           ],
         );
       },
@@ -245,13 +246,15 @@ class _PlotPageContent extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        IconButton(
-          onPressed: () => _showParserConfigDialog(context, vm),
-          icon: const Icon(Icons.settings, size: 18),
-          tooltip: '解析器配置',
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-        ),
+        // JACK四通道解析器不需要配置按钮，地址在通道面板直接设置
+        if (vm.parserType != ParserType.jackFourChannel)
+          IconButton(
+            onPressed: () => _showParserConfigDialog(context, vm),
+            icon: const Icon(Icons.settings, size: 18),
+            tooltip: '解析器配置',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
       ],
     );
   }
@@ -1000,63 +1003,6 @@ class _PlotPageContent extends StatelessWidget {
         if (vm.measurementText != null || vm.statsText != null)
           _buildCombinedInfoBox(context, vm),
       ],
-    );
-  }
-
-  // ========== 状态栏 ==========
-  /// 构建底部状态栏
-  ///
-  /// 显示视口范围、数据点数、接收速率、运行状态及光标信息。
-  Widget _buildStatusBar(BuildContext context, PlotViewModel vm) {
-    return Container(
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
-      ),
-      child: Row(
-        children: [
-          Text(
-            vm.statusText,
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-          const Spacer(),
-          const SizedBox(width: 8),
-          // 垂直光标信息（显示当前X位置的所有通道Y值）
-          if (vm.cursor != null && vm.vCursorEnabled)
-            _buildCursorInfo(vm),
-        ],
-      ),
-    );
-  }
-
-  /// 构建光标信息文本（状态栏右侧）
-  ///
-  /// 显示当前 X 位置及最近数据点各通道的 Y 值。
-  Widget _buildCursorInfo(PlotViewModel vm) {
-    final cursor = vm.cursor!;
-    final buffer = StringBuffer();
-    buffer.write('X: ${cursor.x.toInt()} ');
-
-    // 查找最近的数据点
-    if (vm.dataPoints.isNotEmpty) {
-      final nearest = vm.dataPoints.reduce((a, b) {
-        return (a.index - cursor.x).abs() < (b.index - cursor.x).abs() ? a : b;
-      });
-
-      for (int i = 0; i < nearest.channelCount && i < vm.channels.length; i++) {
-        if (!vm.channels[i].visible) continue;
-        final value = nearest.values[i];
-        buffer.write('Ch$i: ${value.toStringAsFixed(2)} ');
-      }
-    }
-
-    return Text(
-      buffer.toString(),
-      style: const TextStyle(fontSize: 11, color: Colors.grey),
     );
   }
 

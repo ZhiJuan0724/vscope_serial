@@ -269,6 +269,29 @@ class PlotViewModel extends BaseViewModel {
   /// 是否有可撤回的视口历史
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
 
+  /// 状态栏提示文本，根据当前状态给用户操作建议
+  ///
+  /// 提示场景：
+  /// - 未连接串口且未使用随机源 → 提示先连接串口或启用随机源
+  /// - 串口连接中 → 提示正在连接
+  /// - 串口已连接但未开始绘图 → 提示点击开始按钮
+  /// - JACK四通道模式下 → 提示地址在通道面板设置
+  String get hintText {
+    if (serialService.isConnecting) {
+      return '正在连接串口...';
+    }
+    if (!serialService.isConnected && !_useRandomSource && !_isPlotting) {
+      return '请先连接串口或启用随机源，再点击开始绘图';
+    }
+    if (serialService.isConnected && !_isPlotting) {
+      return '串口已连接，点击开始按钮开始绘图';
+    }
+    if (_parserType == ParserType.jackFourChannel) {
+      return 'JACK四通道地址在左侧通道面板设置';
+    }
+    return '';
+  }
+
   /// 状态栏文本，显示当前视口范围、数据点数、接收速率、运行状态
   String get statusText {
     final buffer = StringBuffer();
