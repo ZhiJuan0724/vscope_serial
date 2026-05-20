@@ -173,6 +173,7 @@ class AppLogger {
   }
 
   void _log(String level, String msg, {String? category}) {
+    if (!_initialized) return; // 未初始化时静默丢弃（避免单元测试报错）
     final formatted = category != null ? '[$category] $msg' : msg;
     switch (level) {
       case 'T':

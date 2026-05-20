@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../core/utils/app_logger.dart';
+import '../core/utils/crc.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/data_source_config.dart';
 import '../data/models/parse_result.dart';
@@ -11,6 +14,7 @@ import '../data/models/plot_data.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
+import '../data/parser/jack_four_channel_parser.dart';
 import '../data/source/data_source_manager.dart';
 import '../services/app_settings.dart';
 import '../views/plot/plot_painter.dart';
@@ -434,6 +438,9 @@ class PlotViewModel extends BaseViewModel {
     // 创建解析器
     _parser = _createParser();
 
+    // 发送协议初始化数据（如果有）
+    _sendProtocolInitData();
+
     // 配置并启动数据源
     _sourceConfig.useSerial = serialService.isConnected;
     _sourceConfig.useRandom = _useRandomSource;
@@ -601,7 +608,66 @@ class PlotViewModel extends BaseViewModel {
         return FireWaterParser(_parserConfig);
       case ParserType.fixedFrame:
         return FixedFrameParser(_parserConfig);
+      case ParserType.jackFourChannel:
+        return JackFourChannelParser(_parserConfig);
     }
+  }
+
+  // ========== 协议启动初始化数据发送（预留接口，供后续协议扩展） ==========
+
+  /// 协议启动时发送初始化数据
+  ///
+  /// 某些协议（如JACK四通道）需要在开始绘图前发送配置数据。
+  /// 返回是否发送成功，发送失败不影响后续绘图流程。
+  Future<bool> _sendProtocolInitData() async {
+    switch (_parserType) {
+      case ParserType.jackFourChannel:
+        return _sendJackFourChannelInitData();
+      default:
+        return true; // 其他协议无需发送
+    }
+  }
+
+  /// 发送 JACK四通道初始化数据
+  ///
+  /// 格式：10字节
+  /// [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
+  /// 前8字节为4个通道号（小端序uint16），后2字节为前8字节的CRC16/MODBUS（小端序）
+  Future<bool> _sendJackFourChannelInitData() async {
+    try {
+      // 构造 10 字节数据
+      final bytes = Uint8List(10);
+      final buffer = ByteData.sublistView(bytes);
+
+      for (int i = 0; i < 4; i++) {
+        buffer.setUint16(i * 2, _parserConfig.jackFourChannelIds[i], Endian.little);
+      }
+
+      // 计算前8字节的CRC16/MODBUS
+      final dataBytes = Uint8List.sublistView(bytes, 0, 8);
+      final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
+
+      // CRC 小端序写入
+      bytes[8] = crc & 0xFF;
+      bytes[9] = (crc >> 8) & 0xFF;
+
+      // 通过 SerialService 发送
+      serialService.send(bytes);
+
+      AppLogger().info(
+        'JACK四通道初始化数据已发送: ${_bytesToHex(bytes)}',
+        category: 'PLOT',
+      );
+      return true;
+    } catch (e) {
+      AppLogger().error('JACK四通道初始化数据发送失败: $e', category: 'PLOT');
+      return false;
+    }
+  }
+
+  /// 字节转16进制字符串（用于日志）
+  String _bytesToHex(Uint8List bytes) {
+    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
   }
 
   // ========== 视口控制（带历史记录） ==========
@@ -875,6 +941,25 @@ class PlotViewModel extends BaseViewModel {
     if (index < 0 || index >= channels.length) return;
     final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
     channels[index].yScale = newScale;
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置 JACK四通道的通道号
+  void setJackFourChannelId(int index, int channelId) {
+    if (index < 0 || index >= 4) return;
+    _parserConfig.jackFourChannelIds[index] = channelId & 0xFFFF;
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置 JACK四通道的通道数据类型
+  void setJackFourChannelType(int index, DataType type) {
+    if (index < 0 || index >= 4) return;
+    if (type != DataType.uint16 && type != DataType.int16) return;
+    _parserConfig.jackFourChannelTypes[index] = type;
+    // 同步更新通道配置的数据类型（影响绘图显示）
+    if (index < channels.length) {
+      channels[index].dataType = type;
+    }
     Future.microtask(() => notifyListeners());
   }
 

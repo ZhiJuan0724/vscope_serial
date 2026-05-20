@@ -849,7 +849,11 @@ class _PlotPageContent extends StatelessWidget {
   Widget _buildChannelPanel(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    
+    // JACK四通道模式下，只显示4个通道
+    final displayCount = vm.parserType == ParserType.jackFourChannel
+        ? 4
+        : activeCount;
+
     return Container(
       width: 200,
       decoration: BoxDecoration(
@@ -899,7 +903,7 @@ class _PlotPageContent extends StatelessWidget {
           ),
           Expanded(
             child: ListView.builder(
-              itemCount: activeCount,
+              itemCount: displayCount,
               itemBuilder: (context, index) {
                 final ch = vm.channels[index];
                 return _ChannelItem(key: ValueKey('ch_${ch.index}'), vm: vm, ch: ch);
@@ -1486,16 +1490,28 @@ class _ChannelItem extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 4),
-          // 通道名/别名
+          // 通道名/别名 + JACK四通道通道号
           Expanded(
-            child: Text(
-              _displayName,
-              style: TextStyle(
-                fontSize: 10,
-                color: ch.visible ? null : Colors.grey,
-                decoration: ch.visible ? null : TextDecoration.lineThrough,
-              ),
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _displayName,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: ch.visible ? null : Colors.grey,
+                    decoration: ch.visible ? null : TextDecoration.lineThrough,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // JACK四通道模式下显示通道号
+                if (vm.parserType == ParserType.jackFourChannel && ch.index < 4)
+                  Text(
+                    'ID: 0x${vm.parserConfig.jackFourChannelIds[ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                    style: const TextStyle(fontSize: 9, color: Colors.grey),
+                  ),
+              ],
             ),
           ),
           // 绘图开关
@@ -1553,6 +1569,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   late String _alias;
   late bool _showLine;
   late bool _offsetEnabled;
+  late DataType _jackDataType;
   late final TextEditingController _aliasController;
 
   @override
@@ -1562,6 +1579,8 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _alias = widget.ch.alias;
     _showLine = widget.ch.showLine;
     _offsetEnabled = widget.ch.offsetEnabled;
+    // JACK四通道模式下，使用通道配置的数据类型
+    _jackDataType = widget.ch.dataType == DataType.int16 ? DataType.int16 : DataType.uint16;
     _aliasController = TextEditingController(text: _alias);
   }
 
@@ -1632,6 +1651,40 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
               ),
             ],
+            // JACK四通道模式下显示数据类型选择
+            if (widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4) ...[
+              const SizedBox(height: 16),
+              const Text('数据类型', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text('仅在JACK四通道协议生效', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: NoAnimDropdown<DataType>(
+                      value: _jackDataType,
+                      hint: '类型',
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      ),
+                      items: [DataType.uint16, DataType.int16].map((type) {
+                        return DropdownMenuItem(
+                          value: type,
+                          child: Text(type.label, style: const TextStyle(fontSize: 12)),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _jackDataType = value);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -1646,6 +1699,10 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
             widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
             widget.vm.setChannelShowLine(widget.ch.index, _showLine);
             widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
+            // JACK四通道模式下同步数据类型
+            if (widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4) {
+              widget.vm.setJackFourChannelType(widget.ch.index, _jackDataType);
+            }
             Navigator.pop(context);
           },
           child: const Text('确定'),
@@ -1729,9 +1786,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       title: const Text('解析器配置'),
       content: SizedBox(
         width: 300,
-        child: widget.vm.parserType == ParserType.fireWater
-            ? _buildFireWaterConfig()
-            : _buildFixedFrameConfig(),
+        child: _buildConfigContent(),
       ),
       actions: [
         TextButton(
@@ -1788,6 +1843,111 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           ],
         ),
       ],
+    );
+  }
+
+  /// 根据当前解析器类型构建对应的配置界面
+  Widget _buildConfigContent() {
+    switch (widget.vm.parserType) {
+      case ParserType.fireWater:
+        return _buildFireWaterConfig();
+      case ParserType.fixedFrame:
+        return _buildFixedFrameConfig();
+      case ParserType.jackFourChannel:
+        return _buildJackFourChannelConfig();
+    }
+  }
+
+  /// 构建 JACK四通道解析器配置界面
+  ///
+  /// 包含4个通道的通道号（2字节16进制）和数据类型（uint16/int16）设置。
+  Widget _buildJackFourChannelConfig() {
+    return SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('JACK四通道配置', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          const Text('固定4通道，10字节帧格式', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          const Text('8字节数据 + 2字节CRC16(MODBUS)', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          const SizedBox(height: 12),
+          // 4个通道配置
+          ...List.generate(4, (i) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Text('Ch$i:', style: const TextStyle(fontSize: 12)),
+                  const SizedBox(width: 6),
+                  // 通道号输入（2字节16进制）
+                  SizedBox(
+                    width: 70,
+                    child: TextField(
+                      controller: TextEditingController(
+                        text: '0x${_config.jackFourChannelIds[i].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        hintText: '通道号',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                      ),
+                      style: const TextStyle(fontSize: 11),
+                      onChanged: (value) {
+                        final hex = value.replaceAll('0x', '').replaceAll('0X', '');
+                        final id = int.tryParse(hex, radix: 16);
+                        if (id != null && id >= 0 && id <= 0xFFFF) {
+                          setState(() => _config.jackFourChannelIds[i] = id);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // 数据类型选择
+                  SizedBox(
+                    width: 90,
+                    child: NoAnimDropdown<DataType>(
+                      value: _config.jackFourChannelTypes[i],
+                      hint: '类型',
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                      ),
+                      items: [DataType.uint16, DataType.int16].map((type) {
+                        return DropdownMenuItem(
+                          value: type,
+                          child: Text(type.label, style: const TextStyle(fontSize: 11)),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _config.jackFourChannelTypes[i] = value);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+          // 启动时发送配置开关
+          Row(
+            children: [
+              const Text('启动时发送配置', style: TextStyle(fontSize: 12)),
+              const Spacer(),
+              Switch(
+                value: _config.jackFourChannelSendOnStart,
+                onChanged: (value) {
+                  setState(() => _config.jackFourChannelSendOnStart = value);
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
