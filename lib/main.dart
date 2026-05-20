@@ -46,11 +46,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // SerialService 是全局单例，使用 Provider.value 避免 Provider
+    // 在重建时 dispose 单例导致连接被意外断开。
+    final serialService = SerialService();
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => SerialService()),
+        ChangeNotifierProvider.value(value: serialService),
         ChangeNotifierProvider(
-          create: (context) => PlotViewModel(context.read<SerialService>()),
+          create: (context) => PlotViewModel(serialService),
         ),
       ],
       child: MaterialApp(
@@ -78,6 +81,13 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Register window close handler: disconnect serial before closing
+    _setupWindowCloseHandler();
+  }
+
+  void _setupWindowCloseHandler() {
+    windowManager.setPreventClose(true);
+    windowManager.addListener(_WindowCloseListener(context));
   }
 
   @override
@@ -89,7 +99,6 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.detached) {
-      // 应用退出时关闭日志文件
       AppLogger().disposeLogger();
     }
   }
@@ -192,5 +201,24 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+}
+
+/// Window close listener: disconnect serial before allowing window to close
+class _WindowCloseListener extends WindowListener {
+  final BuildContext context;
+
+  _WindowCloseListener(this.context);
+
+  @override
+  void onWindowClose() async {
+    final serialService = Provider.of<SerialService>(context, listen: false);
+    if (serialService.isConnected) {
+      serialService.disconnect();
+      // Wait for disconnect to complete (C++ thread join + cleanup)
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
+    await windowManager.setPreventClose(false);
+    await windowManager.close();
   }
 }
