@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:io';
 import 'dart:typed_data';
@@ -12,6 +13,8 @@ import '../core/utils/crc.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/serial_config.dart';
 import 'app_settings.dart';
+import 'native_serial_reader.dart';
+import 'time_window_aggregator.dart';
 
 class _OpenPortArgs {
   final SendPort sendPort;
@@ -56,6 +59,16 @@ class SerialService extends ChangeNotifier {
   StreamSubscription? _subscription;
   bool isConnected = false;
   bool isConnecting = false;
+
+  // Windows 原生串口读取器（替代 flutter_libserialport 的读取功能）
+  NativeSerialReader? _nativeReader;
+  StreamSubscription? _nativeSubscription;
+
+  // 时间窗口聚合器
+  TimeWindowAggregator? _aggregator;
+
+  // 时间窗口粒度（毫秒），默认 1ms
+  int timeWindowMs = 1;
 
   // 当前连接的串口标识（用于判断是否需要清空数据）
   String? _lastConnectedPort;
@@ -148,49 +161,9 @@ class SerialService extends ChangeNotifier {
     }
 
     try {
-      // 步骤1: 在 Isolate 中探测串口可用性（不阻塞UI）
-      AppLogger().trace('启动 Isolate 探测串口可用性...', category: 'SERIAL');
-      final probeResult = await _openPortInIsolate(
-        portName: config.port!,
-        baudRate: config.baudRate,
-        dataBits: config.dataBits,
-        stopBits: config.stopBits,
-        parity: config.parity,
-        rts: config.rts,
-        dtr: config.dtr,
-      );
-      AppLogger().trace('Isolate 探测结果: success=${probeResult.success}', category: 'SERIAL');
-
-      if (probeResult.success) {
-        // Isolate 探测成功，在主线程打开（物理串口路径）
-        AppLogger().trace('Isolate 探测成功，主线程打开串口...', category: 'SERIAL');
-        await _openPortInMainThread();
-      } else {
-        // Isolate 探测失败，尝试直接在 Isolate 中打开并保持（虚拟串口路径）
-        AppLogger().trace('Isolate 探测失败，尝试虚拟串口路径...', category: 'SERIAL');
-        final virtualResult = await _openPortInIsolateKeepOpen(
-          portName: config.port!,
-          baudRate: config.baudRate,
-          dataBits: config.dataBits,
-          stopBits: config.stopBits,
-          parity: config.parity,
-          rts: config.rts,
-          dtr: config.dtr,
-        );
-        if (!virtualResult.success) {
-          throw Exception(virtualResult.error ?? '无法打开串口');
-        }
-        // 虚拟串口路径成功，但需要在主线程重新创建 SerialPortReader
-        // 由于虚拟串口已经在 Isolate 中打开，这里直接尝试主线程打开
-        // 如果失败，说明该虚拟串口不支持二次打开
-        try {
-          await _openPortInMainThread();
-        } catch (e) {
-          AppLogger().warning('虚拟串口主线程打开失败，尝试备用方案: $e', category: 'SERIAL');
-          // 备用方案：直接尝试主线程打开，忽略 Isolate 探测结果
-          await _openPortInMainThread(skipProbe: true);
-        }
-      }
+      // 直接使用 NativeSerialReader 打开串口（跳过 Isolate 探测）
+      AppLogger().trace('使用 NativeSerialReader 打开串口...', category: 'SERIAL');
+      await _openPortInMainThread();
 
       _lastConnectedPort = config.port;
       isConnected = true;
@@ -208,28 +181,33 @@ class SerialService extends ChangeNotifier {
 
   /// 在主线程打开串口
   Future<void> _openPortInMainThread({bool skipProbe = false}) async {
-    _serialPort = SerialPort(config.port!);
-    final portConfig = SerialPortConfig();
-    portConfig.baudRate = config.baudRate;
-    portConfig.bits = config.dataBits;
-    portConfig.stopBits = config.stopBits;
-    portConfig.parity = config.parity;
-    portConfig.setFlowControl(SerialPortFlowControl.none);
-    portConfig.rts = config.rts ? SerialPortRts.on : SerialPortRts.off;
-    portConfig.dtr = config.dtr ? SerialPortDtr.on : SerialPortDtr.off;
-    _serialPort!.config = portConfig;
-
-    if (!_serialPort!.openReadWrite()) {
+    // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
+    _nativeReader = NativeSerialReader();
+    // Initialize Dart API with NativeApi.initializeApiDLData before opening
+    final initData = NativeApi.initializeApiDLData;
+    _nativeReader!.initDartApi(initData);
+    final opened = _nativeReader!.open(config.port!, config.baudRate);
+    if (!opened) {
       throw Exception('无法打开串口');
     }
-    AppLogger().trace('openReadWrite() 返回 true', category: 'SERIAL');
 
-    _reader = SerialPortReader(_serialPort!);
-    _subscription = _reader!.stream.listen(
-      (data) => _onDataReceived(data),
-      onError: (error) => AppLogger().error('读取错误: $error', category: 'SERIAL'),
+    // 设置串口参数
+    _nativeReader!.setConfig(config.dataBits, config.stopBits, config.parity);
+    _nativeReader!.setRts(config.rts);
+    _nativeReader!.setDtr(config.dtr);
+
+    AppLogger().trace('NativeSerialReader 打开成功', category: 'SERIAL');
+
+    // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
+    _nativeReader!.startReading(timeoutMs: 10);
+
+    // 监听数据流
+    _nativeSubscription = _nativeReader!.dataStream.listen(
+      (nativeData) => _onNativeDataReceived(nativeData),
+      onError: (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
-    AppLogger().trace('SerialPortReader 创建完成', category: 'SERIAL');
+
+    AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
 
   static Future<_OpenPortResult> _openPortInIsolate({
@@ -350,6 +328,10 @@ class SerialService extends ChangeNotifier {
     _subscription = null;
     _reader?.close();
     _reader = null;
+    _nativeSubscription?.cancel();
+    _nativeSubscription = null;
+    _nativeReader?.close();
+    _nativeReader = null;
     _serialPort?.close();
     _serialPort?.dispose();
     _serialPort = null;
@@ -360,13 +342,28 @@ class SerialService extends ChangeNotifier {
     }
   }
 
-  void _onDataReceived(Uint8List data) {
-    final packet = DataPacket(data: data);
-    // 绘图时禁用逐包debug日志，避免性能瓶颈（PlotViewModel有自己的统计）
+  /// 初始化时间窗口聚合器
+  void _initAggregator() {
+    _aggregator = TimeWindowAggregator(
+      windowMs: timeWindowMs,
+      onWindowComplete: (timestamp, data) {
+        _addRawDataLine(timestamp, data);
+      },
+    );
+  }
+
+  /// 原生串口数据接收回调
+  void _onNativeDataReceived(NativeSerialData nativeData) {
+    final data = nativeData.data;
+    print('[SerialService._onNativeDataReceived] Received ${data.length} bytes');
+
+    // 绘图时禁用逐包debug日志
     if (!isPlotting) {
       AppLogger().debug('接收 ${data.length} bytes', category: 'DATA');
     }
-    _dataController.add(packet);
+
+    // 转发给绘图数据流（保持兼容）
+    _dataController.add(DataPacket(data: data));
 
     // 保存原始字节（始终保存，用于导出）
     _rawBytes.addAll(data);
@@ -378,72 +375,52 @@ class SerialService extends ChangeNotifier {
 
     // 原始数据文本接收条件：串口已连接 + 用户开启接收 + 不在绘图状态
     final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
+    print('[SerialService._onNativeDataReceived] shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting');
     if (shouldReceiveRaw) {
-      // 保存为文本行（原始数据页面用）
-      String text;
-      if (receiveHex) {
-        text = packet.hex;
-      } else {
-        text = utf8.decode(data, allowMalformed: true);
-      }
+      // 使用时间窗口聚合器聚合数据
+      _aggregator ??= TimeWindowAggregator(
+        windowMs: timeWindowMs,
+        onWindowComplete: (timestamp, aggregatedData) {
+          _addRawDataLine(timestamp, aggregatedData);
+        },
+      );
 
-      final ts = showTimestamp
-          ? '[${_formatTimestamp(packet.timestamp)}] '
-          : '';
-
-      // 每包数据独立一行显示
-      final lines = _splitPacketIntoLines(ts, text);
-      for (final line in lines) {
-        receivedLines.add(line);
-        _receivedTextBytes += line.length * 2; // UTF-16 编码估算
-      }
-
-      // 文本缓存限制（按字节）
-      while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
-        final removed = receivedLines.removeAt(0);
-        _receivedTextBytes -= removed.length * 2;
-      }
-      // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
-      while (receivedLines.length > _maxDisplayLines) {
-        final removed = receivedLines.removeAt(0);
-        _receivedTextBytes -= removed.length * 2;
-      }
-      Future.microtask(() => notifyListeners());
+      // 使用 C++ 提供的微秒级时间戳，转换为毫秒精度
+      final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
+        nativeData.timestampUs,
+      );
+      _aggregator!.feed(data, receiveTime);
     }
   }
 
-  /// 将接收到的数据按包拆分为独立行
-  ///
-  /// 对于HEX模式：如果数据包含空格分隔的多组hex，按每组拆分为一行
-  /// 对于文本模式：按换行符拆分，每行独立显示
-  List<String> _splitPacketIntoLines(String ts, String text) {
-    final lines = <String>[];
+  /// 添加一行原始数据显示
+  void _addRawDataLine(DateTime timestamp, Uint8List data) {
+    String text;
     if (receiveHex) {
-      // HEX模式：如果text包含空格，按空格拆分为多行
-      final parts = text.trim().split(' ');
-      if (parts.length > 1 && parts.every((p) => p.length == 2)) {
-        // 看起来是 "01 02 03 ..." 格式，整包作为一行
-        lines.add('$ts$text');
-      } else {
-        lines.add('$ts$text');
-      }
+      text = data
+          .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+          .join(' ');
     } else {
-      // 文本模式：按换行符拆分
-      final parts = text.split('\n');
-      for (var i = 0; i < parts.length; i++) {
-        final part = parts[i];
-        if (part.isEmpty && i == parts.length - 1) continue; // 末尾空行忽略
-        // 移除回车符
-        final clean = part.replaceAll('\r', '');
-        if (clean.isEmpty && i < parts.length - 1) {
-          lines.add('$ts[空行]');
-        } else if (clean.isNotEmpty) {
-          lines.add('$ts$clean');
-        }
-      }
-      if (lines.isEmpty) lines.add('$ts$text');
+      text = utf8.decode(data, allowMalformed: true);
     }
-    return lines;
+
+    final ts = showTimestamp ? '[${_formatTimestamp(timestamp)}] ' : '';
+    final line = '$ts$text (${data.length} bytes)';
+
+    receivedLines.add(line);
+    _receivedTextBytes += line.length * 2; // UTF-16 编码估算
+
+    // 文本缓存限制（按字节）
+    while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
+      final removed = receivedLines.removeAt(0);
+      _receivedTextBytes -= removed.length * 2;
+    }
+    // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
+    while (receivedLines.length > _maxDisplayLines) {
+      final removed = receivedLines.removeAt(0);
+      _receivedTextBytes -= removed.length * 2;
+    }
+    Future.microtask(() => notifyListeners());
   }
 
   String _formatTimestamp(DateTime dt) {
@@ -451,7 +428,8 @@ class SerialService extends ChangeNotifier {
     final m = dt.minute.toString().padLeft(2, '0');
     final s = dt.second.toString().padLeft(2, '0');
     final ms = dt.millisecond.toString().padLeft(3, '0');
-    return '$h:$m:$s.$ms';
+    final us = dt.microsecond.toString().padLeft(6, '0');
+    return '$h:$m:$s.$ms$us';
   }
 
   /// 清空所有数据（切换串口时调用）
@@ -531,7 +509,11 @@ class SerialService extends ChangeNotifier {
   };
 
   Uint8List? prepareSendData(String text) {
-    if (_serialPort == null || !isConnected) {
+    if (!isConnected) {
+      AppLogger().error('串口未连接', category: 'SERIAL');
+      return null;
+    }
+    if (_serialPort == null && _nativeReader == null) {
       AppLogger().error('串口未连接', category: 'SERIAL');
       return null;
     }
@@ -581,21 +563,35 @@ class SerialService extends ChangeNotifier {
   }
 
   void send(Uint8List data) {
-    if (_serialPort == null || !isConnected) {
+    if (!isConnected) {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
     }
-    _serialPort!.write(data);
-    AppLogger().info('发送 ${data.length} bytes', category: 'DATA');
+    print('[SerialService.send] _nativeReader=$_nativeReader, _serialPort=$_serialPort');
+    if (_nativeReader != null) {
+      print('[SerialService.send] _nativeReader.isOpen=${_nativeReader!.isOpen}');
+      final sent = _nativeReader!.write(data);
+      AppLogger().info('发送 $sent bytes', category: 'DATA');
+      print('[SerialService.send] sent=$sent');
+    } else if (_serialPort != null) {
+      _serialPort!.write(data);
+      AppLogger().info('发送 ${data.length} bytes', category: 'DATA');
+    } else {
+      throw StateError('串口未连接');
+    }
   }
 
   void updateRts(bool value) {
     config = config.copyWith(rts: value);
     _saveSettings();
-    if (isConnected && _serialPort != null) {
-      final cfg = _serialPort!.config;
-      cfg.rts = value ? SerialPortRts.on : SerialPortRts.off;
-      _serialPort!.config = cfg;
+    if (isConnected) {
+      if (_nativeReader != null) {
+        _nativeReader!.setRts(value);
+      } else if (_serialPort != null) {
+        final cfg = _serialPort!.config;
+        cfg.rts = value ? SerialPortRts.on : SerialPortRts.off;
+        _serialPort!.config = cfg;
+      }
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
@@ -604,13 +600,29 @@ class SerialService extends ChangeNotifier {
   void updateDtr(bool value) {
     config = config.copyWith(dtr: value);
     _saveSettings();
-    if (isConnected && _serialPort != null) {
-      final cfg = _serialPort!.config;
-      cfg.dtr = value ? SerialPortDtr.on : SerialPortDtr.off;
-      _serialPort!.config = cfg;
+    if (isConnected) {
+      if (_nativeReader != null) {
+        _nativeReader!.setDtr(value);
+      } else if (_serialPort != null) {
+        final cfg = _serialPort!.config;
+        cfg.dtr = value ? SerialPortDtr.on : SerialPortDtr.off;
+        _serialPort!.config = cfg;
+      }
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置时间窗口粒度（毫秒）
+  void setTimeWindowMs(int ms) {
+    timeWindowMs = ms;
+    _aggregator = TimeWindowAggregator(
+      windowMs: ms,
+      onWindowComplete: (timestamp, data) {
+        _addRawDataLine(timestamp, data);
+      },
+    );
+    AppLogger().info('时间窗口粒度: ${ms}ms', category: 'SERIAL');
   }
 
   // ========== 原始数据接收控制 ==========
@@ -639,7 +651,23 @@ class SerialService extends ChangeNotifier {
 
   @override
   void dispose() {
-    disconnect();
+    // Do NOT call disconnect() here - it triggers notifyListeners()
+    // which will throw if called after super.dispose().
+    // Just clean up resources directly.
+    _subscription?.cancel();
+    _subscription = null;
+    _reader?.close();
+    _reader = null;
+    _nativeSubscription?.cancel();
+    _nativeSubscription = null;
+    _nativeReader?.dispose();
+    _nativeReader = null;
+    // NOTE: Do NOT call _serialPort?.dispose() on app exit.
+    // flutter_libserialport's C library may call abort() during process
+    // termination cleanup. Let the OS reclaim the handle instead.
+    _serialPort?.close();
+    _serialPort = null;
+    isConnected = false;
     _dataController.close();
     super.dispose();
   }

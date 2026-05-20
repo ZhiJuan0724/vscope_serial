@@ -18,6 +18,7 @@ class RawDataViewModel extends BaseViewModel {
   String get crcPolyName => serialService.crcPolyName;
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
+  int get timeWindowMs => serialService.timeWindowMs;
 
   /// 设置随机数据源开关
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在原始数据页面
@@ -70,6 +71,10 @@ class RawDataViewModel extends BaseViewModel {
   void setCrcPolyName(String name) {
     serialService.crcPolyName = name;
     Future.microtask(() => serialService.notifyListeners());
+  }
+
+  void setTimeWindowMs(int ms) {
+    serialService.setTimeWindowMs(ms);
   }
 
   void clearData() => serialService.clearReceivedData();

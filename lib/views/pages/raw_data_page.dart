@@ -29,11 +29,13 @@ class _RawDataPageState extends State<RawDataPage> {
   void _scrollToBottom(RawDataViewModel vm) {
     if (vm.autoScroll && _scrollController.hasClients) {
       Future.delayed(const Duration(milliseconds: 50), () {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          );
+        }
       });
     }
   }
@@ -164,6 +166,27 @@ class _RawDataPageState extends State<RawDataPage> {
                   ),
                   const Text('自动滚动'),
                 ],
+              ),
+              const SizedBox(width: 8),
+              // 时间窗口粒度配置
+              SizedBox(
+                width: 70,
+                child: TextField(
+                  controller: TextEditingController(text: vm.timeWindowMs.toString()),
+                  decoration: const InputDecoration(
+                    labelText: '窗口ms',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  ),
+                  style: const TextStyle(fontSize: 12),
+                  keyboardType: TextInputType.number,
+                  onSubmitted: (value) {
+                    final ms = int.tryParse(value);
+                    if (ms != null && ms > 0) {
+                      vm.setTimeWindowMs(ms);
+                    }
+                  },
+                ),
               ),
               const SizedBox(width: 8),
               TextButton.icon(
