@@ -401,12 +401,19 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 解析器控制 ==========
-  /// 切换解析器类型（FireWater / 固定帧）
+  /// 切换解析器类型（FireWater / 固定帧 / JACK四通道）
   ///
   /// 如果正在绘图，会自动重启以应用新解析器。
+  /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时自动关闭。
   void setParserType(ParserType type) {
     _parserType = type;
     _parserConfig.type = type;
+
+    // 随机数据源仅适用于 FireWater 协议
+    if (type != ParserType.fireWater && _useRandomSource) {
+      AppLogger().info('切换到非 FireWater 协议，自动关闭随机数据源', category: 'PLOT');
+      setUseRandomSource(false);
+    }
 
     if (_isPlotting) {
       _restartPlotting();

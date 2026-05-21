@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
-import 'dart:isolate';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -15,35 +14,6 @@ import '../data/models/serial_config.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'time_window_aggregator.dart';
-
-class _OpenPortArgs {
-  final SendPort sendPort;
-  final String portName;
-  final int baudRate;
-  final int dataBits;
-  final int stopBits;
-  final int parity;
-  final bool rts;
-  final bool dtr;
-
-  _OpenPortArgs({
-    required this.sendPort,
-    required this.portName,
-    required this.baudRate,
-    required this.dataBits,
-    required this.stopBits,
-    required this.parity,
-    required this.rts,
-    required this.dtr,
-  });
-}
-
-class _OpenPortResult {
-  final bool success;
-  final String? error;
-
-  _OpenPortResult({required this.success, this.error});
-}
 
 /// 串口服务 - 全局单例
 class SerialService extends ChangeNotifier {
@@ -182,7 +152,7 @@ class SerialService extends ChangeNotifier {
   }
 
   /// 在主线程打开串口
-  Future<void> _openPortInMainThread({bool skipProbe = false}) async {
+  Future<void> _openPortInMainThread() async {
     // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
     _nativeReader = NativeSerialReader();
     // Initialize Dart API with NativeApi.initializeApiDLData before opening
@@ -212,109 +182,6 @@ class SerialService extends ChangeNotifier {
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
 
-  static Future<_OpenPortResult> _openPortInIsolate({
-    required String portName,
-    required int baudRate,
-    required int dataBits,
-    required int stopBits,
-    required int parity,
-    required bool rts,
-    required bool dtr,
-  }) async {
-    final receivePort = ReceivePort();
-    await Isolate.spawn(
-      _openPortIsolateEntry,
-      _OpenPortArgs(
-        sendPort: receivePort.sendPort,
-        portName: portName,
-        baudRate: baudRate,
-        dataBits: dataBits,
-        stopBits: stopBits,
-        parity: parity,
-        rts: rts,
-        dtr: dtr,
-      ),
-    );
-    return await receivePort.first as _OpenPortResult;
-  }
-
-  static void _openPortIsolateEntry(_OpenPortArgs args) {
-    try {
-      final port = SerialPort(args.portName);
-      final portConfig = SerialPortConfig();
-      portConfig.baudRate = args.baudRate;
-      portConfig.bits = args.dataBits;
-      portConfig.stopBits = args.stopBits;
-      portConfig.parity = args.parity;
-      portConfig.setFlowControl(SerialPortFlowControl.none);
-      portConfig.rts = args.rts ? SerialPortRts.on : SerialPortRts.off;
-      portConfig.dtr = args.dtr ? SerialPortDtr.on : SerialPortDtr.off;
-      port.config = portConfig;
-
-      final opened = port.openReadWrite();
-      port.close();
-      port.dispose();
-
-      args.sendPort.send(_OpenPortResult(success: opened));
-    } catch (e) {
-      args.sendPort.send(_OpenPortResult(success: false, error: e.toString()));
-    }
-  }
-
-  /// 在 Isolate 中打开串口并保持打开状态（用于虚拟串口）
-  static Future<_OpenPortResult> _openPortInIsolateKeepOpen({
-    required String portName,
-    required int baudRate,
-    required int dataBits,
-    required int stopBits,
-    required int parity,
-    required bool rts,
-    required bool dtr,
-  }) async {
-    final receivePort = ReceivePort();
-    await Isolate.spawn(
-      _openPortIsolateKeepOpenEntry,
-      _OpenPortArgs(
-        sendPort: receivePort.sendPort,
-        portName: portName,
-        baudRate: baudRate,
-        dataBits: dataBits,
-        stopBits: stopBits,
-        parity: parity,
-        rts: rts,
-        dtr: dtr,
-      ),
-    );
-    return await receivePort.first as _OpenPortResult;
-  }
-
-  static void _openPortIsolateKeepOpenEntry(_OpenPortArgs args) {
-    try {
-      final port = SerialPort(args.portName);
-      final portConfig = SerialPortConfig();
-      portConfig.baudRate = args.baudRate;
-      portConfig.bits = args.dataBits;
-      portConfig.stopBits = args.stopBits;
-      portConfig.parity = args.parity;
-      portConfig.setFlowControl(SerialPortFlowControl.none);
-      portConfig.rts = args.rts ? SerialPortRts.on : SerialPortRts.off;
-      portConfig.dtr = args.dtr ? SerialPortDtr.on : SerialPortDtr.off;
-      port.config = portConfig;
-
-      final opened = port.openReadWrite();
-      if (opened) {
-        // 保持打开一小段时间，测试虚拟串口稳定性
-        sleep(const Duration(milliseconds: 100));
-        port.close();
-      }
-      port.dispose();
-
-      args.sendPort.send(_OpenPortResult(success: opened));
-    } catch (e) {
-      args.sendPort.send(_OpenPortResult(success: false, error: e.toString()));
-    }
-  }
-
   void disconnect() {
     if (isConnecting) {
       AppLogger().warning('正在连接中，无法断开', category: 'SERIAL');
@@ -342,16 +209,6 @@ class SerialService extends ChangeNotifier {
     if (isRawReceiving) {
       isRawReceiving = false;
     }
-  }
-
-  /// 初始化时间窗口聚合器
-  void _initAggregator() {
-    _aggregator = TimeWindowAggregator(
-      windowUs: timeWindowUs,
-      onWindowComplete: (timestamp, data) {
-        _addRawDataLine(timestamp, data);
-      },
-    );
   }
 
   /// 原生串口数据接收回调
@@ -659,7 +516,7 @@ class SerialService extends ChangeNotifier {
         _addRawDataLine(timestamp, data);
       },
     );
-    AppLogger().info('时间窗口粒度: ${us}μs', category: 'SERIAL');
+    AppLogger().info('时间窗口粒度: $us μs', category: 'SERIAL');
   }
 
   // ========== 原始数据接收控制 ==========

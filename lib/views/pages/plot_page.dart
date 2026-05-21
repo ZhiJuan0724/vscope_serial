@@ -1305,7 +1305,7 @@ class _ChannelItemState extends State<_ChannelItem> {
               onTap: () => _showChannelEditDialog(context),
               child: const Padding(
                 padding: EdgeInsets.all(2),
-                child: Icon(Icons.edit, size: 14),
+                child: Icon(Icons.settings, size: 14),
               ),
             ),
           ),

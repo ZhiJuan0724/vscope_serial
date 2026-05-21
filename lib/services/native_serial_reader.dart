@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import '../core/utils/app_logger.dart';
 
 // 加载 DLL
 final DynamicLibrary _dll = _loadDll();
@@ -175,17 +176,21 @@ class NativeSerialReader {
   bool get isOpen => _nsrIsOpen() == 1;
 
   void _onDataReceived(dynamic message) {
-    print('[NativeSerialReader] Received message type: ${message.runtimeType}, length: ${message is Uint8List ? message.length : "N/A"}');
-    
-    if (message is! Uint8List) return;
+    if (message is! Uint8List) {
+      AppLogger().debug('[NativeSerialReader] Received non-Uint8List message: ${message.runtimeType}', category: 'SERIAL');
+      return;
+    }
 
     // C++ 发送的数据格式: [8 bytes timestamp_us][N bytes data]
-    if (message.length < 8) return;
+    if (message.length < 8) {
+      AppLogger().debug('[NativeSerialReader] Message too short: ${message.length} bytes', category: 'SERIAL');
+      return;
+    }
 
     final timestampUs = ByteData.sublistView(message).getInt64(0, Endian.little);
     final data = Uint8List.sublistView(message, 8);
 
-    print('[NativeSerialReader] Data received: ${data.length} bytes, timestamp: ${timestampUs}us');
+    AppLogger().debug('[NativeSerialReader] Data: ${data.length} bytes, timestamp: ${timestampUs}us', category: 'SERIAL');
 
     _dataController.add(NativeSerialData(
       data: data,

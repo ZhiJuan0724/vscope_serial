@@ -104,132 +104,147 @@ class _RawDataPageState extends State<RawDataPage> {
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // 左侧固定区域估算宽度
-              const leftWidth = 180.0;
-              // 菜单按钮宽度
-              const menuButtonWidth = 40.0;
-              // 组间距
-              const groupSpacing = 8.0;
+              // 使用固定断点决定折叠策略，避免宽度跳动：
+              // - ≥ 820px: 全部展开
+              // - 560px ~ 820px: 操作组（清空/保存/设置）折叠进菜单
+              // - < 560px: 选项组（时间戳/HEX/滚动）和操作组都折叠
+              final width = constraints.maxWidth;
+              final showOptions = width >= 560;
+              final showActions = width >= 820;
+              final hasCollapsed = !showOptions || !showActions;
 
-              // 各右侧组的估算宽度（留 20% 余量）
-              const groupWidths = {
-                _RawToolbarGroup.options: 280.0,  // 时间戳 + HEX显示 + 自动滚动
-                _RawToolbarGroup.actions: 300.0,  // 清空 + 保存 + 高级设置
-              };
-
-              // 可用宽度（扣除左侧和菜单按钮）
-              final availableWidth = constraints.maxWidth - leftWidth - menuButtonWidth;
-
-              // 从右边开始逐个检查是否能放下
-              final groups = <_RawToolbarGroup>[
-                _RawToolbarGroup.options,
-                _RawToolbarGroup.actions,
-              ];
-
-              while (groups.isNotEmpty) {
-                var currentWidth = groupSpacing * groups.length;
-                for (final g in groups) {
-                  currentWidth += groupWidths[g] ?? 0;
-                }
-                if (currentWidth <= availableWidth) break;
-                groups.removeLast();
-              }
-
-              final hasCollapsed = groups.length < 2;
-
-              return ClipRect(
-                child: Row(
-                  children: [
-                  const Text('数据窗口',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  // 开始/停止接收按钮
-                  ElevatedButton.icon(
-                    onPressed: vm.isConnected && !vm.isRawReceiving
-                        ? () => vm.startReceiving()
-                        : null,
-                    icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('开始接收'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      minimumSize: const Size(0, 36),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  ElevatedButton.icon(
-                    onPressed: vm.isRawReceiving
-                        ? () => vm.stopReceiving()
-                        : null,
-                    icon: const Icon(Icons.stop, size: 16),
-                    label: const Text('停止接收'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      minimumSize: const Size(0, 36),
-                    ),
-                  ),
-                  const Spacer(),
-                  // 选项组（时间戳/HEX/自动滚动）
-                  if (groups.contains(_RawToolbarGroup.options)) ...[
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: vm.showTimestamp,
-                          onChanged: (value) => vm.setShowTimestamp(value!),
-                        ),
-                        const Text('时间戳'),
-                      ],
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: vm.receiveHex,
-                          onChanged: (value) => vm.setReceiveHex(value!),
-                        ),
-                        const Text('HEX显示'),
-                      ],
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: vm.autoScroll,
-                          onChanged: (value) => vm.setAutoScroll(value!),
-                        ),
-                        const Text('自动滚动'),
-                      ],
-                    ),
-                  ],
-                  // 操作组（清空/保存/高级设置）
-                  if (groups.contains(_RawToolbarGroup.actions)) ...[
+              return SizedBox(
+                height: 40,
+                child: ClipRect(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                    const Text('数据窗口',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(width: 8),
-                    TextButton.icon(
-                      onPressed: () => vm.clearData(),
-                      icon: const Icon(Icons.clear, size: 18),
-                      label: const Text('清空'),
+                    // 开始/停止接收按钮
+                    ElevatedButton.icon(
+                      onPressed: vm.isConnected && !vm.isRawReceiving
+                          ? () => vm.startReceiving()
+                          : null,
+                      icon: const Icon(Icons.play_arrow, size: 16),
+                      label: const Text('开始接收'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
                     ),
-                    TextButton.icon(
-                      onPressed: () => _showExportDialog(context, vm),
-                      icon: const Icon(Icons.save, size: 18),
-                      label: const Text('保存'),
+                    const SizedBox(width: 4),
+                    ElevatedButton.icon(
+                      onPressed: vm.isRawReceiving
+                          ? () => vm.stopReceiving()
+                          : null,
+                      icon: const Icon(Icons.stop, size: 16),
+                      label: const Text('停止接收'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
                     ),
-                    TextButton.icon(
-                      onPressed: () => _showAdvancedSettingsDialog(context, vm),
-                      icon: const Icon(Icons.settings, size: 18),
-                      label: const Text('高级设置'),
-                    ),
+                    const Spacer(),
+                    // 选项组（时间戳/HEX/自动滚动）
+                    if (showOptions) ...[
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: Checkbox(
+                              value: vm.showTimestamp,
+                              onChanged: (value) => vm.setShowTimestamp(value!),
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          const Text('时间戳'),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: Checkbox(
+                              value: vm.receiveHex,
+                              onChanged: (value) => vm.setReceiveHex(value!),
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          const Text('HEX显示'),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: Checkbox(
+                              value: vm.autoScroll,
+                              onChanged: (value) => vm.setAutoScroll(value!),
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          const Text('自动滚动'),
+                        ],
+                      ),
+                    ],
+                    // 操作组（清空/保存/高级设置）
+                    if (showActions) ...[
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: () => vm.clearData(),
+                        icon: const Icon(Icons.clear, size: 18),
+                        label: const Text('清空'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _showExportDialog(context, vm),
+                        icon: const Icon(Icons.save, size: 18),
+                        label: const Text('保存'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () => _showAdvancedSettingsDialog(context, vm),
+                        icon: const Icon(Icons.settings, size: 18),
+                        label: const Text('高级设置'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                      ),
+                    ],
+                    // 有折叠的组时显示下拉菜单
+                    if (hasCollapsed)
+                      _buildRawCollapsedMenu(
+                        context,
+                        vm,
+                        showOptions: showOptions,
+                        showActions: showActions,
+                      ),
                   ],
-                  // 有折叠的组时显示下拉菜单
-                  if (hasCollapsed)
-                    _buildRawCollapsedMenu(context, vm, visibleGroups: groups),
-                ],
-              ),
-            );
+                  ),
+                ),
+              );
             },
           ),
         ),
@@ -628,7 +643,8 @@ class _RawDataPageState extends State<RawDataPage> {
   Widget _buildRawCollapsedMenu(
     BuildContext context,
     RawDataViewModel vm, {
-    required List<_RawToolbarGroup> visibleGroups,
+    required bool showOptions,
+    required bool showActions,
   }) {
     return PopupMenuButton<String>(
       tooltip: '更多选项',
@@ -639,7 +655,7 @@ class _RawDataPageState extends State<RawDataPage> {
         final items = <PopupMenuEntry<String>>[];
 
         // 选项组（如果未平铺）
-        if (!visibleGroups.contains(_RawToolbarGroup.options)) {
+        if (!showOptions) {
           items.add(_buildMenuHeader('显示选项'));
           items.add(PopupMenuItem(
             value: 'timestamp',
@@ -668,7 +684,7 @@ class _RawDataPageState extends State<RawDataPage> {
         }
 
         // 操作组（如果未平铺）
-        if (!visibleGroups.contains(_RawToolbarGroup.actions)) {
+        if (!showActions) {
           if (items.isNotEmpty) items.add(const PopupMenuDivider());
           items.add(_buildMenuHeader('操作'));
           items.add(PopupMenuItem(
@@ -724,12 +740,6 @@ class _RawDataPageState extends State<RawDataPage> {
       ],
     );
   }
-}
-
-/// 原始数据页面工具栏分组
-enum _RawToolbarGroup {
-  options,  // 显示选项：时间戳/HEX/自动滚动
-  actions,  // 操作：清空/保存/高级设置
 }
 
 /// HEX input formatter: only allows 0-9, A-F, a-f, and spaces
