@@ -37,10 +37,10 @@ class _PlotPageContent extends StatefulWidget {
 }
 
 /// 通道面板尺寸常量
-const double kMinChannelPanelWidth = 180;
+const double kMinChannelPanelWidth = 240;
 const double kMaxChannelPanelWidth = 400;
-const double kDefaultChannelPanelWidth = 200;
-const double kCollapsedPanelWidth = 32;
+const double kDefaultChannelPanelWidth = 240;
+const double kCollapsedPanelWidth = 26;
 
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
@@ -1354,11 +1354,13 @@ class _ChannelItemState extends State<_ChannelItem> {
                     child: TextField(
                       controller: _nameController..text = _displayName,
                       autofocus: true,
+                      maxLength: 8,
                       style: const TextStyle(fontSize: 14),
                       decoration: const InputDecoration(
                         isDense: true,
                         contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 0),
-                        border: OutlineInputBorder(),
+                        border: UnderlineInputBorder(),
+                        counterText: '',
                       ),
                       onSubmitted: (_) => _saveAlias(),
                       onEditingComplete: _saveAlias,
