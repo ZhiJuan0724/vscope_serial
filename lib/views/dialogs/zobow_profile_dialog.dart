@@ -8,7 +8,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 ///
 /// 表格形式编辑配置文件：
 /// - 顶部：配置文件名称输入框
-/// - 中部：名称列 + 地址列的可编辑表格
+/// - 中部：名称列 + 地址列的可编辑表格（支持拖动排序）
 /// - 底部：添加行 / 删除选中行 按钮
 class ZobowProfileDialog extends StatefulWidget {
   final PlotViewModel vm;
@@ -96,6 +96,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               child: const Row(
                 children: [
                   SizedBox(width: 32, child: Text('#', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+                  SizedBox(width: 32),
                   Expanded(
                     flex: 2,
                     child: Text('名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
@@ -107,13 +108,35 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                 ],
               ),
             ),
-            // 表格内容
+            // 表格内容（支持拖动排序）
             Expanded(
-              child: ListView.builder(
+              child: ReorderableListView.builder(
+                buildDefaultDragHandles: false,
+                proxyDecorator: (child, index, animation) {
+                  return AnimatedBuilder(
+                    animation: animation,
+                    builder: (context, child) {
+                      return Material(
+                        elevation: 4,
+                        color: Colors.transparent,
+                        child: child,
+                      );
+                    },
+                    child: child,
+                  );
+                },
                 itemCount: _rows.length,
+                onReorderItem: (oldIndex, newIndex) {
+                  setState(() {
+                    final row = _rows.removeAt(oldIndex);
+                    _rows.insert(newIndex, row);
+                    _selectedRowIndex = null;
+                  });
+                },
                 itemBuilder: (context, index) {
                   final isSelected = _selectedRowIndex == index;
                   return InkWell(
+                    key: ValueKey('preset_$index'),
                     onTap: () => setState(() => _selectedRowIndex = index),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -130,6 +153,14 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                           SizedBox(
                             width: 32,
                             child: Text('${index + 1}', style: const TextStyle(fontSize: 12)),
+                          ),
+                          // 拖动手柄
+                          SizedBox(
+                            width: 32,
+                            child: ReorderableDragStartListener(
+                              index: index,
+                              child: const Icon(Icons.drag_handle, size: 16, color: Colors.grey),
+                            ),
                           ),
                           Expanded(
                             flex: 2,

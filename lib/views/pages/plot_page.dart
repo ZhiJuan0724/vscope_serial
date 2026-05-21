@@ -1587,70 +1587,11 @@ class _ChannelItemState extends State<_ChannelItem> {
     showDialog(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFFF0F0F5),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          title: Text(
-            '选择地址 - ${profile.name}',
-            style: const TextStyle(color: Color(0xFF333344), fontSize: 15),
-          ),
-          content: SizedBox(
-            width: 480,
-            height: 360,
-            child: GridView.builder(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: 3.5,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-              ),
-              itemCount: profile.presets.length,
-              itemBuilder: (context, index) {
-                final preset = profile.presets[index];
-                final hexAddr = '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
-                return InkWell(
-                  onTap: () {
-                    widget.vm.applyPresetToChannel(widget.ch.index, preset);
-                    Navigator.pop(context);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: const Color(0xFFD0D0E0), width: 1),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          preset.name,
-                          style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          hexAddr,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF8888AA),
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消', style: TextStyle(color: Color(0xFF666688))),
-            ),
-          ],
+        return _PresetSelectorDialog(
+          profile: profile,
+          onSelect: (preset) {
+            widget.vm.applyPresetToChannel(widget.ch.index, preset);
+          },
         );
       },
     );
@@ -2260,6 +2201,170 @@ class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 预设选择弹窗（支持单列/平铺切换）
+class _PresetSelectorDialog extends StatefulWidget {
+  final ZobowConfigProfile profile;
+  final ValueChanged<ZobowChannelPreset> onSelect;
+
+  const _PresetSelectorDialog({
+    required this.profile,
+    required this.onSelect,
+  });
+
+  @override
+  State<_PresetSelectorDialog> createState() => _PresetSelectorDialogState();
+}
+
+enum _PresetViewMode { list, grid }
+
+class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
+  _PresetViewMode _viewMode = _PresetViewMode.grid;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFFF0F0F5),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '选择地址 - ${widget.profile.name}',
+              style: const TextStyle(color: Color(0xFF333344), fontSize: 15),
+            ),
+          ),
+          // 视图切换按钮
+          Tooltip(
+            message: _viewMode == _PresetViewMode.list ? '切换为平铺' : '切换为列表',
+            child: InkWell(
+              onTap: () => setState(() {
+                _viewMode = _viewMode == _PresetViewMode.list
+                    ? _PresetViewMode.grid
+                    : _PresetViewMode.list;
+              }),
+              child: Icon(
+                _viewMode == _PresetViewMode.list ? Icons.grid_view : Icons.list,
+                size: 20,
+                color: const Color(0xFF666688),
+              ),
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: _viewMode == _PresetViewMode.list ? 320 : 540,
+        height: 360,
+        child: _viewMode == _PresetViewMode.list
+            ? _buildListView()
+            : _buildGridView(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消', style: TextStyle(color: Color(0xFF666688))),
+        ),
+      ],
+    );
+  }
+
+  /// 单列列表视图（每行较细）
+  Widget _buildListView() {
+    return ListView.builder(
+      itemCount: widget.profile.presets.length,
+      itemBuilder: (context, index) {
+        final preset = widget.profile.presets[index];
+        final hexAddr = '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+        return InkWell(
+          onTap: () {
+            widget.onSelect(preset);
+            Navigator.pop(context);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: const Color(0xFFD0D0E0).withValues(alpha: 0.5)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    preset.name,
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  hexAddr,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF8888AA),
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 5列平铺视图
+  Widget _buildGridView() {
+    return GridView.builder(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 5,
+        childAspectRatio: 1.8,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+      ),
+      itemCount: widget.profile.presets.length,
+      itemBuilder: (context, index) {
+        final preset = widget.profile.presets[index];
+        final hexAddr = '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+        return InkWell(
+          onTap: () {
+            widget.onSelect(preset);
+            Navigator.pop(context);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFFD0D0E0), width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  preset.name,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF333344)),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  hexAddr,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFF8888AA),
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
