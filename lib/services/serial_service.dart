@@ -67,8 +67,8 @@ class SerialService extends ChangeNotifier {
   // 时间窗口聚合器
   TimeWindowAggregator? _aggregator;
 
-  // 时间窗口粒度（毫秒），默认 1ms
-  int timeWindowMs = 1;
+  // 时间窗口粒度（微秒），默认 1000us = 1ms
+  int timeWindowUs = 1000;
 
   // 当前连接的串口标识（用于判断是否需要清空数据）
   String? _lastConnectedPort;
@@ -97,6 +97,7 @@ class SerialService extends ChangeNotifier {
   // 发送选项
   bool sendHex = false;
   bool enableCrc = false;
+  bool crcReverseBytes = false;  // CRC 高低位反转
   CrcType crcType = CrcType.crc16;
   String crcPolyName = 'CRC-16/MODBUS';
 
@@ -346,7 +347,7 @@ class SerialService extends ChangeNotifier {
   /// 初始化时间窗口聚合器
   void _initAggregator() {
     _aggregator = TimeWindowAggregator(
-      windowMs: timeWindowMs,
+      windowUs: timeWindowUs,
       onWindowComplete: (timestamp, data) {
         _addRawDataLine(timestamp, data);
       },
@@ -356,8 +357,6 @@ class SerialService extends ChangeNotifier {
   /// 原生串口数据接收回调
   void _onNativeDataReceived(NativeSerialData nativeData) {
     final data = nativeData.data;
-    print('[SerialService._onNativeDataReceived] Received ${data.length} bytes');
-
     // 绘图时禁用逐包debug日志
     if (!isPlotting) {
       AppLogger().debug('接收 ${data.length} bytes', category: 'DATA');
@@ -376,25 +375,30 @@ class SerialService extends ChangeNotifier {
 
     // 原始数据文本接收条件：串口已连接 + 用户开启接收 + 不在绘图状态
     final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    print('[SerialService._onNativeDataReceived] shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting');
+    AppLogger().trace('shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting', category: 'SERIAL');
     if (shouldReceiveRaw) {
-      // 使用时间窗口聚合器聚合数据
-      _aggregator ??= TimeWindowAggregator(
-        windowMs: timeWindowMs,
-        onWindowComplete: (timestamp, aggregatedData) {
-          _addRawDataLine(timestamp, aggregatedData);
-        },
-      );
-
-      // 使用 C++ 提供的微秒级时间戳，转换为毫秒精度
+      // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
         nativeData.timestampUs,
       );
-      _aggregator!.feed(data, receiveTime);
+
+      if (showTimestamp) {
+        // 开启时间戳时使用时间窗口聚合器分包
+        _aggregator ??= TimeWindowAggregator(
+          windowUs: timeWindowUs,
+          onWindowComplete: (timestamp, aggregatedData) {
+            _addRawDataLine(timestamp, aggregatedData);
+          },
+        );
+        _aggregator!.feed(data, receiveTime);
+      } else {
+        // 不开启时间戳时直接显示，不强制分包
+        _addRawDataLine(receiveTime, data);
+      }
     }
   }
 
-  /// 添加一行原始数据显示
+  /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
     String text;
     if (receiveHex) {
@@ -406,8 +410,32 @@ class SerialService extends ChangeNotifier {
     }
 
     final ts = showTimestamp ? '[${_formatTimestamp(timestamp)}] ' : '';
-    final line = '$ts$text (${data.length} bytes)';
+    final line = '← $ts$text (${data.length} bytes)';
 
+    _addDisplayLine(line);
+  }
+
+  /// 添加一行发送数据显示
+  void _addSendDataLine(Uint8List data) {
+    String text;
+    if (sendHex) {
+      text = data
+          .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+          .join(' ');
+    } else {
+      text = utf8.decode(data, allowMalformed: true);
+    }
+
+    final ts = showTimestamp ? '[${_formatTimestamp(DateTime.now())}] ' : '';
+    // 当发送HEX但显示模式不是HEX时，标记为 [HEX] 以便区分
+    final hexMark = (sendHex && !receiveHex) ? '[HEX] ' : '';
+    final line = '→ $ts$hexMark$text (${data.length} bytes)';
+
+    _addDisplayLine(line);
+  }
+
+  /// 添加一行到显示列表（通用）
+  void _addDisplayLine(String line) {
     receivedLines.add(line);
     _receivedTextBytes += line.length * 2; // UTF-16 编码估算
 
@@ -429,8 +457,13 @@ class SerialService extends ChangeNotifier {
     final m = dt.minute.toString().padLeft(2, '0');
     final s = dt.second.toString().padLeft(2, '0');
     final ms = dt.millisecond.toString().padLeft(3, '0');
-    final us = dt.microsecond.toString().padLeft(6, '0');
-    return '$h:$m:$s.$ms$us';
+    // 当时间窗口 < 1000us 时显示微秒，否则只显示毫秒
+    if (timeWindowUs < 1000) {
+      final us = dt.microsecond.toString().padLeft(6, '0');
+      return '$h:$m:$s.$ms$us';
+    } else {
+      return '$h:$m:$s.$ms';
+    }
   }
 
   /// 清空所有数据（切换串口时调用）
@@ -548,7 +581,11 @@ class SerialService extends ChangeNotifier {
         final poly = getPolysByType(crcType)[crcPolyName];
         if (poly != null) {
           final crc = calculateCrc(data, poly);
-          final crcBytes = crcToBytes(crc, poly.width);
+          var crcBytes = crcToBytes(crc, poly.width);
+          // 如果勾选高低位反转，反转 CRC 字节顺序
+          if (crcReverseBytes) {
+            crcBytes = crcBytes.reversed.toList();
+          }
           final newData = Uint8List(data.length + crcBytes.length);
           newData.setRange(0, data.length, data);
           newData.setRange(data.length, newData.length, crcBytes);
@@ -568,18 +605,17 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
     }
-    print('[SerialService.send] _nativeReader=$_nativeReader, _serialPort=$_serialPort');
     if (_nativeReader != null) {
-      print('[SerialService.send] _nativeReader.isOpen=${_nativeReader!.isOpen}');
       final sent = _nativeReader!.write(data);
       AppLogger().info('发送 $sent bytes', category: 'DATA');
-      print('[SerialService.send] sent=$sent');
     } else if (_serialPort != null) {
       _serialPort!.write(data);
       AppLogger().info('发送 ${data.length} bytes', category: 'DATA');
     } else {
       throw StateError('串口未连接');
     }
+    // 发送的数据也显示在数据窗口
+    _addSendDataLine(data);
   }
 
   void updateRts(bool value) {
@@ -614,16 +650,16 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置时间窗口粒度（毫秒）
-  void setTimeWindowMs(int ms) {
-    timeWindowMs = ms;
+  /// 设置时间窗口粒度（微秒）
+  void setTimeWindowUs(int us) {
+    timeWindowUs = us;
     _aggregator = TimeWindowAggregator(
-      windowMs: ms,
+      windowUs: us,
       onWindowComplete: (timestamp, data) {
         _addRawDataLine(timestamp, data);
       },
     );
-    AppLogger().info('时间窗口粒度: ${ms}ms', category: 'SERIAL');
+    AppLogger().info('时间窗口粒度: ${us}μs', category: 'SERIAL');
   }
 
   // ========== 原始数据接收控制 ==========

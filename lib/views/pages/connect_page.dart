@@ -260,9 +260,8 @@ class _ConnectPageContentState extends State<_ConnectPageContent> {
       value: vm.baudRate.toString(),
       hint: '波特率',
       items: const [
-        '1200', '2400', '4800', '9600', '19200',
-        '38400', '57600', '115200', '230400',
-        '460800', '921600',
+        '9600', '19200', '38400', '57600', '115200',
+        '230400', '460800', '512000', '921600', '1152000',
       ],
       enabled: !vm.isConnected,
       decoration: const InputDecoration(

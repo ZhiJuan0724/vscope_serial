@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
@@ -101,105 +102,135 @@ class _RawDataPageState extends State<RawDataPage> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: Row(
-            children: [
-              const Text('接收数据',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(width: 8),
-              // 开始/停止接收按钮
-              ElevatedButton.icon(
-                onPressed: vm.isConnected && !vm.isRawReceiving
-                    ? () => vm.startReceiving()
-                    : null,
-                icon: const Icon(Icons.play_arrow, size: 16),
-                label: const Text('开始接收'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              const SizedBox(width: 4),
-              ElevatedButton.icon(
-                onPressed: vm.isRawReceiving
-                    ? () => vm.stopReceiving()
-                    : null,
-                icon: const Icon(Icons.stop, size: 16),
-                label: const Text('停止接收'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              const Spacer(),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    value: vm.showTimestamp,
-                    onChanged: (value) => vm.setShowTimestamp(value!),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // 左侧固定区域估算宽度
+              const leftWidth = 180.0;
+              // 菜单按钮宽度
+              const menuButtonWidth = 40.0;
+              // 组间距
+              const groupSpacing = 8.0;
+
+              // 各右侧组的估算宽度（留 20% 余量）
+              const groupWidths = {
+                _RawToolbarGroup.options: 280.0,  // 时间戳 + HEX显示 + 自动滚动
+                _RawToolbarGroup.actions: 300.0,  // 清空 + 保存 + 高级设置
+              };
+
+              // 可用宽度（扣除左侧和菜单按钮）
+              final availableWidth = constraints.maxWidth - leftWidth - menuButtonWidth;
+
+              // 从右边开始逐个检查是否能放下
+              final groups = <_RawToolbarGroup>[
+                _RawToolbarGroup.options,
+                _RawToolbarGroup.actions,
+              ];
+
+              while (groups.isNotEmpty) {
+                var currentWidth = groupSpacing * groups.length;
+                for (final g in groups) {
+                  currentWidth += groupWidths[g] ?? 0;
+                }
+                if (currentWidth <= availableWidth) break;
+                groups.removeLast();
+              }
+
+              final hasCollapsed = groups.length < 2;
+
+              return ClipRect(
+                child: Row(
+                  children: [
+                  const Text('数据窗口',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 8),
+                  // 开始/停止接收按钮
+                  ElevatedButton.icon(
+                    onPressed: vm.isConnected && !vm.isRawReceiving
+                        ? () => vm.startReceiving()
+                        : null,
+                    icon: const Icon(Icons.play_arrow, size: 16),
+                    label: const Text('开始接收'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      minimumSize: const Size(0, 36),
+                    ),
                   ),
-                  const Text('时间戳'),
+                  const SizedBox(width: 4),
+                  ElevatedButton.icon(
+                    onPressed: vm.isRawReceiving
+                        ? () => vm.stopReceiving()
+                        : null,
+                    icon: const Icon(Icons.stop, size: 16),
+                    label: const Text('停止接收'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      minimumSize: const Size(0, 36),
+                    ),
+                  ),
+                  const Spacer(),
+                  // 选项组（时间戳/HEX/自动滚动）
+                  if (groups.contains(_RawToolbarGroup.options)) ...[
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: vm.showTimestamp,
+                          onChanged: (value) => vm.setShowTimestamp(value!),
+                        ),
+                        const Text('时间戳'),
+                      ],
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: vm.receiveHex,
+                          onChanged: (value) => vm.setReceiveHex(value!),
+                        ),
+                        const Text('HEX显示'),
+                      ],
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: vm.autoScroll,
+                          onChanged: (value) => vm.setAutoScroll(value!),
+                        ),
+                        const Text('自动滚动'),
+                      ],
+                    ),
+                  ],
+                  // 操作组（清空/保存/高级设置）
+                  if (groups.contains(_RawToolbarGroup.actions)) ...[
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: () => vm.clearData(),
+                      icon: const Icon(Icons.clear, size: 18),
+                      label: const Text('清空'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _showExportDialog(context, vm),
+                      icon: const Icon(Icons.save, size: 18),
+                      label: const Text('保存'),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _showAdvancedSettingsDialog(context, vm),
+                      icon: const Icon(Icons.settings, size: 18),
+                      label: const Text('高级设置'),
+                    ),
+                  ],
+                  // 有折叠的组时显示下拉菜单
+                  if (hasCollapsed)
+                    _buildRawCollapsedMenu(context, vm, visibleGroups: groups),
                 ],
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    value: vm.receiveHex,
-                    onChanged: (value) => vm.setReceiveHex(value!),
-                  ),
-                  const Text('HEX接收'),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    value: vm.autoScroll,
-                    onChanged: (value) => vm.setAutoScroll(value!),
-                  ),
-                  const Text('自动滚动'),
-                ],
-              ),
-              const SizedBox(width: 8),
-              // 时间窗口粒度配置
-              SizedBox(
-                width: 70,
-                child: TextField(
-                  controller: TextEditingController(text: vm.timeWindowMs.toString()),
-                  decoration: const InputDecoration(
-                    labelText: '窗口ms',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                  ),
-                  style: const TextStyle(fontSize: 12),
-                  keyboardType: TextInputType.number,
-                  onSubmitted: (value) {
-                    final ms = int.tryParse(value);
-                    if (ms != null && ms > 0) {
-                      vm.setTimeWindowMs(ms);
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton.icon(
-                onPressed: () => vm.clearData(),
-                icon: const Icon(Icons.clear, size: 18),
-                label: const Text('清空'),
-              ),
-              TextButton.icon(
-                onPressed: () => _showExportDialog(context, vm),
-                icon: const Icon(Icons.save, size: 18),
-                label: const Text('保存'),
-              ),
-            ],
+            );
+            },
           ),
         ),
         Expanded(
@@ -213,31 +244,36 @@ class _RawDataPageState extends State<RawDataPage> {
             child: Stack(
               children: [
                 // 数据列表或提示文字
-                vm.isRawReceiving || vm.receivedLines.isNotEmpty
-                    ? ListView.builder(
+                vm.receivedLines.isNotEmpty
+                    ? SingleChildScrollView(
                         controller: _scrollController,
-                        itemCount: vm.receivedLines.length,
-                        itemBuilder: (context, index) {
-                          // 交替背景色区分每包数据
-                          final bgColor = index.isEven
-                              ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.5)
-                              : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3);
-                          return Container(
-                            color: bgColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            child: SelectableText(
-                              vm.receivedLines[index],
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 13,
-                              ),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: SelectableText.rich(
+                            TextSpan(
+                              children: vm.receivedLines.asMap().entries.map((entry) {
+                                final index = entry.key;
+                                final line = entry.value;
+                                final bgColor = index.isEven
+                                    ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.5)
+                                    : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3);
+                                return TextSpan(
+                                  text: '$line\n',
+                                  style: TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 13,
+                                    backgroundColor: bgColor,
+                                  ),
+                                );
+                              }).toList(),
                             ),
-                          );
-                        },
+                          ),
+                        ),
                       )
                     : const Center(
                         child: Text(
-                          '点击"开始接收"按钮以接收数据',
+                          '发送的数据将显示在这里\n点击"开始接收"可同时显示接收数据',
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.grey,
                             fontSize: 14,
@@ -355,6 +391,17 @@ class _RawDataPageState extends State<RawDataPage> {
                       onChanged: (value) => vm.setCrcPolyName(value!),
                     ),
                   ),
+                  const SizedBox(width: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: vm.crcReverseBytes,
+                        onChanged: (value) => vm.setCrcReverseBytes(value!),
+                      ),
+                      const Text('高低位反转'),
+                    ],
+                  ),
                 ],
               ],
             ],
@@ -383,7 +430,17 @@ class _RawDataPageState extends State<RawDataPage> {
                         enabled: true,
                         keyboardType: TextInputType.multiline,
                         textInputAction: TextInputAction.newline,
-                        onChanged: (_) => setState(() {}),
+                        inputFormatters: vm.sendHex
+                            ? [
+                                _HexInputFormatter(),
+                              ]
+                            : null,
+                        onChanged: (value) {
+                          if (vm.sendHex) {
+                            _formatHexInput(value);
+                          }
+                          setState(() {});
+                        },
                       ),
                       // 右下角长度显示
                       Positioned(
@@ -492,5 +549,204 @@ class _RawDataPageState extends State<RawDataPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  void _formatHexInput(String value) {
+    // Remove all spaces first
+    final hexOnly = value.replaceAll(' ', '');
+    // Re-insert spaces every 2 chars
+    final formatted = <String>[];
+    for (var i = 0; i < hexOnly.length; i += 2) {
+      if (i + 2 <= hexOnly.length) {
+        formatted.add(hexOnly.substring(i, i + 2));
+      } else {
+        formatted.add(hexOnly.substring(i));
+      }
+    }
+    final newText = formatted.join(' ');
+    if (newText != value) {
+      _sendController.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: newText.length),
+      );
+    }
+  }
+
+  void _showAdvancedSettingsDialog(BuildContext context, RawDataViewModel vm) {
+    final controller = TextEditingController(text: vm.timeWindowUs.toString());
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        title: const Text('高级设置'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('分包时间 (μs):'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                hintText: '10 ~ 10000',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final us = int.tryParse(controller.text);
+              if (us != null && us >= 10 && us <= 10000) {
+                vm.setTimeWindowUs(us);
+                Navigator.of(context).pop();
+                _showSnackBar(context, '分包时间已设置为 $us μs');
+              } else {
+                _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
+              }
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 折叠菜单：显示未平铺的组
+  Widget _buildRawCollapsedMenu(
+    BuildContext context,
+    RawDataViewModel vm, {
+    required List<_RawToolbarGroup> visibleGroups,
+  }) {
+    return PopupMenuButton<String>(
+      tooltip: '更多选项',
+      icon: const Icon(Icons.more_vert, size: 20),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      itemBuilder: (context) {
+        final items = <PopupMenuEntry<String>>[];
+
+        // 选项组（如果未平铺）
+        if (!visibleGroups.contains(_RawToolbarGroup.options)) {
+          items.add(_buildMenuHeader('显示选项'));
+          items.add(PopupMenuItem(
+            value: 'timestamp',
+            child: _buildMenuItem(
+              icon: vm.showTimestamp ? Icons.check_box : Icons.check_box_outline_blank,
+              label: '时间戳',
+            ),
+            onTap: () => vm.setShowTimestamp(!vm.showTimestamp),
+          ));
+          items.add(PopupMenuItem(
+            value: 'hex',
+            child: _buildMenuItem(
+              icon: vm.receiveHex ? Icons.check_box : Icons.check_box_outline_blank,
+              label: 'HEX显示',
+            ),
+            onTap: () => vm.setReceiveHex(!vm.receiveHex),
+          ));
+          items.add(PopupMenuItem(
+            value: 'autoscroll',
+            child: _buildMenuItem(
+              icon: vm.autoScroll ? Icons.check_box : Icons.check_box_outline_blank,
+              label: '自动滚动',
+            ),
+            onTap: () => vm.setAutoScroll(!vm.autoScroll),
+          ));
+        }
+
+        // 操作组（如果未平铺）
+        if (!visibleGroups.contains(_RawToolbarGroup.actions)) {
+          if (items.isNotEmpty) items.add(const PopupMenuDivider());
+          items.add(_buildMenuHeader('操作'));
+          items.add(PopupMenuItem(
+            value: 'clear',
+            child: _buildMenuItem(icon: Icons.clear, label: '清空'),
+            onTap: () => vm.clearData(),
+          ));
+          items.add(PopupMenuItem(
+            value: 'export',
+            child: _buildMenuItem(icon: Icons.save, label: '保存'),
+            onTap: () => _showExportDialog(context, vm),
+          ));
+          items.add(PopupMenuItem(
+            value: 'advanced',
+            child: _buildMenuItem(icon: Icons.settings, label: '高级设置'),
+            onTap: () => _showAdvancedSettingsDialog(context, vm),
+          ));
+        }
+
+        return items;
+      },
+    );
+  }
+
+  /// 构建菜单分组标题
+  PopupMenuItem<String> _buildMenuHeader(String label) {
+    return PopupMenuItem(
+      value: 'header_$label',
+      enabled: false,
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          color: Colors.grey.shade600,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  /// 构建下拉菜单项
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String label,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(fontSize: 13)),
+      ],
+    );
+  }
+}
+
+/// 原始数据页面工具栏分组
+enum _RawToolbarGroup {
+  options,  // 显示选项：时间戳/HEX/自动滚动
+  actions,  // 操作：清空/保存/高级设置
+}
+
+/// HEX input formatter: only allows 0-9, A-F, a-f, and spaces
+class _HexInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    // Allow only hex chars and spaces
+    final filtered = newValue.text.replaceAll(RegExp(r'[^0-9A-Fa-f ]'), '');
+    if (filtered != newValue.text) {
+      return TextEditingValue(
+        text: filtered,
+        selection: TextSelection.collapsed(offset: filtered.length),
+      );
+    }
+    return newValue;
   }
 }

@@ -13,11 +13,11 @@ import 'views/pages/raw_data_page.dart';
 import 'views/widgets/status_bar.dart';
 
 /// 主窗口最小宽度：保证左侧控件 + 一个下拉菜单按钮能放下
-const double kMinWindowWidth = 520;
-/// 主窗口默认宽度：刚好容纳所有工具组平铺显示
-const double kDefaultWindowWidth = 1250;
+const double kMinWindowWidth = 650;
+/// 主窗口默认宽度
+const double kDefaultWindowWidth = 1000;
 /// 主窗口默认高度
-const double kDefaultWindowHeight = 800;
+const double kDefaultWindowHeight = 700;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

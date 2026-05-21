@@ -14,11 +14,12 @@ class RawDataViewModel extends BaseViewModel {
   bool get autoScroll => serialService.autoScroll;
   bool get sendHex => serialService.sendHex;
   bool get enableCrc => serialService.enableCrc;
+  bool get crcReverseBytes => serialService.crcReverseBytes;
   CrcType get crcType => serialService.crcType;
   String get crcPolyName => serialService.crcPolyName;
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
-  int get timeWindowMs => serialService.timeWindowMs;
+  int get timeWindowUs => serialService.timeWindowUs;
 
   /// 设置随机数据源开关
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在原始数据页面
@@ -59,6 +60,11 @@ class RawDataViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
   }
 
+  void setCrcReverseBytes(bool value) {
+    serialService.crcReverseBytes = value;
+    Future.microtask(() => serialService.notifyListeners());
+  }
+
   void setCrcType(CrcType type) {
     serialService.crcType = type;
     final polys = getPolysByType(type);
@@ -73,8 +79,8 @@ class RawDataViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
   }
 
-  void setTimeWindowMs(int ms) {
-    serialService.setTimeWindowMs(ms);
+  void setTimeWindowUs(int us) {
+    serialService.setTimeWindowUs(us);
   }
 
   void clearData() => serialService.clearReceivedData();

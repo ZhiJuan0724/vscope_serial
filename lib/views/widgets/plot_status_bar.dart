@@ -31,11 +31,6 @@ class PlotStatusBar extends StatelessWidget {
                 style: const TextStyle(fontSize: 11, color: Colors.grey),
               ),
               const Spacer(),
-              const SizedBox(width: 8),
-              // 中间：用户提示信息
-              if (vm.hintText.isNotEmpty)
-                _buildHintText(vm.hintText),
-              const SizedBox(width: 8),
               // 右侧：垂直光标信息
               if (vm.cursor != null && vm.vCursorEnabled)
                 _buildCursorInfo(vm),
@@ -43,17 +38,6 @@ class PlotStatusBar extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-
-  /// 构建提示文本
-  Widget _buildHintText(String text) {
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: 11,
-        color: Colors.orange.shade300,
-      ),
     );
   }
 
