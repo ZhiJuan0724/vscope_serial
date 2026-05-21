@@ -24,9 +24,6 @@ class SerialService extends ChangeNotifier {
   // 串口相关
   List<String> availablePorts = [];
   SerialConfig config = SerialConfig();
-  SerialPort? _serialPort;
-  SerialPortReader? _reader;
-  StreamSubscription? _subscription;
   bool isConnected = false;
   bool isConnecting = false;
 
@@ -193,17 +190,10 @@ class SerialService extends ChangeNotifier {
   }
 
   void _cleanupPort() {
-    _subscription?.cancel();
-    _subscription = null;
-    _reader?.close();
-    _reader = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.close();
     _nativeReader = null;
-    _serialPort?.close();
-    _serialPort?.dispose();
-    _serialPort = null;
     isConnected = false;
     // 断开串口时自动关闭原始数据接收
     if (isRawReceiving) {
@@ -404,7 +394,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().error('串口未连接', category: 'SERIAL');
       return null;
     }
-    if (_serialPort == null && _nativeReader == null) {
+    if (_nativeReader == null) {
       AppLogger().error('串口未连接', category: 'SERIAL');
       return null;
     }
@@ -465,9 +455,6 @@ class SerialService extends ChangeNotifier {
     if (_nativeReader != null) {
       final sent = _nativeReader!.write(data);
       AppLogger().info('发送 $sent bytes', category: 'DATA');
-    } else if (_serialPort != null) {
-      _serialPort!.write(data);
-      AppLogger().info('发送 ${data.length} bytes', category: 'DATA');
     } else {
       throw StateError('串口未连接');
     }
@@ -481,10 +468,6 @@ class SerialService extends ChangeNotifier {
     if (isConnected) {
       if (_nativeReader != null) {
         _nativeReader!.setRts(value);
-      } else if (_serialPort != null) {
-        final cfg = _serialPort!.config;
-        cfg.rts = value ? SerialPortRts.on : SerialPortRts.off;
-        _serialPort!.config = cfg;
       }
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -497,10 +480,6 @@ class SerialService extends ChangeNotifier {
     if (isConnected) {
       if (_nativeReader != null) {
         _nativeReader!.setDtr(value);
-      } else if (_serialPort != null) {
-        final cfg = _serialPort!.config;
-        cfg.dtr = value ? SerialPortDtr.on : SerialPortDtr.off;
-        _serialPort!.config = cfg;
       }
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -548,19 +527,10 @@ class SerialService extends ChangeNotifier {
     // Do NOT call disconnect() here - it triggers notifyListeners()
     // which will throw if called after super.dispose().
     // Just clean up resources directly.
-    _subscription?.cancel();
-    _subscription = null;
-    _reader?.close();
-    _reader = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();
     _nativeReader = null;
-    // NOTE: Do NOT call _serialPort?.dispose() on app exit.
-    // flutter_libserialport's C library may call abort() during process
-    // termination cleanup. Let the OS reclaim the handle instead.
-    _serialPort?.close();
-    _serialPort = null;
     isConnected = false;
     _dataController.close();
     super.dispose();
