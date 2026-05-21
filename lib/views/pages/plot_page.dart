@@ -1270,7 +1270,6 @@ class _ChannelItem extends StatefulWidget {
 
 class _ChannelItemState extends State<_ChannelItem> {
   bool _isEditingName = false;
-  bool _isEditingId = false;
   late final TextEditingController _nameController;
   late final TextEditingController _idController;
 
@@ -1305,7 +1304,14 @@ class _ChannelItemState extends State<_ChannelItem> {
     if (id != null && id >= 0 && id <= 0xFFFF) {
       widget.vm.setJackFourChannelId(widget.ch.index, id);
     }
-    setState(() => _isEditingId = false);
+  }
+
+  void _onIdFocusChange(bool hasFocus) {
+    if (!hasFocus) {
+      // 失去焦点时取消文本选择
+      _idController.selection = TextSelection.collapsed(offset: _idController.text.length);
+      _saveJackId();
+    }
   }
 
   @override
@@ -1344,11 +1350,11 @@ class _ChannelItemState extends State<_ChannelItem> {
                 if (_isEditingName)
                   SizedBox(
                     width: 70,
-                    height: 22,
+                    height: 24,
                     child: TextField(
                       controller: _nameController..text = _displayName,
                       autofocus: true,
-                      style: const TextStyle(fontSize: 13),
+                      style: const TextStyle(fontSize: 14),
                       decoration: const InputDecoration(
                         isDense: true,
                         contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 0),
@@ -1370,48 +1376,48 @@ class _ChannelItemState extends State<_ChannelItem> {
                     child: Text(
                       _displayName,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 14,
                         color: widget.ch.visible ? null : Colors.grey,
                         decoration: widget.ch.visible ? null : TextDecoration.lineThrough,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                // JACK四通道模式下显示地址（直接编辑），与名称并排
+                // JACK四通道模式下显示地址，常驻可编辑 TextField
                 if (isJackMode) ...[
                   const SizedBox(width: 6),
-                  if (_isEditingId)
-                    SizedBox(
-                      width: 64,
-                      height: 24,
+                  Container(
+                    width: 64,
+                    height: 20,
+                    alignment: Alignment.centerLeft,
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Focus(
+                      onFocusChange: _onIdFocusChange,
                       child: TextField(
                         controller: _idController
                           ..text = '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
-                        autofocus: true,
-                        style: const TextStyle(fontSize: 12),
-                        decoration: const InputDecoration(
+                        style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface, height: 1.0),
+                        decoration: InputDecoration(
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 0),
-                          border: OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(2),
+                            borderSide: BorderSide(color: Colors.grey.shade400, width: 1),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(2),
+                            borderSide: BorderSide(color: Colors.grey.shade400, width: 1),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(2),
+                            borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 1),
+                          ),
                         ),
                         onSubmitted: (_) => _saveJackId(),
                         onEditingComplete: _saveJackId,
-                        onTapOutside: (_) => _saveJackId(),
-                      ),
-                    )
-                  else
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _isEditingId = true;
-                          _idController.text = '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}';
-                        });
-                      },
-                      child: Text(
-                        '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ),
+                  ),
                 ],
               ],
             ),
