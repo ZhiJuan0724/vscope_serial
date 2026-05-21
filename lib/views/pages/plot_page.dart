@@ -38,8 +38,10 @@ class _PlotPageContent extends StatelessWidget {
       builder: (context, vm, child) {
         return Column(
           children: [
-            // 工具栏
-            _buildToolbar(context, vm),
+            // 第一栏工具栏
+            _buildPrimaryToolbar(context, vm),
+            // 第二栏工具栏（光标+缩放）
+            _buildSecondaryToolbar(context, vm),
             // 主区域
             Expanded(
               child: Row(
@@ -69,7 +71,11 @@ class _PlotPageContent extends StatelessWidget {
   ///
   /// 显示顺序：光标 | 缩放 | 自适应 | 文件 | 清空+设置
   /// 折叠顺序：清空+设置 → 文件 → 自适应 → 缩放 → 光标
-  Widget _buildToolbar(BuildContext context, PlotViewModel vm) {
+    // ========== 工具栏 ==========
+  /// 构建第一栏工具栏
+  ///
+  /// 包含：开始/停止、数据源设置、解析器、自适应、文件、清空+设置
+  Widget _buildPrimaryToolbar(BuildContext context, PlotViewModel vm) {
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -79,94 +85,55 @@ class _PlotPageContent extends StatelessWidget {
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          const groupSpacing = 8.0;
-          const menuButtonWidth = 40.0;
-
-          // 左侧固定区域估算宽度
-          const leftWidth = 360.0;
-
-          // 各右侧组的估算宽度（留 10% 余量防止溢出）
-          const groupWidths = {
-            _ToolbarGroup.cursor: 396.0,
-            _ToolbarGroup.zoom: 255.0,
-            _ToolbarGroup.fit: 119.0,
-            _ToolbarGroup.file: 80.0,
-            _ToolbarGroup.clearSettings: 88.0,
-          };
-
-          // 右侧所有组的总宽度（含间距）
-          final totalRightWidth = groupWidths.values.reduce((a, b) => a + b) + groupSpacing * 5;
-
-          // 可用宽度（扣除左侧和菜单按钮）
-          final availableWidth = constraints.maxWidth - leftWidth - menuButtonWidth;
-
-          // 计算需要折叠多少组：从右边开始，空间不够就折叠
-          // 所有组默认显示（按显示顺序排列）
-          final groups = <_ToolbarGroup>[
-            _ToolbarGroup.cursor,
-            _ToolbarGroup.zoom,
-            _ToolbarGroup.fit,
-            _ToolbarGroup.file,
-            _ToolbarGroup.clearSettings,
-          ];
-
-          // 如果总宽度超过可用宽度，从右边开始逐个折叠
-          var currentWidth = totalRightWidth;
-          while (currentWidth > availableWidth && groups.isNotEmpty) {
-            // 移除最右边的组
-            final removed = groups.removeLast();
-            currentWidth -= (groupWidths[removed] ?? 0) + groupSpacing;
-          }
-
-          final hasCollapsed = groups.length < 5;
-
-          return Row(
-            children: [
-              // ===== 左侧：开始/停止、数据源、解析器（始终显示） =====
-              _buildStartStopButton(context, vm),
-              const SizedBox(width: 12),
-              if (vm.parserType == ParserType.fireWater) ...[
-                _buildRandomSourceToggle(context, vm),
-                const SizedBox(width: 12),
-              ],
-              _buildParserSelector(context, vm),
-              const Spacer(),
-
-              // ===== 右侧工具组（动态决定哪些平铺、哪些折叠） =====
-              if (groups.contains(_ToolbarGroup.cursor)) ...[
-                _buildCursorTools(context, vm),
-                const SizedBox(width: groupSpacing),
-              ],
-              if (groups.contains(_ToolbarGroup.zoom)) ...[
-                _buildZoomTools(context, vm),
-                const SizedBox(width: groupSpacing),
-              ],
-              if (groups.contains(_ToolbarGroup.fit)) ...[
-                _buildFitTools(context, vm),
-                const SizedBox(width: groupSpacing),
-              ],
-              if (groups.contains(_ToolbarGroup.file)) ...[
-                _buildFileTools(context, vm),
-                const SizedBox(width: groupSpacing),
-              ],
-              if (groups.contains(_ToolbarGroup.clearSettings)) ...[
-                _buildClearAndSettings(context, vm),
-                const SizedBox(width: groupSpacing),
-              ],
-              // 有折叠的组时显示下拉菜单
-              if (hasCollapsed)
-                _buildCollapsedMenu(context, vm, visibleGroups: groups),
-            ],
-          );
-        },
+      child: Row(
+        children: [
+          // 开始/停止按钮
+          _buildStartStopButton(context, vm),
+          const SizedBox(width: 12),
+          if (vm.parserType == ParserType.fireWater) ...[
+            _buildRandomSourceToggle(context, vm),
+            const SizedBox(width: 12),
+          ],
+          // 解析器选择
+          _buildParserSelector(context, vm),
+          const Spacer(),
+          // 自适应工具组
+          _buildFitTools(context, vm),
+          const SizedBox(width: 8),
+          // 文件工具组
+          _buildFileTools(context, vm),
+          const SizedBox(width: 8),
+          // 清空 + 高级设置
+          _buildClearAndSettings(context, vm),
+        ],
       ),
     );
   }
 
-  /// 开始/停止按钮
-  Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
+  /// 构建第二栏工具栏（光标+缩放）
+  Widget _buildSecondaryToolbar(BuildContext context, PlotViewModel vm) {
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border(
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Row(
+        children: [
+          // 光标和测量工具组
+          _buildCursorTools(context, vm),
+          const Spacer(),
+          // 缩放和框选工具组
+          _buildZoomTools(context, vm),
+        ],
+      ),
+    );
+  }
+
+Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
     return ElevatedButton.icon(
       onPressed: () {
         if (vm.isPlotting) {
@@ -606,246 +573,6 @@ class _PlotPageContent extends StatelessWidget {
   }
 
   /// 折叠菜单：只显示未平铺的组
-  Widget _buildCollapsedMenu(
-    BuildContext context,
-    PlotViewModel vm, {
-    required List<_ToolbarGroup> visibleGroups,
-  }) {
-    return PopupMenuButton<String>(
-      tooltip: '更多工具',
-      icon: const Icon(Icons.more_vert, size: 20),
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-      itemBuilder: (context) {
-        final items = <PopupMenuEntry<String>>[];
-
-        // 光标组（如果未平铺）
-        if (!visibleGroups.contains(_ToolbarGroup.cursor)) {
-          items.add(_buildMenuHeader('光标与测量'));
-          items.add(PopupMenuItem(
-            value: 'vCursor',
-            child: _buildMenuItem(
-              icon: Icons.vertical_align_center,
-              label: '垂直光标',
-              active: vm.vCursorEnabled,
-              activeColor: Colors.orange,
-            ),
-            onTap: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-          ));
-          items.add(PopupMenuItem(
-            value: 'xMeasurement',
-            child: _buildMenuItem(
-              icon: Icons.vertical_align_center,
-              label: 'X-X 测量',
-              active: vm.xMeasurementEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.toggleXMeasurement(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'yMeasurement',
-            child: _buildMenuItem(
-              icon: Icons.horizontal_rule,
-              label: 'Y-Y 测量',
-              active: vm.yMeasurementEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.toggleYMeasurement(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'stats',
-            child: _buildMenuItem(
-              icon: Icons.analytics,
-              label: '统计测量',
-              active: vm.statsEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.toggleStats(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'statsRange',
-            enabled: vm.statsEnabled,
-            child: _buildMenuItem(
-              icon: Icons.straighten,
-              label: '统计范围',
-              active: vm.statsRangeEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.toggleStatsRange(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'follow',
-            child: _buildMenuItem(
-              icon: Icons.trending_flat,
-              label: '最新点跟随',
-              active: vm.followEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.setFollowEnabled(!vm.followEnabled),
-          ));
-        }
-
-        // 缩放组（如果未平铺）
-        if (!visibleGroups.contains(_ToolbarGroup.zoom)) {
-          if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader('缩放'));
-          items.add(PopupMenuItem(
-            value: 'undoZoom',
-            enabled: vm.canUndoZoom,
-            child: _buildMenuItem(icon: Icons.undo, label: '撤回缩放'),
-            onTap: () => vm.undoZoom(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'boxZoom',
-            child: _buildMenuItem(
-              icon: Icons.crop_free,
-              label: '框选放大',
-              active: vm.boxZoomEnabled,
-              activeColor: Colors.blue,
-            ),
-            onTap: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
-          ));
-          items.add(PopupMenuItem(
-            value: 'zoomXOut',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.zoom_out, label: 'X 轴缩小'),
-            onTap: () => vm.zoomXOut(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'zoomXIn',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.zoom_in, label: 'X 轴放大'),
-            onTap: () => vm.zoomXIn(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'zoomYOut',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.vertical_align_bottom, label: 'Y 轴缩小'),
-            onTap: () => vm.zoomYOut(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'zoomYIn',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.vertical_align_top, label: 'Y 轴放大'),
-            onTap: () => vm.zoomYIn(),
-          ));
-        }
-
-        // 文件组（如果未平铺）
-        if (!visibleGroups.contains(_ToolbarGroup.file)) {
-          if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader('文件'));
-          items.add(PopupMenuItem(
-            value: 'importCsv',
-            child: _buildMenuItem(icon: Icons.file_upload, label: '导入 CSV'),
-            onTap: () => _importCsv(context, vm),
-          ));
-          items.add(PopupMenuItem(
-            value: 'exportCsv',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.save, label: '导出 CSV'),
-            onTap: () => _exportCsv(context, vm),
-          ));
-        }
-
-        // 自适应组（如果未平铺）
-        if (!visibleGroups.contains(_ToolbarGroup.fit)) {
-          if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader('自适应'));
-          items.add(PopupMenuItem(
-            value: 'fitY',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.vertical_align_center, label: 'Y轴自适应'),
-            onTap: () => vm.fitYAxis(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'fitX',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.horizontal_rule, label: 'X轴自适应'),
-            onTap: () => vm.fitXAxis(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'fitAll',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.fit_screen, label: '全自适应'),
-            onTap: () => vm.fitAll(),
-          ));
-        }
-
-        // 清空+设置组（如果未平铺）
-        if (!visibleGroups.contains(_ToolbarGroup.clearSettings)) {
-          if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader('操作'));
-          items.add(PopupMenuItem(
-            value: 'clear',
-            enabled: vm.dataPoints.isNotEmpty,
-            child: _buildMenuItem(icon: Icons.clear, label: '清空数据'),
-            onTap: () => vm.clearData(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'settings',
-            child: _buildMenuItem(icon: Icons.tune, label: '高级设置'),
-            onTap: () => _showAdvancedSettingsDialog(context, vm),
-          ));
-        }
-
-        return items;
-      },
-    );
-  }
-
-  /// 构建菜单分组标题
-  PopupMenuItem<String> _buildMenuHeader(String label) {
-    return PopupMenuItem(
-      value: 'header_$label',
-      enabled: false,
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          color: Colors.grey.shade600,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  /// 构建下拉菜单项（带图标和文字）
-  Widget _buildMenuItem({
-    required IconData icon,
-    required String label,
-    bool active = false,
-    Color? activeColor,
-  }) {
-    return Row(
-      children: [
-        Icon(
-          icon,
-          size: 18,
-          color: active ? activeColor : null,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            color: active ? activeColor : null,
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ========== 通道面板 ==========
-  /// 构建左侧通道设置面板
-  ///
-  /// 只显示实际有数据的通道（[activeChannelCount]），包含：
-  /// - 通道颜色指示器
-  /// - 通道名称/别名
-  /// - 绘图开关
-  /// - 编辑按钮（修改颜色/别名/连线）
   Widget _buildChannelPanel(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
@@ -2125,14 +1852,6 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
 /// 工具栏分组枚举
 ///
 /// 用于动态折叠计算，按优先级排序。
-enum _ToolbarGroup {
-  cursor,       // 光标与测量
-  zoom,         // 缩放与框选
-  file,         // 文件导入导出
-  fit,          // 自适应
-  clearSettings,// 清空与设置
-}
-
 /// 可拖动的信息框组件
 ///
 /// 支持用户拖动改变位置，位置保存在 State 中。
