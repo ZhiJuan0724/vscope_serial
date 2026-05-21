@@ -3,6 +3,7 @@
 > 本文档按模块记录各部分的已完成的决策、已知约束
 > 待办事项不要幻觉添加 需要用户确认后再添加
 > 每次会话结束后应更新对应模块的状态
+> 每次准备提交git时找用户确认
 
 ---
 
@@ -37,9 +38,10 @@
 - 绘图时禁用逐包debug日志，避免性能瓶颈（2026-05-19）
 - 断开串口自动关闭原始数据接收（2026-05-20）
 - 日志统一使用`AppLogger`，移除所有`print()`（2026-05-21）
+- **移除未使用的Isolate探测代码**：`_openPortInIsolate`、`_openPortInIsolateKeepOpen`、`_OpenPortArgs`、`_OpenPortResult`（2026-05-21）
 
 ### 已知约束
-- `flutter_libserialport` 在Windows上虚拟串口（com0com）识别不稳定，需Isolate探测
+- `flutter_libserialport` 在Windows上虚拟串口（com0com）识别不稳定
 - **C++ DLL关闭流程**：窗口关闭前需先断开串口，否则可能触发`abort()`（已通过`_WindowCloseListener`修复）
 - 文本缓存按UTF-16估算大小，可能与实际内存占用有偏差
 - 显示行数限制500行，超出后FIFO丢弃，导出时仍可从字节缓存还原完整数据
@@ -105,6 +107,7 @@
 - `RandomDataSource` 使用Isolate生成正弦波数据，避免阻塞UI线程（2026-05-16）
 - `DataSourceManager` 多路复用串口+随机源，支持热切换配置（2026-05-16）
 - 随机源只支持FireWater格式输出（2026-05-20）
+- **切换到非FireWater协议时自动关闭随机源**，避免随机数据被错误解析（2026-05-21）
 
 ### 已知约束
 - 随机源频率通过`randomIntervalMs`控制，实际频率受Isolate调度影响
@@ -163,14 +166,16 @@
 - 随机源选项只在FireWater解析器模式下显示（2026-05-20）
 - 字体：名称13pt，地址12pt（2026-05-20）
 - 底部状态栏移除提示信息区域（2026-05-21）
+- **通道面板可折叠/可拉伸**：折叠为32px窄条，展开后右边缘拖动调整宽度（180px~400px）（2026-05-21）
+- 通道编辑图标改为齿轮（2026-05-21）
+- **两栏工具栏**：第一栏（开始/停止/解析器/自适应/文件/设置），第二栏（光标/测量/缩放）（2026-05-21）
 
 ### 已知约束
-- 通道面板宽度固定200px，名称+地址并排时可能拥挤（长别名时）
 - `_ChannelItem` 改为StatefulWidget后，列表滚动时编辑状态可能丢失（因ListView回收）
 - 解析器配置弹窗中JACK四通道的通道号输入使用临时TextEditingController，每次重建
+- JACK模式下通道面板最小宽度180px，长别名可能显示不全
 
 ### 待办
-- [ ] 通道面板支持宽度拖拽调整
 
 ---
 
@@ -189,6 +194,7 @@
 ### 已知约束
 - `SelectableText.rich` 换行后选择行为与`ListView.builder`不同（已用`SizedBox(width: double.infinity)`修复宽度）
 - 交替背景色基于index奇偶，非基于数据包来源
+- **Flutter Windows accessibility 已知问题**：ListView+Tooltip组合会触发`accessibility_bridge.cc`错误，不影响功能，等官方修复（flutter/flutter#182444）
 
 ### 待办
 
