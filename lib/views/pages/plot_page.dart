@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/models/channel_config.dart';
+import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../dialogs/zobow_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
 import '../widgets/common_widgets.dart';
@@ -303,7 +305,7 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
     );
   }
 
-  /// 解析器选择 + 配置按钮
+  /// 解析器选择 + 配置按钮 + Zobow配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -330,8 +332,8 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
           ),
         ),
         const SizedBox(width: 8),
-        // JACK四通道解析器不需要配置按钮，地址在通道面板直接设置
-        if (vm.parserType != ParserType.jackFourChannel)
+        // 众邦电控解析器不需要配置按钮，地址在通道面板直接设置
+        if (vm.parserType != ParserType.zobow)
           IconButton(
             onPressed: () => _showParserConfigDialog(context, vm),
             icon: const Icon(Icons.settings, size: 18),
@@ -339,7 +341,73 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
+        // Zobow模式下显示配置文件下拉框
+        if (vm.parserType == ParserType.zobow) ...[
+          const SizedBox(width: 8),
+          _buildZobowProfileSelector(context, vm),
+          // 新建配置按钮
+          Tooltip(
+            message: '新建配置',
+            child: InkWell(
+              onTap: () => _showCreateZobowProfileDialog(context, vm),
+              child: const SizedBox(
+                width: 28,
+                height: 28,
+                child: Icon(Icons.add, size: 16),
+              ),
+            ),
+          ),
+          // 编辑配置按钮
+          Tooltip(
+            message: '编辑配置',
+            child: InkWell(
+              onTap: () => _showEditZobowProfileDialog(context, vm),
+              child: const SizedBox(
+                width: 28,
+                height: 28,
+                child: Icon(Icons.edit, size: 16),
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+
+  /// Zobow配置文件选择器
+  Widget _buildZobowProfileSelector(BuildContext context, PlotViewModel vm) {
+    return SizedBox(
+      width: 140,
+      child: NoAnimDropdown<String?>(
+        value: vm.selectedZobowProfileId.isEmpty ? null : vm.selectedZobowProfileId,
+        hint: '不使用配置',
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          // "不使用"选项
+          const DropdownMenuItem<String?>(
+            value: null,
+            child: Text('不使用配置', style: TextStyle(fontSize: 12)),
+          ),
+          // 所有配置文件
+          ...vm.zobowProfiles.map((profile) {
+            return DropdownMenuItem(
+              value: profile.id,
+              child: Text(profile.name, style: const TextStyle(fontSize: 12)),
+            );
+          }),
+        ],
+        onChanged: (value) {
+          if (value == null) {
+            vm.selectZobowProfile(null);
+          } else {
+            vm.selectZobowProfile(value);
+          }
+        },
+      ),
     );
   }
 
@@ -693,8 +761,8 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
   Widget _buildChannelPanelContent(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    // JACK四通道模式下，只显示4个通道
-    final displayCount = vm.parserType == ParserType.jackFourChannel
+    // 众邦电控模式下，只显示4个通道
+    final displayCount = vm.parserType == ParserType.zobow
         ? 4
         : activeCount;
 
@@ -1252,12 +1320,35 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
       ),
     );
   }
+
+  /// 显示新建Zobow配置文件对话框
+  void _showCreateZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    showDialog(
+      context: context,
+      builder: (context) => ZobowProfileDialog(vm: vm),
+    );
+  }
+
+  /// 显示编辑Zobow配置文件对话框
+  void _showEditZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    final profile = vm.selectedZobowProfile;
+    if (profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择一个配置文件')),
+      );
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (context) => ZobowProfileDialog(vm: vm, profile: profile),
+    );
+  }
 }
 
 /// 通道列表项
 ///
 /// 显示单个通道的颜色、名称/别名、绘图开关和编辑按钮。
-/// 支持双击通道名直接编辑别名，JACK四通道模式下支持直接编辑ID。
+/// 支持双击通道名直接编辑别名，众邦电控模式下支持直接编辑ID。
 class _ChannelItem extends StatefulWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
@@ -1297,26 +1388,26 @@ class _ChannelItemState extends State<_ChannelItem> {
     setState(() => _isEditingName = false);
   }
 
-  void _saveJackId() {
+  void _saveZobowId() {
     final text = _idController.text.trim();
     final hex = text.replaceAll('0x', '').replaceAll('0X', '');
     final id = int.tryParse(hex, radix: 16);
     if (id != null && id >= 0 && id <= 0xFFFF) {
-      widget.vm.setJackFourChannelId(widget.ch.index, id);
+      widget.vm.setZobowChannelId(widget.ch.index, id);
     }
   }
 
-  void _onIdFocusChange(bool hasFocus) {
+  void _onZobowIdFocusChange(bool hasFocus) {
     if (!hasFocus) {
       // 失去焦点时取消文本选择
       _idController.selection = TextSelection.collapsed(offset: _idController.text.length);
-      _saveJackId();
+      _saveZobowId();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isJackMode = widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4;
+    final isZobowMode = widget.vm.parserType == ParserType.zobow && widget.ch.index < 4;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1340,7 +1431,7 @@ class _ChannelItemState extends State<_ChannelItem> {
             ),
           ),
           const SizedBox(width: 4),
-          // 通道名/别名（双击编辑）+ JACK四通道ID（直接编辑）并排显示
+          // 通道名/别名（双击编辑）+ 众邦电控ID（直接编辑）并排显示
           Expanded(
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1385,8 +1476,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                // JACK四通道模式下显示地址，常驻可编辑 TextField
-                if (isJackMode) ...[
+                // 众邦电控模式下显示地址，常驻可编辑 TextField
+                if (isZobowMode) ...[
                   const SizedBox(width: 6),
                   Container(
                     width: 64,
@@ -1394,10 +1485,10 @@ class _ChannelItemState extends State<_ChannelItem> {
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.only(bottom: 2),
                     child: Focus(
-                      onFocusChange: _onIdFocusChange,
+                      onFocusChange: _onZobowIdFocusChange,
                       child: TextField(
                         controller: _idController
-                          ..text = '0x${widget.vm.parserConfig.jackFourChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                          ..text = '0x${widget.vm.parserConfig.zobowChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
                         style: TextStyle(fontSize: 13, color: Theme.of(context).colorScheme.onSurface, height: 1.0),
                         decoration: InputDecoration(
                           isDense: true,
@@ -1415,11 +1506,13 @@ class _ChannelItemState extends State<_ChannelItem> {
                             borderSide: BorderSide(color: Theme.of(context).colorScheme.primary, width: 1),
                           ),
                         ),
-                        onSubmitted: (_) => _saveJackId(),
-                        onEditingComplete: _saveJackId,
+                        onSubmitted: (_) => _saveZobowId(),
+                        onEditingComplete: _saveZobowId,
                       ),
                     ),
                   ),
+                  // 预设选择按钮
+                  _buildPresetButton(context),
                 ],
               ],
             ),
@@ -1459,6 +1552,109 @@ class _ChannelItemState extends State<_ChannelItem> {
       builder: (context) => _ChannelEditDialog(vm: widget.vm, ch: widget.ch),
     );
   }
+
+  /// 构建预设选择按钮（仅在Zobow模式下且有选中配置文件时显示）
+  Widget _buildPresetButton(BuildContext context) {
+    final profile = widget.vm.selectedZobowProfile;
+    if (profile == null || profile.presets.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Tooltip(
+      message: '选择地址',
+      child: InkWell(
+        onTap: () => _showPresetSelectorDialog(context, profile),
+        child: Container(
+          width: 20,
+          height: 20,
+          margin: const EdgeInsets.only(left: 2),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: Icon(
+            Icons.chevron_right,
+            size: 14,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 显示预设选择弹窗
+  void _showPresetSelectorDialog(BuildContext context, ZobowConfigProfile profile) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFFF0F0F5),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          title: Text(
+            '选择地址 - ${profile.name}',
+            style: const TextStyle(color: Color(0xFF333344), fontSize: 15),
+          ),
+          content: SizedBox(
+            width: 480,
+            height: 360,
+            child: GridView.builder(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                childAspectRatio: 3.5,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: profile.presets.length,
+              itemBuilder: (context, index) {
+                final preset = profile.presets[index];
+                final hexAddr = '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+                return InkWell(
+                  onTap: () {
+                    widget.vm.applyPresetToChannel(widget.ch.index, preset);
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFFD0D0E0), width: 1),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          preset.name,
+                          style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          hexAddr,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF8888AA),
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消', style: TextStyle(color: Color(0xFF666688))),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 /// 通道编辑对话框
@@ -1479,7 +1675,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   late String _alias;
   late bool _showLine;
   late bool _offsetEnabled;
-  late DataType _jackDataType;
+  late DataType _zobowDataType;
   late final TextEditingController _aliasController;
 
   @override
@@ -1489,8 +1685,8 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _alias = widget.ch.alias;
     _showLine = widget.ch.showLine;
     _offsetEnabled = widget.ch.offsetEnabled;
-    // JACK四通道模式下，使用通道配置的数据类型
-    _jackDataType = widget.ch.dataType == DataType.int16 ? DataType.int16 : DataType.uint16;
+    // 众邦电控模式下，使用通道配置的数据类型
+    _zobowDataType = widget.ch.dataType == DataType.int16 ? DataType.int16 : DataType.uint16;
     _aliasController = TextEditingController(text: _alias);
   }
 
@@ -1561,18 +1757,18 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
               ),
             ],
-            // JACK四通道模式下显示数据类型选择
-            if (widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4) ...[
+            // 众邦电控模式下显示数据类型选择
+            if (widget.vm.parserType == ParserType.zobow && widget.ch.index < 4) ...[
               const SizedBox(height: 16),
               const Text('数据类型', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
-              const Text('仅在JACK四通道协议生效', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              const Text('仅在众邦电控协议生效', style: TextStyle(fontSize: 11, color: Colors.grey)),
               const SizedBox(height: 8),
               Row(
                 children: [
                   Expanded(
                     child: NoAnimDropdown<DataType>(
-                      value: _jackDataType,
+                      value: _zobowDataType,
                       hint: '类型',
                       decoration: const InputDecoration(
                         isDense: true,
@@ -1587,7 +1783,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                       }).toList(),
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() => _jackDataType = value);
+                          setState(() => _zobowDataType = value);
                         }
                       },
                     ),
@@ -1609,9 +1805,9 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
             widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
             widget.vm.setChannelShowLine(widget.ch.index, _showLine);
             widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
-            // JACK四通道模式下同步数据类型
-            if (widget.vm.parserType == ParserType.jackFourChannel && widget.ch.index < 4) {
-              widget.vm.setJackFourChannelType(widget.ch.index, _jackDataType);
+            // 众邦电控模式下同步数据类型
+            if (widget.vm.parserType == ParserType.zobow && widget.ch.index < 4) {
+              widget.vm.setZobowChannelType(widget.ch.index, _zobowDataType);
             }
             Navigator.pop(context);
           },
@@ -1763,21 +1959,21 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         return _buildFireWaterConfig();
       case ParserType.fixedFrame:
         return _buildFixedFrameConfig();
-      case ParserType.jackFourChannel:
-        return _buildJackFourChannelConfig();
+      case ParserType.zobow:
+        return _buildZobowConfig();
     }
   }
 
-  /// 构建 JACK四通道解析器配置界面
+  /// 构建 众邦电控解析器配置界面
   ///
   /// 包含4个通道的通道号（2字节16进制）和数据类型（uint16/int16）设置。
-  Widget _buildJackFourChannelConfig() {
+  Widget _buildZobowConfig() {
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('JACK四通道配置', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('众邦电控配置', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           const Text('固定4通道，10字节帧格式', style: TextStyle(fontSize: 11, color: Colors.grey)),
           const Text('8字节数据 + 2字节CRC16(MODBUS)', style: TextStyle(fontSize: 11, color: Colors.grey)),
@@ -1795,7 +1991,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                     width: 70,
                     child: TextField(
                       controller: TextEditingController(
-                        text: '0x${_config.jackFourChannelIds[i].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                        text: '0x${_config.zobowChannelIds[i].toRadixString(16).toUpperCase().padLeft(4, '0')}',
                       ),
                       decoration: const InputDecoration(
                         isDense: true,
@@ -1808,7 +2004,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                         final hex = value.replaceAll('0x', '').replaceAll('0X', '');
                         final id = int.tryParse(hex, radix: 16);
                         if (id != null && id >= 0 && id <= 0xFFFF) {
-                          setState(() => _config.jackFourChannelIds[i] = id);
+                          setState(() => _config.zobowChannelIds[i] = id);
                         }
                       },
                     ),
@@ -1818,7 +2014,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                   SizedBox(
                     width: 90,
                     child: NoAnimDropdown<DataType>(
-                      value: _config.jackFourChannelTypes[i],
+                      value: _config.zobowChannelTypes[i],
                       hint: '类型',
                       decoration: const InputDecoration(
                         isDense: true,
@@ -1833,7 +2029,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                       }).toList(),
                       onChanged: (value) {
                         if (value != null) {
-                          setState(() => _config.jackFourChannelTypes[i] = value);
+                          setState(() => _config.zobowChannelTypes[i] = value);
                         }
                       },
                     ),
@@ -1843,7 +2039,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             );
           }),
           const SizedBox(height: 8),
-          // JACK四通道协议固定发送配置，无需开关
+          // 众邦电控协议固定发送配置，无需开关
         ],
       ),
     );

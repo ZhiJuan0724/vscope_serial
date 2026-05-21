@@ -1,16 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../data/models/serial_config.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
 ///
-/// 配置文件存储在用户文档目录下：
-/// - Windows: `C:\Users\<用户名>\Documents\vscope_serial\settings.json`
-/// - macOS: `~/Documents/vscope_serial/settings.json`
-/// - Linux: `~/Documents/vscope_serial/settings.json`
+/// 配置文件存储在软件目录下：
+/// - Windows: `<exe_dir>\vscope_serial\settings.json`
 ///
 /// 使用单例模式确保全局唯一实例，通过 [AppSettings()] 访问。
 /// 首次使用前需调用 [init] 加载配置，修改后调用 [save] 持久化。
@@ -20,7 +16,7 @@ class AppSettings {
   AppSettings._internal();
 
   /// 应用配置文件夹名称
-  static const String _appDirName = 'vscope_serial';
+  static const String _appDirName = 'settings';
   /// 配置文件名称
   static const String _settingsFileName = 'settings.json';
 
@@ -58,8 +54,10 @@ class AppSettings {
   double randomFrequency = 1000.0;
   /// 最新点跟随模式开关
   bool followEnabled = false;
-  /// 解析器类型名称（'fireWater' 或 'fixedFrame'）
+  /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow'）
   String parserType = 'fireWater';
+  /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
+  String zobowProfileId = '';
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
@@ -77,8 +75,8 @@ class AppSettings {
   Future<void> init() async {
     if (_initialized) return;
 
-    final docDir = await getApplicationDocumentsDirectory();
-    final appDir = Directory('${docDir.path}/$_appDirName');
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final appDir = Directory('${exeDir.path}/$_appDirName');
     if (!appDir.existsSync()) {
       appDir.createSync(recursive: true);
     }
@@ -116,6 +114,7 @@ class AppSettings {
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
+      zobowProfileId = json['zobowProfileId'] as String? ?? '';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -151,6 +150,7 @@ class AppSettings {
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
       'parserType': parserType,
+      'zobowProfileId': zobowProfileId,
 
       // 视口设置
       'xMin': xMin,

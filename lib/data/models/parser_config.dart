@@ -4,7 +4,7 @@ import 'channel_config.dart';
 enum ParserType {
   fireWater('FireWater'),
   fixedFrame('固定帧头'),
-  jackFourChannel('JACK四通道');
+  zobow('众邦电控');
 
   final String label;
 
@@ -62,12 +62,12 @@ class ParserConfig {
   /// 帧尾字节
   List<int>? frameTail;
 
-  // ========== JACK四通道参数 ==========
+  // ========== 众邦电控参数 ==========
   /// 4个通道的通道号（2字节16进制）
-  List<int> jackFourChannelIds;
+  List<int> zobowChannelIds;
 
   /// 4个通道的数据类型（可单独设置uint16/int16）
-  List<DataType> jackFourChannelTypes;
+  List<DataType> zobowChannelTypes;
 
   ParserConfig({
     this.type = ParserType.fireWater,
@@ -81,11 +81,11 @@ class ParserConfig {
     this.checksumBytes = 1,
     this.hasFrameTail = false,
     this.frameTail,
-    List<int>? jackFourChannelIds,
-    List<DataType>? jackFourChannelTypes,
+    List<int>? zobowChannelIds,
+    List<DataType>? zobowChannelTypes,
   }) : frameHeader = frameHeader ?? [0xAA, 0x55],
-       jackFourChannelIds = jackFourChannelIds ?? [0x0001, 0x0002, 0x0003, 0x0004],
-       jackFourChannelTypes = jackFourChannelTypes ?? [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
+       zobowChannelIds = zobowChannelIds ?? [0x0001, 0x0002, 0x0003, 0x0004],
+       zobowChannelTypes = zobowChannelTypes ?? [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
 
   /// 计算单帧数据长度（不含帧头、校验、帧尾）
   int get dataBytesPerFrame => dataType.byteSize * channelCount;
@@ -109,8 +109,8 @@ class ParserConfig {
     int? checksumBytes,
     bool? hasFrameTail,
     List<int>? frameTail,
-    List<int>? jackFourChannelIds,
-    List<DataType>? jackFourChannelTypes,
+    List<int>? zobowChannelIds,
+    List<DataType>? zobowChannelTypes,
   }) {
     return ParserConfig(
       type: type ?? this.type,
@@ -124,8 +124,8 @@ class ParserConfig {
       checksumBytes: checksumBytes ?? this.checksumBytes,
       hasFrameTail: hasFrameTail ?? this.hasFrameTail,
       frameTail: frameTail ?? (this.frameTail != null ? List.from(this.frameTail!) : null),
-      jackFourChannelIds: jackFourChannelIds ?? List.from(this.jackFourChannelIds),
-      jackFourChannelTypes: jackFourChannelTypes ?? List.from(this.jackFourChannelTypes),
+      zobowChannelIds: zobowChannelIds ?? List.from(this.zobowChannelIds),
+      zobowChannelTypes: zobowChannelTypes ?? List.from(this.zobowChannelTypes),
     );
   }
 
@@ -148,12 +148,12 @@ class ParserConfig {
     );
   }
 
-  /// 创建默认 JACK四通道配置
-  factory ParserConfig.jackFourChannelDefault() {
+  /// 创建默认 众邦电控配置
+  factory ParserConfig.zobowDefault() {
     return ParserConfig(
-      type: ParserType.jackFourChannel,
-      jackFourChannelIds: [0x0001, 0x0002, 0x0003, 0x0004],
-      jackFourChannelTypes: [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16],
+      type: ParserType.zobow,
+      zobowChannelIds: [0x0001, 0x0002, 0x0003, 0x0004],
+      zobowChannelTypes: [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16],
     );
   }
 }

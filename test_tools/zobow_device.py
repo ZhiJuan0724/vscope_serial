@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-JACK四通道协议下位机模拟器
+众邦电控协议下位机模拟器
 
-模拟一个JACK四通道设备的行为：
+模拟一个众邦电控设备的行为：
 - 监听串口，接收10字节配置帧（4通道号 + CRC16）
 - 收到配置后，开始周期性发送10字节数据帧（4通道数据 + CRC16）
 - 支持随机数据或正弦波数据
@@ -148,10 +148,10 @@ class DataGenerator:
         return values
 
 
-# ========== JACK四通道设备模拟器 ==========
+# ========== 众邦电控设备模拟器 ==========
 
 class JackFourChannelDevice:
-    """JACK四通道协议下位机模拟器"""
+    """众邦电控协议下位机模拟器"""
     
     def __init__(
         self,
@@ -295,7 +295,7 @@ class JackFourChannelDevice:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='JACK四通道协议下位机模拟器',
+        description='众邦电控协议下位机模拟器',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -316,7 +316,7 @@ def main():
     args = parser.parse_args()
     
     print("=" * 50)
-    print("JACK四通道协议下位机模拟器")
+    print("众邦电控协议下位机模拟器")
     print("=" * 50)
     print(f"串口: {args.port}")
     print(f"波特率: {args.baud}")

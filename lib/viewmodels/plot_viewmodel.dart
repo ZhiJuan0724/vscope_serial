@@ -14,9 +14,11 @@ import '../data/models/plot_data.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
-import '../data/parser/jack_four_channel_parser.dart';
+import '../data/parser/zobow_parser.dart';
 import '../data/source/data_source_manager.dart';
+import '../data/models/zobow_config_profile.dart';
 import '../services/app_settings.dart';
+import '../services/zobow_profile_service.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
@@ -145,6 +147,16 @@ class PlotViewModel extends BaseViewModel {
   /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
 
+  // ========== 众邦电控配置文件 ==========
+  /// 配置文件服务
+  final ZobowProfileService _profileService = ZobowProfileService();
+  /// 配置文件列表（供UI下拉框使用）
+  List<ZobowConfigProfile> get zobowProfiles => _profileService.profiles;
+  /// 当前选中的配置文件
+  ZobowConfigProfile? get selectedZobowProfile => _profileService.selectedProfile;
+  /// 当前选中的配置文件ID
+  String get selectedZobowProfileId => _profileService.selectedProfileId;
+
   // ========== 定时刷新 ==========
   /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
@@ -189,7 +201,19 @@ class PlotViewModel extends BaseViewModel {
   PlotViewModel(super.serialService) {
     _sourceManager = DataSourceManager(serialService);
     _loadSettings();
+    _initZobowProfileService();
     _startRefreshTimer();
+  }
+
+  /// 初始化Zobow配置文件服务
+  Future<void> _initZobowProfileService() async {
+    await _profileService.init();
+    // 加载上次选中的配置文件
+    final savedProfileId = AppSettings().zobowProfileId;
+    if (savedProfileId.isNotEmpty) {
+      _profileService.selectProfile(savedProfileId);
+    }
+    Future.microtask(() => notifyListeners());
   }
 
   /// 从 AppSettings 加载绘图配置
@@ -209,6 +233,9 @@ class PlotViewModel extends BaseViewModel {
     );
     // 同步到 serialService
     serialService.useRandomSource = _useRandomSource;
+    // 加载解析器类型
+    _parserType = _parserTypeFromString(settings.parserType);
+    _parserConfig.type = _parserType;
   }
 
   /// 保存绘图配置到 AppSettings
@@ -220,6 +247,8 @@ class PlotViewModel extends BaseViewModel {
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
+    settings.parserType = _parserType.name;
+    settings.zobowProfileId = _profileService.selectedProfileId;
     // vCursorEnabled 不持久化
     settings.xMin = viewport.xMin;
     settings.xMax = viewport.xMax;
@@ -275,7 +304,7 @@ class PlotViewModel extends BaseViewModel {
   /// - 未连接串口且未使用随机源 → 提示先连接串口或启用随机源
   /// - 串口连接中 → 提示正在连接
   /// - 串口已连接但未开始绘图 → 提示点击开始按钮
-  /// - JACK四通道模式下 → 提示地址在通道面板设置
+  /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
     if (serialService.isConnecting) {
       return '正在连接串口...';
@@ -286,8 +315,8 @@ class PlotViewModel extends BaseViewModel {
     if (serialService.isConnected && !_isPlotting) {
       return '串口已连接，点击开始按钮开始绘图';
     }
-    if (_parserType == ParserType.jackFourChannel) {
-      return 'JACK四通道地址在左侧通道面板设置';
+    if (_parserType == ParserType.zobow) {
+      return '众邦电控地址在左侧通道面板设置';
     }
     return '';
   }
@@ -401,7 +430,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 解析器控制 ==========
-  /// 切换解析器类型（FireWater / 固定帧 / JACK四通道）
+  /// 切换解析器类型（FireWater / 固定帧 / 众邦电控）
   ///
   /// 如果正在绘图，会自动重启以应用新解析器。
   /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时自动关闭。
@@ -414,6 +443,11 @@ class PlotViewModel extends BaseViewModel {
       AppLogger().info('切换到非 FireWater 协议，自动关闭随机数据源', category: 'PLOT');
       setUseRandomSource(false);
     }
+
+    // 保存解析器类型到设置
+    final settings = AppSettings();
+    settings.parserType = type.name;
+    settings.save();
 
     if (_isPlotting) {
       _restartPlotting();
@@ -701,8 +735,8 @@ class PlotViewModel extends BaseViewModel {
         return FireWaterParser(_parserConfig);
       case ParserType.fixedFrame:
         return FixedFrameParser(_parserConfig);
-      case ParserType.jackFourChannel:
-        return JackFourChannelParser(_parserConfig);
+      case ParserType.zobow:
+        return ZobowParser(_parserConfig);
     }
   }
 
@@ -710,18 +744,18 @@ class PlotViewModel extends BaseViewModel {
 
   /// 协议启动时发送初始化数据
   ///
-  /// 某些协议（如JACK四通道）需要在开始绘图前发送配置数据。
+  /// 某些协议（如众邦电控）需要在开始绘图前发送配置数据。
   /// 返回是否发送成功，发送失败不影响后续绘图流程。
   Future<bool> _sendProtocolInitData() async {
     switch (_parserType) {
-      case ParserType.jackFourChannel:
+      case ParserType.zobow:
         return _sendJackFourChannelInitData();
       default:
         return true; // 其他协议无需发送
     }
   }
 
-  /// 发送 JACK四通道初始化数据
+  /// 发送 众邦电控初始化数据
   ///
   /// 格式：10字节
   /// [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
@@ -729,7 +763,7 @@ class PlotViewModel extends BaseViewModel {
   Future<bool> _sendJackFourChannelInitData() async {
     // 串口未连接时不发送初始化数据
     if (!serialService.isConnected) {
-      AppLogger().debug('串口未连接，跳过JACK四通道初始化数据发送', category: 'PLOT');
+      AppLogger().debug('串口未连接，跳过众邦电控初始化数据发送', category: 'PLOT');
       return false;
     }
 
@@ -739,7 +773,7 @@ class PlotViewModel extends BaseViewModel {
       final buffer = ByteData.sublistView(bytes);
 
       for (int i = 0; i < 4; i++) {
-        buffer.setUint16(i * 2, _parserConfig.jackFourChannelIds[i], Endian.little);
+        buffer.setUint16(i * 2, _parserConfig.zobowChannelIds[i], Endian.little);
       }
 
       // 计算前8字节的CRC16/MODBUS
@@ -754,12 +788,12 @@ class PlotViewModel extends BaseViewModel {
       serialService.send(bytes);
 
       AppLogger().info(
-        'JACK四通道初始化数据已发送: ${_bytesToHex(bytes)}',
+        '众邦电控初始化数据已发送: ${_bytesToHex(bytes)}',
         category: 'PLOT',
       );
       return true;
     } catch (e) {
-      AppLogger().error('JACK四通道初始化数据发送失败: $e', category: 'PLOT');
+      AppLogger().error('众邦电控初始化数据发送失败: $e', category: 'PLOT');
       return false;
     }
   }
@@ -1043,18 +1077,18 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 JACK四通道的通道号
-  void setJackFourChannelId(int index, int channelId) {
+  /// 设置 众邦电控的通道号
+  void setZobowChannelId(int index, int channelId) {
     if (index < 0 || index >= 4) return;
-    _parserConfig.jackFourChannelIds[index] = channelId & 0xFFFF;
+    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFF;
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 JACK四通道的通道数据类型
-  void setJackFourChannelType(int index, DataType type) {
+  /// 设置 众邦电控的通道数据类型
+  void setZobowChannelType(int index, DataType type) {
     if (index < 0 || index >= 4) return;
     if (type != DataType.uint16 && type != DataType.int16) return;
-    _parserConfig.jackFourChannelTypes[index] = type;
+    _parserConfig.zobowChannelTypes[index] = type;
     // 同步更新通道配置的数据类型（影响绘图显示）
     if (index < channels.length) {
       channels[index].dataType = type;
@@ -1545,6 +1579,54 @@ class PlotViewModel extends BaseViewModel {
     return max == double.negativeInfinity ? 1 : max;
   }
 
+  // ========== 众邦电控配置文件操作 ==========
+
+  /// 选择配置文件
+  void selectZobowProfile(String? profileId) {
+    _profileService.selectProfile(profileId);
+    // 保存到设置
+    final settings = AppSettings();
+    settings.zobowProfileId = profileId ?? '';
+    settings.save();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 创建新配置文件
+  Future<ZobowConfigProfile?> createZobowProfile(String name) async {
+    final profile = await _profileService.createProfile(name);
+    Future.microtask(() => notifyListeners());
+    return profile;
+  }
+
+  /// 更新配置文件
+  Future<void> updateZobowProfile(ZobowConfigProfile profile) async {
+    await _profileService.updateProfile(profile);
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 删除配置文件
+  Future<void> deleteZobowProfile(String id) async {
+    await _profileService.deleteProfile(id);
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 应用预设到指定通道
+  void applyPresetToChannel(int channelIndex, ZobowChannelPreset preset) {
+    if (channelIndex < 0 || channelIndex >= 4) return;
+    _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFF;
+    // 同时设置通道别名
+    if (preset.name.isNotEmpty && channelIndex < channels.length) {
+      channels[channelIndex].alias = preset.name;
+    }
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 重新加载配置文件列表
+  Future<void> reloadZobowProfiles() async {
+    await _profileService.reload();
+    Future.microtask(() => notifyListeners());
+  }
+
   /// 释放所有资源：取消订阅、停止数据源、释放解析器、停止定时器
   /// 
   /// 注意：全局单例模式下不修改 serialService.isPlotting，
@@ -1573,4 +1655,13 @@ class _RateSample {
   final int index;
   final int timestampMs;
   _RateSample(this.index, this.timestampMs);
+}
+
+/// 将字符串解析为 ParserType
+ParserType _parserTypeFromString(String value) {
+  return switch (value) {
+    'fixedFrame' => ParserType.fixedFrame,
+    'zobow' => ParserType.zobow,
+    _ => ParserType.fireWater,
+  };
 }

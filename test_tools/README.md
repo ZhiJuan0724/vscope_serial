@@ -18,9 +18,9 @@ Windows 下可使用以下工具创建虚拟串口对：
 
 ## 测试脚本
 
-### JACK四通道协议 (`jack_four_channel_device.py`)
+### 众邦电控协议 (`jack_four_channel_device.py`)
 
-模拟 JACK四通道设备：
+模拟 众邦电控设备：
 - 接收 10 字节配置帧（4 通道号 + CRC16）
 - 周期性发送 10 字节数据帧（4 通道数据 + CRC16）
 
@@ -49,7 +49,7 @@ python jack_four_channel_device.py --help
 1. 创建虚拟串口对（如 COM13 <-> COM14）
 2. 启动测试脚本：`python jack_four_channel_device.py --port COM14`
 3. 在 vscope_serial 中：
-   - 选择解析器："JACK四通道"
+   - 选择解析器："众邦电控"
    - 配置通道号（默认 0x0001~0x0004）
    - 连接串口 COM13
    - 点击"开始"

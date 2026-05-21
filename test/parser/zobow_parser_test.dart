@@ -4,9 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
-import 'package:vscope_serial/data/parser/jack_four_channel_parser.dart';
+import 'package:vscope_serial/data/parser/zobow_parser.dart';
 
-/// JACK四通道解析器单元测试
+/// 众邦电控解析器单元测试
 ///
 /// 测试覆盖：
 /// - 正确帧的解析
@@ -15,13 +15,13 @@ import 'package:vscope_serial/data/parser/jack_four_channel_parser.dart';
 /// - 缓冲区溢出处理
 /// - uint16/int16 数据类型转换
 void main() {
-  group('JackFourChannelParser', () {
-    late JackFourChannelParser parser;
+  group('ZobowParser', () {
+    late ZobowParser parser;
     late ParserConfig config;
 
     setUp(() {
-      config = ParserConfig.jackFourChannelDefault();
-      parser = JackFourChannelParser(config);
+      config = ParserConfig.zobowDefault();
+      parser = ZobowParser(config);
     });
 
     tearDown(() {
@@ -152,8 +152,8 @@ void main() {
 
     test('int16 数据类型转换', () async {
       // 设置通道0为int16
-      config.jackFourChannelTypes[0] = DataType.int16;
-      parser = JackFourChannelParser(config);
+      config.zobowChannelTypes[0] = DataType.int16;
+      parser = ZobowParser(config);
 
       final frame = buildFrame([0xFFFF, 100, 200, 300]); // 0xFFFF as int16 = -1
       final results = <List<double>>[];
@@ -174,13 +174,13 @@ void main() {
 
     test('混合数据类型', () async {
       // Ch0: int16, Ch1: uint16, Ch2: int16, Ch3: uint16
-      config.jackFourChannelTypes = [
+      config.zobowChannelTypes = [
         DataType.int16,
         DataType.uint16,
         DataType.int16,
         DataType.uint16,
       ];
-      parser = JackFourChannelParser(config);
+      parser = ZobowParser(config);
 
       final frame = buildFrame([0xFFFE, 1000, 0x8000, 500]); // -2, 1000, -32768, 500
       final results = <List<double>>[];

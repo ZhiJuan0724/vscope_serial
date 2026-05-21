@@ -8,7 +8,7 @@ import '../models/parse_result.dart';
 import '../models/parser_config.dart';
 import 'data_parser.dart';
 
-/// JACK四通道解析器
+/// 众邦电控解析器
 ///
 /// 协议格式：10字节固定帧
 /// [Ch0_Low][Ch0_High][Ch1_Low][Ch1_High][Ch2_Low][Ch2_High][Ch3_Low][Ch3_High][CRC_Low][CRC_High]
@@ -19,7 +19,7 @@ import 'data_parser.dart';
 /// - 后2字节为前8字节的CRC16（MODBUS）
 /// - 每个通道可单独配置uint16或int16
 /// - 缓冲区最大128字节，超时500ms未成功则清空重试
-class JackFourChannelParser extends IDataParser {
+class ZobowParser extends IDataParser {
   /// 内部字节缓冲区，用于缓存未解析的字节
   final _buffer = <int>[];
 
@@ -50,8 +50,8 @@ class JackFourChannelParser extends IDataParser {
   /// CRC-16/MODBUS 多项式（缓存避免重复查找）
   static final CrcPoly _crcPoly = crc16Polys['CRC-16/MODBUS']!;
 
-  JackFourChannelParser([ParserConfig? config])
-      : super(config ?? ParserConfig.jackFourChannelDefault());
+  ZobowParser([ParserConfig? config])
+      : super(config ?? ParserConfig.zobowDefault());
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
@@ -62,7 +62,7 @@ class JackFourChannelParser extends IDataParser {
       _buffer.addAll(data);
       _processBuffer();
     } catch (e, stack) {
-      AppLogger().debug('JACK四通道解析异常: $e\n$stack', category: 'PARSER');
+      AppLogger().debug('众邦电控解析异常: $e\n$stack', category: 'PARSER');
     }
   }
 
@@ -76,7 +76,7 @@ class JackFourChannelParser extends IDataParser {
       final elapsed = DateTime.now().difference(_lastSuccessTime!).inMilliseconds;
       if (elapsed > _timeoutMs && _buffer.isNotEmpty) {
         AppLogger().warning(
-          'JACK四通道解析超时(${elapsed}ms)，清空缓冲区(${_buffer.length}字节)',
+          '众邦电控解析超时(${elapsed}ms)，清空缓冲区(${_buffer.length}字节)',
           category: 'PARSER',
         );
         _buffer.clear();
@@ -88,7 +88,7 @@ class JackFourChannelParser extends IDataParser {
     // 防止缓冲区无限增长
     if (_buffer.length > _maxBufferSize) {
       AppLogger().warning(
-        'JACK四通道缓冲区溢出(${_buffer.length}>$_maxBufferSize)，保留最后${_frameLength - 1}字节',
+        '众邦电控缓冲区溢出(${_buffer.length}>$_maxBufferSize)，保留最后${_frameLength - 1}字节',
         category: 'PARSER',
       );
       _buffer.removeRange(0, _buffer.length - _frameLength + 1);
@@ -146,7 +146,7 @@ class JackFourChannelParser extends IDataParser {
       _consecutiveFailures++;
       if (_consecutiveFailures >= _maxConsecutiveFailures) {
         AppLogger().warning(
-          'JACK四通道连续失败$_consecutiveFailures次，缓冲区=${_bytesToHex(Uint8List.fromList(_buffer))}',
+          '众邦电控连续失败$_consecutiveFailures次，缓冲区=${_bytesToHex(Uint8List.fromList(_buffer))}',
           category: 'PARSER',
         );
         _consecutiveFailures = 0;
@@ -159,7 +159,7 @@ class JackFourChannelParser extends IDataParser {
     final byteData = ByteData.sublistView(dataBytes);
 
     for (int ch = 0; ch < 4; ch++) {
-      final type = config.jackFourChannelTypes[ch];
+      final type = config.zobowChannelTypes[ch];
       final offset = ch * 2;
       double value;
 
@@ -172,7 +172,7 @@ class JackFourChannelParser extends IDataParser {
           // 其他类型 fallback 到 uint16
           value = byteData.getUint16(offset, Endian.little).toDouble();
           AppLogger().warning(
-            'JACK四通道通道$ch配置了不支持的类型${type.label}，fallback到uint16',
+            '众邦电控通道$ch配置了不支持的类型${type.label}，fallback到uint16',
             category: 'PARSER',
           );
       }
@@ -193,7 +193,7 @@ class JackFourChannelParser extends IDataParser {
     _buffer.clear();
     _lastSuccessTime = null;
     _consecutiveFailures = 0;
-    AppLogger().trace('JACK四通道解析器已重置', category: 'PARSER');
+    AppLogger().trace('众邦电控解析器已重置', category: 'PARSER');
   }
 
   @override
