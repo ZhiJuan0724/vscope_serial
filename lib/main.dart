@@ -59,6 +59,7 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'VScope Serial',
         theme: ThemeData(
+          useMaterial3: false,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         ),
         home: const MainFrame(),

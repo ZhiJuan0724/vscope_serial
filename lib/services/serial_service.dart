@@ -130,7 +130,8 @@ class SerialService extends ChangeNotifier {
       config = config.copyWith(port: null);
     }
     AppLogger().info('已刷新串口列表', category: 'SERIAL');
-    notifyListeners();
+    // Defer notifyListeners to avoid calling during build phase
+    Future.microtask(() => notifyListeners());
   }
 
   /// 更新串口配置并通知监听者（供外部调用）
