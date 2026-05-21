@@ -29,8 +29,26 @@ class PlotPage extends StatelessWidget {
 /// - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
 /// - 主区域：左侧通道面板 + 右侧绘图区域
 /// - 状态栏：视口范围、数据点数、光标信息
-class _PlotPageContent extends StatelessWidget {
+class _PlotPageContent extends StatefulWidget {
   const _PlotPageContent();
+
+  @override
+  State<_PlotPageContent> createState() => _PlotPageContentState();
+}
+
+/// 通道面板尺寸常量
+const double kMinChannelPanelWidth = 180;
+const double kMaxChannelPanelWidth = 400;
+const double kDefaultChannelPanelWidth = 200;
+const double kCollapsedPanelWidth = 32;
+
+class _PlotPageContentState extends State<_PlotPageContent> {
+  /// 面板是否折叠
+  bool _isPanelCollapsed = false;
+  /// 面板宽度（展开时）
+  double _panelWidth = kDefaultChannelPanelWidth;
+  /// 是否正在拖动调整宽度
+  bool _isResizing = false;
 
   @override
   Widget build(BuildContext context) {
@@ -46,8 +64,8 @@ class _PlotPageContent extends StatelessWidget {
             Expanded(
               child: Row(
                 children: [
-                  // 通道设置面板
-                  _buildChannelPanel(context, vm),
+                  // 通道设置面板（可折叠/可拉伸）
+                  _buildChannelPanelArea(context, vm),
                   // 绘图区域
                   Expanded(
                     child: _buildPlotArea(context, vm),
@@ -60,6 +78,105 @@ class _PlotPageContent extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  /// 构建通道面板区域（折叠状态或展开状态）
+  Widget _buildChannelPanelArea(BuildContext context, PlotViewModel vm) {
+    if (_isPanelCollapsed) {
+      return _buildCollapsedPanel(context);
+    }
+    return _buildExpandedPanel(context, vm);
+  }
+
+  /// 折叠后的窄条（32px）
+  Widget _buildCollapsedPanel(BuildContext context) {
+    return Container(
+      width: kCollapsedPanelWidth,
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Column(
+        children: [
+          // 展开按钮（使用 InkWell 替代 IconButton，避免大圆阴影）
+          Tooltip(
+            message: '展开通道面板',
+            child: InkWell(
+              onTap: () => setState(() => _isPanelCollapsed = false),
+              child: const SizedBox(
+                width: 32,
+                height: 32,
+                child: Icon(Icons.chevron_right, size: 18),
+              ),
+            ),
+          ),
+          // 垂直文字 "通道"
+          Expanded(
+            child: Center(
+              child: RotatedBox(
+                quarterTurns: 1,
+                child: Text(
+                  '通道',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 展开后的可拉伸面板
+  Widget _buildExpandedPanel(BuildContext context, PlotViewModel vm) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 通道面板内容
+        SizedBox(
+          width: _panelWidth.clamp(kMinChannelPanelWidth, kMaxChannelPanelWidth),
+          child: _buildChannelPanelContent(context, vm),
+        ),
+        // 右边缘拖动条
+        MouseRegion(
+          cursor: SystemMouseCursors.resizeLeftRight,
+          child: GestureDetector(
+            onHorizontalDragStart: (_) => setState(() => _isResizing = true),
+            onHorizontalDragEnd: (_) => setState(() => _isResizing = false),
+            onHorizontalDragCancel: () => setState(() => _isResizing = false),
+            onHorizontalDragUpdate: (details) {
+              setState(() {
+                _panelWidth += details.delta.dx;
+                _panelWidth = _panelWidth.clamp(kMinChannelPanelWidth, kMaxChannelPanelWidth);
+              });
+            },
+            child: Container(
+              width: 4,
+              color: _isResizing
+                  ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.5)
+                  : Theme.of(context).dividerColor.withValues(alpha: 0.3),
+              child: Center(
+                child: Container(
+                  width: 2,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: _isResizing
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -572,8 +689,8 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
     );
   }
 
-  /// 折叠菜单：只显示未平铺的组
-  Widget _buildChannelPanel(BuildContext context, PlotViewModel vm) {
+  /// 通道面板内容（展开状态）
+  Widget _buildChannelPanelContent(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
     final activeCount = vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
     // JACK四通道模式下，只显示4个通道
@@ -582,7 +699,6 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
         : activeCount;
 
     return Container(
-      width: 200,
       decoration: BoxDecoration(
         border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor),
@@ -591,7 +707,8 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(8),
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               border: Border(
@@ -602,6 +719,19 @@ Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
               children: [
                 const Text('通道', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                 const Spacer(),
+                // 折叠按钮（使用 SizedBox 替代 Padding，避免 InkWell 水波纹扩散过大）
+                Tooltip(
+                  message: '收起通道面板',
+                  child: InkWell(
+                    onTap: () => setState(() => _isPanelCollapsed = true),
+                    child: const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Icon(Icons.chevron_left, size: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
                 // 全选/全不选勾选框
                 Tooltip(
                   message: vm.channels.every((ch) => ch.visible) ? '点击隐藏全部' : '点击显示全部',
