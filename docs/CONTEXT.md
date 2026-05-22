@@ -325,9 +325,10 @@
 
 ### 已完成的决策
 - 使用 `.github/workflows/windows-release.yml` 统一执行 CI 和发布（2026-05-22）
-- `push` / `pull_request` 到 `main` 自动执行 `flutter analyze`、`flutter test` 和 `zobow_device.py` 语法检查（2026-05-22）
+- `pull_request` 到 `main` 自动执行 `flutter analyze`、`flutter test` 和 `zobow_device.py` 语法检查（2026-05-22）
+- `main` 直接 push 不触发该 workflow，避免 `main` 更新后再推送 `v*` 标签时重复执行（2026-05-22）
 - Windows Release 构建运行在 `windows-latest`，使用 Flutter stable channel，并校验 `native_serial_reader.dll` 已进入 Release 包（2026-05-22）
-- 所有非 tag 构建上传 `vscope_serial-windows` artifact；推送 `v*` tag 时自动压缩发布包并创建 GitHub Release（2026-05-22）
+- PR 和手动构建上传 `vscope_serial-windows` artifact；推送 `v*` tag 时自动测试、构建、压缩发布包并创建 GitHub Release（2026-05-22）
 - Git 分支约定：`main` 是发布主线，后续开发默认在 `dev` 分支进行；发布时再从 `dev` 合并到 `main`（2026-05-22）
 - 版本发布约定：需要发布新版本时，在 `main` 上添加 `v*` 版本标签并 push，例如 `git tag v1.0.0 && git push origin v1.0.0`（2026-05-22）
 
