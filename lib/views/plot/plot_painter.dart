@@ -329,19 +329,24 @@ class PlotPainter extends CustomPainter {
       }
     }
 
-    final pointPaint =
-        Paint()
-          ..color = channel.color
-          ..style = PaintingStyle.fill;
+    final plotW = viewport.plotWidth(size.width);
+    final hidePointsForDenseLine =
+        channel.showLine && visibleCount > math.max(1, plotW).round();
+    if (!hidePointsForDenseLine) {
+      final pointPaint =
+          Paint()
+            ..color = channel.color
+            ..style = PaintingStyle.fill;
 
-    _drawChannelPoints(
-      canvas,
-      size,
-      channelIndex,
-      channel,
-      visibleRange,
-      pointPaint,
-    );
+      _drawChannelPoints(
+        canvas,
+        size,
+        channelIndex,
+        channel,
+        visibleRange,
+        pointPaint,
+      );
+    }
   }
 
   void _drawChannelRawPath(
@@ -393,43 +398,58 @@ class PlotPainter extends CustomPainter {
     if (dataCount <= 0 || plotW <= 0) return;
 
     final bucketCount = math.min(plotW.ceil(), dataCount);
-    final rawPoints = Float32List(bucketCount * 4);
+    final rawPoints = Float32List(bucketCount * 8);
     var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
-    final left = PlotViewport().marginLeft;
 
     for (int bucket = 0; bucket < bucketCount; bucket++) {
       final start = visibleRange.start + (bucket * dataCount ~/ bucketCount);
       var end = visibleRange.start + ((bucket + 1) * dataCount ~/ bucketCount);
       if (end <= start) end = start + 1;
 
-      var minY = double.infinity;
-      var maxY = double.negativeInfinity;
+      _BucketPoint? firstPoint;
+      _BucketPoint? lastPoint;
+      _BucketPoint? minPoint;
+      _BucketPoint? maxPoint;
       for (int i = start; i < end && i < visibleRange.end; i++) {
         final point = data[i];
         if (channelIndex >= point.values.length) continue;
+        final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
         final y = _screenY(
           point,
           channelIndex,
           channel,
           size.height,
         ).clamp(marginTop, marginBottom);
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+
+        final bucketPoint = _BucketPoint(point.index, x, y);
+        firstPoint ??= bucketPoint;
+        lastPoint = bucketPoint;
+        if (minPoint == null || y < minPoint.y) minPoint = bucketPoint;
+        if (maxPoint == null || y > maxPoint.y) maxPoint = bucketPoint;
       }
 
-      if (minY == double.infinity) continue;
-      final x = left + (bucket + 0.5) * plotW / bucketCount;
-      rawPoints[rawIndex++] = x;
-      rawPoints[rawIndex++] = minY;
-      rawPoints[rawIndex++] = x;
-      rawPoints[rawIndex++] = maxY;
+      if (firstPoint == null || lastPoint == null) continue;
+      final ordered = <_BucketPoint>[
+        firstPoint,
+        if (minPoint != null) minPoint,
+        if (maxPoint != null) maxPoint,
+        lastPoint,
+      ]..sort((a, b) => a.index.compareTo(b.index));
+
+      var previousIndex = -1;
+      for (final point in ordered) {
+        if (point.index == previousIndex) continue;
+        rawPoints[rawIndex++] = point.x;
+        rawPoints[rawIndex++] = point.y;
+        previousIndex = point.index;
+      }
     }
 
-    if (rawIndex > 0) {
+    if (rawIndex >= 4) {
       canvas.drawRawPoints(
-        ui.PointMode.lines,
+        ui.PointMode.polygon,
         Float32List.sublistView(rawPoints, 0, rawIndex),
         paint,
       );
@@ -554,7 +574,11 @@ class PlotPainter extends CustomPainter {
     // Y 轴刻度（使用 nice number 取整）
     final yGridCount = _calculateGridCount(plotH, 60);
     final roughStep = viewport.yRange / yGridCount;
-    final step = _niceNumber(roughStep, true);
+    final integerYValues = _visibleYValuesAreInteger();
+    final step = _niceNumber(
+      integerYValues ? math.max(1.0, roughStep) : roughStep,
+      true,
+    );
     final Set<double> drawnValues = {};
     if (step > 0) {
       final startValue = (viewport.yMin / step).floor() * step;
@@ -674,8 +698,8 @@ class PlotPainter extends CustomPainter {
           x += dashLen + gapLen;
         }
 
-        // 绘制左侧标签
-        final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+        // 绘制左侧标签。完整通道名称放到图例中，这里只保留短编号。
+        final displayName = 'Ch${ch.index}';
         final labelStyle = TextStyle(
           color: Colors.white,
           fontSize: 10,
@@ -958,7 +982,7 @@ class PlotPainter extends CustomPainter {
       // 通道名和值（优先显示别名）
       final displayName =
           channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
-      final valueText = '$displayName: ${values[i].toStringAsFixed(2)}';
+      final valueText = '$displayName: ${_formatNumber(values[i], true)}';
 
       final valueStyle = TextStyle(
         color: color,
@@ -1076,6 +1100,23 @@ class PlotPainter extends CustomPainter {
       return value.toStringAsFixed(2);
     }
     return value.toStringAsFixed(3);
+  }
+
+  bool _visibleYValuesAreInteger() {
+    var hasValue = false;
+    for (final point in data) {
+      if (point.index < viewport.xMin || point.index > viewport.xMax) continue;
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        final channel = channels[i];
+        if (!channel.visible) continue;
+        final value = point.values[i] * channel.yScale + channel.yOffset;
+        hasValue = true;
+        if ((value - value.roundToDouble()).abs() > 1e-9) {
+          return false;
+        }
+      }
+    }
+    return hasValue;
   }
 
   // ========== X-X / Y-Y 测量绘制 ==========
@@ -1421,4 +1462,12 @@ class _Range {
   final int start;
   final int end;
   _Range(this.start, this.end);
+}
+
+class _BucketPoint {
+  final int index;
+  final double x;
+  final double y;
+
+  const _BucketPoint(this.index, this.x, this.y);
 }

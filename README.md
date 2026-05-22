@@ -68,9 +68,10 @@ flutter build windows --release
 
 项目包含 GitHub Actions 工作流：
 
-- `push` / `pull_request` 到 `main`：自动执行静态分析、单元测试和 Windows Release 构建
+- `pull_request` 到 `main`：自动执行静态分析、单元测试和 Windows Release 构建
+- 推送 `v*` 标签：自动执行测试、构建、打包并创建 GitHub Release
 - `workflow_dispatch`：支持在 GitHub 页面手动触发
-- 推送 `v*` 标签：自动打包 `build/windows/x64/runner/Release` 并创建 GitHub Release
+- `main` 直接 push 不触发该工作流，避免 `main` 更新后再推送 `v*` 标签时重复执行
 
 发布示例：
 ```bash

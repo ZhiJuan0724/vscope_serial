@@ -54,6 +54,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 是否正在拖动调整宽度
   bool _isResizing = false;
 
+  /// 是否显示悬浮图例
+  bool _legendVisible = false;
+
   @override
   Widget build(BuildContext context) {
     return Consumer<PlotViewModel>(
@@ -268,17 +271,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
     return ElevatedButton.icon(
-      onPressed: () {
-        if (vm.isPlotting) {
-          vm.stopPlotting();
-        } else {
-          vm.startPlotting();
-        }
-      },
-      icon: Icon(vm.isPlotting ? Icons.stop : Icons.play_arrow, size: 16),
-      label: Text(vm.isPlotting ? '停止' : '开始'),
+      onPressed:
+          vm.isStopping
+              ? null
+              : () {
+                if (vm.isPlotting) {
+                  vm.stopPlotting();
+                } else {
+                  vm.startPlotting();
+                }
+              },
+      icon: Icon(
+        vm.isStopping
+            ? Icons.hourglass_empty
+            : vm.isPlotting
+            ? Icons.stop
+            : Icons.play_arrow,
+        size: 16,
+      ),
+      label: Text(
+        vm.isStopping
+            ? '停止中'
+            : vm.isPlotting
+            ? '停止'
+            : '开始',
+      ),
       style: ElevatedButton.styleFrom(
-        backgroundColor: vm.isPlotting ? Colors.red : Colors.green,
+        backgroundColor:
+            vm.isStopping
+                ? Colors.grey
+                : vm.isPlotting
+                ? Colors.red
+                : Colors.green,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         minimumSize: const Size(0, 28),
@@ -595,6 +619,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               minimumSize: const Size(0, 28),
               backgroundColor:
                   vm.followEnabled ? Colors.blue.withValues(alpha: 0.1) : null,
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Tooltip(
+          message: '图例',
+          child: IconButton(
+            onPressed: () => setState(() => _legendVisible = !_legendVisible),
+            icon: Icon(
+              Icons.list_alt,
+              size: 18,
+              color: _legendVisible ? Colors.teal : null,
+            ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            style: IconButton.styleFrom(
+              backgroundColor:
+                  _legendVisible ? Colors.teal.withValues(alpha: 0.12) : null,
             ),
           ),
         ),
@@ -977,7 +1019,73 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
         if (vm.measurementText != null || vm.statsText != null)
           _buildCombinedInfoBox(context, vm),
+        if (_legendVisible) _buildLegendBox(vm),
       ],
+    );
+  }
+
+  Widget _buildLegendBox(PlotViewModel vm) {
+    final visibleChannels =
+        vm.channels.where((channel) => channel.visible).toList();
+    if (visibleChannels.isEmpty) return const SizedBox.shrink();
+
+    return _DraggableInfoBox(
+      initialRight: 16,
+      initialTop: 96,
+      borderColor: Colors.teal.withValues(alpha: 0.55),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '图例',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...visibleChannels.map((channel) {
+                final name =
+                    channel.alias.isNotEmpty
+                        ? 'Ch${channel.index}  ${channel.alias}'
+                        : 'Ch${channel.index}';
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: channel.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1524,7 +1632,7 @@ class _ChannelItemState extends State<_ChannelItem> {
     final text = _idController.text.trim();
     final hex = text.replaceAll('0x', '').replaceAll('0X', '');
     final id = int.tryParse(hex, radix: 16);
-    if (id != null && id >= 0 && id <= 0xFFFF) {
+    if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
       widget.vm.setZobowChannelId(widget.ch.index, id);
     }
   }
@@ -1623,7 +1731,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                 if (isZobowMode) ...[
                   const SizedBox(width: 6),
                   Container(
-                    width: 64,
+                    width: 92,
                     height: 20,
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.only(bottom: 2),
@@ -1633,7 +1741,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                         controller:
                             _idController
                               ..text =
-                                  '0x${widget.vm.parserConfig.zobowChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                                  '0x${widget.vm.parserConfig.zobowChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(8, '0')}',
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,
@@ -2205,7 +2313,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
 
   /// 构建 众邦电控解析器配置界面
   ///
-  /// 包含4个通道的通道号（2字节16进制）和数据类型（uint16/int16）设置。
+  /// 包含4个通道的通道号（4字节16进制）和数据类型（uint16/int16）设置。
   Widget _buildZobowConfig() {
     return SingleChildScrollView(
       child: Column(
@@ -2231,13 +2339,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 children: [
                   Text('Ch$i:', style: const TextStyle(fontSize: 12)),
                   const SizedBox(width: 6),
-                  // 通道号输入（2字节16进制）
+                  // 通道号输入（4字节16进制）
                   SizedBox(
-                    width: 70,
+                    width: 96,
                     child: TextField(
                       controller: TextEditingController(
                         text:
-                            '0x${_config.zobowChannelIds[i].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                            '0x${_config.zobowChannelIds[i].toRadixString(16).toUpperCase().padLeft(8, '0')}',
                       ),
                       decoration: const InputDecoration(
                         isDense: true,
@@ -2254,7 +2362,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                             .replaceAll('0x', '')
                             .replaceAll('0X', '');
                         final id = int.tryParse(hex, radix: 16);
-                        if (id != null && id >= 0 && id <= 0xFFFF) {
+                        if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
                           setState(() => _config.zobowChannelIds[i] = id);
                         }
                       },
@@ -2621,7 +2729,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemBuilder: (context, index) {
         final preset = widget.profile.presets[index];
         final hexAddr =
-            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}';
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
@@ -2678,7 +2786,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemBuilder: (context, index) {
         final preset = widget.profile.presets[index];
         final hexAddr =
-            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}';
         return InkWell(
           onTap: () {
             widget.onSelect(preset);

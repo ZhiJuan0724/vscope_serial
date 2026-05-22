@@ -111,6 +111,13 @@ class PlotViewModel extends BaseViewModel {
   /// 是否正在绘图（数据源运行中）
   bool _isPlotting = false;
 
+  /// 是否正在停止绘图。
+  ///
+  /// 停止过程可能包含取消订阅、停止数据源、释放解析器等耗时操作。
+  /// UI 先切换到停止中状态，避免用户重复点击造成并发清理。
+  bool _isStopping = false;
+  Future<void>? _stopFuture;
+
   /// 是否显示网格
   bool _showGrid = true;
 
@@ -321,6 +328,7 @@ class PlotViewModel extends BaseViewModel {
   /// 这里直接返回稳定窗口引用，避免每次 build 复制大列表。
   List<PlotDataPoint> get dataPoints => _dataPoints;
   bool get isPlotting => _isPlotting;
+  bool get isStopping => _isStopping;
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
@@ -400,6 +408,9 @@ class PlotViewModel extends BaseViewModel {
         sources.add('随机源 ${randomFrequency.toStringAsFixed(0)}Hz');
       }
       return sources.isEmpty ? '绘图中' : '数据源：${sources.join(' + ')}';
+    }
+    if (_isStopping) {
+      return '正在停止绘图...';
     }
     if (_useRandomSource && _parserType != ParserType.fireWater) {
       if (!serialService.isConnected) {
@@ -602,6 +613,8 @@ class PlotViewModel extends BaseViewModel {
     _parserConfig.hasFrameTail = config.hasFrameTail;
     _parserConfig.frameTail =
         config.frameTail != null ? List.from(config.frameTail!) : null;
+    _parserConfig.zobowChannelIds = List.from(config.zobowChannelIds);
+    _parserConfig.zobowChannelTypes = List.from(config.zobowChannelTypes);
 
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
@@ -624,6 +637,10 @@ class PlotViewModel extends BaseViewModel {
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
   void startPlotting() {
+    if (_isStopping) {
+      showStatusMessage('正在停止绘图，请稍候');
+      return;
+    }
     if (_isPlotting) return;
 
     final canUseRandom =
@@ -679,8 +696,20 @@ class PlotViewModel extends BaseViewModel {
     // 创建解析器
     _parser = _createParser();
 
-    // 发送协议初始化数据（如果有）
-    _sendProtocolInitData();
+    // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
+    // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
+    if (!_sendProtocolInitData()) {
+      _parser?.dispose();
+      _parser = null;
+      _sourceConfig.useSerial = false;
+      _sourceConfig.useRandom = false;
+      serialService.isPlotting = false;
+      const message = '协议初始化发送失败，已停止绘图并断开串口';
+      showStatusMessage(message);
+      AppLogger().warning(message, category: 'PLOT');
+      Future.microtask(() => notifyListeners());
+      return;
+    }
 
     // 配置并启动数据源
     // 注意：useSerial/useRandom 已在开头同步
@@ -725,33 +754,51 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 取消数据流订阅、停止数据源、释放解析器，但保持定时刷新运行
   /// 以确保交互响应及时。
-  void stopPlotting() {
-    if (!_isPlotting) return;
+  Future<void> stopPlotting() {
+    if (_isStopping) {
+      return _stopFuture ?? Future.value();
+    }
+    if (!_isPlotting) return Future.value();
 
-    _parseSubscription?.cancel();
-    _parseSubscription = null;
-    _sourceManager.stop();
-    _parser?.dispose();
-    _parser = null;
-
+    _isStopping = true;
     _isPlotting = false;
     serialService.isPlotting = false;
-    serialService.notifyListeners();
-    _notifyTimer?.cancel();
-    _notifyTimer = null;
-    _statusMessageTimer?.cancel();
-    _statusMessageTimer = null;
-    _pendingNotifyCount = 0;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
-    showStatusMessage('已停止绘图');
+    showStatusMessage('正在停止绘图...', duration: Duration.zero);
+    Future.microtask(() => serialService.notifyListeners());
     Future.microtask(() => notifyListeners());
+
+    _stopFuture = Future<void>(() async {
+      await _parseSubscription?.cancel();
+      _parseSubscription = null;
+      _sourceManager.stop();
+      _parser?.dispose();
+      _parser = null;
+
+      _notifyTimer?.cancel();
+      _notifyTimer = null;
+      _statusMessageTimer?.cancel();
+      _statusMessageTimer = null;
+      _pendingNotifyCount = 0;
+      _isStopping = false;
+      if (!_disposed) {
+        showStatusMessage('已停止绘图');
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      }
+    }).whenComplete(() {
+      _stopFuture = null;
+    });
+    return _stopFuture!;
   }
 
   /// 重启绘图（用于配置变更时）
   void _restartPlotting() {
-    stopPlotting();
-    startPlotting();
+    stopPlotting().then((_) {
+      if (!_disposed) startPlotting();
+    });
   }
 
   /// 清空所有数据、速率统计、视口和光标
@@ -972,8 +1019,8 @@ class PlotViewModel extends BaseViewModel {
   /// 协议启动时发送初始化数据
   ///
   /// 某些协议（如众邦电控）需要在开始绘图前发送配置数据。
-  /// 返回是否发送成功，发送失败不影响后续绘图流程。
-  Future<bool> _sendProtocolInitData() async {
+  /// 返回是否发送成功，发送失败会阻止本次绘图启动。
+  bool _sendProtocolInitData() {
     switch (_parserType) {
       case ParserType.zobow:
         return _sendJackFourChannelInitData();
@@ -984,10 +1031,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// 发送 众邦电控初始化数据
   ///
-  /// 格式：10字节
-  /// [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
-  /// 前8字节为4个通道号（小端序uint16），后2字节为前8字节的CRC16/MODBUS（小端序）
-  Future<bool> _sendJackFourChannelInitData() async {
+  /// 格式：18字节
+  /// 前16字节为4个通道号（小端序uint32），后2字节为前16字节的CRC16/MODBUS（小端序）
+  bool _sendJackFourChannelInitData() {
     // 串口未连接时不发送初始化数据
     if (!serialService.isConnected) {
       AppLogger().debug('串口未连接，跳过众邦电控初始化数据发送', category: 'PLOT');
@@ -995,27 +1041,7 @@ class PlotViewModel extends BaseViewModel {
     }
 
     try {
-      // 构造 10 字节数据
-      final bytes = Uint8List(10);
-      final buffer = ByteData.sublistView(bytes);
-
-      for (int i = 0; i < 4; i++) {
-        buffer.setUint16(
-          i * 2,
-          _parserConfig.zobowChannelIds[i],
-          Endian.little,
-        );
-      }
-
-      // 计算前8字节的CRC16/MODBUS
-      final dataBytes = Uint8List.sublistView(bytes, 0, 8);
-      final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
-
-      // CRC 小端序写入
-      bytes[8] = crc & 0xFF;
-      bytes[9] = (crc >> 8) & 0xFF;
-
-      // 通过 SerialService 发送
+      final bytes = buildZobowInitFrame(_parserConfig.zobowChannelIds);
       serialService.send(bytes);
 
       AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
@@ -1024,6 +1050,27 @@ class PlotViewModel extends BaseViewModel {
       AppLogger().error('众邦电控初始化数据发送失败: $e', category: 'PLOT');
       return false;
     }
+  }
+
+  /// 构造众邦电控初始化帧。
+  ///
+  /// 通道号使用 uint32 little-endian 编码，CRC 覆盖前 16 字节。
+  static Uint8List buildZobowInitFrame(List<int> channelIds) {
+    if (channelIds.length < 4) {
+      throw ArgumentError.value(channelIds, 'channelIds', '至少需要4个通道号');
+    }
+
+    final bytes = Uint8List(18);
+    final buffer = ByteData.sublistView(bytes);
+    for (int i = 0; i < 4; i++) {
+      buffer.setUint32(i * 4, channelIds[i] & 0xFFFFFFFF, Endian.little);
+    }
+
+    final dataBytes = Uint8List.sublistView(bytes, 0, 16);
+    final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
+    bytes[16] = crc & 0xFF;
+    bytes[17] = (crc >> 8) & 0xFF;
+    return bytes;
   }
 
   /// 字节转16进制字符串（用于日志）
@@ -1170,6 +1217,10 @@ class PlotViewModel extends BaseViewModel {
       }
     }
     if (minY == double.infinity || maxY == double.negativeInfinity) return;
+    if (minY == maxY) {
+      showStatusMessage('Y轴数据范围为0，跳过自适应');
+      return;
+    }
 
     _saveViewport();
     final padding = (maxY - minY) * 0.1;
@@ -1180,7 +1231,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
   void fitXAxis() {
-    if (_nextIndex == 0) return;
+    if (_nextIndex <= 3) {
+      showStatusMessage('X轴数据点过少，跳过自适应');
+      return;
+    }
     final maxX = _nextIndex.toDouble();
     final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
 
@@ -1193,7 +1247,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
   void fitAll() {
-    if (_nextIndex == 0) return;
+    if (_nextIndex <= 3) {
+      showStatusMessage('X轴数据点过少，跳过自适应');
+      return;
+    }
 
     if (_parserType == ParserType.zobow) {
       _loadZobowTailWindow();
@@ -1217,6 +1274,13 @@ class PlotViewModel extends BaseViewModel {
 
     _saveViewport();
     if (minY != double.infinity && maxY != double.negativeInfinity) {
+      if (minY == maxY) {
+        viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+        showStatusMessage('Y轴数据范围为0，仅自适应X轴');
+        _saveSettings();
+        Future.microtask(() => notifyListeners());
+        return;
+      }
       final padding = (maxY - minY) * 0.1;
       viewport = viewport.copyWith(
         xMin: minX,
@@ -1341,7 +1405,7 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 众邦电控的通道号
   void setZobowChannelId(int index, int channelId) {
     if (index < 0 || index >= 4) return;
-    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFF;
+    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
     Future.microtask(() => notifyListeners());
   }
 
@@ -1592,18 +1656,18 @@ class PlotViewModel extends BaseViewModel {
 
     if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
       final dx = _xCursor2! - _xCursor1!;
-      buffer.writeln('X1 = ${_xCursor1!.toStringAsFixed(1)}');
-      buffer.writeln('X2 = ${_xCursor2!.toStringAsFixed(1)}');
-      buffer.writeln('ΔX = ${dx.toStringAsFixed(1)}');
+      buffer.writeln('X1 = ${_formatDisplayNumber(_xCursor1!)}');
+      buffer.writeln('X2 = ${_formatDisplayNumber(_xCursor2!)}');
+      buffer.writeln('ΔX = ${_formatDisplayNumber(dx)}');
       hasData = true;
     }
 
     if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
       final dy = _yCursor2! - _yCursor1!;
       if (hasData) buffer.writeln('---');
-      buffer.writeln('Y1 = ${_yCursor1!.toStringAsFixed(1)}');
-      buffer.writeln('Y2 = ${_yCursor2!.toStringAsFixed(1)}');
-      buffer.writeln('ΔY = ${dy.toStringAsFixed(1)}');
+      buffer.writeln('Y1 = ${_formatDisplayNumber(_yCursor1!)}');
+      buffer.writeln('Y2 = ${_formatDisplayNumber(_yCursor2!)}');
+      buffer.writeln('ΔY = ${_formatDisplayNumber(dy)}');
       hasData = true;
     }
 
@@ -1659,9 +1723,9 @@ class PlotViewModel extends BaseViewModel {
       hasVisibleChannel = true;
 
       buffer.writeln('Ch$i:');
-      buffer.writeln('  Max: ${maxVal!.toStringAsFixed(2)}');
-      buffer.writeln('  Min: ${minVal!.toStringAsFixed(2)}');
-      buffer.writeln('  Avg: ${(sum! / count).toStringAsFixed(2)}');
+      buffer.writeln('  Max: ${_formatDisplayNumber(maxVal!)}');
+      buffer.writeln('  Min: ${_formatDisplayNumber(minVal!)}');
+      buffer.writeln('  Avg: ${_formatDisplayNumber(sum! / count)}');
     }
 
     if (!hasVisibleChannel) return null;
@@ -1670,10 +1734,27 @@ class PlotViewModel extends BaseViewModel {
     buffer.writeln('---');
     buffer.writeln('N: $commonCount');
     buffer.writeln(
-      'Range: ${xMin.toStringAsFixed(1)} ~ ${xMax.toStringAsFixed(1)}',
+      'Range: ${_formatDisplayNumber(xMin)} ~ ${_formatDisplayNumber(xMax)}',
     );
 
     return buffer.toString().trim();
+  }
+
+  String _formatDisplayNumber(double value) {
+    final absValue = value.abs();
+    if ((value - value.roundToDouble()).abs() < 1e-9) {
+      return value.toInt().toString();
+    }
+    if (absValue >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    }
+    if (absValue >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}k';
+    }
+    if (absValue >= 100) return value.toStringAsFixed(0);
+    if (absValue >= 1) return value.toStringAsFixed(1);
+    if (absValue >= 0.01) return value.toStringAsFixed(2);
+    return value.toStringAsFixed(3);
   }
 
   // ========== 导出 ==========
@@ -1924,7 +2005,7 @@ class PlotViewModel extends BaseViewModel {
   /// 应用预设到指定通道
   void applyPresetToChannel(int channelIndex, ZobowChannelPreset preset) {
     if (channelIndex < 0 || channelIndex >= 4) return;
-    _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFF;
+    _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFFFFFF;
     // 同时设置通道别名
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;
@@ -1951,6 +2032,8 @@ class PlotViewModel extends BaseViewModel {
     _parser?.dispose();
     _parser = null;
     _isPlotting = false;
+    _isStopping = false;
+    _stopFuture = null;
     // 全局单例模式下不重置 serialService.isPlotting
     // serialService.isPlotting = false;
     _notifyTimer?.cancel();

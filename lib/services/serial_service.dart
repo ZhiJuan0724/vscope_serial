@@ -460,12 +460,25 @@ class SerialService extends ChangeNotifier {
     }
     if (_nativeReader != null) {
       final sent = _nativeReader!.write(data);
+      if (sent != data.length) {
+        _handleIoDisconnected(
+          '发送失败，串口可能已断开: expected=${data.length}, sent=$sent',
+        );
+        throw StateError('串口已断开连接，发送失败');
+      }
       AppLogger().info('发送 $sent bytes', category: 'DATA');
     } else {
-      throw StateError('串口未连接');
+      _handleIoDisconnected('发送失败，串口读取器不可用');
+      throw StateError('串口已断开连接，发送失败');
     }
     // 发送的数据也显示在数据窗口
     _addSendDataLine(data);
+  }
+
+  void _handleIoDisconnected(String message) {
+    AppLogger().warning(message, category: 'SERIAL');
+    _cleanupPort();
+    Future.microtask(() => notifyListeners());
   }
 
   void updateRts(bool value) {

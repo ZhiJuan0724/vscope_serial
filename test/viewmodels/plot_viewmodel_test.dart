@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -113,6 +115,34 @@ void main() {
       expect(vm.viewport.xMax, 1000.0);
     });
 
+    test('Y轴全零时跳过自适应', () {
+      for (int i = 0; i < 4; i++) {
+        vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      }
+      final oldViewport = vm.viewport;
+
+      vm.fitYAxis();
+
+      expect(vm.viewport.yMin, oldViewport.yMin);
+      expect(vm.viewport.yMax, oldViewport.yMax);
+      expect(vm.hintText, contains('Y轴数据范围为0'));
+    });
+
+    test('X轴点数小于等于3时跳过自适应', () {
+      for (int i = 0; i < 3; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      final oldViewport = vm.viewport;
+
+      vm.fitXAxis();
+
+      expect(vm.viewport.xMin, oldViewport.xMin);
+      expect(vm.viewport.xMax, oldViewport.xMax);
+      expect(vm.hintText, contains('X轴数据点过少'));
+    });
+
     test('状态文本包含关键信息', () {
       final status = vm.statusText;
       expect(status.contains('X:'), true);
@@ -131,6 +161,71 @@ void main() {
 
       expect(vm.isPlotting, false);
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
+    });
+
+    test('众邦初始化帧使用4字节小端通道号', () {
+      final frame = PlotViewModel.buildZobowInitFrame([
+        0x01020304,
+        0x11223344,
+        0xAABBCCDD,
+        0x00000005,
+      ]);
+
+      expect(frame.length, 18);
+      expect(frame.sublist(0, 16), [
+        0x04,
+        0x03,
+        0x02,
+        0x01,
+        0x44,
+        0x33,
+        0x22,
+        0x11,
+        0xDD,
+        0xCC,
+        0xBB,
+        0xAA,
+        0x05,
+        0x00,
+        0x00,
+        0x00,
+      ]);
+
+      final crc = calculateCrc(
+        frame.sublist(0, 16),
+        crc16Polys['CRC-16/MODBUS']!,
+      );
+      expect(frame[16], crc & 0xFF);
+      expect(frame[17], (crc >> 8) & 0xFF);
+    });
+
+    test('众邦初始化发送失败时不进入绘图并断开连接', () {
+      serialService.isConnected = true;
+      vm.setParserType(ParserType.zobow);
+
+      vm.startPlotting();
+
+      expect(vm.isPlotting, false);
+      expect(serialService.isConnected, false);
+      expect(vm.hintText, contains('协议初始化发送失败'));
+    });
+
+    test('stopPlotting先更新UI状态并阻止重复停止', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.startPlotting();
+      expect(vm.isPlotting, true);
+
+      final stopFuture = vm.stopPlotting();
+
+      expect(vm.isPlotting, false);
+      expect(vm.isStopping, true);
+      expect(vm.hintText, contains('正在停止绘图'));
+
+      expect(identical(vm.stopPlotting(), stopFuture), true);
+
+      await stopFuture;
+      expect(vm.isStopping, false);
     });
 
     test('canUndoZoom初始为false', () {
