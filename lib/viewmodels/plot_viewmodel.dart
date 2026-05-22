@@ -602,6 +602,8 @@ class PlotViewModel extends BaseViewModel {
     _parserConfig.hasFrameTail = config.hasFrameTail;
     _parserConfig.frameTail =
         config.frameTail != null ? List.from(config.frameTail!) : null;
+    _parserConfig.zobowChannelIds = List.from(config.zobowChannelIds);
+    _parserConfig.zobowChannelTypes = List.from(config.zobowChannelTypes);
 
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
@@ -984,9 +986,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// 发送 众邦电控初始化数据
   ///
-  /// 格式：10字节
-  /// [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
-  /// 前8字节为4个通道号（小端序uint16），后2字节为前8字节的CRC16/MODBUS（小端序）
+  /// 格式：18字节
+  /// 前16字节为4个通道号（小端序uint32），后2字节为前16字节的CRC16/MODBUS（小端序）
   Future<bool> _sendJackFourChannelInitData() async {
     // 串口未连接时不发送初始化数据
     if (!serialService.isConnected) {
@@ -995,27 +996,7 @@ class PlotViewModel extends BaseViewModel {
     }
 
     try {
-      // 构造 10 字节数据
-      final bytes = Uint8List(10);
-      final buffer = ByteData.sublistView(bytes);
-
-      for (int i = 0; i < 4; i++) {
-        buffer.setUint16(
-          i * 2,
-          _parserConfig.zobowChannelIds[i],
-          Endian.little,
-        );
-      }
-
-      // 计算前8字节的CRC16/MODBUS
-      final dataBytes = Uint8List.sublistView(bytes, 0, 8);
-      final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
-
-      // CRC 小端序写入
-      bytes[8] = crc & 0xFF;
-      bytes[9] = (crc >> 8) & 0xFF;
-
-      // 通过 SerialService 发送
+      final bytes = buildZobowInitFrame(_parserConfig.zobowChannelIds);
       serialService.send(bytes);
 
       AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
@@ -1024,6 +1005,27 @@ class PlotViewModel extends BaseViewModel {
       AppLogger().error('众邦电控初始化数据发送失败: $e', category: 'PLOT');
       return false;
     }
+  }
+
+  /// 构造众邦电控初始化帧。
+  ///
+  /// 通道号使用 uint32 little-endian 编码，CRC 覆盖前 16 字节。
+  static Uint8List buildZobowInitFrame(List<int> channelIds) {
+    if (channelIds.length < 4) {
+      throw ArgumentError.value(channelIds, 'channelIds', '至少需要4个通道号');
+    }
+
+    final bytes = Uint8List(18);
+    final buffer = ByteData.sublistView(bytes);
+    for (int i = 0; i < 4; i++) {
+      buffer.setUint32(i * 4, channelIds[i] & 0xFFFFFFFF, Endian.little);
+    }
+
+    final dataBytes = Uint8List.sublistView(bytes, 0, 16);
+    final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
+    bytes[16] = crc & 0xFF;
+    bytes[17] = (crc >> 8) & 0xFF;
+    return bytes;
   }
 
   /// 字节转16进制字符串（用于日志）
@@ -1341,7 +1343,7 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 众邦电控的通道号
   void setZobowChannelId(int index, int channelId) {
     if (index < 0 || index >= 4) return;
-    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFF;
+    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
     Future.microtask(() => notifyListeners());
   }
 
@@ -1924,7 +1926,7 @@ class PlotViewModel extends BaseViewModel {
   /// 应用预设到指定通道
   void applyPresetToChannel(int channelIndex, ZobowChannelPreset preset) {
     if (channelIndex < 0 || channelIndex >= 4) return;
-    _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFF;
+    _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFFFFFF;
     // 同时设置通道别名
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;

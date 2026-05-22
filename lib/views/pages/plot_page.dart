@@ -1524,7 +1524,7 @@ class _ChannelItemState extends State<_ChannelItem> {
     final text = _idController.text.trim();
     final hex = text.replaceAll('0x', '').replaceAll('0X', '');
     final id = int.tryParse(hex, radix: 16);
-    if (id != null && id >= 0 && id <= 0xFFFF) {
+    if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
       widget.vm.setZobowChannelId(widget.ch.index, id);
     }
   }
@@ -1623,7 +1623,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                 if (isZobowMode) ...[
                   const SizedBox(width: 6),
                   Container(
-                    width: 64,
+                    width: 92,
                     height: 20,
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.only(bottom: 2),
@@ -1633,7 +1633,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                         controller:
                             _idController
                               ..text =
-                                  '0x${widget.vm.parserConfig.zobowChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                                  '0x${widget.vm.parserConfig.zobowChannelIds[widget.ch.index].toRadixString(16).toUpperCase().padLeft(8, '0')}',
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,
@@ -2205,7 +2205,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
 
   /// 构建 众邦电控解析器配置界面
   ///
-  /// 包含4个通道的通道号（2字节16进制）和数据类型（uint16/int16）设置。
+  /// 包含4个通道的通道号（4字节16进制）和数据类型（uint16/int16）设置。
   Widget _buildZobowConfig() {
     return SingleChildScrollView(
       child: Column(
@@ -2231,13 +2231,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 children: [
                   Text('Ch$i:', style: const TextStyle(fontSize: 12)),
                   const SizedBox(width: 6),
-                  // 通道号输入（2字节16进制）
+                  // 通道号输入（4字节16进制）
                   SizedBox(
-                    width: 70,
+                    width: 96,
                     child: TextField(
                       controller: TextEditingController(
                         text:
-                            '0x${_config.zobowChannelIds[i].toRadixString(16).toUpperCase().padLeft(4, '0')}',
+                            '0x${_config.zobowChannelIds[i].toRadixString(16).toUpperCase().padLeft(8, '0')}',
                       ),
                       decoration: const InputDecoration(
                         isDense: true,
@@ -2254,7 +2254,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                             .replaceAll('0x', '')
                             .replaceAll('0X', '');
                         final id = int.tryParse(hex, radix: 16);
-                        if (id != null && id >= 0 && id <= 0xFFFF) {
+                        if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
                           setState(() => _config.zobowChannelIds[i] = id);
                         }
                       },
@@ -2621,7 +2621,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemBuilder: (context, index) {
         final preset = widget.profile.presets[index];
         final hexAddr =
-            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}';
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
@@ -2678,7 +2678,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemBuilder: (context, index) {
         final preset = widget.profile.presets[index];
         final hexAddr =
-            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}';
         return InkWell(
           onTap: () {
             widget.onSelect(preset);

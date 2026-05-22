@@ -3,7 +3,7 @@
 众邦电控协议下位机模拟器
 
 模拟一个众邦电控设备的行为：
-- 监听串口，接收10字节配置帧（4通道号 + CRC16）
+- 监听串口，接收18字节配置帧（4个uint32通道号 + CRC16）
 - 收到配置后，开始周期性发送10字节数据帧（4通道数据 + CRC16）
 - 支持随机数据或正弦波数据
 
@@ -203,14 +203,14 @@ class JackFourChannelDevice:
         """解析配置帧，验证CRC
         
         配置帧格式：
-        [Ch0_ID_Low][Ch0_ID_High][Ch1_ID_Low][Ch1_ID_High][Ch2_ID_Low][Ch2_ID_High][Ch3_ID_Low][Ch3_ID_High][CRC_Low][CRC_High]
+        4个uint32 little-endian通道号 + 2字节CRC16/MODBUS little-endian
         """
-        if len(data) != 10:
+        if len(data) != 18:
             return False
         
         # 验证CRC
-        received_crc = struct.unpack('<H', data[8:10])[0]
-        calculated_crc = crc16_modbus(data[0:8])
+        received_crc = struct.unpack('<H', data[16:18])[0]
+        calculated_crc = crc16_modbus(data[0:16])
         
         if received_crc != calculated_crc:
             print(f"[设备] 配置帧CRC错误: received=0x{received_crc:04X}, calculated=0x{calculated_crc:04X}")
@@ -218,13 +218,13 @@ class JackFourChannelDevice:
         
         # 提取通道号
         self.channel_ids = [
-            struct.unpack('<H', data[0:2])[0],
-            struct.unpack('<H', data[2:4])[0],
-            struct.unpack('<H', data[4:6])[0],
-            struct.unpack('<H', data[6:8])[0],
+            struct.unpack('<I', data[0:4])[0],
+            struct.unpack('<I', data[4:8])[0],
+            struct.unpack('<I', data[8:12])[0],
+            struct.unpack('<I', data[12:16])[0],
         ]
         
-        print(f"[设备] 收到配置帧，通道号: {[f'0x{id:04X}' for id in self.channel_ids]}")
+        print(f"[设备] 收到配置帧，通道号: {[f'0x{id:08X}' for id in self.channel_ids]}")
         return True
     
     def _send_data_frame(self):
@@ -265,10 +265,10 @@ class JackFourChannelDevice:
                     buffer.extend(data)
                     
                     # 尝试解析配置帧
-                    while len(buffer) >= 10:
-                        if self._parse_config_frame(bytes(buffer[:10])):
+                    while len(buffer) >= 18:
+                        if self._parse_config_frame(bytes(buffer[:18])):
                             self.configured = True
-                            buffer = buffer[10:]
+                            buffer = buffer[18:]
                             print("[设备] 配置完成，开始发送数据...")
                             # 高频率时关闭逐帧打印
                             if self.interval_ms < 5:

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/serial_service.dart';
@@ -131,6 +132,42 @@ void main() {
 
       expect(vm.isPlotting, false);
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
+    });
+
+    test('众邦初始化帧使用4字节小端通道号', () {
+      final frame = PlotViewModel.buildZobowInitFrame([
+        0x01020304,
+        0x11223344,
+        0xAABBCCDD,
+        0x00000005,
+      ]);
+
+      expect(frame.length, 18);
+      expect(frame.sublist(0, 16), [
+        0x04,
+        0x03,
+        0x02,
+        0x01,
+        0x44,
+        0x33,
+        0x22,
+        0x11,
+        0xDD,
+        0xCC,
+        0xBB,
+        0xAA,
+        0x05,
+        0x00,
+        0x00,
+        0x00,
+      ]);
+
+      final crc = calculateCrc(
+        frame.sublist(0, 16),
+        crc16Polys['CRC-16/MODBUS']!,
+      );
+      expect(frame[16], crc & 0xFF);
+      expect(frame[17], (crc >> 8) & 0xFF);
     });
 
     test('canUndoZoom初始为false', () {

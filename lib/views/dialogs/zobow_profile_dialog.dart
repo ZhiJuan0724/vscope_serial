@@ -16,11 +16,7 @@ class ZobowProfileDialog extends StatefulWidget {
   /// 为 null 时创建新配置，否则编辑现有配置
   final ZobowConfigProfile? profile;
 
-  const ZobowProfileDialog({
-    super.key,
-    required this.vm,
-    this.profile,
-  });
+  const ZobowProfileDialog({super.key, required this.vm, this.profile});
 
   @override
   State<ZobowProfileDialog> createState() => _ZobowProfileDialogState();
@@ -37,12 +33,19 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     _nameController = TextEditingController(
       text: widget.profile?.name ?? '新配置',
     );
-    _rows = widget.profile?.presets.map((p) => _PresetRow(
-      nameController: TextEditingController(text: p.name),
-      addressController: TextEditingController(
-        text: '0x${p.address.toRadixString(16).toUpperCase().padLeft(4, '0')}',
-      ),
-    )).toList() ?? [];
+    _rows =
+        widget.profile?.presets
+            .map(
+              (p) => _PresetRow(
+                nameController: TextEditingController(text: p.name),
+                addressController: TextEditingController(
+                  text:
+                      '0x${p.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+                ),
+              ),
+            )
+            .toList() ??
+        [];
   }
 
   @override
@@ -76,7 +79,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                     style: const TextStyle(fontSize: 13),
                     decoration: const InputDecoration(
                       isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -95,15 +101,36 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               ),
               child: const Row(
                 children: [
-                  SizedBox(width: 32, child: Text('#', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+                  SizedBox(
+                    width: 32,
+                    child: Text(
+                      '#',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                   SizedBox(width: 32),
                   Expanded(
                     flex: 2,
-                    child: Text('名称', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    child: Text(
+                      '名称',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                   Expanded(
                     flex: 2,
-                    child: Text('地址 (hex)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    child: Text(
+                      '地址 (hex)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -139,27 +166,44 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                     key: ValueKey('preset_$index'),
                     onTap: () => setState(() => _selectedRowIndex = index),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
-                        color: isSelected
-                            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
-                            : null,
+                        color:
+                            isSelected
+                                ? Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.1)
+                                : null,
                         border: Border(
-                          bottom: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.3)),
+                          bottom: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).dividerColor.withValues(alpha: 0.3),
+                          ),
                         ),
                       ),
                       child: Row(
                         children: [
                           SizedBox(
                             width: 32,
-                            child: Text('${index + 1}', style: const TextStyle(fontSize: 12)),
+                            child: Text(
+                              '${index + 1}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
                           ),
                           // 拖动手柄
                           SizedBox(
                             width: 32,
                             child: ReorderableDragStartListener(
                               index: index,
-                              child: const Icon(Icons.drag_handle, size: 16, color: Colors.grey),
+                              child: const Icon(
+                                Icons.drag_handle,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
                             ),
                           ),
                           Expanded(
@@ -169,7 +213,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               style: const TextStyle(fontSize: 12),
                               decoration: const InputDecoration(
                                 isDense: true,
-                                contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 4,
+                                ),
                                 border: InputBorder.none,
                               ),
                             ),
@@ -178,15 +225,23 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                             flex: 2,
                             child: TextField(
                               controller: _rows[index].addressController,
-                              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                              ),
                               decoration: const InputDecoration(
                                 isDense: true,
-                                contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 4,
+                                ),
                                 border: InputBorder.none,
-                                hintText: '0x0000',
+                                hintText: '0x00000000',
                               ),
                               inputFormatters: [
-                                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-FxX]')),
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9a-fA-FxX]'),
+                                ),
                               ],
                             ),
                           ),
@@ -212,7 +267,8 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
-                  onPressed: _selectedRowIndex != null ? _deleteSelectedRow : null,
+                  onPressed:
+                      _selectedRowIndex != null ? _deleteSelectedRow : null,
                   icon: const Icon(Icons.delete, size: 14),
                   label: const Text('删除', style: TextStyle(fontSize: 12)),
                   style: ElevatedButton.styleFrom(
@@ -237,20 +293,19 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
         ),
-        ElevatedButton(
-          onPressed: _saveProfile,
-          child: const Text('保存'),
-        ),
+        ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
       ],
     );
   }
 
   void _addRow() {
     setState(() {
-      _rows.add(_PresetRow(
-        nameController: TextEditingController(text: '预设${_rows.length + 1}'),
-        addressController: TextEditingController(text: '0x0001'),
-      ));
+      _rows.add(
+        _PresetRow(
+          nameController: TextEditingController(text: '预设${_rows.length + 1}'),
+          addressController: TextEditingController(text: '0x00000001'),
+        ),
+      );
       _selectedRowIndex = _rows.length - 1;
     });
   }
@@ -276,10 +331,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       final address = int.tryParse(hex, radix: 16) ?? 0;
 
       if (presetName.isNotEmpty) {
-        presets.add(ZobowChannelPreset(
-          name: presetName,
-          address: address & 0xFFFF,
-        ));
+        presets.add(
+          ZobowChannelPreset(name: presetName, address: address & 0xFFFFFFFF),
+        );
       }
     }
 
@@ -296,10 +350,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       });
     } else {
       // 更新现有配置
-      final updated = widget.profile!.copyWith(
-        name: name,
-        presets: presets,
-      );
+      final updated = widget.profile!.copyWith(name: name, presets: presets);
       widget.vm.updateZobowProfile(updated).then((_) {
         if (mounted) Navigator.pop(context);
       });
@@ -312,10 +363,7 @@ class _PresetRow {
   final TextEditingController nameController;
   final TextEditingController addressController;
 
-  _PresetRow({
-    required this.nameController,
-    required this.addressController,
-  });
+  _PresetRow({required this.nameController, required this.addressController});
 
   void dispose() {
     nameController.dispose();

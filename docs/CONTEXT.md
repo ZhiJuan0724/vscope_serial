@@ -92,7 +92,7 @@
 - `ChannelConfig` 默认16通道，每通道独立配置颜色/别名/可见性/偏移/缩放（2026-05-19）
 - `ChannelConfig` 支持每通道线宽和点半径，采样点始终绘制，不再保留点显示开关（2026-05-22）
 - `ChunkedByteBuffer` / `FixedPacketByteBuffer` 用于本次运行内保留固定包原始字节，支持按包序号随机读取（2026-05-22）
-- **众邦电控协议**：4个通道号(uint16) + 4个数据类型(uint16/int16)（2026-05-18）
+- **众邦电控协议**：启动配置帧发送4个通道号(uint32，低位先发) + CRC16/MODBUS；接收数据帧为4个数据值(uint16/int16) + CRC16/MODBUS（2026-05-22）
 - **ZobowConfigProfile**：配置文件模型，含名称+预设列表（2026-05-22）
 - **ZobowChannelPreset**：键值对模型，名称+地址（2026-05-22）
 - `PlotDataPoint` 使用 `Float32List` 存储数值，优化窗口内解析点内存（2026-05-16）

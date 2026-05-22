@@ -5,13 +5,10 @@ class ZobowChannelPreset {
   /// 预设名称（如 "温度传感器"、"压力传感器"）
   String name;
 
-  /// 通道地址（2字节16进制值，如 0x0001）
+  /// 通道地址（4字节16进制值，如 0x00000001）
   int address;
 
-  ZobowChannelPreset({
-    required this.name,
-    required this.address,
-  });
+  ZobowChannelPreset({required this.name, required this.address});
 
   /// 从JSON映射创建
   factory ZobowChannelPreset.fromJson(Map<String, dynamic> json) {
@@ -22,15 +19,9 @@ class ZobowChannelPreset {
   }
 
   /// 转换为JSON映射
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'address': address,
-      };
+  Map<String, dynamic> toJson() => {'name': name, 'address': address};
 
-  ZobowChannelPreset copyWith({
-    String? name,
-    int? address,
-  }) {
+  ZobowChannelPreset copyWith({String? name, int? address}) {
     return ZobowChannelPreset(
       name: name ?? this.name,
       address: address ?? this.address,
@@ -57,18 +48,15 @@ class ZobowConfigProfile {
 
   /// 创建默认空配置文件
   factory ZobowConfigProfile.empty(String id, {String? name}) {
-    return ZobowConfigProfile(
-      id: id,
-      name: name ?? '未命名配置',
-      presets: [],
-    );
+    return ZobowConfigProfile(id: id, name: name ?? '未命名配置', presets: []);
   }
 
   /// 从JSON映射创建
   factory ZobowConfigProfile.fromJson(Map<String, dynamic> json) {
-    final presetsList = (json['presets'] as List<dynamic>?)
-        ?.map((e) => ZobowChannelPreset.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final presetsList =
+        (json['presets'] as List<dynamic>?)
+            ?.map((e) => ZobowChannelPreset.fromJson(e as Map<String, dynamic>))
+            .toList();
     return ZobowConfigProfile(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '未命名配置',
@@ -78,10 +66,10 @@ class ZobowConfigProfile {
 
   /// 转换为JSON映射
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'presets': presets.map((p) => p.toJson()).toList(),
-      };
+    'id': id,
+    'name': name,
+    'presets': presets.map((p) => p.toJson()).toList(),
+  };
 
   /// 转换为JSON字符串
   String toJsonString() => const JsonEncoder.withIndent('  ').convert(toJson());

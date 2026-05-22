@@ -63,7 +63,7 @@ class ParserConfig {
   List<int>? frameTail;
 
   // ========== 众邦电控参数 ==========
-  /// 4个通道的通道号（2字节16进制）
+  /// 4个通道的通道号（4字节16进制）
   List<int> zobowChannelIds;
 
   /// 4个通道的数据类型（可单独设置uint16/int16）
@@ -85,7 +85,9 @@ class ParserConfig {
     List<DataType>? zobowChannelTypes,
   }) : frameHeader = frameHeader ?? [0xAA, 0x55],
        zobowChannelIds = zobowChannelIds ?? [0x0001, 0x0002, 0x0003, 0x0004],
-       zobowChannelTypes = zobowChannelTypes ?? [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
+       zobowChannelTypes =
+           zobowChannelTypes ??
+           [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
 
   /// 计算单帧数据长度（不含帧头、校验、帧尾）
   int get dataBytesPerFrame => dataType.byteSize * channelCount;
@@ -123,7 +125,9 @@ class ParserConfig {
       checksumType: checksumType ?? this.checksumType,
       checksumBytes: checksumBytes ?? this.checksumBytes,
       hasFrameTail: hasFrameTail ?? this.hasFrameTail,
-      frameTail: frameTail ?? (this.frameTail != null ? List.from(this.frameTail!) : null),
+      frameTail:
+          frameTail ??
+          (this.frameTail != null ? List.from(this.frameTail!) : null),
       zobowChannelIds: zobowChannelIds ?? List.from(this.zobowChannelIds),
       zobowChannelTypes: zobowChannelTypes ?? List.from(this.zobowChannelTypes),
     );
@@ -131,10 +135,7 @@ class ParserConfig {
 
   /// 创建默认 FireWater 配置
   factory ParserConfig.fireWaterDefault() {
-    return ParserConfig(
-      type: ParserType.fireWater,
-      fireWaterChannelCount: 0,
-    );
+    return ParserConfig(type: ParserType.fireWater, fireWaterChannelCount: 0);
   }
 
   /// 创建默认固定帧头配置
@@ -153,7 +154,12 @@ class ParserConfig {
     return ParserConfig(
       type: ParserType.zobow,
       zobowChannelIds: [0x0001, 0x0002, 0x0003, 0x0004],
-      zobowChannelTypes: [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16],
+      zobowChannelTypes: [
+        DataType.uint16,
+        DataType.uint16,
+        DataType.uint16,
+        DataType.uint16,
+      ],
     );
   }
 }
