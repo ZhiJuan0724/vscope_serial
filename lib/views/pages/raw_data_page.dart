@@ -65,7 +65,8 @@ class _RawDataPageState extends State<RawDataPage> {
                 behavior: HitTestBehavior.translucent,
                 onVerticalDragUpdate: (details) {
                   setState(() {
-                    final delta = details.delta.dy / MediaQuery.of(context).size.height;
+                    final delta =
+                        details.delta.dy / MediaQuery.of(context).size.height;
                     _splitRatio = (_splitRatio + delta).clamp(0.2, 0.8);
                   });
                 },
@@ -73,7 +74,9 @@ class _RawDataPageState extends State<RawDataPage> {
                   cursor: SystemMouseCursors.resizeRow,
                   child: Container(
                     height: 8,
-                    color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: 0.5),
                     child: Center(
                       child: Container(
                         width: 40,
@@ -87,9 +90,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   ),
                 ),
               ),
-              Expanded(
-                child: _buildSendArea(vm),
-              ),
+              Expanded(child: _buildSendArea(vm)),
             ],
           );
         },
@@ -119,129 +120,151 @@ class _RawDataPageState extends State<RawDataPage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                    const Text('数据窗口',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 8),
-                    // 开始/停止接收按钮
-                    ElevatedButton.icon(
-                      onPressed: vm.isConnected && !vm.isRawReceiving
-                          ? () => vm.startReceiving()
-                          : null,
-                      icon: const Icon(Icons.play_arrow, size: 16),
-                      label: const Text('开始接收'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        minimumSize: const Size(0, 32),
+                      const Text(
+                        '数据窗口',
+                        style: TextStyle(fontWeight: FontWeight.bold),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    ElevatedButton.icon(
-                      onPressed: vm.isRawReceiving
-                          ? () => vm.stopReceiving()
-                          : null,
-                      icon: const Icon(Icons.stop, size: 16),
-                      label: const Text('停止接收'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        minimumSize: const Size(0, 32),
-                      ),
-                    ),
-                    const Spacer(),
-                    // 选项组（时间戳/HEX/自动滚动）
-                    if (showOptions) ...[
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 32,
-                            height: 32,
-                            child: Checkbox(
-                              value: vm.showTimestamp,
-                              onChanged: (value) => vm.setShowTimestamp(value!),
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                          const Text('时间戳'),
-                        ],
-                      ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 32,
-                            height: 32,
-                            child: Checkbox(
-                              value: vm.receiveHex,
-                              onChanged: (value) => vm.setReceiveHex(value!),
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                          const Text('HEX显示'),
-                        ],
-                      ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SizedBox(
-                            width: 32,
-                            height: 32,
-                            child: Checkbox(
-                              value: vm.autoScroll,
-                              onChanged: (value) => vm.setAutoScroll(value!),
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                          const Text('自动滚动'),
-                        ],
-                      ),
-                    ],
-                    // 操作组（清空/保存/高级设置）
-                    if (showActions) ...[
                       const SizedBox(width: 8),
-                      TextButton.icon(
-                        onPressed: () => vm.clearData(),
-                        icon: const Icon(Icons.clear, size: 18),
-                        label: const Text('清空'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      // 开始/停止接收按钮
+                      ElevatedButton.icon(
+                        onPressed:
+                            vm.isConnected && !vm.isRawReceiving
+                                ? () => vm.startReceiving()
+                                : null,
+                        icon: const Icon(Icons.play_arrow, size: 16),
+                        label: const Text('开始接收'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                           minimumSize: const Size(0, 32),
                         ),
                       ),
-                      TextButton.icon(
-                        onPressed: () => _showExportDialog(context, vm),
-                        icon: const Icon(Icons.save, size: 18),
-                        label: const Text('保存'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      const SizedBox(width: 4),
+                      ElevatedButton.icon(
+                        onPressed:
+                            vm.isRawReceiving ? () => vm.stopReceiving() : null,
+                        icon: const Icon(Icons.stop, size: 16),
+                        label: const Text('停止接收'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                           minimumSize: const Size(0, 32),
                         ),
                       ),
-                      TextButton.icon(
-                        onPressed: () => _showAdvancedSettingsDialog(context, vm),
-                        icon: const Icon(Icons.settings, size: 18),
-                        label: const Text('高级设置'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                          minimumSize: const Size(0, 32),
+                      const Spacer(),
+                      // 选项组（时间戳/HEX/自动滚动）
+                      if (showOptions) ...[
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: Checkbox(
+                                value: vm.showTimestamp,
+                                onChanged:
+                                    (value) => vm.setShowTimestamp(value!),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                            const Text('时间戳'),
+                          ],
                         ),
-                      ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: Checkbox(
+                                value: vm.receiveHex,
+                                onChanged: (value) => vm.setReceiveHex(value!),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                            const Text('HEX显示'),
+                          ],
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              height: 32,
+                              child: Checkbox(
+                                value: vm.autoScroll,
+                                onChanged: (value) => vm.setAutoScroll(value!),
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                            const Text('自动滚动'),
+                          ],
+                        ),
+                      ],
+                      // 操作组（清空/保存/高级设置）
+                      if (showActions) ...[
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () => vm.clearData(),
+                          icon: const Icon(Icons.clear, size: 18),
+                          label: const Text('清空'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 8,
+                            ),
+                            minimumSize: const Size(0, 32),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => _showExportDialog(context, vm),
+                          icon: const Icon(Icons.save, size: 18),
+                          label: const Text('保存'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 8,
+                            ),
+                            minimumSize: const Size(0, 32),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed:
+                              () => _showAdvancedSettingsDialog(context, vm),
+                          icon: const Icon(Icons.settings, size: 18),
+                          label: const Text('高级设置'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 8,
+                            ),
+                            minimumSize: const Size(0, 32),
+                          ),
+                        ),
+                      ],
+                      // 有折叠的组时显示下拉菜单
+                      if (hasCollapsed)
+                        _buildRawCollapsedMenu(
+                          context,
+                          vm,
+                          showOptions: showOptions,
+                          showActions: showActions,
+                        ),
                     ],
-                    // 有折叠的组时显示下拉菜单
-                    if (hasCollapsed)
-                      _buildRawCollapsedMenu(
-                        context,
-                        vm,
-                        showOptions: showOptions,
-                        showActions: showActions,
-                      ),
-                  ],
                   ),
                 ),
               );
@@ -261,51 +284,63 @@ class _RawDataPageState extends State<RawDataPage> {
                 // 数据列表或提示文字
                 vm.receivedLines.isNotEmpty
                     ? SingleChildScrollView(
-                        controller: _scrollController,
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: SelectableText.rich(
-                            TextSpan(
-                              children: vm.receivedLines.asMap().entries.map((entry) {
-                                final index = entry.key;
-                                final line = entry.value;
-                                final bgColor = index.isEven
-                                    ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.5)
-                                    : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3);
-                                return TextSpan(
-                                  text: '$line\n',
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 13,
-                                    backgroundColor: bgColor,
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                        ),
-                      )
-                    : const Center(
-                        child: Text(
-                          '发送的数据将显示在这里\n点击"开始接收"可同时显示接收数据',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 14,
+                      controller: _scrollController,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: SelectableText.rich(
+                          TextSpan(
+                            children:
+                                vm.receivedLines.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final line = entry.value;
+                                  final bgColor =
+                                      index.isEven
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .surface
+                                              .withValues(alpha: 0.5)
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest
+                                              .withValues(alpha: 0.3);
+                                  return TextSpan(
+                                    text: '$line\n',
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 13,
+                                      backgroundColor: bgColor,
+                                    ),
+                                  );
+                                }).toList(),
                           ),
                         ),
                       ),
+                    )
+                    : const Center(
+                      child: Text(
+                        '发送的数据将显示在这里\n点击"开始接收"可同时显示接收数据',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey, fontSize: 14),
+                      ),
+                    ),
                 // 右下角统计信息
                 Positioned(
                   bottom: 4,
                   right: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surface.withValues(alpha: 0.9),
                       borderRadius: BorderRadius.circular(4),
                       border: Border.all(
-                        color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+                        color: Theme.of(
+                          context,
+                        ).dividerColor.withValues(alpha: 0.5),
                       ),
                     ),
                     child: Text(
@@ -333,8 +368,7 @@ class _RawDataPageState extends State<RawDataPage> {
           // 工具栏：发送HEX + CRC 放同一行
           Row(
             children: [
-              const Text('发送数据',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('发送数据', style: TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -367,17 +401,25 @@ class _RawDataPageState extends State<RawDataPage> {
                       hint: '类型',
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
                         isDense: true,
                       ),
                       items: [
                         DropdownMenuItem(
-                            value: CrcType.crc8, child: Text('CRC-8')),
+                          value: CrcType.crc8,
+                          child: Text('CRC-8'),
+                        ),
                         DropdownMenuItem(
-                            value: CrcType.crc16, child: Text('CRC-16')),
+                          value: CrcType.crc16,
+                          child: Text('CRC-16'),
+                        ),
                         DropdownMenuItem(
-                            value: CrcType.crc32, child: Text('CRC-32')),
+                          value: CrcType.crc32,
+                          child: Text('CRC-32'),
+                        ),
                       ],
                       onChanged: (value) => vm.setCrcType(value!),
                     ),
@@ -390,19 +432,25 @@ class _RawDataPageState extends State<RawDataPage> {
                       hint: '多项式',
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        contentPadding:
-                            EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
                         isDense: true,
                       ),
-                      items: getPolysByType(vm.crcType).keys.map((name) {
-                        return DropdownMenuItem(
-                          value: name,
-                          child: Tooltip(
-                            message: name,
-                            child: Text(name, overflow: TextOverflow.ellipsis),
-                          ),
-                        );
-                      }).toList(),
+                      items:
+                          getPolysByType(vm.crcType).keys.map((name) {
+                            return DropdownMenuItem(
+                              value: name,
+                              child: Tooltip(
+                                message: name,
+                                child: Text(
+                                  name,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            );
+                          }).toList(),
                       onChanged: (value) => vm.setCrcPolyName(value!),
                     ),
                   ),
@@ -433,23 +481,21 @@ class _RawDataPageState extends State<RawDataPage> {
                       TextField(
                         controller: _sendController,
                         decoration: InputDecoration(
-                          hintText: vm.sendHex
-                              ? '输入十六进制 (如: 01 02 03)'
-                              : '输入要发送的数据',
+                          hintText:
+                              vm.sendHex ? '输入十六进制 (如: 01 02 03)' : '输入要发送的数据',
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 12),
+                            horizontal: 12,
+                            vertical: 12,
+                          ),
                         ),
                         maxLines: null,
                         expands: true,
                         enabled: true,
                         keyboardType: TextInputType.multiline,
                         textInputAction: TextInputAction.newline,
-                        inputFormatters: vm.sendHex
-                            ? [
-                                _HexInputFormatter(),
-                              ]
-                            : null,
+                        inputFormatters:
+                            vm.sendHex ? [_HexInputFormatter()] : null,
                         onChanged: (value) {
                           if (vm.sendHex) {
                             _formatHexInput(value);
@@ -462,9 +508,15 @@ class _RawDataPageState extends State<RawDataPage> {
                         right: 8,
                         bottom: 4,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            color:
+                                Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
@@ -473,7 +525,10 @@ class _RawDataPageState extends State<RawDataPage> {
                                 : '${_sendController.text.length} chars',
                             style: TextStyle(
                               fontSize: 10,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ),
@@ -483,21 +538,33 @@ class _RawDataPageState extends State<RawDataPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
-                  onPressed: vm.isConnected
-                      ? () {
-                          final data = vm.prepareSendData(_sendController.text);
-                          if (data != null) {
-                            vm.send(data);
-                            _sendController.clear();
-                            setState(() {});
+                  onPressed:
+                      vm.isConnected
+                          ? () {
+                            final data = vm.prepareSendData(
+                              _sendController.text,
+                            );
+                            if (data != null) {
+                              try {
+                                vm.send(data);
+                                _sendController.clear();
+                                setState(() {});
+                              } catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(e.toString())),
+                                );
+                              }
+                            }
                           }
-                        }
-                      : null,
+                          : null,
                   icon: const Icon(Icons.send),
                   label: const Text('发送'),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 20),
+                      horizontal: 20,
+                      vertical: 20,
+                    ),
                   ),
                 ),
               ],
@@ -511,59 +578,64 @@ class _RawDataPageState extends State<RawDataPage> {
   void _showExportDialog(BuildContext context, RawDataViewModel vm) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-        title: const Text('保存数据'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('选择保存格式：'),
-            const SizedBox(height: 8),
-            ...vm.dataStats.entries.map((e) => Text(
-              '${e.key}: ${e.value}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            )),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: const Text('保存数据'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('选择保存格式：'),
+                const SizedBox(height: 8),
+                ...vm.dataStats.entries.map(
+                  (e) => Text(
+                    '${e.key}: ${e.value}',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  final path = await vm.exportAsText();
+                  if (!context.mounted) return;
+                  Navigator.of(context).pop();
+                  if (path != null) {
+                    _showSnackBar(context, '已保存为文本: $path');
+                  }
+                },
+                icon: const Icon(Icons.text_snippet),
+                label: const Text('文本 (.txt)'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  final path = await vm.exportAsRawBytes();
+                  if (!context.mounted) return;
+                  Navigator.of(context).pop();
+                  if (path != null) {
+                    _showSnackBar(context, '已保存为原始字节: $path');
+                  }
+                },
+                icon: const Icon(Icons.memory),
+                label: const Text('原始字节 (.bin)'),
+              ),
+            ],
           ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              final path = await vm.exportAsText();
-              if (!context.mounted) return;
-              Navigator.of(context).pop();
-              if (path != null) {
-                _showSnackBar(context, '已保存为文本: $path');
-              }
-            },
-            icon: const Icon(Icons.text_snippet),
-            label: const Text('文本 (.txt)'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () async {
-              final path = await vm.exportAsRawBytes();
-              if (!context.mounted) return;
-              Navigator.of(context).pop();
-              if (path != null) {
-                _showSnackBar(context, '已保存为原始字节: $path');
-              }
-            },
-            icon: const Icon(Icons.memory),
-            label: const Text('原始字节 (.bin)'),
-          ),
-        ],
-      ),
     );
   }
 
   void _showSnackBar(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _formatHexInput(String value) {
@@ -591,51 +663,57 @@ class _RawDataPageState extends State<RawDataPage> {
     final controller = TextEditingController(text: vm.timeWindowUs.toString());
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-        title: const Text('高级设置'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('分包时间 (μs):'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: '10 ~ 10000',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: const Text('高级设置'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('分包时间 (μs):'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    hintText: '10 ~ 10000',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('取消'),
               ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
+              ElevatedButton(
+                onPressed: () {
+                  final us = int.tryParse(controller.text);
+                  if (us != null && us >= 10 && us <= 10000) {
+                    vm.setTimeWindowUs(us);
+                    Navigator.of(context).pop();
+                    _showSnackBar(context, '分包时间已设置为 $us μs');
+                  } else {
+                    _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
+                  }
+                },
+                child: const Text('确定'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () {
-              final us = int.tryParse(controller.text);
-              if (us != null && us >= 10 && us <= 10000) {
-                vm.setTimeWindowUs(us);
-                Navigator.of(context).pop();
-                _showSnackBar(context, '分包时间已设置为 $us μs');
-              } else {
-                _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
-              }
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -657,51 +735,72 @@ class _RawDataPageState extends State<RawDataPage> {
         // 选项组（如果未平铺）
         if (!showOptions) {
           items.add(_buildMenuHeader('显示选项'));
-          items.add(PopupMenuItem(
-            value: 'timestamp',
-            child: _buildMenuItem(
-              icon: vm.showTimestamp ? Icons.check_box : Icons.check_box_outline_blank,
-              label: '时间戳',
+          items.add(
+            PopupMenuItem(
+              value: 'timestamp',
+              child: _buildMenuItem(
+                icon:
+                    vm.showTimestamp
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank,
+                label: '时间戳',
+              ),
+              onTap: () => vm.setShowTimestamp(!vm.showTimestamp),
             ),
-            onTap: () => vm.setShowTimestamp(!vm.showTimestamp),
-          ));
-          items.add(PopupMenuItem(
-            value: 'hex',
-            child: _buildMenuItem(
-              icon: vm.receiveHex ? Icons.check_box : Icons.check_box_outline_blank,
-              label: 'HEX显示',
+          );
+          items.add(
+            PopupMenuItem(
+              value: 'hex',
+              child: _buildMenuItem(
+                icon:
+                    vm.receiveHex
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank,
+                label: 'HEX显示',
+              ),
+              onTap: () => vm.setReceiveHex(!vm.receiveHex),
             ),
-            onTap: () => vm.setReceiveHex(!vm.receiveHex),
-          ));
-          items.add(PopupMenuItem(
-            value: 'autoscroll',
-            child: _buildMenuItem(
-              icon: vm.autoScroll ? Icons.check_box : Icons.check_box_outline_blank,
-              label: '自动滚动',
+          );
+          items.add(
+            PopupMenuItem(
+              value: 'autoscroll',
+              child: _buildMenuItem(
+                icon:
+                    vm.autoScroll
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank,
+                label: '自动滚动',
+              ),
+              onTap: () => vm.setAutoScroll(!vm.autoScroll),
             ),
-            onTap: () => vm.setAutoScroll(!vm.autoScroll),
-          ));
+          );
         }
 
         // 操作组（如果未平铺）
         if (!showActions) {
           if (items.isNotEmpty) items.add(const PopupMenuDivider());
           items.add(_buildMenuHeader('操作'));
-          items.add(PopupMenuItem(
-            value: 'clear',
-            child: _buildMenuItem(icon: Icons.clear, label: '清空'),
-            onTap: () => vm.clearData(),
-          ));
-          items.add(PopupMenuItem(
-            value: 'export',
-            child: _buildMenuItem(icon: Icons.save, label: '保存'),
-            onTap: () => _showExportDialog(context, vm),
-          ));
-          items.add(PopupMenuItem(
-            value: 'advanced',
-            child: _buildMenuItem(icon: Icons.settings, label: '高级设置'),
-            onTap: () => _showAdvancedSettingsDialog(context, vm),
-          ));
+          items.add(
+            PopupMenuItem(
+              value: 'clear',
+              child: _buildMenuItem(icon: Icons.clear, label: '清空'),
+              onTap: () => vm.clearData(),
+            ),
+          );
+          items.add(
+            PopupMenuItem(
+              value: 'export',
+              child: _buildMenuItem(icon: Icons.save, label: '保存'),
+              onTap: () => _showExportDialog(context, vm),
+            ),
+          );
+          items.add(
+            PopupMenuItem(
+              value: 'advanced',
+              child: _buildMenuItem(icon: Icons.settings, label: '高级设置'),
+              onTap: () => _showAdvancedSettingsDialog(context, vm),
+            ),
+          );
         }
 
         return items;
@@ -728,10 +827,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   /// 构建下拉菜单项
-  Widget _buildMenuItem({
-    required IconData icon,
-    required String label,
-  }) {
+  Widget _buildMenuItem({required IconData icon, required String label}) {
     return Row(
       children: [
         Icon(icon, size: 18),

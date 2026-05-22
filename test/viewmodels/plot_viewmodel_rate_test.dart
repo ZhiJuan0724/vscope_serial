@@ -43,7 +43,7 @@ void main() {
       final actualRate = pointCount * 1000 / durationMs;
       final achievement = actualRate / targetRate * 100;
 
-      vm.stopPlotting();
+      await vm.stopPlotting();
 
       // debugPrint('ViewModel接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
 

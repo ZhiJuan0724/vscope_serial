@@ -268,17 +268,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
     return ElevatedButton.icon(
-      onPressed: () {
-        if (vm.isPlotting) {
-          vm.stopPlotting();
-        } else {
-          vm.startPlotting();
-        }
-      },
-      icon: Icon(vm.isPlotting ? Icons.stop : Icons.play_arrow, size: 16),
-      label: Text(vm.isPlotting ? '停止' : '开始'),
+      onPressed:
+          vm.isStopping
+              ? null
+              : () {
+                if (vm.isPlotting) {
+                  vm.stopPlotting();
+                } else {
+                  vm.startPlotting();
+                }
+              },
+      icon: Icon(
+        vm.isStopping
+            ? Icons.hourglass_empty
+            : vm.isPlotting
+            ? Icons.stop
+            : Icons.play_arrow,
+        size: 16,
+      ),
+      label: Text(
+        vm.isStopping
+            ? '停止中'
+            : vm.isPlotting
+            ? '停止'
+            : '开始',
+      ),
       style: ElevatedButton.styleFrom(
-        backgroundColor: vm.isPlotting ? Colors.red : Colors.green,
+        backgroundColor:
+            vm.isStopping
+                ? Colors.grey
+                : vm.isPlotting
+                ? Colors.red
+                : Colors.green,
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         minimumSize: const Size(0, 28),
