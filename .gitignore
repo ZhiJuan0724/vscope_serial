@@ -51,4 +51,7 @@ app.*.map.json
 *.exp
 *.pdb
 
+# Local documentation scratch files
+docs/icons.md
+
 
