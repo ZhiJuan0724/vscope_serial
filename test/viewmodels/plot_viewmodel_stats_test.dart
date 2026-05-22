@@ -35,11 +35,11 @@ void main() {
 
       final stats = vm.statsText;
       expect(stats, isNotNull);
-      expect(stats, contains('Max: 5.00'));
-      expect(stats, contains('Min: 2.00'));
-      expect(stats, contains('Avg: 3.50'));
+      expect(stats, contains('Max: 5'));
+      expect(stats, contains('Min: 2'));
+      expect(stats, contains('Avg: 3.5'));
       expect(stats, contains('N: 4'));
-      expect(stats, contains('Range: 2.0 ~ 5.0'));
+      expect(stats, contains('Range: 2 ~ 5'));
     });
 
     test('启用统计范围后使用S1/S2范围', () {
@@ -53,11 +53,11 @@ void main() {
 
       final stats = vm.statsText;
       expect(stats, isNotNull);
-      expect(stats, contains('Max: 4.00'));
-      expect(stats, contains('Min: 3.00'));
-      expect(stats, contains('Avg: 3.50'));
+      expect(stats, contains('Max: 4'));
+      expect(stats, contains('Min: 3'));
+      expect(stats, contains('Avg: 3.5'));
       expect(stats, contains('N: 2'));
-      expect(stats, contains('Range: 3.0 ~ 4.0'));
+      expect(stats, contains('Range: 3 ~ 4'));
     });
   });
 }

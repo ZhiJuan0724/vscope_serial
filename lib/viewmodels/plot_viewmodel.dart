@@ -1656,18 +1656,18 @@ class PlotViewModel extends BaseViewModel {
 
     if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
       final dx = _xCursor2! - _xCursor1!;
-      buffer.writeln('X1 = ${_xCursor1!.toStringAsFixed(1)}');
-      buffer.writeln('X2 = ${_xCursor2!.toStringAsFixed(1)}');
-      buffer.writeln('ΔX = ${dx.toStringAsFixed(1)}');
+      buffer.writeln('X1 = ${_formatDisplayNumber(_xCursor1!)}');
+      buffer.writeln('X2 = ${_formatDisplayNumber(_xCursor2!)}');
+      buffer.writeln('ΔX = ${_formatDisplayNumber(dx)}');
       hasData = true;
     }
 
     if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
       final dy = _yCursor2! - _yCursor1!;
       if (hasData) buffer.writeln('---');
-      buffer.writeln('Y1 = ${_yCursor1!.toStringAsFixed(1)}');
-      buffer.writeln('Y2 = ${_yCursor2!.toStringAsFixed(1)}');
-      buffer.writeln('ΔY = ${dy.toStringAsFixed(1)}');
+      buffer.writeln('Y1 = ${_formatDisplayNumber(_yCursor1!)}');
+      buffer.writeln('Y2 = ${_formatDisplayNumber(_yCursor2!)}');
+      buffer.writeln('ΔY = ${_formatDisplayNumber(dy)}');
       hasData = true;
     }
 
@@ -1723,9 +1723,9 @@ class PlotViewModel extends BaseViewModel {
       hasVisibleChannel = true;
 
       buffer.writeln('Ch$i:');
-      buffer.writeln('  Max: ${maxVal!.toStringAsFixed(2)}');
-      buffer.writeln('  Min: ${minVal!.toStringAsFixed(2)}');
-      buffer.writeln('  Avg: ${(sum! / count).toStringAsFixed(2)}');
+      buffer.writeln('  Max: ${_formatDisplayNumber(maxVal!)}');
+      buffer.writeln('  Min: ${_formatDisplayNumber(minVal!)}');
+      buffer.writeln('  Avg: ${_formatDisplayNumber(sum! / count)}');
     }
 
     if (!hasVisibleChannel) return null;
@@ -1734,10 +1734,27 @@ class PlotViewModel extends BaseViewModel {
     buffer.writeln('---');
     buffer.writeln('N: $commonCount');
     buffer.writeln(
-      'Range: ${xMin.toStringAsFixed(1)} ~ ${xMax.toStringAsFixed(1)}',
+      'Range: ${_formatDisplayNumber(xMin)} ~ ${_formatDisplayNumber(xMax)}',
     );
 
     return buffer.toString().trim();
+  }
+
+  String _formatDisplayNumber(double value) {
+    final absValue = value.abs();
+    if ((value - value.roundToDouble()).abs() < 1e-9) {
+      return value.toInt().toString();
+    }
+    if (absValue >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(1)}M';
+    }
+    if (absValue >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}k';
+    }
+    if (absValue >= 100) return value.toStringAsFixed(0);
+    if (absValue >= 1) return value.toStringAsFixed(1);
+    if (absValue >= 0.01) return value.toStringAsFixed(2);
+    return value.toStringAsFixed(3);
   }
 
   // ========== 导出 ==========

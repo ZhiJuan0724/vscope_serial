@@ -329,19 +329,24 @@ class PlotPainter extends CustomPainter {
       }
     }
 
-    final pointPaint =
-        Paint()
-          ..color = channel.color
-          ..style = PaintingStyle.fill;
+    final plotW = viewport.plotWidth(size.width);
+    final hidePointsForDenseLine =
+        channel.showLine && visibleCount > math.max(1, plotW).round();
+    if (!hidePointsForDenseLine) {
+      final pointPaint =
+          Paint()
+            ..color = channel.color
+            ..style = PaintingStyle.fill;
 
-    _drawChannelPoints(
-      canvas,
-      size,
-      channelIndex,
-      channel,
-      visibleRange,
-      pointPaint,
-    );
+      _drawChannelPoints(
+        canvas,
+        size,
+        channelIndex,
+        channel,
+        visibleRange,
+        pointPaint,
+      );
+    }
   }
 
   void _drawChannelRawPath(
@@ -569,7 +574,11 @@ class PlotPainter extends CustomPainter {
     // Y 轴刻度（使用 nice number 取整）
     final yGridCount = _calculateGridCount(plotH, 60);
     final roughStep = viewport.yRange / yGridCount;
-    final step = _niceNumber(roughStep, true);
+    final integerYValues = _visibleYValuesAreInteger();
+    final step = _niceNumber(
+      integerYValues ? math.max(1.0, roughStep) : roughStep,
+      true,
+    );
     final Set<double> drawnValues = {};
     if (step > 0) {
       final startValue = (viewport.yMin / step).floor() * step;
@@ -689,8 +698,8 @@ class PlotPainter extends CustomPainter {
           x += dashLen + gapLen;
         }
 
-        // 绘制左侧标签
-        final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+        // 绘制左侧标签。完整通道名称放到图例中，这里只保留短编号。
+        final displayName = 'Ch${ch.index}';
         final labelStyle = TextStyle(
           color: Colors.white,
           fontSize: 10,
@@ -973,7 +982,7 @@ class PlotPainter extends CustomPainter {
       // 通道名和值（优先显示别名）
       final displayName =
           channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
-      final valueText = '$displayName: ${values[i].toStringAsFixed(2)}';
+      final valueText = '$displayName: ${_formatNumber(values[i], true)}';
 
       final valueStyle = TextStyle(
         color: color,
@@ -1091,6 +1100,23 @@ class PlotPainter extends CustomPainter {
       return value.toStringAsFixed(2);
     }
     return value.toStringAsFixed(3);
+  }
+
+  bool _visibleYValuesAreInteger() {
+    var hasValue = false;
+    for (final point in data) {
+      if (point.index < viewport.xMin || point.index > viewport.xMax) continue;
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        final channel = channels[i];
+        if (!channel.visible) continue;
+        final value = point.values[i] * channel.yScale + channel.yOffset;
+        hasValue = true;
+        if ((value - value.roundToDouble()).abs() > 1e-9) {
+          return false;
+        }
+      }
+    }
+    return hasValue;
   }
 
   // ========== X-X / Y-Y 测量绘制 ==========

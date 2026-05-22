@@ -54,6 +54,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 是否正在拖动调整宽度
   bool _isResizing = false;
 
+  /// 是否显示悬浮图例
+  bool _legendVisible = false;
+
   @override
   Widget build(BuildContext context) {
     return Consumer<PlotViewModel>(
@@ -619,6 +622,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
+        const SizedBox(width: 4),
+        Tooltip(
+          message: '图例',
+          child: IconButton(
+            onPressed: () => setState(() => _legendVisible = !_legendVisible),
+            icon: Icon(
+              Icons.list_alt,
+              size: 18,
+              color: _legendVisible ? Colors.teal : null,
+            ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            style: IconButton.styleFrom(
+              backgroundColor:
+                  _legendVisible ? Colors.teal.withValues(alpha: 0.12) : null,
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -998,7 +1019,73 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
         if (vm.measurementText != null || vm.statsText != null)
           _buildCombinedInfoBox(context, vm),
+        if (_legendVisible) _buildLegendBox(vm),
       ],
+    );
+  }
+
+  Widget _buildLegendBox(PlotViewModel vm) {
+    final visibleChannels =
+        vm.channels.where((channel) => channel.visible).toList();
+    if (visibleChannels.isEmpty) return const SizedBox.shrink();
+
+    return _DraggableInfoBox(
+      initialRight: 16,
+      initialTop: 96,
+      borderColor: Colors.teal.withValues(alpha: 0.55),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '图例',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              ...visibleChannels.map((channel) {
+                final name =
+                    channel.alias.isNotEmpty
+                        ? 'Ch${channel.index}  ${channel.alias}'
+                        : 'Ch${channel.index}';
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: channel.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
