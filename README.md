@@ -1,6 +1,6 @@
 # VScope Serial — 高性能串口波形助手
 
-一款基于 Flutter 开发的跨平台串口数据可视化工具，支持实时波形绘制、多通道数据分析、统计测量等功能。
+一款基于 Flutter 开发的 Windows 串口数据可视化工具，支持实时波形绘制、多通道数据分析、统计测量等功能。
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)
@@ -62,6 +62,20 @@ flutter run -d windows --release
 ### 构建 Release
 ```bash
 flutter build windows --release
+```
+
+## CI 与发布
+
+项目包含 GitHub Actions 工作流：
+
+- `push` / `pull_request` 到 `main`：自动执行静态分析、单元测试和 Windows Release 构建
+- `workflow_dispatch`：支持在 GitHub 页面手动触发
+- 推送 `v*` 标签：自动打包 `build/windows/x64/runner/Release` 并创建 GitHub Release
+
+发布示例：
+```bash
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 ## 使用说明

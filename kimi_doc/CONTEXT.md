@@ -324,6 +324,23 @@
 
 ---
 
+## 当前模块：CI/GitHub Actions
+
+### 已完成的决策
+- 使用 `.github/workflows/windows-release.yml` 统一执行 CI 和发布（2026-05-22）
+- `push` / `pull_request` 到 `main` 自动执行 `flutter analyze`、`flutter test` 和 `zobow_device.py` 语法检查（2026-05-22）
+- Windows Release 构建运行在 `windows-latest`，使用 Flutter stable channel，并校验 `native_serial_reader.dll` 已进入 Release 包（2026-05-22）
+- 所有非 tag 构建上传 `vscope_serial-windows` artifact；推送 `v*` tag 时自动压缩发布包并创建 GitHub Release（2026-05-22）
+
+### 已知约束
+- GitHub Release 发布依赖仓库 Actions 权限允许 `contents: write`
+- 发布包为 zip 格式，直接来自 `build/windows/x64/runner/Release`
+- 仓库已移除 macOS/Linux 平台目录，当前仅维护 Windows 桌面目标
+
+### 待办
+
+---
+
 ## 全局待办（跨模块）
 - [ ] 性能监控面板（帧率、内存、数据速率实时图表）
 - [ ] 自动化测试覆盖率提升（当前主要覆盖解析器和VM）
