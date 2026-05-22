@@ -120,7 +120,9 @@ class DataGenerator:
     def next(self) -> List[int]:
         """生成下一组4通道数据"""
         self._tick += 1
-        t = self._tick * 0.1
+        # Slower sine sweep: 0.01 rad/sample gives a ~628-sample period.
+        # At the default 1kHz send rate this is about 0.63s per cycle.
+        t = self._tick * 0.01
         
         if self.mode == 'sine':
             # 正弦波，不同相位

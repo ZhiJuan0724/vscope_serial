@@ -42,7 +42,8 @@ typedef NsrOpenPortDart = int Function(Pointer<Utf8> portName, int baudRate);
 typedef NsrClosePortC = Void Function();
 typedef NsrClosePortDart = void Function();
 
-typedef NsrSetConfigC = Int32 Function(Int32 dataBits, Int32 stopBits, Int32 parity);
+typedef NsrSetConfigC =
+    Int32 Function(Int32 dataBits, Int32 stopBits, Int32 parity);
 typedef NsrSetConfigDart = int Function(int dataBits, int stopBits, int parity);
 
 typedef NsrSetRtsC = Void Function(Int32 on);
@@ -64,16 +65,31 @@ typedef NsrIsOpenC = Int32 Function();
 typedef NsrIsOpenDart = int Function();
 
 // 获取函数指针
-final _nsrInitDartApi = _dll.lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
-final _nsrOpenPort = _dll.lookupFunction<NsrOpenPortC, NsrOpenPortDart>('nsr_open_port');
-final _nsrClosePort = _dll.lookupFunction<NsrClosePortC, NsrClosePortDart>('nsr_close_port');
-final _nsrSetConfig = _dll.lookupFunction<NsrSetConfigC, NsrSetConfigDart>('nsr_set_config');
-final _nsrSetRts = _dll.lookupFunction<NsrSetRtsC, NsrSetRtsDart>('nsr_set_rts');
-final _nsrSetDtr = _dll.lookupFunction<NsrSetDtrC, NsrSetDtrDart>('nsr_set_dtr');
-final _nsrStartReading = _dll.lookupFunction<NsrStartReadingC, NsrStartReadingDart>('nsr_start_reading');
-final _nsrStopReading = _dll.lookupFunction<NsrStopReadingC, NsrStopReadingDart>('nsr_stop_reading');
+final _nsrInitDartApi = _dll
+    .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
+final _nsrOpenPort = _dll.lookupFunction<NsrOpenPortC, NsrOpenPortDart>(
+  'nsr_open_port',
+);
+final _nsrClosePort = _dll.lookupFunction<NsrClosePortC, NsrClosePortDart>(
+  'nsr_close_port',
+);
+final _nsrSetConfig = _dll.lookupFunction<NsrSetConfigC, NsrSetConfigDart>(
+  'nsr_set_config',
+);
+final _nsrSetRts = _dll.lookupFunction<NsrSetRtsC, NsrSetRtsDart>(
+  'nsr_set_rts',
+);
+final _nsrSetDtr = _dll.lookupFunction<NsrSetDtrC, NsrSetDtrDart>(
+  'nsr_set_dtr',
+);
+final _nsrStartReading = _dll
+    .lookupFunction<NsrStartReadingC, NsrStartReadingDart>('nsr_start_reading');
+final _nsrStopReading = _dll
+    .lookupFunction<NsrStopReadingC, NsrStopReadingDart>('nsr_stop_reading');
 final _nsrWrite = _dll.lookupFunction<NsrWriteC, NsrWriteDart>('nsr_write');
-final _nsrIsOpen = _dll.lookupFunction<NsrIsOpenC, NsrIsOpenDart>('nsr_is_open');
+final _nsrIsOpen = _dll.lookupFunction<NsrIsOpenC, NsrIsOpenDart>(
+  'nsr_is_open',
+);
 
 /// Windows 原生串口读取器
 class NativeSerialReader {
@@ -85,20 +101,20 @@ class NativeSerialReader {
   bool _dartApiInitialized = false;
 
   /// Initialize Dart API (must be called before any other operation)
-  /// 
+  ///
   /// This must be called with [NativeApi.initializeApiDLData] from dart:ffi.
   /// Example: initDartApi(NativeApi.initializeApiDLData);
   bool initDartApi(Pointer<Void> initData) {
     if (_dartApiInitialized) return true;
     if (initData == nullptr) return false;
-    
+
     final result = _nsrInitDartApi(initData);
     _dartApiInitialized = result == 0;
     return _dartApiInitialized;
   }
 
   /// 打开串口
-  /// 
+  ///
   /// [initData] should be [NativeApi.initializeApiDLData] from dart:ffi.
   /// If not provided, the caller must call [initDartApi] before [startReading].
   bool open(String portName, int baudRate, {Pointer<Void>? initData}) {
@@ -106,7 +122,7 @@ class NativeSerialReader {
     if (initData != null && !_dartApiInitialized) {
       initDartApi(initData);
     }
-    
+
     final namePtr = portName.toNativeUtf8();
     try {
       final result = _nsrOpenPort(namePtr, baudRate);
@@ -146,7 +162,10 @@ class NativeSerialReader {
     _receivePort = ReceivePort();
     _receivePort!.listen(_onDataReceived);
 
-    final result = _nsrStartReading(_receivePort!.sendPort.nativePort, timeoutMs);
+    final result = _nsrStartReading(
+      _receivePort!.sendPort.nativePort,
+      timeoutMs,
+    );
     return result == 0;
   }
 
@@ -156,7 +175,7 @@ class NativeSerialReader {
     // from sending data to a closed port after C++ thread exits
     _receivePort?.close();
     _receivePort = null;
-    
+
     // Then stop the C++ read thread
     _nsrStopReading();
   }
@@ -177,25 +196,28 @@ class NativeSerialReader {
 
   void _onDataReceived(dynamic message) {
     if (message is! Uint8List) {
-      AppLogger().debug('[NativeSerialReader] Received non-Uint8List message: ${message.runtimeType}', category: 'SERIAL');
+      AppLogger().debug(
+        '[NativeSerialReader] Received non-Uint8List message: ${message.runtimeType}',
+        category: 'SERIAL',
+      );
       return;
     }
 
     // C++ 发送的数据格式: [8 bytes timestamp_us][N bytes data]
     if (message.length < 8) {
-      AppLogger().debug('[NativeSerialReader] Message too short: ${message.length} bytes', category: 'SERIAL');
+      AppLogger().debug(
+        '[NativeSerialReader] Message too short: ${message.length} bytes',
+        category: 'SERIAL',
+      );
       return;
     }
 
-    final timestampUs = ByteData.sublistView(message).getInt64(0, Endian.little);
+    final timestampUs = ByteData.sublistView(
+      message,
+    ).getInt64(0, Endian.little);
     final data = Uint8List.sublistView(message, 8);
 
-    AppLogger().debug('[NativeSerialReader] Data: ${data.length} bytes, timestamp: ${timestampUs}us', category: 'SERIAL');
-
-    _dataController.add(NativeSerialData(
-      data: data,
-      timestampUs: timestampUs,
-    ));
+    _dataController.add(NativeSerialData(data: data, timestampUs: timestampUs));
   }
 
   void dispose() {
@@ -214,10 +236,7 @@ class NativeSerialData {
   final Uint8List data;
   final int timestampUs;
 
-  NativeSerialData({
-    required this.data,
-    required this.timestampUs,
-  });
+  NativeSerialData({required this.data, required this.timestampUs});
 
   String get hex => data
       .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())

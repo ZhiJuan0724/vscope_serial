@@ -17,55 +17,76 @@ class AppSettings {
 
   /// 应用配置文件夹名称
   static const String _appDirName = 'settings';
+
   /// 配置文件名称
   static const String _settingsFileName = 'settings.json';
 
   /// 配置文件完整路径（由 [init] 设置）
   String? _settingsPath;
+
   /// 是否已完成初始化
   bool _initialized = false;
 
   // ========== 串口设置 ==========
   /// 上次连接成功的串口名称（启动时自动连接）
   String? lastPort;
+
   /// 串口波特率（默认 115200）
   int baudRate = 115200;
+
   /// 数据位（默认 8）
   int dataBits = 8;
+
   /// 停止位（默认 1）
   int stopBits = 1;
+
   /// 校验位（默认 0=无校验）
   int parity = 0;
+
   /// RTS 流控开关
   bool rts = false;
+
   /// DTR 流控开关
   bool dtr = false;
 
   // ========== 绘图设置 ==========
   /// UI 刷新帧率 (fps)，范围 10~60
   int refreshFps = 30;
+
+  /// 绘图窗口点数上限，范围 10000~3600000
+  int maxVisiblePoints = 60000;
+
   /// 是否显示网格
   bool showGrid = true;
+
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String gridDensity = 'normal';
+
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
+
   /// 随机数据源频率 (Hz)
   double randomFrequency = 1000.0;
+
   /// 最新点跟随模式开关
   bool followEnabled = false;
+
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow'）
   String parserType = 'fireWater';
+
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
+
   /// 视口 X 轴最大值
   double xMax = 1000;
+
   /// 视口 Y 轴最小值
   double yMin = 0;
+
   /// 视口 Y 轴最大值
   double yMax = 32768;
 
@@ -108,6 +129,8 @@ class AppSettings {
 
       // 绘图设置
       refreshFps = json['refreshFps'] as int? ?? 30;
+      maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ?? 60000)
+          .clamp(10000, 3600000);
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
@@ -144,6 +167,7 @@ class AppSettings {
 
       // 绘图设置
       'refreshFps': refreshFps,
+      'maxVisiblePoints': maxVisiblePoints,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'useRandomSource': useRandomSource,

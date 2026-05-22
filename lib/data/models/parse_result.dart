@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 /// 解析结果模型
 class ParseResult {
   /// 是否解析成功
@@ -15,21 +17,32 @@ class ParseResult {
   /// 原始字节数（用于统计）
   final int bytesConsumed;
 
+  /// 成功解析出的原始帧字节。
+  ///
+  /// 高频绘图会把这里的有效帧按原始字节保存，历史回看时再按窗口解析。
+  final Uint8List? rawBytes;
+
   ParseResult({
     required this.success,
     this.values,
     this.channelCount,
     this.error,
     this.bytesConsumed = 0,
+    this.rawBytes,
   });
 
   /// 成功的快捷构造
-  factory ParseResult.ok(List<double> values, {int bytesConsumed = 0}) {
+  factory ParseResult.ok(
+    List<double> values, {
+    int bytesConsumed = 0,
+    Uint8List? rawBytes,
+  }) {
     return ParseResult(
       success: true,
       values: values,
       channelCount: values.length,
       bytesConsumed: bytesConsumed,
+      rawBytes: rawBytes,
     );
   }
 

@@ -9,6 +9,7 @@ import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
+import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/serial_config.dart';
 import 'app_settings.dart';
@@ -45,9 +46,8 @@ class SerialService extends ChangeNotifier {
   Stream<DataPacket> get dataStream => _dataController.stream;
 
   // 原始字节数据（内部保留）
-  final List<int> _rawBytes = [];
-  int _rawBytesSize = 0;
-  static const int _maxRawBytes = 512 * 1024 * 1024; // 512MB
+  final ChunkedByteBuffer _rawBytes = ChunkedByteBuffer();
+  int get _rawBytesSize => _rawBytes.length;
 
   // 原始文本数据（用于原始数据页面显示）
   final List<String> receivedLines = [];
@@ -64,7 +64,7 @@ class SerialService extends ChangeNotifier {
   // 发送选项
   bool sendHex = false;
   bool enableCrc = false;
-  bool crcReverseBytes = false;  // CRC 高低位反转
+  bool crcReverseBytes = false; // CRC 高低位反转
   CrcType crcType = CrcType.crc16;
   String crcPolyName = 'CRC-16/MODBUS';
 
@@ -115,7 +115,10 @@ class SerialService extends ChangeNotifier {
       return;
     }
     if (isConnecting || isConnected) {
-      AppLogger().trace('connect() 被忽略，isConnecting=$isConnecting, isConnected=$isConnected', category: 'SERIAL');
+      AppLogger().trace(
+        'connect() 被忽略，isConnecting=$isConnecting, isConnected=$isConnected',
+        category: 'SERIAL',
+      );
       return;
     }
 
@@ -137,7 +140,10 @@ class SerialService extends ChangeNotifier {
       _lastConnectedPort = config.port;
       isConnected = true;
       _saveSettings(); // 保存连接成功的串口配置
-      AppLogger().info('串口已连接: ${config.port} @ ${config.baudRate}', category: 'SERIAL');
+      AppLogger().info(
+        '串口已连接: ${config.port} @ ${config.baudRate}',
+        category: 'SERIAL',
+      );
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
       _cleanupPort();
@@ -173,7 +179,8 @@ class SerialService extends ChangeNotifier {
     // 监听数据流
     _nativeSubscription = _nativeReader!.dataStream.listen(
       (nativeData) => _onNativeDataReceived(nativeData),
-      onError: (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
+      onError:
+          (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
 
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
@@ -213,16 +220,14 @@ class SerialService extends ChangeNotifier {
     _dataController.add(DataPacket(data: data));
 
     // 保存原始字节（始终保存，用于导出）
-    _rawBytes.addAll(data);
-    _rawBytesSize += data.length;
-    while (_rawBytesSize > _maxRawBytes && _rawBytes.isNotEmpty) {
-      _rawBytes.removeAt(0);
-      _rawBytesSize--;
-    }
+    _rawBytes.append(data);
 
     // 原始数据文本接收条件：串口已连接 + 用户开启接收 + 不在绘图状态
     final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    AppLogger().trace('shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting', category: 'SERIAL');
+    AppLogger().trace(
+      'shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting',
+      category: 'SERIAL',
+    );
     if (shouldReceiveRaw) {
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
@@ -287,7 +292,8 @@ class SerialService extends ChangeNotifier {
     _receivedTextBytes += line.length * 2; // UTF-16 编码估算
 
     // 文本缓存限制（按字节）
-    while (_receivedTextBytes > _maxReceivedTextBytes && receivedLines.isNotEmpty) {
+    while (_receivedTextBytes > _maxReceivedTextBytes &&
+        receivedLines.isNotEmpty) {
       final removed = receivedLines.removeAt(0);
       _receivedTextBytes -= removed.length * 2;
     }
@@ -316,7 +322,6 @@ class SerialService extends ChangeNotifier {
   /// 清空所有数据（切换串口时调用）
   void _clearAllData() {
     _rawBytes.clear();
-    _rawBytesSize = 0;
     receivedLines.clear();
     _receivedTextBytes = 0;
     Future.microtask(() => notifyListeners());
@@ -358,7 +363,7 @@ class SerialService extends ChangeNotifier {
       final file = File(path);
 
       // 原始数据
-      final bytes = Uint8List.fromList(_rawBytes);
+      final bytes = _rawBytes.toBytes();
 
       // 计算 CRC-32 并附加到末尾
       final crcPoly = crc32Polys['CRC-32']!;
@@ -380,11 +385,12 @@ class SerialService extends ChangeNotifier {
   }
 
   /// 获取原始字节数据（不含校验）
-  Uint8List get rawBytes => Uint8List.fromList(_rawBytes);
+  Uint8List get rawBytes => _rawBytes.toBytes();
 
   /// 获取数据大小信息
   Map<String, String> get dataStats => {
-    '原始字节': '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
+    '原始字节':
+        '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
     '文本行数': '${receivedLines.length}',
     '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
   };

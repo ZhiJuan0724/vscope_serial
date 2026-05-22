@@ -41,9 +41,6 @@ class ChannelConfig {
   /// 连线开关（默认 true）
   bool showLine;
 
-  /// 点显示开关
-  bool showPoint;
-
   /// 点直径
   double pointSize;
 
@@ -68,7 +65,6 @@ class ChannelConfig {
     required this.color,
     this.alias = '',
     this.showLine = true,
-    this.showPoint = false,
     this.pointSize = 3.0,
     this.lineWidth = 1.5,
     this.yOffset = 0.0,
@@ -82,7 +78,6 @@ class ChannelConfig {
     Color? color,
     String? alias,
     bool? showLine,
-    bool? showPoint,
     double? pointSize,
     double? lineWidth,
     double? yOffset,
@@ -96,7 +91,6 @@ class ChannelConfig {
       color: color ?? this.color,
       alias: alias ?? this.alias,
       showLine: showLine ?? this.showLine,
-      showPoint: showPoint ?? this.showPoint,
       pointSize: pointSize ?? this.pointSize,
       lineWidth: lineWidth ?? this.lineWidth,
       yOffset: yOffset ?? this.yOffset,
@@ -130,10 +124,7 @@ class ChannelConfig {
   static List<ChannelConfig> createDefaults() {
     return List.generate(
       16,
-      (i) => ChannelConfig(
-        index: i,
-        color: defaultColors[i],
-      ),
+      (i) => ChannelConfig(index: i, color: defaultColors[i]),
     );
   }
 }

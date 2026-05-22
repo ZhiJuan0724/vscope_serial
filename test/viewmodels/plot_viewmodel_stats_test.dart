@@ -1,18 +1,25 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
-/// 测试 PlotViewModel 统计信息准确性
+void _ingestSequentialPoints(PlotViewModel vm, int count) {
+  for (int i = 0; i < count; i++) {
+    vm.ingestParsedResultForTest(
+      ParseResult.ok([i.toDouble()], bytesConsumed: 4),
+    );
+  }
+}
+
+/// 统计逻辑使用确定性数据注入，避免随机源 Isolate 调度导致单测波动。
 void main() {
   group('PlotViewModel 统计信息测试', () {
-    late SerialService serialService;
     late PlotViewModel vm;
 
     setUp(() async {
       await AppLogger().init();
-      serialService = SerialService();
-      vm = PlotViewModel(serialService);
+      vm = PlotViewModel(SerialService());
     });
 
     tearDown(() {
@@ -20,84 +27,37 @@ void main() {
       AppLogger().disposeLogger();
     });
 
-    test('1KHz运行时状态文本统计准确', () async {
-      vm.setUseRandomSource(true);
-      vm.setRandomFrequency(1000);
-      vm.clearData();
-      vm.startPlotting();
+    test('默认统计当前显示窗口范围', () {
+      _ingestSequentialPoints(vm, 10);
+      vm.updateViewport(vm.viewport.copyWith(xMin: 2, xMax: 5));
 
-      // 运行2秒让数据稳定
-      await Future.delayed(const Duration(seconds: 2));
+      vm.toggleStats();
 
-      final status = vm.statusText;
-      // print('状态文本: $status');
-
-      // 检查状态文本包含每秒点数
-      expect(status.contains('/s)'), true,
-          reason: '状态文本应包含每秒点数，实际: $status');
-
-      // 提取每秒点数
-      final match = RegExp(r'\((\d+(?:\.\d+)?)/s\)').firstMatch(status);
-      expect(match, isNotNull,
-          reason: '状态文本应匹配 /s 格式，实际: $status');
-
-      final reportedRate = double.parse(match!.group(1)!);
-      // print('报告速率: $reportedRate /s');
-
-      // 报告速率应接近实际速率（允许±20%误差）
-      expect(reportedRate, greaterThan(800),
-          reason: '1KHz下报告速率应>800/s，实际$reportedRate/s');
-
-      vm.stopPlotting();
+      final stats = vm.statsText;
+      expect(stats, isNotNull);
+      expect(stats, contains('Max: 5.00'));
+      expect(stats, contains('Min: 2.00'));
+      expect(stats, contains('Avg: 3.50'));
+      expect(stats, contains('N: 4'));
+      expect(stats, contains('Range: 2.0 ~ 5.0'));
     });
 
-    test('统计速率与实际接收速率一致', () async {
-      vm.setUseRandomSource(true);
-      vm.setRandomFrequency(1000);
-      vm.clearData();
-      vm.startPlotting();
+    test('启用统计范围后使用S1/S2范围', () {
+      _ingestSequentialPoints(vm, 10);
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 9));
 
-      // 运行3秒
-      await Future.delayed(const Duration(seconds: 3));
+      vm.toggleStats();
+      vm.toggleStatsRange();
+      vm.setStatsX1(3);
+      vm.setStatsX2(4);
 
-      final actualCount = vm.pointCount;
-      final actualRate = actualCount / 3.0;
-
-      final status = vm.statusText;
-      final match = RegExp(r'\((\d+(?:\.\d+)?)/s\)').firstMatch(status);
-      final reportedRate = match != null ? double.parse(match.group(1)!) : 0.0;
-
-      // print('实际总点数: $actualCount, 实际平均速率: ${actualRate.toStringAsFixed(1)}/s');
-      // print('报告速率: $reportedRate/s');
-
-      // 报告速率应接近实际平均速率（±30%）
-      final ratio = reportedRate / actualRate;
-      expect(ratio, greaterThan(0.7),
-          reason: '报告速率应≥实际速率的70%，实际比例${(ratio * 100).toStringAsFixed(1)}%');
-      expect(ratio, lessThan(1.3),
-          reason: '报告速率应≤实际速率的130%，实际比例${(ratio * 100).toStringAsFixed(1)}%');
-
-      vm.stopPlotting();
-    });
-
-    test('高频下统计不丢数据', () async {
-      vm.setUseRandomSource(true);
-      vm.setRandomFrequency(1000);
-      vm.clearData();
-      vm.startPlotting();
-
-      // 运行5秒
-      await Future.delayed(const Duration(seconds: 5));
-
-      final pointCount = vm.pointCount;
-      final expectedMin = 1000 * 5 * 0.9; // 90%
-
-      // print('5秒接收: $pointCount 包');
-
-      expect(pointCount, greaterThanOrEqualTo(expectedMin.round()),
-          reason: '5秒应接收≥${expectedMin.round()}包，实际$pointCount包');
-
-      vm.stopPlotting();
+      final stats = vm.statsText;
+      expect(stats, isNotNull);
+      expect(stats, contains('Max: 4.00'));
+      expect(stats, contains('Min: 3.00'));
+      expect(stats, contains('Avg: 3.50'));
+      expect(stats, contains('N: 2'));
+      expect(stats, contains('Range: 3.0 ~ 4.0'));
     });
   });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/serial_service.dart';
+import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/status_dialog.dart';
 
 /// 底部共享状态栏
@@ -10,17 +11,16 @@ class StatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SerialService>(
-      builder: (context, service, child) {
+    return Consumer2<SerialService, PlotViewModel>(
+      builder: (context, service, plotVm, child) {
+        final message = plotVm.hintText;
         return Container(
           height: 26,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             border: Border(
-              top: BorderSide(
-                color: Theme.of(context).dividerColor,
-              ),
+              top: BorderSide(color: Theme.of(context).dividerColor),
             ),
           ),
           child: Row(
@@ -54,6 +54,22 @@ class StatusBar extends StatelessWidget {
                         ),
                       ),
                     ],
+                    if (plotVm.useRandomSource) ...[
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.auto_graph,
+                        size: 13,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        '随机源',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
                     const SizedBox(width: 4),
                     Icon(
                       Icons.edit,
@@ -63,6 +79,35 @@ class StatusBar extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child:
+                    message.isEmpty
+                        ? const SizedBox.shrink()
+                        : Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Icon(
+                              _messageIcon(message),
+                              size: 13,
+                              color: _messageColor(context, message),
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                message,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: _messageColor(context, message),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+              ),
             ],
           ),
         );
@@ -71,9 +116,26 @@ class StatusBar extends StatelessWidget {
   }
 
   void _showStatusDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => const StatusDialog(),
-    );
+    showDialog(context: context, builder: (context) => const StatusDialog());
+  }
+
+  IconData _messageIcon(String message) {
+    if (message.contains('无法') ||
+        message.contains('失败') ||
+        message.contains('未连接') ||
+        message.contains('请选择')) {
+      return Icons.warning_amber_rounded;
+    }
+    return Icons.info_outline;
+  }
+
+  Color _messageColor(BuildContext context, String message) {
+    if (message.contains('无法') ||
+        message.contains('失败') ||
+        message.contains('未连接') ||
+        message.contains('请选择')) {
+      return Colors.orange.shade800;
+    }
+    return Theme.of(context).colorScheme.onSurfaceVariant;
   }
 }

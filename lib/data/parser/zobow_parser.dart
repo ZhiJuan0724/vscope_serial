@@ -51,7 +51,7 @@ class ZobowParser extends IDataParser {
   static final CrcPoly _crcPoly = crc16Polys['CRC-16/MODBUS']!;
 
   ZobowParser([ParserConfig? config])
-      : super(config ?? ParserConfig.zobowDefault());
+    : super(config ?? ParserConfig.zobowDefault());
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
@@ -73,7 +73,8 @@ class ZobowParser extends IDataParser {
   void _processBuffer() {
     // 检查超时：超过500ms未成功解析，清空缓冲区
     if (_lastSuccessTime != null) {
-      final elapsed = DateTime.now().difference(_lastSuccessTime!).inMilliseconds;
+      final elapsed =
+          DateTime.now().difference(_lastSuccessTime!).inMilliseconds;
       if (elapsed > _timeoutMs && _buffer.isNotEmpty) {
         AppLogger().warning(
           '众邦电控解析超时(${elapsed}ms)，清空缓冲区(${_buffer.length}字节)',
@@ -130,11 +131,15 @@ class ZobowParser extends IDataParser {
   ParseResult? _tryParseAt(int index) {
     if (index + _frameLength > _buffer.length) return null;
 
-    // 提取候选帧
-    final frame = _buffer.sublist(index, index + _frameLength);
+    // 提取候选帧。这里只在CRC通过后把完整帧挂到ParseResult上，
+    // 供绘图会话按原始帧做窗口回放。
+    final frame = Uint8List(_frameLength);
+    for (int i = 0; i < _frameLength; i++) {
+      frame[i] = _buffer[index + i];
+    }
 
     // 提取数据区和CRC
-    final dataBytes = Uint8List.fromList(frame.sublist(0, _dataLength));
+    final dataBytes = Uint8List.sublistView(frame, 0, _dataLength);
     final crcLow = frame[_dataLength];
     final crcHigh = frame[_dataLength + 1];
     final receivedCrc = (crcHigh << 8) | crcLow;
@@ -154,9 +159,28 @@ class ZobowParser extends IDataParser {
       return null;
     }
 
-    // CRC通过，解析4个通道数据
+    return ParseResult.ok(
+      decodeFrameValues(frame, config),
+      bytesConsumed: _frameLength,
+      rawBytes: frame,
+    );
+  }
+
+  /// 解码一帧众邦电控数据的4通道值。
+  ///
+  /// [frame] 必须是完整10字节帧。历史窗口回放复用这个方法，避免重新走
+  /// 流式解析器的滑动窗口状态机。
+  static List<double> decodeFrameValues(Uint8List frame, ParserConfig config) {
+    if (frame.length != _frameLength) {
+      throw ArgumentError.value(
+        frame.length,
+        'frame.length',
+        'must be $_frameLength',
+      );
+    }
+
     final values = <double>[];
-    final byteData = ByteData.sublistView(dataBytes);
+    final byteData = ByteData.sublistView(frame, 0, _dataLength);
 
     for (int ch = 0; ch < 4; ch++) {
       final type = config.zobowChannelTypes[ch];
@@ -169,18 +193,13 @@ class ZobowParser extends IDataParser {
         case DataType.int16:
           value = byteData.getInt16(offset, Endian.little).toDouble();
         default:
-          // 其他类型 fallback 到 uint16
           value = byteData.getUint16(offset, Endian.little).toDouble();
-          AppLogger().warning(
-            '众邦电控通道$ch配置了不支持的类型${type.label}，fallback到uint16',
-            category: 'PARSER',
-          );
       }
 
       values.add(value);
     }
 
-    return ParseResult.ok(values, bytesConsumed: _frameLength);
+    return values;
   }
 
   /// 将字节列表转为16进制字符串（用于日志）

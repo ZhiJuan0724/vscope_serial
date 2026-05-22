@@ -32,8 +32,7 @@ class PlotStatusBar extends StatelessWidget {
               ),
               const Spacer(),
               // 右侧：垂直光标信息
-              if (vm.cursor != null && vm.vCursorEnabled)
-                _buildCursorInfo(vm),
+              if (vm.cursor != null && vm.vCursorEnabled) _buildCursorInfo(vm),
             ],
           ),
         );
@@ -50,10 +49,27 @@ class PlotStatusBar extends StatelessWidget {
     buffer.write('X: ${cursor.x.toInt()} ');
 
     // 查找最近的数据点
-    if (vm.dataPoints.isNotEmpty) {
-      final nearest = vm.dataPoints.reduce((a, b) {
-        return (a.index - cursor.x).abs() < (b.index - cursor.x).abs() ? a : b;
-      });
+    final points = vm.dataPoints;
+    if (points.isNotEmpty) {
+      final target = cursor.x.round();
+      var left = 0;
+      var right = points.length - 1;
+      while (left < right) {
+        final mid = (left + right) >> 1;
+        if (points[mid].index < target) {
+          left = mid + 1;
+        } else {
+          right = mid;
+        }
+      }
+      var nearest = points[left];
+      if (left > 0) {
+        final previous = points[left - 1];
+        if ((previous.index - cursor.x).abs() <
+            (nearest.index - cursor.x).abs()) {
+          nearest = previous;
+        }
+      }
 
       for (int i = 0; i < nearest.channelCount && i < vm.channels.length; i++) {
         if (!vm.channels[i].visible) continue;

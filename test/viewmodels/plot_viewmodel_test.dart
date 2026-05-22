@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
@@ -117,6 +118,19 @@ void main() {
       expect(status.contains('X:'), true);
       expect(status.contains('Y:'), true);
       expect(status.contains('点数:'), true);
+    });
+
+    test('非FireWater解析器保留随机源开关但不能单独启动', () {
+      vm.setUseRandomSource(true);
+      vm.setParserType(ParserType.zobow);
+
+      expect(vm.useRandomSource, true);
+      expect(vm.hintText, contains('随机源已保留'));
+
+      vm.startPlotting();
+
+      expect(vm.isPlotting, false);
+      expect(vm.hintText, contains('随机源仅支持 FireWater'));
     });
 
     test('canUndoZoom初始为false', () {

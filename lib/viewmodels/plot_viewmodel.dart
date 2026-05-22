@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../data/models/channel_config.dart';
+import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_source_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
@@ -46,25 +47,41 @@ class PlotViewModel extends BaseViewModel {
   // ========== 解析器 ==========
   /// 当前使用的数据解析器（FireWater 或固定帧）
   IDataParser? _parser;
+
   /// 数据源字节流的订阅，dispose 时需要取消
   StreamSubscription? _parseSubscription;
 
   // ========== 数据缓冲区 ==========
-  /// 所有接收到的数据点（按 index 递增排序）
+  /// 当前绘图窗口的数据点（按 index 递增排序）
   final List<PlotDataPoint> _dataPoints = [];
-  /// 数据缓冲区最大点数，超过后从头部批量移除
-  static const int _maxPoints = 100000;
+
+  /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
+  static const int minVisiblePoints = 10000;
+  static const int defaultVisiblePoints = 60000;
+  static const int maxVisiblePointsLimit = 3600000;
+  int _maxVisiblePoints = defaultVisiblePoints;
+  int _dataRevision = 0;
+
+  /// 众邦电控有效原始帧缓存（10字节/包，本次运行内全量保留）
+  final FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
+    packetSize: 10,
+  );
+
+  /// 当前窗口起始点序号
+  int _visibleStartIndex = 0;
+
   /// 下一个数据点的索引序号（单调递增）
   int _nextIndex = 0;
+
   /// 绘图开始时间，用于计算时间戳
   DateTime? _startTime;
 
   // ========== 速率统计（基于计数器，避免遍历列表）==========
   /// 速率统计样本列表，用于计算实时接收速率
   final List<_RateSample> _rateSamples = [];
+
   /// 速率样本最大数量（最近1000个）
   static const int _maxRateSamples = 1000;
-
 
   // ========== 当前数据实际通道数 ==========
   /// 当前数据中实际出现的最大通道数（用于动态显示通道面板）
@@ -82,6 +99,7 @@ class PlotViewModel extends BaseViewModel {
   // ========== 视口历史记录（用于撤回） ==========
   /// 视口历史记录栈，每次缩放/平移前保存当前状态
   final List<PlotViewport> _viewportHistory = [];
+
   /// 视口历史最大深度
   static const int _maxHistory = 50;
 
@@ -92,40 +110,55 @@ class PlotViewModel extends BaseViewModel {
   // ========== 状态 ==========
   /// 是否正在绘图（数据源运行中）
   bool _isPlotting = false;
+
   /// 是否显示网格
   bool _showGrid = true;
+
   /// 是否使用随机数据源（而非串口）
   bool _useRandomSource = false;
 
   // ========== 高级设置 ==========
   /// UI 刷新帧率 (fps)，范围 10~60，默认 30
   int _refreshFps = 30;
+
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
+
   /// 抗锯齿开关，默认开启，通道>8时自动关闭但可手动修改
   bool _antiAliasEnabled = true;
+
   /// 最新点跟随模式：最新数据点保持在视口 3/4 宽度处
   bool _followEnabled = false;
+
   /// 单垂直光标开关（鼠标悬停显示垂直线+tooltip）
   bool _vCursorEnabled = false;
+
   /// X-X 测量开关（两条垂直测量线）
   bool _xMeasurementEnabled = false;
+
   /// Y-Y 测量开关（两条水平测量线）
   bool _yMeasurementEnabled = false;
+
   /// 统计测量开关（Max/Min/Avg）
   bool _statsEnabled = false;
+
   /// 统计范围开关（限定统计的 X 范围）
   bool _statsRangeEnabled = false;
+
   /// 统计范围左边界
   double? _statsX1;
+
   /// 统计范围右边界
   double? _statsX2;
+
   /// 当前光标模式
   // cursorMode 已废弃，保留 CursorMode.follow 用于垂直光标标识
   /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
+
   /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
+
   /// 解析器配置（FireWater 和固定帧共用）
   final ParserConfig _parserConfig = ParserConfig.fireWaterDefault();
 
@@ -140,32 +173,46 @@ class PlotViewModel extends BaseViewModel {
   // ========== x-x / y-y 光标 ==========
   /// X-X 测量第一条垂直线位置（数据坐标）
   double? _xCursor1;
+
   /// X-X 测量第二条垂直线位置（数据坐标）
   double? _xCursor2;
+
   /// Y-Y 测量第一条水平线位置（数据坐标）
   double? _yCursor1;
+
   /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
 
   // ========== 众邦电控配置文件 ==========
   /// 配置文件服务
   final ZobowProfileService _profileService = ZobowProfileService();
+
   /// 配置文件列表（供UI下拉框使用）
   List<ZobowConfigProfile> get zobowProfiles => _profileService.profiles;
+
   /// 当前选中的配置文件
-  ZobowConfigProfile? get selectedZobowProfile => _profileService.selectedProfile;
+  ZobowConfigProfile? get selectedZobowProfile =>
+      _profileService.selectedProfile;
+
   /// 当前选中的配置文件ID
   String get selectedZobowProfileId => _profileService.selectedProfileId;
 
   // ========== 定时刷新 ==========
   /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
+
+  /// 状态栏右侧临时提示
+  String? _statusMessage;
+  Timer? _statusMessageTimer;
+  bool _disposed = false;
+
   /// 定时刷新间隔（ms），无数据时保持 UI 响应
   static const int _refreshIntervalMs = 100;
 
   // ========== UI 刷新降频（数据不丢失）==========
   /// 待刷新的数据包计数，达到批量大小后触发 UI 刷新
   int _pendingNotifyCount = 0;
+
   /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收
   /// 根据 _refreshFps 计算：batchSize = targetRate / fps
   /// 串口数据源使用固定批量大小（1000Hz / 30fps ≈ 33），避免依赖 randomIntervalMs
@@ -184,16 +231,20 @@ class PlotViewModel extends BaseViewModel {
       return batch;
     }
   }
+
   /// Fallback 定时器：确保数据流中断时 UI 仍能刷新
   Timer? _notifyTimer;
 
   // ========== 接收速率调试统计 ==========
   /// 上次日志报告时间
   DateTime? _lastRateLogTime;
+
   /// 上次日志报告时的 _nextIndex
   int _lastRateLogIndex = 0;
+
   /// 接收字节数统计（用于排查串口读取性能）
   int _totalReceivedBytes = 0;
+
   /// 上次日志报告时的接收字节数
   int _lastRateLogBytes = 0;
 
@@ -220,11 +271,17 @@ class PlotViewModel extends BaseViewModel {
   void _loadSettings() {
     final settings = AppSettings();
     _refreshFps = settings.refreshFps;
+    _maxVisiblePoints = settings.maxVisiblePoints.clamp(
+      minVisiblePoints,
+      maxVisiblePointsLimit,
+    );
     _showGrid = settings.showGrid;
     _gridDensity = settings.gridDensity;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
-    _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency).round().clamp(1, 1000);
+    _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency)
+        .round()
+        .clamp(1, 1000);
     viewport = PlotViewport(
       xMin: settings.xMin,
       xMax: settings.xMax,
@@ -242,6 +299,7 @@ class PlotViewModel extends BaseViewModel {
   void _saveSettings() {
     final settings = AppSettings();
     settings.refreshFps = _refreshFps;
+    settings.maxVisiblePoints = _maxVisiblePoints;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.useRandomSource = _useRandomSource;
@@ -258,8 +316,10 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== Getters ==========
-  /// 不可修改的数据点列表（供 UI 读取）
-  List<PlotDataPoint> get dataPoints => List.unmodifiable(_dataPoints);
+  /// 当前绘图窗口的数据点列表（供 UI 读取）。
+  ///
+  /// 这里直接返回稳定窗口引用，避免每次 build 复制大列表。
+  List<PlotDataPoint> get dataPoints => _dataPoints;
   bool get isPlotting => _isPlotting;
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
@@ -278,8 +338,22 @@ class PlotViewModel extends BaseViewModel {
   CursorState? get cursor => _cursor;
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
-  /// 当前数据点总数
-  int get pointCount => _dataPoints.length;
+
+  /// 本次绘图接收到的数据点总数
+  int get pointCount => _nextIndex;
+
+  /// 当前窗口中的数据点数量
+  int get visiblePointCount => _dataPoints.length;
+
+  /// 当前窗口起始点序号
+  int get visibleStartIndex => _visibleStartIndex;
+
+  /// 当前窗口点数上限
+  int get maxVisiblePoints => _maxVisiblePoints;
+
+  /// 当前窗口数据版本，用于窗口长度不变但内容滚动时触发重绘。
+  int get dataRevision => _dataRevision;
+
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
 
@@ -288,15 +362,20 @@ class PlotViewModel extends BaseViewModel {
 
   /// X-X 测量第一条垂直线位置
   double? get xCursor1 => _xCursor1;
+
   /// X-X 测量第二条垂直线位置
   double? get xCursor2 => _xCursor2;
+
   /// Y-Y 测量第一条水平线位置
   double? get yCursor1 => _yCursor1;
+
   /// Y-Y 测量第二条水平线位置
   double? get yCursor2 => _yCursor2;
 
   /// 是否有可撤回的视口历史
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
+
+  int get _visibleEndIndex => _visibleStartIndex + _dataPoints.length;
 
   /// 状态栏提示文本，根据当前状态给用户操作建议
   ///
@@ -306,17 +385,36 @@ class PlotViewModel extends BaseViewModel {
   /// - 串口已连接但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
+    if (_statusMessage != null && _statusMessage!.isNotEmpty) {
+      return _statusMessage!;
+    }
     if (serialService.isConnecting) {
       return '正在连接串口...';
     }
-    if (!serialService.isConnected && !_useRandomSource && !_isPlotting) {
-      return '请先连接串口或启用随机源，再点击开始绘图';
+    if (_isPlotting) {
+      final sources = <String>[];
+      if (serialService.isConnected) {
+        sources.add('串口 ${serialService.config.port ?? ''}'.trim());
+      }
+      if (_useRandomSource && _parserType == ParserType.fireWater) {
+        sources.add('随机源 ${randomFrequency.toStringAsFixed(0)}Hz');
+      }
+      return sources.isEmpty ? '绘图中' : '数据源：${sources.join(' + ')}';
     }
-    if (serialService.isConnected && !_isPlotting) {
+    if (_useRandomSource && _parserType != ParserType.fireWater) {
+      if (!serialService.isConnected) {
+        return '随机源仅支持 FireWater；当前解析器需要连接串口后绘图';
+      }
+      return '随机源已保留；当前解析器仅使用串口数据';
+    }
+    if (!serialService.isConnected && !_useRandomSource) {
+      return '串口未连接，无法从串口绘图；可连接串口或启用随机源';
+    }
+    if (!serialService.isConnected && _useRandomSource) {
+      return '随机源已启用，点击开始绘图';
+    }
+    if (serialService.isConnected) {
       return '串口已连接，点击开始按钮开始绘图';
-    }
-    if (_parserType == ParserType.zobow) {
-      return '众邦电控地址在左侧通道面板设置';
     }
     return '';
   }
@@ -332,6 +430,9 @@ class PlotViewModel extends BaseViewModel {
       buffer.write('点数: $_nextIndex (${pointsPerSecond.toStringAsFixed(1)}/s)');
     } else {
       buffer.write('点数: $_nextIndex');
+    }
+    if (_dataPoints.isNotEmpty && _dataPoints.length < _nextIndex) {
+      buffer.write(' 窗口: $_visibleStartIndex-${_visibleEndIndex - 1}');
     }
     if (_isPlotting) {
       buffer.write(' [运行中]');
@@ -365,9 +466,32 @@ class PlotViewModel extends BaseViewModel {
     return recentCount * 2.0; // 500ms * 2 = 1s
   }
 
+  /// 在底部状态栏右侧显示一次性提示。
+  void showStatusMessage(
+    String message, {
+    Duration duration = const Duration(seconds: 4),
+  }) {
+    if (_disposed) return;
+    _statusMessageTimer?.cancel();
+    _statusMessage = message;
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+
+    if (duration > Duration.zero) {
+      _statusMessageTimer = Timer(duration, () {
+        if (_disposed) return;
+        if (_statusMessage == message) {
+          _statusMessage = null;
+          notifyListeners();
+        }
+      });
+    }
+  }
+
   // ========== 定时刷新 ==========
   /// 启动定时刷新器。
-  /// 
+  ///
   /// 绘图运行时：定时刷新确保垂直光标跟随鼠标、数据更新及时显示。
   /// 停止绘图后：定时器继续运行（即使无光标），确保拖动/缩放等交互
   /// 的视觉反馈及时，避免因纯手势回调驱动导致的卡顿感。
@@ -397,15 +521,22 @@ class PlotViewModel extends BaseViewModel {
   /// 同时同步更新 serialService 的随机源状态。
   void setUseRandomSource(bool value) {
     _useRandomSource = value;
-    _sourceConfig.useRandom = value;
+    _sourceConfig.useRandom = value && _parserType == ParserType.fireWater;
     _sourceConfig.useSerial = serialService.isConnected;
     // 根据 FireWater 配置的通道数设置随机数据源通道数
     // 如果 fireWaterChannelCount 为 0，则默认输出 4 通道
-    _sourceConfig.randomChannelCount = _parserConfig.fireWaterChannelCount > 0
-        ? _parserConfig.fireWaterChannelCount
-        : 4;
+    _sourceConfig.randomChannelCount =
+        _parserConfig.fireWaterChannelCount > 0
+            ? _parserConfig.fireWaterChannelCount
+            : 4;
     _sourceManager.updateConfig(_sourceConfig);
     _saveSettings();
+
+    if (value && _parserType != ParserType.fireWater) {
+      showStatusMessage('随机源已保留；随机源数据仅支持 FireWater 解析器');
+    } else {
+      showStatusMessage(value ? '随机源已启用' : '随机源已关闭');
+    }
 
     // 如果正在绘图，重启数据源
     if (_isPlotting) {
@@ -433,15 +564,15 @@ class PlotViewModel extends BaseViewModel {
   /// 切换解析器类型（FireWater / 固定帧 / 众邦电控）
   ///
   /// 如果正在绘图，会自动重启以应用新解析器。
-  /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时自动关闭。
+  /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时保留开关
+  /// 状态，但不会把随机源接入当前解析链。
   void setParserType(ParserType type) {
     _parserType = type;
     _parserConfig.type = type;
 
-    // 随机数据源仅适用于 FireWater 协议
     if (type != ParserType.fireWater && _useRandomSource) {
-      AppLogger().info('切换到非 FireWater 协议，自动关闭随机数据源', category: 'PLOT');
-      setUseRandomSource(false);
+      AppLogger().info('切换到非 FireWater 协议，保留随机源开关但不接入当前解析链', category: 'PLOT');
+      showStatusMessage('随机源已保留；当前解析器仅使用串口数据');
     }
 
     // 保存解析器类型到设置
@@ -469,12 +600,12 @@ class PlotViewModel extends BaseViewModel {
     _parserConfig.checksumType = config.checksumType;
     _parserConfig.checksumBytes = config.checksumBytes;
     _parserConfig.hasFrameTail = config.hasFrameTail;
-    _parserConfig.frameTail = config.frameTail != null ? List.from(config.frameTail!) : null;
+    _parserConfig.frameTail =
+        config.frameTail != null ? List.from(config.frameTail!) : null;
 
     // 更新随机数据源通道数以匹配 FireWater 配置
-    _sourceConfig.randomChannelCount = config.fireWaterChannelCount > 0
-        ? config.fireWaterChannelCount
-        : 4;
+    _sourceConfig.randomChannelCount =
+        config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
     _sourceManager.updateConfig(_sourceConfig);
 
     if (_isPlotting) {
@@ -495,18 +626,33 @@ class PlotViewModel extends BaseViewModel {
   void startPlotting() {
     if (_isPlotting) return;
 
+    final canUseRandom =
+        _useRandomSource && _parserType == ParserType.fireWater;
+
     // 检查是否有数据源
     if (!serialService.isConnected && !_useRandomSource) {
-      AppLogger().warning('无可用数据源，请先连接串口或启用随机数据源', category: 'PLOT');
+      const message = '串口未连接，无法绘图；请连接串口或启用随机源';
+      showStatusMessage(message);
+      AppLogger().warning(message, category: 'PLOT');
+      return;
+    }
+
+    if (!serialService.isConnected && _useRandomSource && !canUseRandom) {
+      const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或连接串口';
+      showStatusMessage(message);
+      AppLogger().warning(message, category: 'PLOT');
       return;
     }
 
     // 再次确认数据源配置与实际状态一致
     _sourceConfig.useSerial = serialService.isConnected;
-    _sourceConfig.useRandom = _useRandomSource;
+    _sourceConfig.useRandom = canUseRandom;
 
     // 清空旧数据
     _dataPoints.clear();
+    _zobowRawFrames.clear();
+    _visibleStartIndex = 0;
+    _dataRevision++;
     _rateSamples.clear();
     _nextIndex = 0;
     _activeChannelCount = 0;
@@ -539,9 +685,10 @@ class PlotViewModel extends BaseViewModel {
     // 配置并启动数据源
     // 注意：useSerial/useRandom 已在开头同步
     // 根据 FireWater 配置设置随机数据源通道数
-    _sourceConfig.randomChannelCount = _parserConfig.fireWaterChannelCount > 0
-        ? _parserConfig.fireWaterChannelCount
-        : 4;
+    _sourceConfig.randomChannelCount =
+        _parserConfig.fireWaterChannelCount > 0
+            ? _parserConfig.fireWaterChannelCount
+            : 4;
     _sourceManager.updateConfig(_sourceConfig);
     _sourceManager.start();
 
@@ -570,6 +717,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
     _startRefreshTimer();
     AppLogger().info('开始绘图', category: 'PLOT');
+    showStatusMessage('开始绘图');
     Future.microtask(() => notifyListeners());
   }
 
@@ -591,9 +739,12 @@ class PlotViewModel extends BaseViewModel {
     serialService.notifyListeners();
     _notifyTimer?.cancel();
     _notifyTimer = null;
+    _statusMessageTimer?.cancel();
+    _statusMessageTimer = null;
     _pendingNotifyCount = 0;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
+    showStatusMessage('已停止绘图');
     Future.microtask(() => notifyListeners());
   }
 
@@ -606,6 +757,9 @@ class PlotViewModel extends BaseViewModel {
   /// 清空所有数据、速率统计、视口和光标
   void clearData() {
     _dataPoints.clear();
+    _zobowRawFrames.clear();
+    _visibleStartIndex = 0;
+    _dataRevision++;
     _rateSamples.clear();
     _nextIndex = 0;
     _activeChannelCount = 0;
@@ -624,6 +778,11 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 数据接收 ==========
+  @visibleForTesting
+  void ingestParsedResultForTest(ParseResult result) {
+    _onParseResult(result);
+  }
+
   /// 处理解析器输出的数据包
   ///
   /// 每包数据都处理（不丢失），但 UI 刷新按 [_notifyBatchSize] 批量触发：
@@ -638,9 +797,10 @@ class PlotViewModel extends BaseViewModel {
     }
 
     final now = DateTime.now();
-    final timestamp = _startTime != null
-        ? now.difference(_startTime!).inMilliseconds.toDouble()
-        : 0.0;
+    final timestamp =
+        _startTime != null
+            ? now.difference(_startTime!).inMilliseconds.toDouble()
+            : 0.0;
 
     final point = PlotDataPoint(
       index: _nextIndex++,
@@ -648,7 +808,17 @@ class PlotViewModel extends BaseViewModel {
       values: List.from(result.values!),
     );
 
-    _dataPoints.add(point);
+    if (_parserType == ParserType.zobow && result.rawBytes != null) {
+      _zobowRawFrames.appendPacket(result.rawBytes!);
+    }
+
+    final appendToVisibleWindow =
+        _parserType != ParserType.zobow || _isViewingTail || _followEnabled;
+    if (appendToVisibleWindow) {
+      _dataPoints.add(point);
+      _trimVisibleWindowToLimit();
+      _dataRevision++;
+    }
 
     // 统计接收字节数
     _totalReceivedBytes += result.bytesConsumed;
@@ -659,7 +829,6 @@ class PlotViewModel extends BaseViewModel {
       _rateSamples.removeAt(0);
     }
 
-
     // 更新实际通道数
     if (point.channelCount > _activeChannelCount) {
       _activeChannelCount = point.channelCount;
@@ -667,12 +836,6 @@ class PlotViewModel extends BaseViewModel {
       if (_activeChannelCount > 8 && _antiAliasEnabled) {
         _antiAliasEnabled = false;
       }
-    }
-
-    // 限制缓冲区大小（使用removeRange批量移除，比removeAt高效）
-    if (_dataPoints.length > _maxPoints) {
-      final removeCount = _dataPoints.length - _maxPoints;
-      _dataPoints.removeRange(0, removeCount);
     }
 
     // 自动跟随最新数据（仅跟随模式开启时）
@@ -728,6 +891,70 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  bool get _isViewingTail {
+    if (_dataPoints.isEmpty) return true;
+    return _visibleEndIndex >= _nextIndex - 1;
+  }
+
+  void _trimVisibleWindowToLimit() {
+    if (_dataPoints.length <= _maxVisiblePoints) {
+      _visibleStartIndex = _dataPoints.isEmpty ? 0 : _dataPoints.first.index;
+      return;
+    }
+
+    final removeCount = _dataPoints.length - _maxVisiblePoints;
+    _dataPoints.removeRange(0, removeCount);
+    _visibleStartIndex = _dataPoints.first.index;
+  }
+
+  void _loadZobowWindowForViewport({bool force = false}) {
+    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
+
+    var start =
+        viewport.xMin.floor().clamp(0, _zobowRawFrames.packetCount).toInt();
+    var end =
+        viewport.xMax.ceil().clamp(start, _zobowRawFrames.packetCount).toInt();
+    if (end - start > _maxVisiblePoints) {
+      end = start + _maxVisiblePoints;
+      viewport = viewport.copyWith(
+        xMin: start.toDouble(),
+        xMax: end.toDouble(),
+      );
+    }
+
+    final currentStart = _visibleStartIndex;
+    final currentEnd = _visibleEndIndex;
+    if (!force && start >= currentStart && end <= currentEnd) return;
+
+    _rebuildZobowWindow(start, end - start);
+  }
+
+  void _loadZobowTailWindow() {
+    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
+    final count =
+        _zobowRawFrames.packetCount.clamp(0, _maxVisiblePoints).toInt();
+    final start = _zobowRawFrames.packetCount - count;
+    _rebuildZobowWindow(start, count);
+  }
+
+  void _rebuildZobowWindow(int start, int count) {
+    _dataPoints.clear();
+    _visibleStartIndex = start;
+    _dataRevision++;
+
+    for (int i = 0; i < count; i++) {
+      final packetIndex = start + i;
+      final frame = _zobowRawFrames.readPacket(packetIndex);
+      _dataPoints.add(
+        PlotDataPoint(
+          index: packetIndex,
+          timestamp: packetIndex.toDouble(),
+          values: ZobowParser.decodeFrameValues(frame, _parserConfig),
+        ),
+      );
+    }
+  }
+
   /// 根据当前解析器类型创建对应的解析器实例
   IDataParser _createParser() {
     switch (_parserType) {
@@ -773,7 +1000,11 @@ class PlotViewModel extends BaseViewModel {
       final buffer = ByteData.sublistView(bytes);
 
       for (int i = 0; i < 4; i++) {
-        buffer.setUint16(i * 2, _parserConfig.zobowChannelIds[i], Endian.little);
+        buffer.setUint16(
+          i * 2,
+          _parserConfig.zobowChannelIds[i],
+          Endian.little,
+        );
       }
 
       // 计算前8字节的CRC16/MODBUS
@@ -787,10 +1018,7 @@ class PlotViewModel extends BaseViewModel {
       // 通过 SerialService 发送
       serialService.send(bytes);
 
-      AppLogger().info(
-        '众邦电控初始化数据已发送: ${_bytesToHex(bytes)}',
-        category: 'PLOT',
-      );
+      AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
       return true;
     } catch (e) {
       AppLogger().error('众邦电控初始化数据发送失败: $e', category: 'PLOT');
@@ -823,12 +1051,16 @@ class PlotViewModel extends BaseViewModel {
     if (!fromDrag) {
       _saveViewport();
     }
-    viewport = newViewport.copy();
+    viewport = _limitXRange(newViewport).copy();
     viewport.setOffsetChannelCount(offsetChannelCount);
+    _loadZobowWindowForViewport();
     if (!fromDrag) {
       _saveSettings();
     }
-    AppLogger().trace('updateViewport: oldXMin=${oldXMin.toStringAsFixed(1)} → newXMin=${viewport.xMin.toStringAsFixed(1)} | delta=${(oldXMin - viewport.xMin).toStringAsFixed(1)} | fromDrag=$fromDrag', category: 'PLOT');
+    AppLogger().trace(
+      'updateViewport: oldXMin=${oldXMin.toStringAsFixed(1)} → newXMin=${viewport.xMin.toStringAsFixed(1)} | delta=${(oldXMin - viewport.xMin).toStringAsFixed(1)} | fromDrag=$fromDrag',
+      category: 'PLOT',
+    );
     if (fromDrag) {
       // 拖动时同步通知，避免微任务堆积
       notifyListeners();
@@ -843,8 +1075,12 @@ class PlotViewModel extends BaseViewModel {
   /// 最终视口保存到配置和历史记录。
   void saveDragViewport() {
     _saveViewport();
+    _loadZobowWindowForViewport();
     _saveSettings();
-    AppLogger().trace('saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}', category: 'PLOT');
+    AppLogger().trace(
+      'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
+      category: 'PLOT',
+    );
   }
 
   /// 重置视口到默认值并保存历史记录
@@ -859,16 +1095,23 @@ class PlotViewModel extends BaseViewModel {
   void undoZoom() {
     if (_viewportHistory.isEmpty) return;
     final previous = _viewportHistory.removeLast();
-    viewport = previous.copy();
+    viewport = _limitXRange(previous).copy();
+    _loadZobowWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
+  }
+
+  PlotViewport _limitXRange(PlotViewport candidate) {
+    if (candidate.xRange <= _maxVisiblePoints) return candidate;
+    return candidate.copyWith(xMax: candidate.xMin + _maxVisiblePoints);
   }
 
   /// X 轴放大
   void zoomXIn() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    viewport = viewport.zoomX(0.8, centerX);
+    viewport = _limitXRange(viewport.zoomX(0.8, centerX));
+    _loadZobowWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -877,7 +1120,8 @@ class PlotViewModel extends BaseViewModel {
   void zoomXOut() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    viewport = viewport.zoomX(1.25, centerX);
+    viewport = _limitXRange(viewport.zoomX(1.25, centerX));
+    _loadZobowWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -909,9 +1153,10 @@ class PlotViewModel extends BaseViewModel {
   /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
   void fitYAxis() {
     if (_dataPoints.isEmpty) return;
-    final visiblePoints = _dataPoints.where((p) {
-      return p.index >= viewport.xMin && p.index <= viewport.xMax;
-    }).toList();
+    final visiblePoints =
+        _dataPoints.where((p) {
+          return p.index >= viewport.xMin && p.index <= viewport.xMax;
+        }).toList();
     if (visiblePoints.isEmpty) return;
 
     double minY = double.infinity;
@@ -928,36 +1173,35 @@ class PlotViewModel extends BaseViewModel {
 
     _saveViewport();
     final padding = (maxY - minY) * 0.1;
-    viewport = viewport.copyWith(
-      yMin: minY - padding,
-      yMax: maxY + padding,
-    );
+    viewport = viewport.copyWith(yMin: minY - padding, yMax: maxY + padding);
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
   /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
   void fitXAxis() {
-    if (_dataPoints.isEmpty) return;
-    final minX = _dataPoints.first.index.toDouble();
-    final maxX = _dataPoints.last.index.toDouble();
+    if (_nextIndex == 0) return;
+    final maxX = _nextIndex.toDouble();
+    final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
 
     _saveViewport();
-    viewport = viewport.copyWith(
-      xMin: minX,
-      xMax: maxX + 1,
-    );
+    viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+    _loadZobowTailWindow();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
   void fitAll() {
-    if (_dataPoints.isEmpty) return;
+    if (_nextIndex == 0) return;
+
+    if (_parserType == ParserType.zobow) {
+      _loadZobowTailWindow();
+    }
 
     // X范围
-    final minX = _dataPoints.first.index.toDouble();
-    final maxX = _dataPoints.last.index.toDouble();
+    final maxX = _nextIndex.toDouble();
+    final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
 
     // Y范围（只计算可见通道）
     double minY = double.infinity;
@@ -976,15 +1220,12 @@ class PlotViewModel extends BaseViewModel {
       final padding = (maxY - minY) * 0.1;
       viewport = viewport.copyWith(
         xMin: minX,
-        xMax: maxX + 1,
+        xMax: maxX,
         yMin: minY - padding,
         yMax: maxY + padding,
       );
     } else {
-      viewport = viewport.copyWith(
-        xMin: minX,
-        xMax: maxX + 1,
-      );
+      viewport = viewport.copyWith(xMin: minX, xMax: maxX);
     }
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -993,6 +1234,12 @@ class PlotViewModel extends BaseViewModel {
   /// 设置跟随开关
   void setFollowEnabled(bool value) {
     _followEnabled = value;
+    if (value && _parserType == ParserType.zobow && _nextIndex > 0) {
+      final maxX = _nextIndex.toDouble();
+      final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
+      viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+      _loadZobowTailWindow();
+    }
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1025,6 +1272,20 @@ class PlotViewModel extends BaseViewModel {
   void setChannelShowLine(int index, bool show) {
     if (index < 0 || index >= channels.length) return;
     channels[index].showLine = show;
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置通道点半径
+  void setChannelPointSize(int index, double size) {
+    if (index < 0 || index >= channels.length) return;
+    channels[index].pointSize = size.clamp(0.5, 12.0);
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置通道线宽
+  void setChannelLineWidth(int index, double width) {
+    if (index < 0 || index >= channels.length) return;
+    channels[index].lineWidth = width.clamp(0.5, 8.0);
     Future.microtask(() => notifyListeners());
   }
 
@@ -1111,6 +1372,25 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  /// 设置绘图窗口点数上限（10000~3600000）
+  void setMaxVisiblePoints(int points) {
+    final next = points.clamp(minVisiblePoints, maxVisiblePointsLimit).toInt();
+    if (next == _maxVisiblePoints) return;
+    _maxVisiblePoints = next;
+
+    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+      viewport = _limitXRange(viewport).copy();
+      _loadZobowWindowForViewport(force: true);
+    } else if (_dataPoints.length > _maxVisiblePoints) {
+      _trimVisibleWindowToLimit();
+      _dataRevision++;
+      viewport = _limitXRange(viewport).copy();
+    }
+
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   /// 设置网格密度（sparse/normal/dense）
   void setGridDensity(String density) {
     const valid = {'sparse', 'normal', 'dense'};
@@ -1158,8 +1438,8 @@ class PlotViewModel extends BaseViewModel {
       // 自动初始化两条线，Y2在上（值更大），间隔为Y范围的1/4
       final range = viewport.yRange;
       final center = viewport.yMin + range / 2;
-      _yCursor1 = center - range / 8;  // 下方（值小）
-      _yCursor2 = center + range / 8;  // 上方（值大）
+      _yCursor1 = center - range / 8; // 下方（值小）
+      _yCursor2 = center + range / 8; // 上方（值大）
     }
     if (!_yMeasurementEnabled) {
       _yCursor1 = null;
@@ -1221,7 +1501,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 更新垂直光标（跟随鼠标模式）
-  /// 
+  ///
   /// - X 值吸附到最近的整数（数据点索引都是整数）
   /// - 使用二分查找精确匹配数据点，避免线性扫描
   /// - 未绘制到数据点的区域设置 hasData=false，tooltip 不显示
@@ -1309,7 +1589,7 @@ class PlotViewModel extends BaseViewModel {
   String? get measurementText {
     final buffer = StringBuffer();
     bool hasData = false;
-    
+
     if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
       final dx = _xCursor2! - _xCursor1!;
       buffer.writeln('X1 = ${_xCursor1!.toStringAsFixed(1)}');
@@ -1317,7 +1597,7 @@ class PlotViewModel extends BaseViewModel {
       buffer.writeln('ΔX = ${dx.toStringAsFixed(1)}');
       hasData = true;
     }
-    
+
     if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
       final dy = _yCursor2! - _yCursor1!;
       if (hasData) buffer.writeln('---');
@@ -1326,7 +1606,7 @@ class PlotViewModel extends BaseViewModel {
       buffer.writeln('ΔY = ${dy.toStringAsFixed(1)}');
       hasData = true;
     }
-    
+
     return hasData ? buffer.toString().trim() : null;
   }
 
@@ -1334,12 +1614,14 @@ class PlotViewModel extends BaseViewModel {
   String? get statsText {
     if (!_statsEnabled || _dataPoints.isEmpty) return null;
 
-    final xMin = _statsRangeEnabled && _statsX1 != null && _statsX2 != null
-        ? (_statsX1! < _statsX2! ? _statsX1! : _statsX2!)
-        : null;
-    final xMax = _statsRangeEnabled && _statsX1 != null && _statsX2 != null
-        ? (_statsX1! > _statsX2! ? _statsX1! : _statsX2!)
-        : null;
+    final xMin =
+        _statsRangeEnabled && _statsX1 != null && _statsX2 != null
+            ? (_statsX1! < _statsX2! ? _statsX1! : _statsX2!)
+            : viewport.xMin;
+    final xMax =
+        _statsRangeEnabled && _statsX1 != null && _statsX2 != null
+            ? (_statsX1! > _statsX2! ? _statsX1! : _statsX2!)
+            : viewport.xMax;
 
     final buffer = StringBuffer();
     bool hasVisibleChannel = false;
@@ -1347,8 +1629,8 @@ class PlotViewModel extends BaseViewModel {
 
     // 先计算统一的样本数（所有可见通道在范围内的点数应该相同）
     for (final point in _dataPoints) {
-      if (xMin != null && point.index < xMin) continue;
-      if (xMax != null && point.index > xMax) continue;
+      if (point.index < xMin) continue;
+      if (point.index > xMax) continue;
       commonCount++;
     }
 
@@ -1362,8 +1644,8 @@ class PlotViewModel extends BaseViewModel {
 
       for (final point in _dataPoints) {
         if (i >= point.channelCount) continue;
-        if (xMin != null && point.index < xMin) continue;
-        if (xMax != null && point.index > xMax) continue;
+        if (point.index < xMin) continue;
+        if (point.index > xMax) continue;
 
         final val = point.values[i];
         maxVal = maxVal == null || val > maxVal ? val : maxVal;
@@ -1387,9 +1669,9 @@ class PlotViewModel extends BaseViewModel {
     // 统一显示 N 和 Range
     buffer.writeln('---');
     buffer.writeln('N: $commonCount');
-    if (_statsRangeEnabled && _statsX1 != null && _statsX2 != null) {
-      buffer.writeln('Range: ${xMin!.toStringAsFixed(1)} ~ ${xMax!.toStringAsFixed(1)}');
-    }
+    buffer.writeln(
+      'Range: ${xMin.toStringAsFixed(1)} ~ ${xMax.toStringAsFixed(1)}',
+    );
 
     return buffer.toString().trim();
   }
@@ -1401,7 +1683,7 @@ class PlotViewModel extends BaseViewModel {
   /// 返回实际保存的文件路径，失败返回 null。
   Future<String?> exportToCsv(String? selectedPath) async {
     try {
-      if (_dataPoints.isEmpty) {
+      if (_nextIndex == 0) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
@@ -1422,23 +1704,47 @@ class PlotViewModel extends BaseViewModel {
       final buffer = StringBuffer();
 
       // 表头: x,y1,y2,...
-      final maxChannels = _dataPoints.map((p) => p.channelCount).reduce((a, b) => a > b ? a : b);
+      final maxChannels =
+          _parserType == ParserType.zobow
+              ? 4
+              : _dataPoints
+                  .map((p) => p.channelCount)
+                  .reduce((a, b) => a > b ? a : b);
       buffer.write('x');
       for (int i = 0; i < maxChannels; i++) {
         buffer.write(',y${i + 1}');
       }
       buffer.writeln();
 
-      // 数据行
-      for (final point in _dataPoints) {
-        buffer.write(point.index);
-        for (int i = 0; i < maxChannels; i++) {
-          buffer.write(',');
-          if (i < point.values.length) {
-            buffer.write(point.values[i].toStringAsFixed(6));
+      // 数据行。Zobow 使用全量原始帧导出，其他协议导出当前窗口。
+      if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+        for (
+          int packetIndex = 0;
+          packetIndex < _zobowRawFrames.packetCount;
+          packetIndex++
+        ) {
+          final values = ZobowParser.decodeFrameValues(
+            _zobowRawFrames.readPacket(packetIndex),
+            _parserConfig,
+          );
+          buffer.write(packetIndex);
+          for (int i = 0; i < maxChannels; i++) {
+            buffer.write(',');
+            buffer.write(values[i].toStringAsFixed(6));
           }
+          buffer.writeln();
         }
-        buffer.writeln();
+      } else {
+        for (final point in _dataPoints) {
+          buffer.write(point.index);
+          for (int i = 0; i < maxChannels; i++) {
+            buffer.write(',');
+            if (i < point.values.length) {
+              buffer.write(point.values[i].toStringAsFixed(6));
+            }
+          }
+          buffer.writeln();
+        }
       }
 
       await file.writeAsString(buffer.toString());
@@ -1510,11 +1816,9 @@ class PlotViewModel extends BaseViewModel {
           values.add(0);
         }
 
-        importedPoints.add(PlotDataPoint(
-          index: index,
-          timestamp: xValue,
-          values: values,
-        ));
+        importedPoints.add(
+          PlotDataPoint(index: index, timestamp: xValue, values: values),
+        );
         index++;
       }
 
@@ -1524,7 +1828,14 @@ class PlotViewModel extends BaseViewModel {
 
       // 清空现有数据并替换
       _dataPoints.clear();
-      _dataPoints.addAll(importedPoints);
+      _dataRevision++;
+      if (importedPoints.length > _maxVisiblePoints) {
+        _visibleStartIndex = importedPoints.length - _maxVisiblePoints;
+        _dataPoints.addAll(importedPoints.skip(_visibleStartIndex));
+      } else {
+        _visibleStartIndex = 0;
+        _dataPoints.addAll(importedPoints);
+      }
       _nextIndex = importedPoints.length;
       _activeChannelCount = channelCount;
       _startTime = null;
@@ -1628,11 +1939,12 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 释放所有资源：取消订阅、停止数据源、释放解析器、停止定时器
-  /// 
+  ///
   /// 注意：全局单例模式下不修改 serialService.isPlotting，
   /// 避免页面切换时误停绘图状态。
   @override
   void dispose() {
+    _disposed = true;
     _parseSubscription?.cancel();
     _parseSubscription = null;
     _sourceManager.stop();

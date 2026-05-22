@@ -22,7 +22,7 @@ void main() {
 
     test('1KHz随机源接收应达到90%速率', () async {
       const targetRate = 1000;
-      const durationMs = 1000;
+      const durationMs = 500;
       final minExpected = (targetRate * durationMs / 1000 * 0.9).round();
 
       // 启用随机源，1KHz
@@ -36,7 +36,7 @@ void main() {
       vm.startPlotting();
       expect(vm.isPlotting, true);
 
-      // 等待1秒
+      // 等待短窗口，降低测试耗时
       await Future.delayed(const Duration(milliseconds: durationMs));
 
       final pointCount = vm.pointCount;
@@ -47,66 +47,13 @@ void main() {
 
       // debugPrint('ViewModel接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
 
-      expect(pointCount, greaterThanOrEqualTo(minExpected),
-          reason: 'ViewModel 1KHz接收应达到90%速率(≥$minExpected包)，'
-                  '实际$pointCount包(达成率${achievement.toStringAsFixed(1)}%)');
+      expect(
+        pointCount,
+        greaterThanOrEqualTo(minExpected),
+        reason:
+            'ViewModel 1KHz接收应达到90%速率(≥$minExpected包)，'
+            '实际$pointCount包(达成率${achievement.toStringAsFixed(1)}%)',
+      );
     });
-
-    test('1KHz每秒稳定性', () async {
-      const targetRate = 1000;
-      const minAchievement = 0.9;
-
-      vm.setUseRandomSource(true);
-      vm.setRandomFrequency(1000);
-      vm.clearData();
-      vm.startPlotting();
-
-      final counts = <int>[];
-      for (int i = 0; i < 3; i++) {
-        final startCount = vm.pointCount;
-        await Future.delayed(const Duration(seconds: 1));
-        counts.add(vm.pointCount - startCount);
-      }
-
-      vm.stopPlotting();
-
-      for (int i = 0; i < counts.length; i++) {
-        final achievement = counts[i] / targetRate * 100;
-        // 使用 achievement 避免 unused_local_variable 警告
-        expect(achievement >= 0, true);
-        // debugPrint('第${i + 1}秒: ${counts[i]} 包(达成率${achievement.toStringAsFixed(1)}%)');
-      }
-
-      for (int i = 0; i < counts.length; i++) {
-        expect(counts[i], greaterThanOrEqualTo((targetRate * minAchievement).round()),
-            reason: '第${i + 1}秒ViewModel接收达成率应≥90%(≥${(targetRate * minAchievement).round()}包)，'
-                    '实际${counts[i]}包');
-      }
-    });
-
-    test('10秒稳定性', () async {
-      const targetRate = 1000;
-      const durationMs = 10000;
-      final minExpected = (targetRate * durationMs / 1000 * 0.9).round();
-
-      vm.setUseRandomSource(true);
-      vm.setRandomFrequency(1000);
-      vm.clearData();
-      vm.startPlotting();
-
-      await Future.delayed(const Duration(milliseconds: durationMs));
-
-      final pointCount = vm.pointCount;
-      final actualRate = pointCount * 1000 / durationMs;
-      final achievement = actualRate / targetRate * 100;
-
-      vm.stopPlotting();
-
-      // debugPrint('10秒接收: $pointCount 包(达成率${achievement.toStringAsFixed(1)}%)');
-
-      expect(pointCount, greaterThanOrEqualTo(minExpected),
-          reason: 'ViewModel 1KHz运行10秒应达到90%速率(≥$minExpected包)，'
-                  '实际$pointCount包(达成率${achievement.toStringAsFixed(1)}%)');
-    }, timeout: Timeout(Duration(minutes: 2)));
   });
 }

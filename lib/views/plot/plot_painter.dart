@@ -1,8 +1,9 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../../core/utils/app_logger.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_viewport.dart';
@@ -47,38 +48,56 @@ enum GridDensity { sparse, normal, dense }
 class PlotPainter extends CustomPainter {
   /// 当前绘图视口
   final PlotViewport viewport;
+
   /// 数据点列表
   final List<PlotDataPoint> data;
+
+  /// 数据版本，窗口长度不变但内容滚动时也会变化
+  final int dataRevision;
+
   /// 通道配置列表
   final List<ChannelConfig> channels;
+
   /// 是否显示网格
   final bool showGrid;
+
   /// 网格密度
   final GridDensity gridDensity;
+
   /// 垂直光标状态（鼠标悬停跟随）
   final CursorState? cursor;
+
   /// X-X 测量第一条线位置
   final double? xCursor1;
+
   /// X-X 测量第二条线位置
   final double? xCursor2;
+
   /// Y-Y 测量第一条线位置
   final double? yCursor1;
+
   /// Y-Y 测量第二条线位置
   final double? yCursor2;
+
   /// 统计测量开关
   final bool statsEnabled;
+
   /// 统计范围开关
   final bool statsRangeEnabled;
+
   /// 统计范围左边界
   final double? statsX1;
+
   /// 统计范围右边界
   final double? statsX2;
+
   /// 抗锯齿开关
   final bool antiAliasEnabled;
 
   PlotPainter({
     required this.viewport,
     required this.data,
+    this.dataRevision = 0,
     required this.channels,
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
@@ -96,12 +115,14 @@ class PlotPainter extends CustomPainter {
 
   /// 判断两个视口是否相等（用于重绘判断）
   bool _viewportEquals(PlotViewport a, PlotViewport b) {
-    return a.xMin == b.xMin && a.xMax == b.xMax && a.yMin == b.yMin && a.yMax == b.yMax;
+    return a.xMin == b.xMin &&
+        a.xMax == b.xMax &&
+        a.yMin == b.yMin &&
+        a.yMax == b.yMax;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    AppLogger().trace('PlotPainter.paint: viewport xMin=${viewport.xMin.toStringAsFixed(1)} xMax=${viewport.xMax.toStringAsFixed(1)}', category: 'PAINT');
     // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 光标 → 统计范围
     _drawBackground(canvas, size);
 
@@ -120,38 +141,52 @@ class PlotPainter extends CustomPainter {
 
     // X-X 测量线（独立绘制，不依赖 cursor）
     if (xCursor1 != null || xCursor2 != null) {
-      _drawXMeasurement(canvas, size, xCursor1, xCursor2, viewport.plotHeight(size.height));
+      _drawXMeasurement(
+        canvas,
+        size,
+        xCursor1,
+        xCursor2,
+        viewport.plotHeight(size.height),
+      );
     }
 
     // Y-Y 测量线（独立绘制，不依赖 cursor）
     if (yCursor1 != null || yCursor2 != null) {
-      _drawYMeasurement(canvas, size, yCursor1, yCursor2, viewport.plotWidth(size.width));
+      _drawYMeasurement(
+        canvas,
+        size,
+        yCursor1,
+        yCursor2,
+        viewport.plotWidth(size.width),
+      );
     }
 
     // 统计范围框（独立绘制）
-    if (statsEnabled && statsRangeEnabled && statsX1 != null && statsX2 != null) {
+    if (statsEnabled &&
+        statsRangeEnabled &&
+        statsX1 != null &&
+        statsX2 != null) {
       _drawStatsRange(canvas, size);
     }
   }
 
   /// 绘制深色背景
   void _drawBackground(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF1A1A2E)
-      ..style = PaintingStyle.fill;
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      paint,
-    );
+    final paint =
+        Paint()
+          ..color = const Color(0xFF1A1A2E)
+          ..style = PaintingStyle.fill;
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
   }
 
   /// 绘制网格线和 Y=0 基准线
   void _drawGrid(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFF2D2D44)
-      ..strokeWidth = 0.5
-      ..style = PaintingStyle.stroke
-      ..isAntiAlias = antiAliasEnabled;
+    final paint =
+        Paint()
+          ..color = const Color(0xFF2D2D44)
+          ..strokeWidth = 0.5
+          ..style = PaintingStyle.stroke
+          ..isAntiAlias = antiAliasEnabled;
 
     final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
@@ -183,15 +218,16 @@ class PlotPainter extends CustomPainter {
   /// 根据网格密度计算网格间距（像素）
   double _getGridSpacing() {
     return switch (gridDensity) {
-      GridDensity.sparse => 160,  // 稀疏: 每160px一条线
-      GridDensity.normal => 80,   // 普通: 每80px一条线
-      GridDensity.dense => 40,    // 密集: 每40px一条线
+      GridDensity.sparse => 160, // 稀疏: 每160px一条线
+      GridDensity.normal => 80, // 普通: 每80px一条线
+      GridDensity.dense => 40, // 密集: 每40px一条线
     };
   }
 
   int _calculateGridCount(double length, double minSpacing) {
     final densitySpacing = _getGridSpacing();
-    final effectiveSpacing = minSpacing > densitySpacing ? minSpacing : densitySpacing;
+    final effectiveSpacing =
+        minSpacing > densitySpacing ? minSpacing : densitySpacing;
     final count = (length / effectiveSpacing).floor();
     if (count < 2) return 2;
     if (count > 50) return 50; // 密集模式上限更高
@@ -200,6 +236,7 @@ class PlotPainter extends CustomPainter {
 
   /// 缓存的可见数据范围，避免每帧重复二分查找
   _Range? _cachedVisibleRange;
+
   /// 缓存视口引用，用于判断缓存是否有效
   PlotViewport? _cachedViewport;
 
@@ -215,10 +252,10 @@ class PlotPainter extends CustomPainter {
     final visibleIndices = _getVisibleRange();
     if (visibleIndices.start >= visibleIndices.end) return;
 
-    // 降采样：根据像素宽度决定采样步长
+    // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
     final dataCount = visibleIndices.end - visibleIndices.start;
-    final step = dataCount > plotW * 2 ? (dataCount / (plotW * 2)).ceil() : 1;
+    final useMinMaxBuckets = dataCount > plotW * 2;
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length; ch++) {
@@ -226,13 +263,21 @@ class PlotPainter extends CustomPainter {
       if (!channel.visible) continue;
       if (ch >= data.first.values.length) continue;
 
-      _drawChannelOptimized(canvas, size, ch, channel, visibleIndices, step);
+      _drawChannelOptimized(
+        canvas,
+        size,
+        ch,
+        channel,
+        visibleIndices,
+        useMinMaxBuckets,
+      );
     }
   }
 
   /// 获取可见数据范围（带缓存）
   _Range _getVisibleRange() {
-    if (_cachedVisibleRange != null && _cachedViewport != null &&
+    if (_cachedVisibleRange != null &&
+        _cachedViewport != null &&
         _viewportEquals(_cachedViewport!, viewport)) {
       return _cachedVisibleRange!;
     }
@@ -252,74 +297,203 @@ class PlotPainter extends CustomPainter {
     int channelIndex,
     ChannelConfig channel,
     _Range visibleRange,
-    int step,
+    bool useMinMaxBuckets,
   ) {
-    // 预分配固定大小列表，避免动态扩容
-    final maxPoints = ((visibleRange.end - visibleRange.start) / step).ceil() + 1;
-    final points = List<Offset?>.filled(maxPoints, null);
-    var count = 0;
+    final visibleCount = visibleRange.end - visibleRange.start;
+    if (channel.showLine && visibleCount > 1) {
+      final linePaint =
+          Paint()
+            ..color = channel.color
+            ..strokeWidth = channel.lineWidth
+            ..style = PaintingStyle.stroke
+            ..isAntiAlias = antiAliasEnabled;
 
+      if (useMinMaxBuckets) {
+        _drawChannelMinMaxBuckets(
+          canvas,
+          size,
+          channelIndex,
+          channel,
+          visibleRange,
+          linePaint,
+        );
+      } else {
+        _drawChannelRawPath(
+          canvas,
+          size,
+          channelIndex,
+          channel,
+          visibleRange,
+          linePaint,
+        );
+      }
+    }
+
+    final pointPaint =
+        Paint()
+          ..color = channel.color
+          ..style = PaintingStyle.fill;
+
+    _drawChannelPoints(
+      canvas,
+      size,
+      channelIndex,
+      channel,
+      visibleRange,
+      pointPaint,
+    );
+  }
+
+  void _drawChannelRawPath(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint paint,
+  ) {
+    final path = Path();
+    var hasPoint = false;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+
+    for (int i = visibleRange.start; i < visibleRange.end; i++) {
+      final point = data[i];
+      if (channelIndex >= point.values.length) continue;
+      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
+      final y = _screenY(
+        point,
+        channelIndex,
+        channel,
+        size.height,
+      ).clamp(marginTop, marginBottom);
+      if (hasPoint) {
+        path.lineTo(x, y);
+      } else {
+        path.moveTo(x, y);
+        hasPoint = true;
+      }
+    }
+
+    if (hasPoint) {
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  void _drawChannelMinMaxBuckets(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint paint,
+  ) {
+    final plotW = viewport.plotWidth(size.width);
+    final dataCount = visibleRange.end - visibleRange.start;
+    if (dataCount <= 0 || plotW <= 0) return;
+
+    final bucketCount = math.min(plotW.ceil(), dataCount);
+    final rawPoints = Float32List(bucketCount * 4);
+    var rawIndex = 0;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+    final left = PlotViewport().marginLeft;
+
+    for (int bucket = 0; bucket < bucketCount; bucket++) {
+      final start = visibleRange.start + (bucket * dataCount ~/ bucketCount);
+      var end = visibleRange.start + ((bucket + 1) * dataCount ~/ bucketCount);
+      if (end <= start) end = start + 1;
+
+      var minY = double.infinity;
+      var maxY = double.negativeInfinity;
+      for (int i = start; i < end && i < visibleRange.end; i++) {
+        final point = data[i];
+        if (channelIndex >= point.values.length) continue;
+        final y = _screenY(
+          point,
+          channelIndex,
+          channel,
+          size.height,
+        ).clamp(marginTop, marginBottom);
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+
+      if (minY == double.infinity) continue;
+      final x = left + (bucket + 0.5) * plotW / bucketCount;
+      rawPoints[rawIndex++] = x;
+      rawPoints[rawIndex++] = minY;
+      rawPoints[rawIndex++] = x;
+      rawPoints[rawIndex++] = maxY;
+    }
+
+    if (rawIndex > 0) {
+      canvas.drawRawPoints(
+        ui.PointMode.lines,
+        Float32List.sublistView(rawPoints, 0, rawIndex),
+        paint,
+      );
+    }
+  }
+
+  void _drawChannelPoints(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint paint,
+  ) {
+    final plotW = viewport.plotWidth(size.width);
+    final dataCount = visibleRange.end - visibleRange.start;
+    final step = dataCount > plotW * 2 ? (dataCount / (plotW * 2)).ceil() : 1;
+    final rawPoints = Float32List(((dataCount / step).ceil() + 1) * 2);
+    var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
     for (int i = visibleRange.start; i < visibleRange.end; i += step) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
-
-      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-      var y = viewport.dataToScreenY(
-        point.values[channelIndex] * channel.yScale + channel.yOffset,
-        size.height,
+      rawPoints[rawIndex++] = viewport.dataToScreenX(
+        point.index.toDouble(),
+        size.width,
       );
-
-      // 限制在绘图区域内
-      if (y < marginTop) y = marginTop;
-      if (y > marginBottom) y = marginBottom;
-
-      points[count++] = Offset(x, y);
+      rawPoints[rawIndex++] = _screenY(
+        point,
+        channelIndex,
+        channel,
+        size.height,
+      ).clamp(marginTop, marginBottom);
     }
 
-    if (count == 0) return;
-
-    // 绘制连线（根据设置决定是否开启抗锯齿）
-    if (channel.showLine && count > 1) {
-      final linePaint = Paint()
-        ..color = channel.color
-        ..strokeWidth = channel.lineWidth
-        ..style = PaintingStyle.stroke
-        ..isAntiAlias = antiAliasEnabled;
-
-      final path = Path();
-      final first = points[0]!;
-      path.moveTo(first.dx, first.dy);
-      for (int i = 1; i < count; i++) {
-        final p = points[i]!;
-        path.lineTo(p.dx, p.dy);
-      }
-      canvas.drawPath(path, linePaint);
+    if (rawIndex > 0) {
+      canvas.drawRawPoints(
+        ui.PointMode.points,
+        Float32List.sublistView(rawPoints, 0, rawIndex),
+        paint..strokeWidth = channel.pointSize,
+      );
     }
+  }
 
-    // 绘制点（只在需要时）
-    final shouldShowPoints = channel.showPoint ||
-        count < 100 ||
-        (!channel.showLine && channel.visible);
-    if (shouldShowPoints) {
-      final pointPaint = Paint()
-        ..color = channel.color
-        ..style = PaintingStyle.fill;
-
-      for (int i = 0; i < count; i++) {
-        final p = points[i]!;
-        canvas.drawCircle(p, channel.pointSize, pointPaint);
-      }
-    }
+  double _screenY(
+    PlotDataPoint point,
+    int channelIndex,
+    ChannelConfig channel,
+    double height,
+  ) {
+    return viewport.dataToScreenY(
+      point.values[channelIndex] * channel.yScale + channel.yOffset,
+      height,
+    );
   }
 
   /// 绘制坐标轴、刻度线和刻度值
   void _drawAxes(Canvas canvas, Size size) {
-    final axisPaint = Paint()
-      ..color = const Color(0xFF8888AA)
-      ..strokeWidth = 1.0;
+    final axisPaint =
+        Paint()
+          ..color = const Color(0xFF8888AA)
+          ..strokeWidth = 1.0;
 
     final textStyle = const TextStyle(
       color: Color(0xFF8888AA),
@@ -332,15 +506,24 @@ class PlotPainter extends CustomPainter {
 
     // X 轴
     canvas.drawLine(
-      Offset(PlotViewport().marginLeft, size.height - PlotViewport().marginBottom),
-      Offset(size.width - PlotViewport().marginRight, size.height - PlotViewport().marginBottom),
+      Offset(
+        PlotViewport().marginLeft,
+        size.height - PlotViewport().marginBottom,
+      ),
+      Offset(
+        size.width - PlotViewport().marginRight,
+        size.height - PlotViewport().marginBottom,
+      ),
       axisPaint,
     );
 
     // Y 轴
     canvas.drawLine(
       Offset(PlotViewport().marginLeft, PlotViewport().marginTop),
-      Offset(PlotViewport().marginLeft, size.height - PlotViewport().marginBottom),
+      Offset(
+        PlotViewport().marginLeft,
+        size.height - PlotViewport().marginBottom,
+      ),
       axisPaint,
     );
 
@@ -375,11 +558,18 @@ class PlotPainter extends CustomPainter {
     final Set<double> drawnValues = {};
     if (step > 0) {
       final startValue = (viewport.yMin / step).floor() * step;
-      for (double value = startValue; value <= viewport.yMax + step * 0.5; value += step) {
+      for (
+        double value = startValue;
+        value <= viewport.yMax + step * 0.5;
+        value += step
+      ) {
         if (value < viewport.yMin || value > viewport.yMax) continue;
 
         final y = viewport.dataToScreenY(value, size.height);
-        if (y < PlotViewport().marginTop || y > PlotViewport().marginTop + plotH) continue;
+        if (y < PlotViewport().marginTop ||
+            y > PlotViewport().marginTop + plotH) {
+          continue;
+        }
 
         drawnValues.add(value);
 
@@ -403,9 +593,12 @@ class PlotPainter extends CustomPainter {
     }
 
     // 常驻 Y=0 刻度（如果 0 在可见范围内且尚未绘制）
-    if (viewport.yMin <= 0 && viewport.yMax >= 0 && !drawnValues.contains(0.0)) {
+    if (viewport.yMin <= 0 &&
+        viewport.yMax >= 0 &&
+        !drawnValues.contains(0.0)) {
       final zeroY = viewport.dataToScreenY(0, size.height);
-      if (zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH) {
+      if (zeroY >= PlotViewport().marginTop &&
+          zeroY <= PlotViewport().marginTop + plotH) {
         // 刻度线（稍长，突出显示）
         canvas.drawLine(
           Offset(PlotViewport().marginLeft - 8, zeroY),
@@ -461,13 +654,16 @@ class PlotPainter extends CustomPainter {
       final zeroY = viewport.dataToScreenY(zeroDataY, size.height);
 
       // 标签和基准线只在 Y=0 位置在绘图区域内时绘制
-      final labelVisible = zeroY >= PlotViewport().marginTop && zeroY <= PlotViewport().marginTop + plotH;
+      final labelVisible =
+          zeroY >= PlotViewport().marginTop &&
+          zeroY <= PlotViewport().marginTop + plotH;
 
       if (labelVisible) {
         // 绘制水平虚线（通道颜色，半透明）
-        final dashPaint = Paint()
-          ..color = ch.color.withValues(alpha: 0.4)
-          ..strokeWidth = 1.0;
+        final dashPaint =
+            Paint()
+              ..color = ch.color.withValues(alpha: 0.4)
+              ..strokeWidth = 1.0;
 
         const dashLen = 6.0;
         const gapLen = 4.0;
@@ -505,10 +701,7 @@ class PlotPainter extends CustomPainter {
           Rect.fromLTWH(labelX, labelY, labelW, labelH),
           const Radius.circular(2),
         );
-        canvas.drawRRect(
-          bgRect,
-          Paint()..color = ch.color,
-        );
+        canvas.drawRRect(bgRect, Paint()..color = ch.color);
 
         // 标签文字
         textPainter.paint(
@@ -527,7 +720,12 @@ class PlotPainter extends CustomPainter {
   ///
   /// 在绘图区右侧绘制该通道的 Y 轴刻度线和刻度值，
   /// 刻度密度受全局网格设置影响，刻度值取整为 nice number。
-  void _drawChannelYAxis(Canvas canvas, Size size, ChannelConfig ch, double axisX) {
+  void _drawChannelYAxis(
+    Canvas canvas,
+    Size size,
+    ChannelConfig ch,
+    double axisX,
+  ) {
     final plotH = viewport.plotHeight(size.height);
     final top = PlotViewport().marginTop;
     final bottom = top + plotH;
@@ -539,9 +737,10 @@ class PlotPainter extends CustomPainter {
     final step = _niceNumber(roughStep, true);
     if (step <= 0) return;
 
-    final tickPaint = Paint()
-      ..color = ch.color.withValues(alpha: 0.6)
-      ..strokeWidth = 0.5;
+    final tickPaint =
+        Paint()
+          ..color = ch.color.withValues(alpha: 0.6)
+          ..strokeWidth = 0.5;
 
     final textStyle = TextStyle(
       color: ch.color,
@@ -553,7 +752,11 @@ class PlotPainter extends CustomPainter {
     final startValue = (viewport.yMin / step).floor() * step;
     final Set<double> drawnValues = {};
 
-    for (double value = startValue; value <= viewport.yMax + step * 0.5; value += step) {
+    for (
+      double value = startValue;
+      value <= viewport.yMax + step * 0.5;
+      value += step
+    ) {
       if (value < viewport.yMin || value > viewport.yMax) continue;
 
       // 该刻度值对应的屏幕 Y（数据坐标 → 屏幕坐标）
@@ -566,11 +769,7 @@ class PlotPainter extends CustomPainter {
       final originalValue = (value - ch.yOffset) / ch.yScale;
 
       // 刻度线（向右伸出）
-      canvas.drawLine(
-        Offset(axisX, y),
-        Offset(axisX + 5, y),
-        tickPaint,
-      );
+      canvas.drawLine(Offset(axisX, y), Offset(axisX + 5, y), tickPaint);
 
       // 刻度值
       _drawText(
@@ -586,7 +785,9 @@ class PlotPainter extends CustomPainter {
     // 注意：这里判断的是"显示值"0（即数据值 y=0 在视口坐标系中的位置）
     // 而不是原始数据值 0，因为偏置通道的刻度显示的是视口坐标系中的值
     final zeroScreenY = viewport.dataToScreenY(0, size.height);
-    if (zeroScreenY >= top && zeroScreenY <= bottom && !drawnValues.contains(0.0)) {
+    if (zeroScreenY >= top &&
+        zeroScreenY <= bottom &&
+        !drawnValues.contains(0.0)) {
       // 还原为原始数据值
       final originalZeroValue = (0.0 - ch.yOffset) / ch.yScale;
 
@@ -614,24 +815,22 @@ class PlotPainter extends CustomPainter {
     }
 
     // 绘制轴线
-    final axisPaint = Paint()
-      ..color = ch.color.withValues(alpha: 0.3)
-      ..strokeWidth = 1.0;
-    canvas.drawLine(
-      Offset(axisX, top),
-      Offset(axisX, bottom),
-      axisPaint,
-    );
+    final axisPaint =
+        Paint()
+          ..color = ch.color.withValues(alpha: 0.3)
+          ..strokeWidth = 1.0;
+    canvas.drawLine(Offset(axisX, top), Offset(axisX, bottom), axisPaint);
   }
 
   /// 绘制垂直光标（鼠标悬停跟随）
   void _drawCursor(Canvas canvas, Size size) {
     if (cursor == null) return;
 
-    final cursorPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
+    final cursorPaint =
+        Paint()
+          ..color = Colors.white
+          ..strokeWidth = 1.0
+          ..style = PaintingStyle.stroke;
 
     final sx = viewport.dataToScreenX(cursor!.x, size.width);
     canvas.drawLine(
@@ -643,7 +842,7 @@ class PlotPainter extends CustomPainter {
   }
 
   /// 绘制垂直光标旁的各通道 Y 值 tooltip
-  /// 
+  ///
   /// - 无数据（hasData=false）时整个 tooltip 不显示
   /// - 只显示有数据且 visible 的通道，不显示 "ChX: --"
   /// - 字体已放大以便阅读
@@ -751,11 +950,14 @@ class PlotPainter extends CustomPainter {
       canvas.drawCircle(
         Offset(tooltipX + padding + 4, y + 5),
         3,
-        Paint()..color = color..style = PaintingStyle.fill,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.fill,
       );
 
       // 通道名和值（优先显示别名）
-      final displayName = channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
+      final displayName =
+          channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
       final valueText = '$displayName: ${values[i].toStringAsFixed(2)}';
 
       final valueStyle = TextStyle(
@@ -878,87 +1080,137 @@ class PlotPainter extends CustomPainter {
 
   // ========== X-X / Y-Y 测量绘制 ==========
   /// 绘制 X-X 测量两条垂直线及标签
-  void _drawXMeasurement(Canvas canvas, Size size, double? x1, double? x2, double plotH) {
+  void _drawXMeasurement(
+    Canvas canvas,
+    Size size,
+    double? x1,
+    double? x2,
+    double plotH,
+  ) {
     if (x1 == null && x2 == null) return;
 
-    final line1Paint = Paint()
-      ..color = Colors.cyan
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    final line2Paint = Paint()
-      ..color = Colors.yellow
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
+    final line1Paint =
+        Paint()
+          ..color = Colors.cyan
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke;
+    final line2Paint =
+        Paint()
+          ..color = Colors.yellow
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke;
 
     // 第一条线
     if (x1 != null) {
       final sx1 = viewport.dataToScreenX(x1, size.width);
-      if (sx1 >= PlotViewport().marginLeft && sx1 <= size.width - PlotViewport().marginRight) {
+      if (sx1 >= PlotViewport().marginLeft &&
+          sx1 <= size.width - PlotViewport().marginRight) {
         canvas.drawLine(
           Offset(sx1, PlotViewport().marginTop),
           Offset(sx1, PlotViewport().marginTop + plotH),
           line1Paint,
         );
-        _drawMeasurementLabel(canvas, 'X1', sx1, PlotViewport().marginTop + 10, Colors.cyan);
+        _drawMeasurementLabel(
+          canvas,
+          'X1',
+          sx1,
+          PlotViewport().marginTop + 10,
+          Colors.cyan,
+        );
       }
     }
 
     // 第二条线
     if (x2 != null) {
       final sx2 = viewport.dataToScreenX(x2, size.width);
-      if (sx2 >= PlotViewport().marginLeft && sx2 <= size.width - PlotViewport().marginRight) {
+      if (sx2 >= PlotViewport().marginLeft &&
+          sx2 <= size.width - PlotViewport().marginRight) {
         canvas.drawLine(
           Offset(sx2, PlotViewport().marginTop),
           Offset(sx2, PlotViewport().marginTop + plotH),
           line2Paint,
         );
-        _drawMeasurementLabel(canvas, 'X2', sx2, PlotViewport().marginTop + 10, Colors.yellow);
+        _drawMeasurementLabel(
+          canvas,
+          'X2',
+          sx2,
+          PlotViewport().marginTop + 10,
+          Colors.yellow,
+        );
       }
     }
   }
 
   /// 绘制 Y-Y 测量两条水平线及标签
-  void _drawYMeasurement(Canvas canvas, Size size, double? y1, double? y2, double plotW) {
+  void _drawYMeasurement(
+    Canvas canvas,
+    Size size,
+    double? y1,
+    double? y2,
+    double plotW,
+  ) {
     if (y1 == null && y2 == null) return;
 
-    final line1Paint = Paint()
-      ..color = Colors.cyan
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
-    final line2Paint = Paint()
-      ..color = Colors.yellow
-      ..strokeWidth = 1.5
-      ..style = PaintingStyle.stroke;
+    final line1Paint =
+        Paint()
+          ..color = Colors.cyan
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke;
+    final line2Paint =
+        Paint()
+          ..color = Colors.yellow
+          ..strokeWidth = 1.5
+          ..style = PaintingStyle.stroke;
 
     // 第一条线
     if (y1 != null) {
       final sy1 = viewport.dataToScreenY(y1, size.height);
-      if (sy1 >= PlotViewport().marginTop && sy1 <= size.height - PlotViewport().marginBottom) {
+      if (sy1 >= PlotViewport().marginTop &&
+          sy1 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
           Offset(PlotViewport().marginLeft, sy1),
           Offset(PlotViewport().marginLeft + plotW, sy1),
           line1Paint,
         );
-        _drawMeasurementLabel(canvas, 'Y1', PlotViewport().marginLeft + 10, sy1, Colors.cyan);
+        _drawMeasurementLabel(
+          canvas,
+          'Y1',
+          PlotViewport().marginLeft + 10,
+          sy1,
+          Colors.cyan,
+        );
       }
     }
 
     // 第二条线
     if (y2 != null) {
       final sy2 = viewport.dataToScreenY(y2, size.height);
-      if (sy2 >= PlotViewport().marginTop && sy2 <= size.height - PlotViewport().marginBottom) {
+      if (sy2 >= PlotViewport().marginTop &&
+          sy2 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
           Offset(PlotViewport().marginLeft, sy2),
           Offset(PlotViewport().marginLeft + plotW, sy2),
           line2Paint,
         );
-        _drawMeasurementLabel(canvas, 'Y2', PlotViewport().marginLeft + 10, sy2, Colors.yellow);
+        _drawMeasurementLabel(
+          canvas,
+          'Y2',
+          PlotViewport().marginLeft + 10,
+          sy2,
+          Colors.yellow,
+        );
       }
     }
   }
 
   /// 绘制测量线标签（带背景框）
-  void _drawMeasurementLabel(Canvas canvas, String label, double x, double y, Color color) {
+  void _drawMeasurementLabel(
+    Canvas canvas,
+    String label,
+    double x,
+    double y,
+    Color color,
+  ) {
     final textStyle = TextStyle(
       color: color,
       fontSize: 10,
@@ -974,19 +1226,32 @@ class PlotPainter extends CustomPainter {
 
     // 背景
     final bgRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(x - textPainter.width / 2 - 3, y - textPainter.height / 2 - 2, textPainter.width + 6, textPainter.height + 4),
+      Rect.fromLTWH(
+        x - textPainter.width / 2 - 3,
+        y - textPainter.height / 2 - 2,
+        textPainter.width + 6,
+        textPainter.height + 4,
+      ),
       const Radius.circular(2),
     );
     canvas.drawRRect(
       bgRect,
-      Paint()..color = const Color(0xDD1A1A2E)..style = PaintingStyle.fill,
+      Paint()
+        ..color = const Color(0xDD1A1A2E)
+        ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
       bgRect,
-      Paint()..color = color..strokeWidth = 1.0..style = PaintingStyle.stroke,
+      Paint()
+        ..color = color
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke,
     );
 
-    textPainter.paint(canvas, Offset(x - textPainter.width / 2, y - textPainter.height / 2));
+    textPainter.paint(
+      canvas,
+      Offset(x - textPainter.width / 2, y - textPainter.height / 2),
+    );
   }
 
   /// 通过二分查找确定可见范围内的数据索引
@@ -1026,10 +1291,18 @@ class PlotPainter extends CustomPainter {
 
   /// 绘制统计测量范围框（半透明高亮区域 + 虚线边界 + S1/S2 标签）
   void _drawStatsRange(Canvas canvas, Size size) {
-    final sx1 = viewport.dataToScreenX(statsX1!, size.width)
-        .clamp(PlotViewport().marginLeft, size.width - PlotViewport().marginRight);
-    final sx2 = viewport.dataToScreenX(statsX2!, size.width)
-        .clamp(PlotViewport().marginLeft, size.width - PlotViewport().marginRight);
+    final sx1 = viewport
+        .dataToScreenX(statsX1!, size.width)
+        .clamp(
+          PlotViewport().marginLeft,
+          size.width - PlotViewport().marginRight,
+        );
+    final sx2 = viewport
+        .dataToScreenX(statsX2!, size.width)
+        .clamp(
+          PlotViewport().marginLeft,
+          size.width - PlotViewport().marginRight,
+        );
 
     if ((sx2 - sx1).abs() < 2) return;
 
@@ -1052,21 +1325,42 @@ class PlotPainter extends CustomPainter {
     );
 
     // 左右边界虚线
-    final borderPaint = Paint()
-      ..color = Colors.green.withValues(alpha: 0.5)
-      ..strokeWidth = 1.0
-      ..style = PaintingStyle.stroke;
+    final borderPaint =
+        Paint()
+          ..color = Colors.green.withValues(alpha: 0.5)
+          ..strokeWidth = 1.0
+          ..style = PaintingStyle.stroke;
 
     // 左边界
-    _drawDashedLine(canvas, Offset(left, PlotViewport().marginTop),
-        Offset(left, size.height - PlotViewport().marginBottom), borderPaint);
+    _drawDashedLine(
+      canvas,
+      Offset(left, PlotViewport().marginTop),
+      Offset(left, size.height - PlotViewport().marginBottom),
+      borderPaint,
+    );
     // 右边界
-    _drawDashedLine(canvas, Offset(right, PlotViewport().marginTop),
-        Offset(right, size.height - PlotViewport().marginBottom), borderPaint);
+    _drawDashedLine(
+      canvas,
+      Offset(right, PlotViewport().marginTop),
+      Offset(right, size.height - PlotViewport().marginBottom),
+      borderPaint,
+    );
 
     // 绘制 S1/S2 标签（底部，带背景框）
-    _drawMeasurementLabel(canvas, 'S1', left, size.height - PlotViewport().marginBottom - 10, Colors.green);
-    _drawMeasurementLabel(canvas, 'S2', right, size.height - PlotViewport().marginBottom - 10, Colors.green);
+    _drawMeasurementLabel(
+      canvas,
+      'S1',
+      left,
+      size.height - PlotViewport().marginBottom - 10,
+      Colors.green,
+    );
+    _drawMeasurementLabel(
+      canvas,
+      'S2',
+      right,
+      size.height - PlotViewport().marginBottom - 10,
+      Colors.green,
+    );
   }
 
   /// 绘制虚线（5px 实线 + 3px 间隙）
@@ -1083,7 +1377,10 @@ class PlotPainter extends CustomPainter {
       final t2 = (i * (dashLength + gapLength) + dashLength) / distance;
       canvas.drawLine(
         Offset(start.dx + dx * t1, start.dy + dy * t1),
-        Offset(start.dx + dx * t2.clamp(0.0, 1.0), start.dy + dy * t2.clamp(0.0, 1.0)),
+        Offset(
+          start.dx + dx * t2.clamp(0.0, 1.0),
+          start.dy + dy * t2.clamp(0.0, 1.0),
+        ),
         paint,
       );
     }
@@ -1096,21 +1393,23 @@ class PlotPainter extends CustomPainter {
   bool shouldRepaint(covariant PlotPainter oldDelegate) {
     final viewportChanged = !_viewportEquals(oldDelegate.viewport, viewport);
     final dataChanged = oldDelegate.data.length != data.length;
-    final result = viewportChanged || dataChanged ||
+    final dataRevisionChanged = oldDelegate.dataRevision != dataRevision;
+    final result =
+        viewportChanged ||
+        dataChanged ||
+        dataRevisionChanged ||
         oldDelegate.cursor != cursor ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.statsEnabled != statsEnabled ||
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
         oldDelegate.statsX2 != statsX2;
-    final cursorChanged = oldDelegate.cursor != cursor ||
+    final cursorChanged =
+        oldDelegate.cursor != cursor ||
         oldDelegate.xCursor1 != xCursor1 ||
         oldDelegate.xCursor2 != xCursor2 ||
         oldDelegate.yCursor1 != yCursor1 ||
         oldDelegate.yCursor2 != yCursor2;
-    if (viewportChanged || cursorChanged) {
-      AppLogger().trace('shouldRepaint=true: viewport xMin ${oldDelegate.viewport.xMin.toStringAsFixed(1)} → ${viewport.xMin.toStringAsFixed(1)}', category: 'PAINT');
-    }
     return result || cursorChanged;
   }
 }
