@@ -1025,8 +1025,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildLegendBox(PlotViewModel vm) {
+    final displayCount = _activeDisplayChannelCount(vm);
     final visibleChannels =
-        vm.channels.where((channel) => channel.visible).toList();
+        vm.channels
+            .take(displayCount)
+            .where((channel) => channel.visible)
+            .toList();
     if (visibleChannels.isEmpty) return const SizedBox.shrink();
 
     return _DraggableInfoBox(
@@ -1087,6 +1091,26 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
       ),
     );
+  }
+
+  int _activeDisplayChannelCount(PlotViewModel vm) {
+    if (vm.activeChannelCount > 0) {
+      return vm.activeChannelCount.clamp(0, vm.channels.length).toInt();
+    }
+
+    switch (vm.parserType) {
+      case ParserType.zobow:
+        return 4.clamp(0, vm.channels.length).toInt();
+      case ParserType.fireWater:
+        final configured = vm.parserConfig.fireWaterChannelCount;
+        return (configured > 0 ? configured : vm.channels.length)
+            .clamp(0, vm.channels.length)
+            .toInt();
+      case ParserType.fixedFrame:
+        return vm.parserConfig.channelCount
+            .clamp(0, vm.channels.length)
+            .toInt();
+    }
   }
 
   // ========== 对话框 ==========

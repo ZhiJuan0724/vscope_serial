@@ -883,26 +883,33 @@ class PlotPainter extends CustomPainter {
     List<double>? values = cursor?.channelValues;
 
     // 确定要显示的通道数：只显示有数据且可见的通道
-    final int displayChannelCount;
+    const valueStyle = TextStyle(fontSize: 12, fontFamily: 'monospace');
+    final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
       // 只统计有数据且visible的通道数
-      int count = 0;
       for (int i = 0; i < values.length && i < channels.length; i++) {
-        if (channels[i].visible) count++;
+        if (!channels[i].visible) continue;
+        final displayName =
+            channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
+        rows.add(
+          _CursorValueRow(
+            index: i,
+            text: '$displayName: ${_formatExactNumber(values[i])}',
+          ),
+        );
       }
-      displayChannelCount = count;
-    } else {
-      displayChannelCount = 0;
     }
 
-    if (displayChannelCount == 0) return;
+    if (rows.isEmpty) return;
 
     // 计算tooltip尺寸
     const lineHeight = 20.0;
     const padding = 8.0;
-    const maxLabelWidth = 120.0;
-    final tooltipWidth = maxLabelWidth + padding * 2;
-    final tooltipHeight = displayChannelCount * lineHeight + padding * 2 + 22;
+    final maxLabelWidth = rows.fold<double>(120, (width, row) {
+      return math.max(width, _measureTextWidth(row.text, valueStyle));
+    });
+    final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
+    final tooltipHeight = rows.length * lineHeight + padding * 2 + 22;
 
     // tooltip位置（在鼠标右侧，如果超出边界则在左侧）
     var tooltipX = screenPos.dx + 18;
@@ -962,13 +969,10 @@ class PlotPainter extends CustomPainter {
 
     // 绘制各通道值（只显示有数据且visible的通道）
     int row = 0;
-    for (int i = 0; i < channels.length; i++) {
-      if (!channels[i].visible) continue;
+    for (final rowValue in rows) {
       // 只显示有数据值的通道，跳过数据范围外的
-      if (values == null || i >= values.length) continue;
-
       final y = tooltipY + padding + 22 + row * lineHeight;
-      final color = channels[i].color;
+      final color = channels[rowValue.index].color;
 
       // 颜色指示点
       canvas.drawCircle(
@@ -980,20 +984,16 @@ class PlotPainter extends CustomPainter {
       );
 
       // 通道名和值（优先显示别名）
-      final displayName =
-          channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
-      final valueText = '$displayName: ${_formatNumber(values[i], true)}';
-
-      final valueStyle = TextStyle(
+      final rowStyle = TextStyle(
         color: color,
         fontSize: 12,
         fontFamily: 'monospace',
       );
       _drawText(
         canvas,
-        valueText,
+        rowValue.text,
         Offset(tooltipX + padding + 12, y),
-        valueStyle,
+        rowStyle,
       );
 
       row++;
@@ -1031,6 +1031,14 @@ class PlotPainter extends CustomPainter {
     }
 
     textPainter.paint(canvas, Offset(dx, dy));
+  }
+
+  double _measureTextWidth(String text, TextStyle style) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return textPainter.width + 12;
   }
 
   /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
@@ -1076,14 +1084,6 @@ class PlotPainter extends CustomPainter {
 
     final absValue = value.abs();
 
-    // 大数值使用 k/M 后缀
-    if (absValue >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(1)}M';
-    }
-    if (absValue >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}k';
-    }
-
     // 整数直接显示
     if (value == value.roundToDouble()) {
       return value.toInt().toString();
@@ -1100,6 +1100,12 @@ class PlotPainter extends CustomPainter {
       return value.toStringAsFixed(2);
     }
     return value.toStringAsFixed(3);
+  }
+
+  String _formatExactNumber(double value) {
+    if (!value.isFinite) return value.toString();
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toString();
   }
 
   bool _visibleYValuesAreInteger() {
@@ -1470,4 +1476,11 @@ class _BucketPoint {
   final double y;
 
   const _BucketPoint(this.index, this.x, this.y);
+}
+
+class _CursorValueRow {
+  final int index;
+  final String text;
+
+  const _CursorValueRow({required this.index, required this.text});
 }
