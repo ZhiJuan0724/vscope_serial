@@ -94,6 +94,9 @@ class PlotPainter extends CustomPainter {
   /// 抗锯齿开关
   final bool antiAliasEnabled;
 
+  /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
+  final int plotFontSizeDelta;
+
   PlotPainter({
     required this.viewport,
     required this.data,
@@ -111,7 +114,12 @@ class PlotPainter extends CustomPainter {
     this.statsX1,
     this.statsX2,
     this.antiAliasEnabled = true,
+    this.plotFontSizeDelta = 0,
   });
+
+  double _fontSize(double base) {
+    return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
 
   /// 判断两个视口是否相等（用于重绘判断）
   bool _viewportEquals(PlotViewport a, PlotViewport b) {
@@ -255,7 +263,7 @@ class PlotPainter extends CustomPainter {
     // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
     final dataCount = visibleIndices.end - visibleIndices.start;
-    final useMinMaxBuckets = dataCount > plotW * 2;
+    final useMinMaxBuckets = dataCount > plotW;
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length; ch++) {
@@ -515,9 +523,9 @@ class PlotPainter extends CustomPainter {
           ..color = const Color(0xFF8888AA)
           ..strokeWidth = 1.0;
 
-    final textStyle = const TextStyle(
-      color: Color(0xFF8888AA),
-      fontSize: 12,
+    final textStyle = TextStyle(
+      color: const Color(0xFF8888AA),
+      fontSize: _fontSize(12),
       fontFamily: 'monospace',
     );
 
@@ -631,9 +639,9 @@ class PlotPainter extends CustomPainter {
         );
 
         // 刻度值：Y=0（加粗）
-        final zeroTextStyle = const TextStyle(
-          color: Color(0xFFCCCCDD),
-          fontSize: 12,
+        final zeroTextStyle = TextStyle(
+          color: const Color(0xFFCCCCDD),
+          fontSize: _fontSize(12),
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,
         );
@@ -702,7 +710,7 @@ class PlotPainter extends CustomPainter {
         final displayName = 'Ch${ch.index}';
         final labelStyle = TextStyle(
           color: Colors.white,
-          fontSize: 10,
+          fontSize: _fontSize(10),
           fontWeight: FontWeight.bold,
         );
 
@@ -768,7 +776,7 @@ class PlotPainter extends CustomPainter {
 
     final textStyle = TextStyle(
       color: ch.color,
-      fontSize: 11,
+      fontSize: _fontSize(11),
       fontFamily: 'monospace',
     );
 
@@ -825,7 +833,7 @@ class PlotPainter extends CustomPainter {
       // 刻度值（加粗）
       final zeroTextStyle = TextStyle(
         color: ch.color,
-        fontSize: 11,
+        fontSize: _fontSize(11),
         fontFamily: 'monospace',
         fontWeight: FontWeight.bold,
       );
@@ -883,26 +891,37 @@ class PlotPainter extends CustomPainter {
     List<double>? values = cursor?.channelValues;
 
     // 确定要显示的通道数：只显示有数据且可见的通道
-    final int displayChannelCount;
+    final valueStyle = TextStyle(
+      fontSize: _fontSize(12),
+      fontFamily: 'monospace',
+    );
+    final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
       // 只统计有数据且visible的通道数
-      int count = 0;
       for (int i = 0; i < values.length && i < channels.length; i++) {
-        if (channels[i].visible) count++;
+        if (!channels[i].visible) continue;
+        final displayName =
+            channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
+        rows.add(
+          _CursorValueRow(
+            index: i,
+            text: '$displayName: ${_formatExactNumber(values[i])}',
+          ),
+        );
       }
-      displayChannelCount = count;
-    } else {
-      displayChannelCount = 0;
     }
 
-    if (displayChannelCount == 0) return;
+    if (rows.isEmpty) return;
 
     // 计算tooltip尺寸
-    const lineHeight = 20.0;
+    final lineHeight = _fontSize(12) + 8;
+    final headerHeight = _fontSize(12) + 10;
     const padding = 8.0;
-    const maxLabelWidth = 120.0;
-    final tooltipWidth = maxLabelWidth + padding * 2;
-    final tooltipHeight = displayChannelCount * lineHeight + padding * 2 + 22;
+    final maxLabelWidth = rows.fold<double>(120, (width, row) {
+      return math.max(width, _measureTextWidth(row.text, valueStyle));
+    });
+    final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
+    final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
     // tooltip位置（在鼠标右侧，如果超出边界则在左侧）
     var tooltipX = screenPos.dx + 18;
@@ -938,9 +957,9 @@ class PlotPainter extends CustomPainter {
     );
 
     // 绘制标题（X值）
-    final headerStyle = const TextStyle(
+    final headerStyle = TextStyle(
       color: Colors.white,
-      fontSize: 12,
+      fontSize: _fontSize(12),
       fontWeight: FontWeight.bold,
       fontFamily: 'monospace',
     );
@@ -953,8 +972,11 @@ class PlotPainter extends CustomPainter {
 
     // 绘制分隔线（往下移，给标题更多空间）
     canvas.drawLine(
-      Offset(tooltipX + padding, tooltipY + padding + 17),
-      Offset(tooltipX + tooltipWidth - padding, tooltipY + padding + 17),
+      Offset(tooltipX + padding, tooltipY + padding + headerHeight - 5),
+      Offset(
+        tooltipX + tooltipWidth - padding,
+        tooltipY + padding + headerHeight - 5,
+      ),
       Paint()
         ..color = const Color(0xFF8888AA)
         ..strokeWidth = 0.5,
@@ -962,13 +984,10 @@ class PlotPainter extends CustomPainter {
 
     // 绘制各通道值（只显示有数据且visible的通道）
     int row = 0;
-    for (int i = 0; i < channels.length; i++) {
-      if (!channels[i].visible) continue;
+    for (final rowValue in rows) {
       // 只显示有数据值的通道，跳过数据范围外的
-      if (values == null || i >= values.length) continue;
-
-      final y = tooltipY + padding + 22 + row * lineHeight;
-      final color = channels[i].color;
+      final y = tooltipY + padding + headerHeight + row * lineHeight;
+      final color = channels[rowValue.index].color;
 
       // 颜色指示点
       canvas.drawCircle(
@@ -980,20 +999,16 @@ class PlotPainter extends CustomPainter {
       );
 
       // 通道名和值（优先显示别名）
-      final displayName =
-          channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
-      final valueText = '$displayName: ${_formatNumber(values[i], true)}';
-
-      final valueStyle = TextStyle(
+      final rowStyle = TextStyle(
         color: color,
-        fontSize: 12,
+        fontSize: _fontSize(12),
         fontFamily: 'monospace',
       );
       _drawText(
         canvas,
-        valueText,
+        rowValue.text,
         Offset(tooltipX + padding + 12, y),
-        valueStyle,
+        rowStyle,
       );
 
       row++;
@@ -1031,6 +1046,14 @@ class PlotPainter extends CustomPainter {
     }
 
     textPainter.paint(canvas, Offset(dx, dy));
+  }
+
+  double _measureTextWidth(String text, TextStyle style) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return textPainter.width + 12;
   }
 
   /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
@@ -1076,14 +1099,6 @@ class PlotPainter extends CustomPainter {
 
     final absValue = value.abs();
 
-    // 大数值使用 k/M 后缀
-    if (absValue >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(1)}M';
-    }
-    if (absValue >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}k';
-    }
-
     // 整数直接显示
     if (value == value.roundToDouble()) {
       return value.toInt().toString();
@@ -1100,6 +1115,12 @@ class PlotPainter extends CustomPainter {
       return value.toStringAsFixed(2);
     }
     return value.toStringAsFixed(3);
+  }
+
+  String _formatExactNumber(double value) {
+    if (!value.isFinite) return value.toString();
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toString();
   }
 
   bool _visibleYValuesAreInteger() {
@@ -1254,7 +1275,7 @@ class PlotPainter extends CustomPainter {
   ) {
     final textStyle = TextStyle(
       color: color,
-      fontSize: 10,
+      fontSize: _fontSize(10),
       fontWeight: FontWeight.bold,
       fontFamily: 'monospace',
     );
@@ -1444,7 +1465,8 @@ class PlotPainter extends CustomPainter {
         oldDelegate.statsEnabled != statsEnabled ||
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
-        oldDelegate.statsX2 != statsX2;
+        oldDelegate.statsX2 != statsX2 ||
+        oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
     final cursorChanged =
         oldDelegate.cursor != cursor ||
         oldDelegate.xCursor1 != xCursor1 ||
@@ -1470,4 +1492,11 @@ class _BucketPoint {
   final double y;
 
   const _BucketPoint(this.index, this.x, this.y);
+}
+
+class _CursorValueRow {
+  final int index;
+  final String text;
+
+  const _CursorValueRow({required this.index, required this.text});
 }

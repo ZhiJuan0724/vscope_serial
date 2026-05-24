@@ -35,6 +35,18 @@ class SerialService extends ChangeNotifier {
   // 时间窗口聚合器
   TimeWindowAggregator? _aggregator;
 
+  Timer? _receiveLogFlushTimer;
+  DateTime? _receiveLogWindowStart;
+  bool _receiveLogHighFrequency = false;
+  int _receiveLogPacketCount = 0;
+  int _receiveLogBytes = 0;
+  int _receiveLogFirstPacketBytes = 0;
+
+  static const int _receiveLogDetectPacketCount = 10;
+  static const int _receiveLogBatchPacketCount = 50;
+  static const Duration _receiveLogDetectWindow = Duration(milliseconds: 200);
+  static const Duration _receiveLogMaxBatchWindow = Duration(seconds: 1);
+
   // 时间窗口粒度（微秒），默认 1000us = 1ms
   int timeWindowUs = 1000;
 
@@ -173,15 +185,21 @@ class SerialService extends ChangeNotifier {
 
     AppLogger().trace('NativeSerialReader 打开成功', category: 'SERIAL');
 
-    // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
-    _nativeReader!.startReading(timeoutMs: 10);
-
     // 监听数据流
     _nativeSubscription = _nativeReader!.dataStream.listen(
       (nativeData) => _onNativeDataReceived(nativeData),
       onError:
           (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
+
+    // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
+    if (!_nativeReader!.startReading(timeoutMs: 10)) {
+      await _nativeSubscription?.cancel();
+      _nativeSubscription = null;
+      _nativeReader!.close();
+      _nativeReader = null;
+      throw Exception('failed to start native serial read thread');
+    }
 
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
@@ -197,6 +215,7 @@ class SerialService extends ChangeNotifier {
   }
 
   void _cleanupPort() {
+    _flushReceiveLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.close();
@@ -211,24 +230,19 @@ class SerialService extends ChangeNotifier {
   /// 原生串口数据接收回调
   void _onNativeDataReceived(NativeSerialData nativeData) {
     final data = nativeData.data;
-    // 绘图时禁用逐包debug日志
-    if (!isPlotting) {
-      AppLogger().debug('接收 ${data.length} bytes', category: 'DATA');
+    final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
+    if (!isPlotting && !shouldReceiveRaw) {
+      return;
     }
 
-    // 转发给绘图数据流（保持兼容）
-    _dataController.add(DataPacket(data: data));
+    if (isPlotting) {
+      _dataController.add(DataPacket(data: data));
+    }
 
-    // 保存原始字节（始终保存，用于导出）
-    _rawBytes.append(data);
-
-    // 原始数据文本接收条件：串口已连接 + 用户开启接收 + 不在绘图状态
-    final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    AppLogger().trace(
-      'shouldReceiveRaw=$shouldReceiveRaw, isConnected=$isConnected, isRawReceiving=$isRawReceiving, isPlotting=$isPlotting',
-      category: 'SERIAL',
-    );
     if (shouldReceiveRaw) {
+      _recordReceiveLog(data.length);
+      _rawBytes.append(data);
+
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
         nativeData.timestampUs,
@@ -248,6 +262,79 @@ class SerialService extends ChangeNotifier {
         _addRawDataLine(receiveTime, data);
       }
     }
+  }
+
+  void _recordReceiveLog(int bytes) {
+    final now = DateTime.now();
+    _receiveLogWindowStart ??= now;
+    if (_receiveLogPacketCount == 0) {
+      _receiveLogFirstPacketBytes = bytes;
+    }
+
+    _receiveLogPacketCount++;
+    _receiveLogBytes += bytes;
+
+    final elapsed = now.difference(_receiveLogWindowStart!);
+    if (!_receiveLogHighFrequency &&
+        _receiveLogPacketCount >= _receiveLogDetectPacketCount &&
+        elapsed <= _receiveLogDetectWindow) {
+      _receiveLogHighFrequency = true;
+    }
+
+    if (_receiveLogHighFrequency) {
+      if (_receiveLogPacketCount >= _receiveLogBatchPacketCount ||
+          elapsed >= _receiveLogMaxBatchWindow) {
+        _flushReceiveLog(now);
+      } else {
+        _scheduleReceiveLogFlush(_receiveLogMaxBatchWindow - elapsed);
+      }
+      return;
+    }
+
+    if (elapsed >= _receiveLogDetectWindow) {
+      _flushReceiveLog(now);
+    } else {
+      _scheduleReceiveLogFlush(_receiveLogDetectWindow - elapsed);
+    }
+  }
+
+  void _scheduleReceiveLogFlush(Duration delay) {
+    _receiveLogFlushTimer?.cancel();
+    _receiveLogFlushTimer = Timer(
+      delay,
+      () => _flushReceiveLog(DateTime.now()),
+    );
+  }
+
+  void _flushReceiveLog([DateTime? now]) {
+    _receiveLogFlushTimer?.cancel();
+    _receiveLogFlushTimer = null;
+
+    if (_receiveLogPacketCount == 0 || _receiveLogWindowStart == null) return;
+
+    final elapsedMs = (now ?? DateTime.now())
+        .difference(_receiveLogWindowStart!)
+        .inMilliseconds
+        .clamp(1, 1 << 31);
+    if (!_receiveLogHighFrequency && _receiveLogPacketCount == 1) {
+      AppLogger().debug(
+        '接收 $_receiveLogFirstPacketBytes bytes',
+        category: 'DATA',
+      );
+    } else {
+      final packetRate = _receiveLogPacketCount * 1000.0 / elapsedMs;
+      AppLogger().debug(
+        '接收 $_receiveLogPacketCount 包，共 $_receiveLogBytes bytes，'
+        '约 ${packetRate.toStringAsFixed(1)} 包/s',
+        category: 'DATA',
+      );
+    }
+
+    _receiveLogWindowStart = null;
+    _receiveLogHighFrequency = false;
+    _receiveLogPacketCount = 0;
+    _receiveLogBytes = 0;
+    _receiveLogFirstPacketBytes = 0;
   }
 
   /// 添加一行接收数据显示
@@ -546,6 +633,7 @@ class SerialService extends ChangeNotifier {
     // Do NOT call disconnect() here - it triggers notifyListeners()
     // which will throw if called after super.dispose().
     // Just clean up resources directly.
+    _flushReceiveLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();

@@ -48,6 +48,22 @@ void main() {
       return bytes;
     }
 
+    Uint8List buildFrameWithCount(List<int> values) {
+      final bytes = Uint8List(values.length * 2 + 2);
+      final buffer = ByteData.sublistView(bytes);
+      for (int i = 0; i < values.length; i++) {
+        buffer.setUint16(i * 2, values[i], Endian.little);
+      }
+      final dataLength = values.length * 2;
+      final crc = calculateCrc(
+        Uint8List.sublistView(bytes, 0, dataLength),
+        crc16Polys['CRC-16/MODBUS']!,
+      );
+      bytes[dataLength] = crc & 0xFF;
+      bytes[dataLength + 1] = (crc >> 8) & 0xFF;
+      return bytes;
+    }
+
     test('正确帧解析', () async {
       final frame = buildFrame([100, 200, 300, 400]);
       final results = <List<double>>[];
@@ -63,6 +79,44 @@ void main() {
 
       expect(results.length, 1);
       expect(results[0], [100.0, 200.0, 300.0, 400.0]);
+    });
+
+    test('8通道帧解析', () async {
+      config.channelCount = 8;
+      parser = ZobowParser(config);
+      final frame = buildFrameWithCount([
+        100,
+        200,
+        300,
+        400,
+        500,
+        600,
+        700,
+        800,
+      ]);
+      final results = <List<double>>[];
+
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      parser.feed(frame);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(results.length, 1);
+      expect(results[0], [
+        100.0,
+        200.0,
+        300.0,
+        400.0,
+        500.0,
+        600.0,
+        700.0,
+        800.0,
+      ]);
+      expect(results[0].length, 8);
     });
 
     test('CRC错误帧应被拒绝', () async {
@@ -182,7 +236,12 @@ void main() {
       ];
       parser = ZobowParser(config);
 
-      final frame = buildFrame([0xFFFE, 1000, 0x8000, 500]); // -2, 1000, -32768, 500
+      final frame = buildFrame([
+        0xFFFE,
+        1000,
+        0x8000,
+        500,
+      ]); // -2, 1000, -32768, 500
       final results = <List<double>>[];
 
       parser.outputStream.listen((result) {

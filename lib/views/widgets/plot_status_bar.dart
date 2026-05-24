@@ -74,7 +74,7 @@ class PlotStatusBar extends StatelessWidget {
       for (int i = 0; i < nearest.channelCount && i < vm.channels.length; i++) {
         if (!vm.channels[i].visible) continue;
         final value = nearest.values[i];
-        buffer.write('Ch$i: ${value.toStringAsFixed(2)} ');
+        buffer.write('Ch$i: ${_formatExactNumber(value)} ');
       }
     }
 
@@ -82,5 +82,11 @@ class PlotStatusBar extends StatelessWidget {
       buffer.toString(),
       style: const TextStyle(fontSize: 11, color: Colors.grey),
     );
+  }
+
+  String _formatExactNumber(double value) {
+    if (!value.isFinite) return value.toString();
+    if (value == value.roundToDouble()) return value.toInt().toString();
+    return value.toString();
   }
 }
