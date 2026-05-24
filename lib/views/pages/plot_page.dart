@@ -978,6 +978,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           refreshFps: vm.refreshFps,
           plotFontSizeDelta: vm.plotFontSizeDelta,
           channels: vm.channels,
+          data: vm.dataPoints,
           observations: vm.observations,
           onObservationDrag: (index, x) => vm.updateObservation(index, x),
           onObservationDelete: (index) => vm.removeObservation(index),
@@ -1131,12 +1132,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
       );
       widgets.add(
-        Positioned(
-          left: (sx + 10).clamp(plotLeft, plotRight - 180).toDouble(),
-          top: (plotTop + 8 + i * 8).clamp(plotTop, plotBottom - 80).toDouble(),
-          child: IgnorePointer(
-            child: _buildObservationTooltip(observation, vm),
-          ),
+        _DraggableObservationBox(
+          key: ValueKey('observation_info_$i'),
+          initialLeft: (sx + 10).clamp(plotLeft, plotRight - 180).toDouble(),
+          initialTop:
+              (plotTop + 8 + i * 8).clamp(plotTop, plotBottom - 80).toDouble(),
+          child: _buildObservationTooltip(i, observation, vm),
         ),
       );
     }
@@ -1144,17 +1145,43 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return widgets;
   }
 
-  Widget _buildObservationTooltip(CursorState observation, PlotViewModel vm) {
+  Widget _buildObservationTooltip(
+    int index,
+    CursorState observation,
+    PlotViewModel vm,
+  ) {
     final values = observation.channelValues;
     final rows = <Widget>[
-      Text(
-        'X: ${observation.x.toInt()}',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: _plotFontSize(vm, 12),
-          fontWeight: FontWeight.bold,
-          fontFamily: 'monospace',
-        ),
+      Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.amber,
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: Text(
+              'O${index + 1}',
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: _plotFontSize(vm, 11),
+                fontWeight: FontWeight.bold,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'X: ${observation.x.toInt()}',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: _plotFontSize(vm, 12),
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
       ),
     ];
     if (observation.hasData && values != null) {
@@ -2893,6 +2920,64 @@ class _DraggableInfoBox extends StatefulWidget {
 
   @override
   State<_DraggableInfoBox> createState() => _DraggableInfoBoxState();
+}
+
+class _DraggableObservationBox extends StatefulWidget {
+  final double initialLeft;
+  final double initialTop;
+  final Widget child;
+
+  const _DraggableObservationBox({
+    super.key,
+    required this.initialLeft,
+    required this.initialTop,
+    required this.child,
+  });
+
+  @override
+  State<_DraggableObservationBox> createState() =>
+      _DraggableObservationBoxState();
+}
+
+class _DraggableObservationBoxState extends State<_DraggableObservationBox> {
+  double? _left;
+  double? _top;
+  bool _isDragging = false;
+  Offset? _dragStart;
+  double? _dragStartLeft;
+  double? _dragStartTop;
+
+  @override
+  Widget build(BuildContext context) {
+    final left = _left ?? widget.initialLeft;
+    final top = _top ?? widget.initialTop;
+
+    return Positioned(
+      left: left,
+      top: top,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (details) {
+          _isDragging = true;
+          _dragStart = details.globalPosition;
+          _dragStartLeft = left;
+          _dragStartTop = top;
+        },
+        onPanUpdate: (details) {
+          if (!_isDragging || _dragStart == null) return;
+          final dx = details.globalPosition.dx - _dragStart!.dx;
+          final dy = details.globalPosition.dy - _dragStart!.dy;
+          setState(() {
+            _left = (_dragStartLeft! + dx).clamp(0.0, double.infinity);
+            _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
+          });
+        },
+        onPanEnd: (_) => _isDragging = false,
+        onPanCancel: () => _isDragging = false,
+        child: widget.child,
+      ),
+    );
+  }
 }
 
 /// [_DraggableInfoBox] 的状态类

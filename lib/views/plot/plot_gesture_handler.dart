@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/utils/app_logger.dart';
 import '../../data/models/channel_config.dart';
+import '../../data/models/plot_data.dart';
 import 'plot_painter.dart';
 import 'plot_viewport.dart';
 
@@ -43,6 +44,9 @@ class PlotGestureHandler extends StatefulWidget {
 
   /// 子组件（通常是 CustomPaint）
   final Widget child;
+
+  /// 当前绘图数据（用于 Y-Y 测量线吸附到最近绘图点）
+  final List<PlotDataPoint> data;
 
   /// X-X 测量第一条线位置（用于拖动检测）
   final double? xCursor1;
@@ -107,6 +111,7 @@ class PlotGestureHandler extends StatefulWidget {
     this.boxZoomEnabled = false,
     this.onDragEnd,
     required this.child,
+    this.data = const [],
     this.xCursor1,
     this.xCursor2,
     this.yCursor1,
@@ -186,6 +191,40 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   double _fontSize(double base) {
     return (base + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
+
+  double _snapYToNearestVisiblePoint(double y, Size size) {
+    if (widget.data.isEmpty) return y;
+
+    final targetScreenY = widget.viewport.dataToScreenY(y, size.height);
+    var bestY = y;
+    var bestDistance = double.infinity;
+
+    for (final point in widget.data) {
+      if (point.index < widget.viewport.xMin ||
+          point.index > widget.viewport.xMax) {
+        continue;
+      }
+
+      for (
+        int i = 0;
+        i < point.values.length && i < widget.channels.length;
+        i++
+      ) {
+        final channel = widget.channels[i];
+        if (!channel.visible) continue;
+
+        final pointY = point.values[i] * channel.yScale + channel.yOffset;
+        final pointScreenY = widget.viewport.dataToScreenY(pointY, size.height);
+        final distance = (pointScreenY - targetScreenY).abs();
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestY = pointY;
+        }
+      }
+    }
+
+    return bestDistance.isFinite ? bestY : y;
   }
 
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
@@ -681,8 +720,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.height,
           );
-          // Y-Y 不吸附，保留原始精度
-          widget.onYCursor1Drag!(y);
+          widget.onYCursor1Drag!(_snapYToNearestVisiblePoint(y, size));
         }
         break;
       case _DragTarget.yCursor2:
@@ -694,8 +732,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.height,
           );
-          // Y-Y 不吸附，保留原始精度
-          widget.onYCursor2Drag!(y);
+          widget.onYCursor2Drag!(_snapYToNearestVisiblePoint(y, size));
         }
         break;
       case _DragTarget.statsX1:
