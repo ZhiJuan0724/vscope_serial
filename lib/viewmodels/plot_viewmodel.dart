@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -15,6 +16,7 @@ import '../data/models/plot_data.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
+import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
 import '../data/source/data_source_manager.dart';
 import '../data/models/zobow_config_profile.dart';
@@ -1040,6 +1042,7 @@ class PlotViewModel extends BaseViewModel {
         _loadZobowWindowForViewport(force: force);
         break;
       case ParserType.fireWater:
+      case ParserType.justFloat:
         _loadParsedWindowForViewport(force: force);
         break;
       case ParserType.fixedFrame:
@@ -1106,6 +1109,7 @@ class PlotViewModel extends BaseViewModel {
         _loadZobowTailWindow();
         break;
       case ParserType.fireWater:
+      case ParserType.justFloat:
         final count = _parsedHistory.length.clamp(0, _maxVisiblePoints).toInt();
         final start = _parsedHistory.length - count;
         _rebuildParsedWindow(start, count);
@@ -1176,6 +1180,8 @@ class PlotViewModel extends BaseViewModel {
         return FixedFrameParser(_parserConfig);
       case ParserType.zobow:
         return ZobowParser(_parserConfig);
+      case ParserType.justFloat:
+        return JustFloatParser(_parserConfig);
     }
   }
 
@@ -2060,13 +2066,10 @@ class PlotViewModel extends BaseViewModel {
       final buffer = StringBuffer();
 
       // 表头: x,y1,y2,...
-      final maxChannels =
-          _parserType == ParserType.zobow
-              ? 4
-              : _parserType == ParserType.fixedFrame &&
-                  _fixedFrameRawFrames.isNotEmpty
-              ? _parserConfig.channelCount
-              : _parsedHistory.maxChannelCount;
+      final maxChannels = _exportChannelCount;
+      buffer.writeln(
+        '# vscope_plot_meta=${jsonEncode(_buildExportMetadata(maxChannels))}',
+      );
       buffer.write('x');
       for (int i = 0; i < maxChannels; i++) {
         buffer.write(',y${i + 1}');
@@ -2138,6 +2141,146 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  Future<String?> exportToBin(String? selectedPath) async {
+    try {
+      final points = _collectExportPoints();
+      if (points.isEmpty) {
+        AppLogger().warning('无数据可导出', category: 'PLOT');
+        return null;
+      }
+
+      String path;
+      if (selectedPath != null) {
+        path = selectedPath;
+      } else {
+        final exeDir = File(Platform.resolvedExecutable).parent;
+        final dir = Directory('${exeDir.path}/exports');
+        await dir.create(recursive: true);
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        path = '${dir.path}/vscope_plot_$timestamp.bin';
+      }
+
+      final channelCount = _exportChannelCount;
+      final payloadLength = points.length * (8 + channelCount * 8);
+      final payload = ByteData(payloadLength);
+      var offset = 0;
+      for (final point in points) {
+        payload.setFloat64(offset, point.timestamp, Endian.little);
+        offset += 8;
+        for (int i = 0; i < channelCount; i++) {
+          final value = i < point.values.length ? point.values[i] : 0.0;
+          payload.setFloat64(offset, value, Endian.little);
+          offset += 8;
+        }
+      }
+
+      final payloadBytes = payload.buffer.asUint8List();
+      final metadataBytes = utf8.encode(
+        jsonEncode(_buildExportMetadata(channelCount)),
+      );
+      final dataBlock =
+          BytesBuilder(copy: false)
+            ..add(metadataBytes)
+            ..add(payloadBytes);
+      final dataBlockBytes = dataBlock.takeBytes();
+      final checksum = calculateCrc(dataBlockBytes, crc32Polys['CRC-32']!);
+      final header = ByteData(28);
+      const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
+      for (int i = 0; i < magic.length; i++) {
+        header.setUint8(i, magic[i]);
+      }
+      header.setUint16(8, 2, Endian.little);
+      header.setUint16(10, channelCount, Endian.little);
+      header.setUint32(12, points.length, Endian.little);
+      header.setUint32(16, payloadLength, Endian.little);
+      header.setUint32(20, checksum, Endian.little);
+      header.setUint32(24, metadataBytes.length, Endian.little);
+
+      final builder =
+          BytesBuilder(copy: false)
+            ..add(header.buffer.asUint8List())
+            ..add(dataBlockBytes);
+      await File(path).writeAsBytes(builder.takeBytes());
+      AppLogger().info('已导出 BIN: $path', category: 'PLOT');
+      return path;
+    } catch (e) {
+      AppLogger().error('BIN 导出失败: $e', category: 'PLOT');
+      return null;
+    }
+  }
+
+  int get _exportChannelCount {
+    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+      return _parserConfig.zobowChannelCount;
+    }
+    if (_parserType == ParserType.fixedFrame &&
+        _fixedFrameRawFrames.isNotEmpty) {
+      return _parserConfig.channelCount;
+    }
+    return _parsedHistory.maxChannelCount;
+  }
+
+  Map<String, dynamic> _buildExportMetadata(int channelCount) {
+    final names = List<String>.generate(channelCount, (i) {
+      if (i >= channels.length) return 'Ch$i';
+      return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
+    }, growable: false);
+    final metadata = <String, dynamic>{'channelNames': names};
+    if (_parserType == ParserType.zobow) {
+      metadata['parserType'] = ParserType.zobow.name;
+      metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
+          .take(channelCount)
+          .map((id) => id & 0xFFFFFFFF)
+          .toList(growable: false);
+    }
+    return metadata;
+  }
+
+  List<PlotDataPoint> _collectExportPoints() {
+    final points = <PlotDataPoint>[];
+    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+      for (int i = 0; i < _zobowRawFrames.packetCount; i++) {
+        points.add(
+          PlotDataPoint(
+            index: i,
+            timestamp: i.toDouble(),
+            values: ZobowParser.decodeFrameValues(
+              _zobowRawFrames.readPacket(i),
+              _parserConfig,
+            ),
+          ),
+        );
+      }
+      return points;
+    }
+    if (_parserType == ParserType.fixedFrame &&
+        _fixedFrameRawFrames.isNotEmpty) {
+      for (int i = 0; i < _fixedFrameRawFrames.packetCount; i++) {
+        points.add(
+          PlotDataPoint(
+            index: i,
+            timestamp: i.toDouble(),
+            values: FixedFrameParser.decodeFrameValues(
+              _fixedFrameRawFrames.readPacket(i),
+              _parserConfig,
+            ),
+          ),
+        );
+      }
+      return points;
+    }
+    for (int i = 0; i < _parsedHistory.length; i++) {
+      points.add(
+        PlotDataPoint(
+          index: i,
+          timestamp: i.toDouble(),
+          values: _parsedHistory.valuesAt(i),
+        ),
+      );
+    }
+    return points;
+  }
+
   // ========== 导入 ==========
   /// 从 CSV 文件导入数据
   ///
@@ -2155,8 +2298,26 @@ class PlotViewModel extends BaseViewModel {
         return '文件为空';
       }
 
+      final metadata = <String, dynamic>{};
+      var headerLineIndex = 0;
+      while (headerLineIndex < lines.length &&
+          lines[headerLineIndex].trim().startsWith('#')) {
+        final line = lines[headerLineIndex].trim();
+        const prefix = '# vscope_plot_meta=';
+        if (line.startsWith(prefix)) {
+          final decoded = jsonDecode(line.substring(prefix.length));
+          if (decoded is Map<String, dynamic>) {
+            metadata.addAll(decoded);
+          }
+        }
+        headerLineIndex++;
+      }
+      if (headerLineIndex >= lines.length) {
+        return '缺少 CSV 表头';
+      }
+
       // 解析表头
-      final header = lines.first.trim();
+      final header = lines[headerLineIndex].trim();
       if (!header.toLowerCase().startsWith('x')) {
         return '表头格式错误，第一列应为 x';
       }
@@ -2173,7 +2334,7 @@ class PlotViewModel extends BaseViewModel {
       // 解析数据行
       final importedPoints = <PlotDataPoint>[];
       int index = 0;
-      for (int i = 1; i < lines.length; i++) {
+      for (int i = headerLineIndex + 1; i < lines.length; i++) {
         final line = lines[i].trim();
         if (line.isEmpty) continue;
 
@@ -2208,44 +2369,202 @@ class PlotViewModel extends BaseViewModel {
         return '未找到有效数据行';
       }
 
-      // 清空现有数据并替换
-      _dataPoints.clear();
-      _parsedHistory.clear();
-      _zobowRawFrames.clear();
-      _fixedFrameRawFrames.clear();
-      for (final point in importedPoints) {
-        _parsedHistory.add(point.values);
-      }
-      _nextIndex = importedPoints.length;
-      _activeChannelCount = channelCount;
-      _startTime = null;
-
-      // 重置视口以显示全部数据
-      viewport = PlotViewport(
-        xMin: 0,
-        xMax: importedPoints.length.toDouble(),
-        yMin: _calculateMinY(importedPoints),
-        yMax: _calculateMaxY(importedPoints),
-      );
-      _loadTailWindow();
-      _viewportHistory.clear();
-
-      // 重置光标
-      _cursor = null;
-      _xCursor1 = null;
-      _xCursor2 = null;
-      _yCursor1 = null;
-      _yCursor2 = null;
+      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
 
       AppLogger().info(
         'CSV 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
         category: 'PLOT',
       );
-      Future.microtask(() => notifyListeners());
       return null;
     } catch (e) {
       AppLogger().error('CSV 导入失败: $e', category: 'PLOT');
       return '解析错误: $e';
+    }
+  }
+
+  Future<String?> importFromBin(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        return '文件不存在';
+      }
+
+      final bytes = await file.readAsBytes();
+      if (bytes.length < 24) {
+        return 'BIN 文件头不完整';
+      }
+
+      const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
+      for (int i = 0; i < magic.length; i++) {
+        if (bytes[i] != magic[i]) {
+          return 'BIN 文件标识错误';
+        }
+      }
+
+      final header = ByteData.sublistView(bytes, 0, 24);
+      final version = header.getUint16(8, Endian.little);
+      final channelCount = header.getUint16(10, Endian.little);
+      final pointCount = header.getUint32(12, Endian.little);
+      final payloadLength = header.getUint32(16, Endian.little);
+      final expectedChecksum = header.getUint32(20, Endian.little);
+
+      if (version != 1 && version != 2) return '不支持的 BIN 版本: $version';
+      if (channelCount < 1 || channelCount > 16) return '通道数无效';
+      final headerLength = version == 2 ? 28 : 24;
+      if (bytes.length < headerLength) return 'BIN 文件头不完整';
+      final metadataLength =
+          version == 2
+              ? ByteData.sublistView(bytes, 24, 28).getUint32(0, Endian.little)
+              : 0;
+      if (bytes.length != headerLength + metadataLength + payloadLength) {
+        return 'BIN 文件长度不匹配';
+      }
+
+      final dataBlock = Uint8List.sublistView(bytes, headerLength);
+      final actualChecksum = calculateCrc(dataBlock, crc32Polys['CRC-32']!);
+      if (actualChecksum != expectedChecksum) {
+        return 'BIN 校验失败';
+      }
+
+      final metadata = <String, dynamic>{};
+      if (metadataLength > 0) {
+        final decoded = jsonDecode(
+          utf8.decode(Uint8List.sublistView(dataBlock, 0, metadataLength)),
+        );
+        if (decoded is Map<String, dynamic>) {
+          metadata.addAll(decoded);
+        }
+      }
+
+      final payload = Uint8List.sublistView(dataBlock, metadataLength);
+
+      final rowLength = 8 + channelCount * 8;
+      if (payloadLength != pointCount * rowLength) {
+        return 'BIN 数据长度不匹配';
+      }
+
+      final data = ByteData.sublistView(payload);
+      final importedPoints = <PlotDataPoint>[];
+      var offset = 0;
+      for (int i = 0; i < pointCount; i++) {
+        final x = data.getFloat64(offset, Endian.little);
+        offset += 8;
+        final values = <double>[];
+        for (int c = 0; c < channelCount; c++) {
+          values.add(data.getFloat64(offset, Endian.little));
+          offset += 8;
+        }
+        importedPoints.add(
+          PlotDataPoint(index: i, timestamp: x, values: values),
+        );
+      }
+
+      if (importedPoints.isEmpty) {
+        return '未找到有效数据行';
+      }
+
+      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
+      AppLogger().info(
+        'BIN 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
+        category: 'PLOT',
+      );
+      return null;
+    } catch (e) {
+      AppLogger().error('BIN 导入失败: $e', category: 'PLOT');
+      return '解析错误: $e';
+    }
+  }
+
+  void _replaceImportedPoints(
+    List<PlotDataPoint> importedPoints,
+    int channelCount, {
+    Map<String, dynamic>? metadata,
+  }) {
+    _dataPoints.clear();
+    _parsedHistory.clear();
+    _zobowRawFrames.clear();
+    _fixedFrameRawFrames.clear();
+    for (final point in importedPoints) {
+      _parsedHistory.add(point.values);
+    }
+    _nextIndex = importedPoints.length;
+    _activeChannelCount = channelCount;
+    _startTime = null;
+    _applyImportedMetadata(metadata, channelCount);
+
+    final visibleCount =
+        importedPoints.length.clamp(0, _maxVisiblePoints).toInt();
+    final visibleStart = importedPoints.length - visibleCount;
+    viewport = PlotViewport(
+      xMin: visibleStart.toDouble(),
+      xMax: importedPoints.length.toDouble(),
+      yMin: _calculateMinY(importedPoints),
+      yMax: _calculateMaxY(importedPoints),
+    );
+    _rebuildParsedWindow(visibleStart, visibleCount);
+    _viewportHistory.clear();
+
+    _cursor = null;
+    _xCursor1 = null;
+    _xCursor2 = null;
+    _yCursor1 = null;
+    _yCursor2 = null;
+
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _applyImportedMetadata(
+    Map<String, dynamic>? metadata,
+    int channelCount,
+  ) {
+    if (metadata == null || metadata.isEmpty) return;
+
+    final names = metadata['channelNames'];
+    if (names is List) {
+      for (
+        int i = 0;
+        i < names.length && i < channelCount && i < channels.length;
+        i++
+      ) {
+        final name = names[i];
+        if (name is String && name.isNotEmpty) {
+          channels[i].alias = name == 'Ch$i' ? '' : name;
+        }
+      }
+    }
+
+    final ids = metadata['zobowChannelIds'];
+    if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
+      _parserType = ParserType.zobow;
+      _parserConfig.type = ParserType.zobow;
+      _parserConfig.channelCount =
+          channelCount >= ParserConfig.maxZobowChannelCount
+              ? ParserConfig.maxZobowChannelCount
+              : ParserConfig.minZobowChannelCount;
+      for (
+        int i = 0;
+        i < ids.length &&
+            i < _parserConfig.zobowChannelIds.length &&
+            i < _parserConfig.zobowChannelCount;
+        i++
+      ) {
+        final id = ids[i];
+        if (id is int) {
+          _parserConfig.zobowChannelIds[i] = id & 0xFFFFFFFF;
+        } else if (id is num) {
+          _parserConfig.zobowChannelIds[i] = id.toInt() & 0xFFFFFFFF;
+        } else if (id is String) {
+          final parsed = int.tryParse(
+            id.replaceAll('0x', '').replaceAll('0X', ''),
+            radix: 16,
+          );
+          if (parsed != null) {
+            _parserConfig.zobowChannelIds[i] = parsed & 0xFFFFFFFF;
+          }
+        }
+      }
+      AppSettings().parserType = ParserType.zobow.name;
+      _saveSettings();
     }
   }
 
@@ -2414,6 +2733,7 @@ ParserType _parserTypeFromString(String value) {
   return switch (value) {
     'fixedFrame' => ParserType.fixedFrame,
     'zobow' => ParserType.zobow,
+    'justFloat' => ParserType.justFloat,
     _ => ParserType.fireWater,
   };
 }

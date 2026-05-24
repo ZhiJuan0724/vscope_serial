@@ -4,7 +4,8 @@ import 'channel_config.dart';
 enum ParserType {
   fireWater('FireWater'),
   fixedFrame('固定帧头'),
-  zobow('众邦电控');
+  zobow('众邦电控'),
+  justFloat('JustFloat');
 
   final String label;
 
@@ -163,6 +164,11 @@ class ParserConfig {
       zobowChannelIds: List.generate(maxZobowChannelCount, (i) => i + 1),
       zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.uint16),
     );
+  }
+
+  /// 创建默认 VOFA JustFloat 配置
+  factory ParserConfig.justFloatDefault() {
+    return ParserConfig(type: ParserType.justFloat, channelCount: 4);
   }
 
   static List<int> _normalizeZobowChannelIds(List<int>? ids) {
