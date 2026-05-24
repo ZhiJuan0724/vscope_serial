@@ -976,6 +976,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           vCursorEnabled: vm.vCursorEnabled,
           boxZoomEnabled: vm.boxZoomEnabled,
           refreshFps: vm.refreshFps,
+          plotFontSizeDelta: vm.plotFontSizeDelta,
           channels: vm.channels,
           observations: vm.observations,
           onObservationDrag: (index, x) => vm.updateObservation(index, x),
@@ -1038,6 +1039,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               statsX1: vm.statsX1,
               statsX2: vm.statsX2,
               antiAliasEnabled: vm.antiAliasEnabled,
+              plotFontSizeDelta: vm.plotFontSizeDelta,
             ),
             size: Size.infinite,
           ),
@@ -1061,6 +1063,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         if (_legendVisible) _buildLegendBox(vm),
       ],
     );
+  }
+
+  double _plotFontSize(PlotViewModel vm, double base) {
+    return (base + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   List<Widget> _buildObservationWidgets(
@@ -1114,9 +1120,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               ),
               child: Text(
                 'O${i + 1}',
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.black,
-                  fontSize: 10,
+                  fontSize: _plotFontSize(vm, 10),
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -1143,9 +1149,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final rows = <Widget>[
       Text(
         'X: ${observation.x.toInt()}',
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
-          fontSize: 12,
+          fontSize: _plotFontSize(vm, 12),
           fontWeight: FontWeight.bold,
           fontFamily: 'monospace',
         ),
@@ -1161,7 +1167,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             '$name: ${_formatExactNumber(values[i])}',
             style: TextStyle(
               color: channel.color,
-              fontSize: 12,
+              fontSize: _plotFontSize(vm, 12),
               fontFamily: 'monospace',
             ),
           ),
@@ -1211,11 +1217,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 '图例',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 12,
+                  fontSize: _plotFontSize(vm, 12),
                   fontWeight: FontWeight.bold,
                 ),
               ),
@@ -1243,9 +1249,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         child: Text(
                           name,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: _plotFontSize(vm, 12),
                           ),
                         ),
                       ),
@@ -1439,9 +1445,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children.add(
         Text(
           vm.measurementText!,
-          style: const TextStyle(
+          style: TextStyle(
             color: Colors.white,
-            fontSize: 12,
+            fontSize: _plotFontSize(vm, 12),
             fontFamily: 'monospace',
             height: 1.5,
           ),
@@ -1465,7 +1471,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     // 第二列及以后：统计信息（多列）
     if (vm.statsText != null) {
-      children.add(_buildStatsContent(vm.statsText!));
+      children.add(_buildStatsContent(vm.statsText!, vm));
     }
 
     return _DraggableInfoBox(
@@ -1486,7 +1492,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 构建统计信息内容，支持多列布局
   ///
   /// 当通道数超过 4 个时，自动分为多列显示以避免信息框过高。
-  Widget _buildStatsContent(String text) {
+  Widget _buildStatsContent(String text, PlotViewModel vm) {
     final lines = text.split('\n');
     final channelBlocks = <List<String>>[];
     List<String> currentBlock = [];
@@ -1515,9 +1521,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (columnCount == 1) {
       return Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           color: Colors.white,
-          fontSize: 11,
+          fontSize: _plotFontSize(vm, 11),
           fontFamily: 'monospace',
           height: 1.5,
         ),
@@ -1545,9 +1551,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       columns.add(
         Text(
           colText.toString().trim(),
-          style: const TextStyle(
+          style: TextStyle(
             color: Colors.white,
-            fontSize: 11,
+            fontSize: _plotFontSize(vm, 11),
             fontFamily: 'monospace',
             height: 1.5,
           ),
@@ -1585,99 +1591,161 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               width: 300,
               child: StatefulBuilder(
                 builder: (context, setState) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 网格开关
-                      Row(
-                        children: [
-                          const Text('显示网格', style: TextStyle(fontSize: 14)),
-                          const Spacer(),
-                          Switch(
-                            value: vm.showGrid,
-                            onChanged: (value) {
-                              vm.setShowGrid(value);
-                              setState(() {}); // 刷新对话框内部状态
-                            },
-                          ),
-                        ],
-                      ),
-                      // 网格密度
-                      if (vm.showGrid) ...[
-                        const SizedBox(height: 8),
-                        const Text('网格密度', style: TextStyle(fontSize: 14)),
-                        const SizedBox(height: 4),
+                  return SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // 网格开关
                         Row(
                           children: [
-                            _buildDensityButton('稀疏', 'sparse', vm, setState),
-                            const SizedBox(width: 8),
-                            _buildDensityButton('普通', 'normal', vm, setState),
-                            const SizedBox(width: 8),
-                            _buildDensityButton('密集', 'dense', vm, setState),
+                            const Text('显示网格', style: TextStyle(fontSize: 14)),
+                            const Spacer(),
+                            Switch(
+                              value: vm.showGrid,
+                              onChanged: (value) {
+                                vm.setShowGrid(value);
+                                setState(() {}); // 刷新对话框内部状态
+                              },
+                            ),
                           ],
                         ),
-                      ],
-                      const Divider(),
-                      // 刷新帧率
-                      const Text('绘图刷新帧率', style: TextStyle(fontSize: 14)),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(
-                            '${vm.refreshFps} fps',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Spacer(),
-                          Text(
-                            '${(1000 / vm.refreshFps).round()}ms',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
+                        // 网格密度
+                        if (vm.showGrid) ...[
+                          const SizedBox(height: 8),
+                          const Text('网格密度', style: TextStyle(fontSize: 14)),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              _buildDensityButton('稀疏', 'sparse', vm, setState),
+                              const SizedBox(width: 8),
+                              _buildDensityButton('普通', 'normal', vm, setState),
+                              const SizedBox(width: 8),
+                              _buildDensityButton('密集', 'dense', vm, setState),
+                            ],
                           ),
                         ],
-                      ),
-                      Slider(
-                        value: vm.refreshFps.toDouble(),
-                        min: 10,
-                        max: 60,
-                        divisions: 50,
-                        label: '${vm.refreshFps} fps',
-                        onChanged: (value) {
-                          vm.setRefreshFps(value.round());
-                          setState(() {}); // 刷新对话框内部状态
-                        },
-                      ),
-                      const Text(
-                        '范围: 10~60 fps，默认 30 fps\n值越高绘图越流畅，但可能降低数据接收速率',
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      const Divider(),
-                      // 窗口点数上限
-                      const Text('绘图窗口上限', style: TextStyle(fontSize: 14)),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: 140,
-                            child: TextField(
-                              controller: maxVisibleController,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                border: OutlineInputBorder(),
-                                suffixText: '包',
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
-                                ),
+                        const Divider(),
+                        // 刷新帧率
+                        const Text('绘图刷新帧率', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Text(
+                              '${vm.refreshFps} fps',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
                               ),
-                              onSubmitted: (value) {
-                                final points = int.tryParse(value);
+                            ),
+                            const Spacer(),
+                            Text(
+                              '${(1000 / vm.refreshFps).round()}ms',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: vm.refreshFps.toDouble(),
+                          min: 10,
+                          max: 60,
+                          divisions: 50,
+                          label: '${vm.refreshFps} fps',
+                          onChanged: (value) {
+                            vm.setRefreshFps(value.round());
+                            setState(() {}); // 刷新对话框内部状态
+                          },
+                        ),
+                        const Text(
+                          '范围: 10~60 fps，默认 30 fps\n值越高绘图越流畅，但可能降低数据接收速率',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                        const Divider(),
+                        const Text('绘图字体大小', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Text(
+                              vm.plotFontSizeDelta == 0
+                                  ? '默认'
+                                  : vm.plotFontSizeDelta > 0
+                                  ? '+${vm.plotFontSizeDelta}'
+                                  : '${vm.plotFontSizeDelta}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '基于默认字号',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Slider(
+                          value: vm.plotFontSizeDelta.toDouble(),
+                          min: -3,
+                          max: 6,
+                          divisions: 9,
+                          label:
+                              vm.plotFontSizeDelta == 0
+                                  ? '默认'
+                                  : vm.plotFontSizeDelta > 0
+                                  ? '+${vm.plotFontSizeDelta}'
+                                  : '${vm.plotFontSizeDelta}',
+                          onChanged: (value) {
+                            vm.setPlotFontSizeDelta(value.round());
+                            setState(() {});
+                          },
+                        ),
+                        const Text(
+                          '范围: -3~+6，影响绘图区坐标轴、光标、观察、测量和统计文本',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                        const Divider(),
+                        // 窗口点数上限
+                        const Text('绘图窗口上限', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              child: TextField(
+                                controller: maxVisibleController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  suffixText: '包',
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                onSubmitted: (value) {
+                                  final points = int.tryParse(value);
+                                  if (points != null) {
+                                    vm.setMaxVisiblePoints(points);
+                                    maxVisibleController.text =
+                                        vm.maxVisiblePoints.toString();
+                                    setState(() {});
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                final points = int.tryParse(
+                                  maxVisibleController.text,
+                                );
                                 if (points != null) {
                                   vm.setMaxVisiblePoints(points);
                                   maxVisibleController.text =
@@ -1685,62 +1753,48 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   setState(() {});
                                 }
                               },
+                              child: const Text('应用'),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              final points = int.tryParse(
-                                maxVisibleController.text,
-                              );
-                              if (points != null) {
-                                vm.setMaxVisiblePoints(points);
-                                maxVisibleController.text =
-                                    vm.maxVisiblePoints.toString();
-                                setState(() {});
-                              }
-                            },
-                            child: const Text('应用'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '范围: ${PlotViewModel.minVisiblePoints}~${PlotViewModel.maxVisiblePointsLimit} 包，默认 ${PlotViewModel.defaultVisiblePoints} 包。当前窗口: ${vm.visiblePointCount} 包',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey,
+                          ],
                         ),
-                      ),
-                      const Divider(),
-                      // 抗锯齿开关
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('抗锯齿', style: TextStyle(fontSize: 14)),
-                                Text(
-                                  '默认开启，通道>8时自动关闭',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
+                        const SizedBox(height: 4),
+                        Text(
+                          '范围: ${PlotViewModel.minVisiblePoints}~${PlotViewModel.maxVisiblePointsLimit} 包，默认 ${PlotViewModel.defaultVisiblePoints} 包。当前窗口: ${vm.visiblePointCount} 包',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        const Divider(),
+                        // 抗锯齿开关
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('抗锯齿', style: TextStyle(fontSize: 14)),
+                                  Text(
+                                    '默认开启，通道>8时自动关闭',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                          Switch(
-                            value: vm.antiAliasEnabled,
-                            onChanged: (value) {
-                              vm.setAntiAlias(value);
-                              setState(() {});
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
+                            Switch(
+                              value: vm.antiAliasEnabled,
+                              onChanged: (value) {
+                                vm.setAntiAlias(value);
+                                setState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),

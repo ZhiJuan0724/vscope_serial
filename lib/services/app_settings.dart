@@ -53,6 +53,9 @@ class AppSettings {
   /// UI 刷新帧率 (fps)，范围 10~60
   int refreshFps = 30;
 
+  /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
+  int plotFontSizeDelta = 0;
+
   /// 绘图窗口点数上限，范围 10000~3600000
   int maxVisiblePoints = 60000;
 
@@ -129,6 +132,7 @@ class AppSettings {
 
       // 绘图设置
       refreshFps = json['refreshFps'] as int? ?? 30;
+      plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ?? 60000)
           .clamp(10000, 3600000);
       showGrid = json['showGrid'] as bool? ?? true;
@@ -167,6 +171,7 @@ class AppSettings {
 
       // 绘图设置
       'refreshFps': refreshFps,
+      'plotFontSizeDelta': plotFontSizeDelta,
       'maxVisiblePoints': maxVisiblePoints,
       'showGrid': showGrid,
       'gridDensity': gridDensity,

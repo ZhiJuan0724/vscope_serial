@@ -130,6 +130,9 @@ class PlotViewModel extends BaseViewModel {
   /// UI 刷新帧率 (fps)，范围 10~60，默认 30
   int _refreshFps = 30;
 
+  /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
+  int _plotFontSizeDelta = 0;
+
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
 
@@ -282,6 +285,7 @@ class PlotViewModel extends BaseViewModel {
   void _loadSettings() {
     final settings = AppSettings();
     _refreshFps = settings.refreshFps;
+    _plotFontSizeDelta = settings.plotFontSizeDelta.clamp(-3, 6);
     _maxVisiblePoints = settings.maxVisiblePoints.clamp(
       minVisiblePoints,
       maxVisiblePointsLimit,
@@ -310,6 +314,7 @@ class PlotViewModel extends BaseViewModel {
   void _saveSettings() {
     final settings = AppSettings();
     settings.refreshFps = _refreshFps;
+    settings.plotFontSizeDelta = _plotFontSizeDelta;
     settings.maxVisiblePoints = _maxVisiblePoints;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
@@ -336,6 +341,7 @@ class PlotViewModel extends BaseViewModel {
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
+  int get plotFontSizeDelta => _plotFontSizeDelta;
   String get gridDensity => _gridDensity;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
@@ -1518,6 +1524,13 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 UI 刷新帧率（10~60 fps）
   void setRefreshFps(int fps) {
     _refreshFps = fps.clamp(10, 60);
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
+  void setPlotFontSizeDelta(int delta) {
+    _plotFontSizeDelta = delta.clamp(-3, 6);
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

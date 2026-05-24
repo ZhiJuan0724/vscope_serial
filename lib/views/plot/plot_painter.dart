@@ -94,6 +94,9 @@ class PlotPainter extends CustomPainter {
   /// 抗锯齿开关
   final bool antiAliasEnabled;
 
+  /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
+  final int plotFontSizeDelta;
+
   PlotPainter({
     required this.viewport,
     required this.data,
@@ -111,7 +114,12 @@ class PlotPainter extends CustomPainter {
     this.statsX1,
     this.statsX2,
     this.antiAliasEnabled = true,
+    this.plotFontSizeDelta = 0,
   });
+
+  double _fontSize(double base) {
+    return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
 
   /// 判断两个视口是否相等（用于重绘判断）
   bool _viewportEquals(PlotViewport a, PlotViewport b) {
@@ -515,9 +523,9 @@ class PlotPainter extends CustomPainter {
           ..color = const Color(0xFF8888AA)
           ..strokeWidth = 1.0;
 
-    final textStyle = const TextStyle(
-      color: Color(0xFF8888AA),
-      fontSize: 12,
+    final textStyle = TextStyle(
+      color: const Color(0xFF8888AA),
+      fontSize: _fontSize(12),
       fontFamily: 'monospace',
     );
 
@@ -631,9 +639,9 @@ class PlotPainter extends CustomPainter {
         );
 
         // 刻度值：Y=0（加粗）
-        final zeroTextStyle = const TextStyle(
-          color: Color(0xFFCCCCDD),
-          fontSize: 12,
+        final zeroTextStyle = TextStyle(
+          color: const Color(0xFFCCCCDD),
+          fontSize: _fontSize(12),
           fontFamily: 'monospace',
           fontWeight: FontWeight.bold,
         );
@@ -702,7 +710,7 @@ class PlotPainter extends CustomPainter {
         final displayName = 'Ch${ch.index}';
         final labelStyle = TextStyle(
           color: Colors.white,
-          fontSize: 10,
+          fontSize: _fontSize(10),
           fontWeight: FontWeight.bold,
         );
 
@@ -768,7 +776,7 @@ class PlotPainter extends CustomPainter {
 
     final textStyle = TextStyle(
       color: ch.color,
-      fontSize: 11,
+      fontSize: _fontSize(11),
       fontFamily: 'monospace',
     );
 
@@ -825,7 +833,7 @@ class PlotPainter extends CustomPainter {
       // 刻度值（加粗）
       final zeroTextStyle = TextStyle(
         color: ch.color,
-        fontSize: 11,
+        fontSize: _fontSize(11),
         fontFamily: 'monospace',
         fontWeight: FontWeight.bold,
       );
@@ -883,7 +891,10 @@ class PlotPainter extends CustomPainter {
     List<double>? values = cursor?.channelValues;
 
     // 确定要显示的通道数：只显示有数据且可见的通道
-    const valueStyle = TextStyle(fontSize: 12, fontFamily: 'monospace');
+    final valueStyle = TextStyle(
+      fontSize: _fontSize(12),
+      fontFamily: 'monospace',
+    );
     final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
       // 只统计有数据且visible的通道数
@@ -903,13 +914,14 @@ class PlotPainter extends CustomPainter {
     if (rows.isEmpty) return;
 
     // 计算tooltip尺寸
-    const lineHeight = 20.0;
+    final lineHeight = _fontSize(12) + 8;
+    final headerHeight = _fontSize(12) + 10;
     const padding = 8.0;
     final maxLabelWidth = rows.fold<double>(120, (width, row) {
       return math.max(width, _measureTextWidth(row.text, valueStyle));
     });
     final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
-    final tooltipHeight = rows.length * lineHeight + padding * 2 + 22;
+    final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
     // tooltip位置（在鼠标右侧，如果超出边界则在左侧）
     var tooltipX = screenPos.dx + 18;
@@ -945,9 +957,9 @@ class PlotPainter extends CustomPainter {
     );
 
     // 绘制标题（X值）
-    final headerStyle = const TextStyle(
+    final headerStyle = TextStyle(
       color: Colors.white,
-      fontSize: 12,
+      fontSize: _fontSize(12),
       fontWeight: FontWeight.bold,
       fontFamily: 'monospace',
     );
@@ -960,8 +972,11 @@ class PlotPainter extends CustomPainter {
 
     // 绘制分隔线（往下移，给标题更多空间）
     canvas.drawLine(
-      Offset(tooltipX + padding, tooltipY + padding + 17),
-      Offset(tooltipX + tooltipWidth - padding, tooltipY + padding + 17),
+      Offset(tooltipX + padding, tooltipY + padding + headerHeight - 5),
+      Offset(
+        tooltipX + tooltipWidth - padding,
+        tooltipY + padding + headerHeight - 5,
+      ),
       Paint()
         ..color = const Color(0xFF8888AA)
         ..strokeWidth = 0.5,
@@ -971,7 +986,7 @@ class PlotPainter extends CustomPainter {
     int row = 0;
     for (final rowValue in rows) {
       // 只显示有数据值的通道，跳过数据范围外的
-      final y = tooltipY + padding + 22 + row * lineHeight;
+      final y = tooltipY + padding + headerHeight + row * lineHeight;
       final color = channels[rowValue.index].color;
 
       // 颜色指示点
@@ -986,7 +1001,7 @@ class PlotPainter extends CustomPainter {
       // 通道名和值（优先显示别名）
       final rowStyle = TextStyle(
         color: color,
-        fontSize: 12,
+        fontSize: _fontSize(12),
         fontFamily: 'monospace',
       );
       _drawText(
@@ -1260,7 +1275,7 @@ class PlotPainter extends CustomPainter {
   ) {
     final textStyle = TextStyle(
       color: color,
-      fontSize: 10,
+      fontSize: _fontSize(10),
       fontWeight: FontWeight.bold,
       fontFamily: 'monospace',
     );
@@ -1450,7 +1465,8 @@ class PlotPainter extends CustomPainter {
         oldDelegate.statsEnabled != statsEnabled ||
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
-        oldDelegate.statsX2 != statsX2;
+        oldDelegate.statsX2 != statsX2 ||
+        oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
     final cursorChanged =
         oldDelegate.cursor != cursor ||
         oldDelegate.xCursor1 != xCursor1 ||

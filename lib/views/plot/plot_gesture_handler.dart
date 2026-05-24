@@ -95,6 +95,9 @@ class PlotGestureHandler extends StatefulWidget {
   /// 目标刷新帧率（fps），与高级设置中的绘图刷新帧率同步
   final int refreshFps;
 
+  /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
+  final int plotFontSizeDelta;
+
   const PlotGestureHandler({
     super.key,
     required this.viewport,
@@ -123,6 +126,7 @@ class PlotGestureHandler extends StatefulWidget {
     this.onChannelOffsetDrag,
     this.onChannelYScaleZoom,
     this.refreshFps = 30,
+    this.plotFontSizeDelta = 0,
   });
 
   @override
@@ -179,6 +183,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   /// 目标刷新帧率（fps），由外部传入，与高级设置同步
   int _targetFps = 30;
+
+  double _fontSize(double base) {
+    return (base + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
 
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
@@ -532,7 +540,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final textPainter = TextPainter(
         text: TextSpan(
           text: displayName,
-          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: _fontSize(9), fontWeight: FontWeight.bold),
         ),
         textDirection: TextDirection.ltr,
       );
