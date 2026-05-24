@@ -62,9 +62,9 @@ class PlotViewModel extends BaseViewModel {
   int _maxVisiblePoints = defaultVisiblePoints;
   int _dataRevision = 0;
 
-  /// 众邦电控有效原始帧缓存（10字节/包，本次运行内全量保留）
-  final FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
-    packetSize: 10,
+  /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
+  FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
+    packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
   );
 
   /// 当前窗口起始点序号
@@ -86,6 +86,8 @@ class PlotViewModel extends BaseViewModel {
   // ========== 当前数据实际通道数 ==========
   /// 当前数据中实际出现的最大通道数（用于动态显示通道面板）
   int _activeChannelCount = 0;
+
+  bool _hasStartedPlottingOnce = false;
 
   // ========== 视口 ==========
   /// 当前绘图视口，定义可见的 X/Y 数据范围
@@ -162,6 +164,8 @@ class PlotViewModel extends BaseViewModel {
   // cursorMode 已废弃，保留 CursorMode.follow 用于垂直光标标识
   /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
+
+  final List<CursorState> _observations = [];
 
   /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
@@ -344,6 +348,7 @@ class PlotViewModel extends BaseViewModel {
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
   CursorState? get cursor => _cursor;
+  List<CursorState> get observations => List.unmodifiable(_observations);
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
 
@@ -580,6 +585,10 @@ class PlotViewModel extends BaseViewModel {
   void setParserType(ParserType type) {
     _parserType = type;
     _parserConfig.type = type;
+    if (type == ParserType.zobow &&
+        _parserConfig.channelCount != ParserConfig.maxZobowChannelCount) {
+      _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
+    }
 
     if (type != ParserType.fireWater && _useRandomSource) {
       AppLogger().info('切换到非 FireWater 协议，保留随机源开关但不接入当前解析链', category: 'PLOT');
@@ -601,6 +610,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
+    final oldZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
     _parserConfig.type = config.type;
     _parserConfig.frameHeaderLength = config.frameHeaderLength;
     _parserConfig.frameHeader = List.from(config.frameHeader);
@@ -615,6 +625,10 @@ class PlotViewModel extends BaseViewModel {
         config.frameTail != null ? List.from(config.frameTail!) : null;
     _parserConfig.zobowChannelIds = List.from(config.zobowChannelIds);
     _parserConfig.zobowChannelTypes = List.from(config.zobowChannelTypes);
+    final newZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
+    if (oldZobowFrameLength != newZobowFrameLength) {
+      _resetZobowRawFrameBuffer();
+    }
 
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
@@ -681,13 +695,20 @@ class PlotViewModel extends BaseViewModel {
     _totalReceivedBytes = 0;
     _lastRateLogBytes = 0;
 
-    // 重置视口
-    viewport = viewport.reset();
+    // 保留上一轮缩放比例；首次启动仍使用默认视口。
+    if (_hasStartedPlottingOnce) {
+      final xRange = viewport.xRange;
+      viewport = viewport.copyWith(xMin: 0, xMax: xRange);
+    } else {
+      viewport = viewport.reset();
+      _hasStartedPlottingOnce = true;
+    }
     _viewportHistory.clear();
 
     // 重置光标（垂直光标为临时功能，每次开始绘图时关闭）
     _vCursorEnabled = false;
     _cursor = null;
+    _observations.clear();
     _xCursor1 = null;
     _xCursor2 = null;
     _yCursor1 = null;
@@ -1041,7 +1062,11 @@ class PlotViewModel extends BaseViewModel {
     }
 
     try {
-      final bytes = buildZobowInitFrame(_parserConfig.zobowChannelIds);
+      final bytes = buildZobowInitFrame(
+        _parserConfig.zobowChannelIds
+            .take(_parserConfig.zobowChannelCount)
+            .toList(),
+      );
       serialService.send(bytes);
 
       AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
@@ -1054,23 +1079,34 @@ class PlotViewModel extends BaseViewModel {
 
   /// 构造众邦电控初始化帧。
   ///
-  /// 通道号使用 uint32 little-endian 编码，CRC 覆盖前 16 字节。
+  /// 通道号使用 uint32 little-endian 编码，CRC 覆盖全部通道号字节。
   static Uint8List buildZobowInitFrame(List<int> channelIds) {
-    if (channelIds.length < 4) {
-      throw ArgumentError.value(channelIds, 'channelIds', '至少需要4个通道号');
+    if (channelIds.length != 4 && channelIds.length != 8) {
+      throw ArgumentError.value(
+        channelIds,
+        'channelIds',
+        'must contain 4 or 8 ids',
+      );
     }
 
-    final bytes = Uint8List(18);
+    final dataLength = channelIds.length * 4;
+    final bytes = Uint8List(dataLength + 2);
     final buffer = ByteData.sublistView(bytes);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < channelIds.length; i++) {
       buffer.setUint32(i * 4, channelIds[i] & 0xFFFFFFFF, Endian.little);
     }
 
-    final dataBytes = Uint8List.sublistView(bytes, 0, 16);
+    final dataBytes = Uint8List.sublistView(bytes, 0, dataLength);
     final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
-    bytes[16] = crc & 0xFF;
-    bytes[17] = (crc >> 8) & 0xFF;
+    bytes[dataLength] = crc & 0xFF;
+    bytes[dataLength + 1] = (crc >> 8) & 0xFF;
     return bytes;
+  }
+
+  void _resetZobowRawFrameBuffer() {
+    _zobowRawFrames = FixedPacketByteBuffer(
+      packetSize: ZobowParser.frameLengthForConfig(_parserConfig),
+    );
   }
 
   /// 字节转16进制字符串（用于日志）
@@ -1211,20 +1247,30 @@ class PlotViewModel extends BaseViewModel {
     for (final point in visiblePoints) {
       for (int i = 0; i < point.values.length && i < channels.length; i++) {
         if (!channels[i].visible) continue;
+        if (channels[i].offsetEnabled) continue;
         final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
         if (v < minY) minY = v;
         if (v > maxY) maxY = v;
       }
     }
-    if (minY == double.infinity || maxY == double.negativeInfinity) return;
-    if (minY == maxY) {
-      showStatusMessage('Y轴数据范围为0，跳过自适应');
-      return;
-    }
 
     _saveViewport();
-    final padding = (maxY - minY) * 0.1;
-    viewport = viewport.copyWith(yMin: minY - padding, yMax: maxY + padding);
+    var changed = false;
+    if (minY != double.infinity && maxY != double.negativeInfinity) {
+      if (minY == maxY) {
+        showStatusMessage('Y轴数据范围为0，跳过默认Y轴自适应');
+      } else {
+        final padding = (maxY - minY) * 0.1;
+        viewport = viewport.copyWith(
+          yMin: minY - padding,
+          yMax: maxY + padding,
+        );
+        changed = true;
+      }
+    }
+
+    changed = _fitOffsetChannelsY(visiblePoints) || changed;
+    if (!changed) return;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1266,6 +1312,7 @@ class PlotViewModel extends BaseViewModel {
     for (final point in _dataPoints) {
       for (int i = 0; i < point.values.length && i < channels.length; i++) {
         if (!channels[i].visible) continue;
+        if (channels[i].offsetEnabled) continue;
         final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
         if (v < minY) minY = v;
         if (v > maxY) maxY = v;
@@ -1276,23 +1323,62 @@ class PlotViewModel extends BaseViewModel {
     if (minY != double.infinity && maxY != double.negativeInfinity) {
       if (minY == maxY) {
         viewport = viewport.copyWith(xMin: minX, xMax: maxX);
-        showStatusMessage('Y轴数据范围为0，仅自适应X轴');
-        _saveSettings();
-        Future.microtask(() => notifyListeners());
-        return;
+        showStatusMessage('默认Y轴数据范围为0，仅自适应X轴');
       }
-      final padding = (maxY - minY) * 0.1;
-      viewport = viewport.copyWith(
-        xMin: minX,
-        xMax: maxX,
-        yMin: minY - padding,
-        yMax: maxY + padding,
-      );
+      if (minY != maxY) {
+        final padding = (maxY - minY) * 0.1;
+        viewport = viewport.copyWith(
+          xMin: minX,
+          xMax: maxX,
+          yMin: minY - padding,
+          yMax: maxY + padding,
+        );
+      }
     } else {
       viewport = viewport.copyWith(xMin: minX, xMax: maxX);
     }
+    _fitOffsetChannelsY(_dataPoints);
     _saveSettings();
     Future.microtask(() => notifyListeners());
+  }
+
+  bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
+    final valuesByChannel = <int, (double, double)>{};
+    for (final point in points) {
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        final channel = channels[i];
+        if (!channel.visible || !channel.offsetEnabled) continue;
+        final value = point.values[i];
+        final current = valuesByChannel[i];
+        if (current == null) {
+          valuesByChannel[i] = (value, value);
+        } else {
+          valuesByChannel[i] = (
+            value < current.$1 ? value : current.$1,
+            value > current.$2 ? value : current.$2,
+          );
+        }
+      }
+    }
+
+    var changed = false;
+    final targetMin = viewport.yMin + viewport.yRange * 0.1;
+    final targetMax = viewport.yMax - viewport.yRange * 0.1;
+    final targetRange = targetMax - targetMin;
+    if (targetRange <= 0) return false;
+
+    for (final entry in valuesByChannel.entries) {
+      final minY = entry.value.$1;
+      final maxY = entry.value.$2;
+      if (minY == maxY) continue;
+
+      final channel = channels[entry.key];
+      channel.yScale = targetRange / (maxY - minY);
+      channel.yOffset = targetMin - minY * channel.yScale;
+      changed = true;
+    }
+
+    return changed;
   }
 
   /// 设置跟随开关
@@ -1404,14 +1490,14 @@ class PlotViewModel extends BaseViewModel {
 
   /// 设置 众邦电控的通道号
   void setZobowChannelId(int index, int channelId) {
-    if (index < 0 || index >= 4) return;
+    if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
     _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 众邦电控的通道数据类型
   void setZobowChannelType(int index, DataType type) {
-    if (index < 0 || index >= 4) return;
+    if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
     if (type != DataType.uint16 && type != DataType.int16) return;
     _parserConfig.zobowChannelTypes[index] = type;
     // 同步更新通道配置的数据类型（影响绘图显示）
@@ -1570,14 +1656,42 @@ class PlotViewModel extends BaseViewModel {
   /// - 使用二分查找精确匹配数据点，避免线性扫描
   /// - 未绘制到数据点的区域设置 hasData=false，tooltip 不显示
   void updateFollowCursor(double x, double y, Offset screenPosition) {
-    // X值吸附到最近的整数（数据点索引都是整数）
-    final snappedX = x.round().toDouble();
+    _cursor = _buildCursorAtX(x, y: y, screenPosition: screenPosition);
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
+  }
 
-    // 查找精确匹配的数据点
+  /// 更新光标状态（由外部直接设置）
+  void updateCursor(CursorState? cursor) {
+    _cursor = cursor;
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void addObservation() {
+    final x =
+        (_cursor?.x ?? (viewport.xMin + viewport.xRange / 2)).roundToDouble();
+    _observations.add(_buildCursorAtX(x));
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservation(int index, double x) {
+    if (index < 0 || index >= _observations.length) return;
+    _observations[index] = _buildCursorAtX(x);
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void removeObservation(int index) {
+    if (index < 0 || index >= _observations.length) return;
+    _observations.removeAt(index);
+    scheduleMicrotask(notifyListeners);
+  }
+
+  CursorState _buildCursorAtX(double x, {double? y, Offset? screenPosition}) {
+    final snappedX = x.round().toDouble();
     List<double>? channelValues;
-    bool hasData = false;
+    var hasData = false;
     if (_dataPoints.isNotEmpty) {
-      // 二分查找精确匹配的数据点
       int left = 0, right = _dataPoints.length - 1;
       while (left <= right) {
         final mid = (left + right) ~/ 2;
@@ -1594,22 +1708,13 @@ class PlotViewModel extends BaseViewModel {
       }
     }
 
-    _cursor = CursorState(
+    return CursorState(
       x: snappedX,
       y: y,
       screenPosition: screenPosition,
       channelValues: channelValues,
       hasData: hasData,
     );
-    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
-    scheduleMicrotask(notifyListeners);
-  }
-
-  /// 更新光标状态（由外部直接设置）
-  void updateCursor(CursorState? cursor) {
-    _cursor = cursor;
-    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
-    scheduleMicrotask(notifyListeners);
   }
 
   // ========== x-x / y-y 光标控制 ==========

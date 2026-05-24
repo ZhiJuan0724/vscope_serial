@@ -27,6 +27,9 @@ enum ChecksumType {
 
 /// 解析器配置模型
 class ParserConfig {
+  static const int minZobowChannelCount = 4;
+  static const int maxZobowChannelCount = 8;
+
   /// 解析器类型
   ParserType type;
 
@@ -63,10 +66,10 @@ class ParserConfig {
   List<int>? frameTail;
 
   // ========== 众邦电控参数 ==========
-  /// 4个通道的通道号（4字节16进制）
+  /// 众邦电控通道号（4字节16进制），支持4或8通道。
   List<int> zobowChannelIds;
 
-  /// 4个通道的数据类型（可单独设置uint16/int16）
+  /// 众邦电控通道数据类型（可单独设置uint16/int16）。
   List<DataType> zobowChannelTypes;
 
   ParserConfig({
@@ -84,13 +87,16 @@ class ParserConfig {
     List<int>? zobowChannelIds,
     List<DataType>? zobowChannelTypes,
   }) : frameHeader = frameHeader ?? [0xAA, 0x55],
-       zobowChannelIds = zobowChannelIds ?? [0x0001, 0x0002, 0x0003, 0x0004],
-       zobowChannelTypes =
-           zobowChannelTypes ??
-           [DataType.uint16, DataType.uint16, DataType.uint16, DataType.uint16];
+       zobowChannelIds = _normalizeZobowChannelIds(zobowChannelIds),
+       zobowChannelTypes = _normalizeZobowChannelTypes(zobowChannelTypes);
 
   /// 计算单帧数据长度（不含帧头、校验、帧尾）
   int get dataBytesPerFrame => dataType.byteSize * channelCount;
+
+  int get zobowChannelCount =>
+      channelCount >= maxZobowChannelCount
+          ? maxZobowChannelCount
+          : minZobowChannelCount;
 
   /// 计算完整帧长度
   int get totalFrameLength {
@@ -153,13 +159,29 @@ class ParserConfig {
   factory ParserConfig.zobowDefault() {
     return ParserConfig(
       type: ParserType.zobow,
-      zobowChannelIds: [0x0001, 0x0002, 0x0003, 0x0004],
-      zobowChannelTypes: [
-        DataType.uint16,
-        DataType.uint16,
-        DataType.uint16,
-        DataType.uint16,
-      ],
+      channelCount: minZobowChannelCount,
+      zobowChannelIds: List.generate(maxZobowChannelCount, (i) => i + 1),
+      zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.uint16),
     );
+  }
+
+  static List<int> _normalizeZobowChannelIds(List<int>? ids) {
+    final values = List<int>.from(
+      ids ?? List.generate(maxZobowChannelCount, (i) => i + 1),
+    );
+    while (values.length < maxZobowChannelCount) {
+      values.add(values.length + 1);
+    }
+    return values.take(maxZobowChannelCount).toList();
+  }
+
+  static List<DataType> _normalizeZobowChannelTypes(List<DataType>? types) {
+    final values = List<DataType>.from(
+      types ?? List.filled(maxZobowChannelCount, DataType.uint16),
+    );
+    while (values.length < maxZobowChannelCount) {
+      values.add(DataType.uint16);
+    }
+    return values.take(maxZobowChannelCount).toList();
   }
 }

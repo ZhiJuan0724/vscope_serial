@@ -199,6 +199,53 @@ void main() {
       expect(frame[17], (crc >> 8) & 0xFF);
     });
 
+    test('众邦初始化帧支持8通道', () {
+      final frame = PlotViewModel.buildZobowInitFrame([1, 2, 3, 4, 5, 6, 7, 8]);
+
+      expect(frame.length, 34);
+      expect(frame.sublist(0, 32), [
+        1,
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        3,
+        0,
+        0,
+        0,
+        4,
+        0,
+        0,
+        0,
+        5,
+        0,
+        0,
+        0,
+        6,
+        0,
+        0,
+        0,
+        7,
+        0,
+        0,
+        0,
+        8,
+        0,
+        0,
+        0,
+      ]);
+
+      final crc = calculateCrc(
+        frame.sublist(0, 32),
+        crc16Polys['CRC-16/MODBUS']!,
+      );
+      expect(frame[32], crc & 0xFF);
+      expect(frame[33], (crc >> 8) & 0xFF);
+    });
+
     test('众邦初始化发送失败时不进入绘图并断开连接', () {
       serialService.isConnected = true;
       vm.setParserType(ParserType.zobow);

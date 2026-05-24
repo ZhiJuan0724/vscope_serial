@@ -35,12 +35,6 @@ class ZobowParser extends IDataParser {
   /// 最大缓冲区大小
   static const int _maxBufferSize = 128;
 
-  /// 帧长度
-  static const int _frameLength = 10;
-
-  /// 数据区长度（不含CRC）
-  static const int _dataLength = 8;
-
   /// 超时时间（未成功解析则清空缓冲区）
   static const int _timeoutMs = 500;
 
@@ -52,6 +46,10 @@ class ZobowParser extends IDataParser {
 
   ZobowParser([ParserConfig? config])
     : super(config ?? ParserConfig.zobowDefault());
+
+  int get _channelCount => config.zobowChannelCount;
+  int get _dataLength => _channelCount * 2;
+  int get _frameLength => _dataLength + 2;
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
@@ -171,18 +169,22 @@ class ZobowParser extends IDataParser {
   /// [frame] 必须是完整10字节帧。历史窗口回放复用这个方法，避免重新走
   /// 流式解析器的滑动窗口状态机。
   static List<double> decodeFrameValues(Uint8List frame, ParserConfig config) {
-    if (frame.length != _frameLength) {
+    final channelCount = config.zobowChannelCount;
+    final dataLength = channelCount * 2;
+    final frameLength = dataLength + 2;
+
+    if (frame.length != frameLength) {
       throw ArgumentError.value(
         frame.length,
         'frame.length',
-        'must be $_frameLength',
+        'must be $frameLength',
       );
     }
 
     final values = <double>[];
-    final byteData = ByteData.sublistView(frame, 0, _dataLength);
+    final byteData = ByteData.sublistView(frame, 0, dataLength);
 
-    for (int ch = 0; ch < 4; ch++) {
+    for (int ch = 0; ch < channelCount; ch++) {
       final type = config.zobowChannelTypes[ch];
       final offset = ch * 2;
       double value;
@@ -201,6 +203,9 @@ class ZobowParser extends IDataParser {
 
     return values;
   }
+
+  static int frameLengthForConfig(ParserConfig config) =>
+      config.zobowChannelCount * 2 + 2;
 
   /// 将字节列表转为16进制字符串（用于日志）
   String _bytesToHex(Uint8List bytes) {
