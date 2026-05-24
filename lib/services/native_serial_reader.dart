@@ -157,6 +157,7 @@ class NativeSerialReader {
   ///   - >0: 超时时间，超时后返回已读取的数据
   bool startReading({int timeoutMs = 0}) {
     if (!_isOpen) return false;
+    if (_receivePort != null) return false;
 
     // 创建 ReceivePort 接收 C++ 回调
     _receivePort = ReceivePort();
@@ -166,18 +167,20 @@ class NativeSerialReader {
       _receivePort!.sendPort.nativePort,
       timeoutMs,
     );
-    return result == 0;
+    if (result != 0) {
+      _receivePort?.close();
+      _receivePort = null;
+      return false;
+    }
+    return true;
   }
 
   /// 停止读取
   void stopReading() {
-    // Close ReceivePort first to prevent Dart_PostCObject_DL
-    // from sending data to a closed port after C++ thread exits
+    _nsrStopReading();
+    // Native thread is stopped first so no more messages are posted.
     _receivePort?.close();
     _receivePort = null;
-
-    // Then stop the C++ read thread
-    _nsrStopReading();
   }
 
   /// 发送数据
@@ -221,10 +224,10 @@ class NativeSerialReader {
   }
 
   void dispose() {
-    // Close ReceivePort first, then C++ thread, then stream controller
+    // Stop native thread first, then close ReceivePort and stream controller.
+    _nsrStopReading();
     _receivePort?.close();
     _receivePort = null;
-    _nsrStopReading();
     _nsrClosePort();
     _isOpen = false;
     _dataController.close();

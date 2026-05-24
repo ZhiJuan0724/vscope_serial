@@ -185,15 +185,21 @@ class SerialService extends ChangeNotifier {
 
     AppLogger().trace('NativeSerialReader 打开成功', category: 'SERIAL');
 
-    // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
-    _nativeReader!.startReading(timeoutMs: 10);
-
     // 监听数据流
     _nativeSubscription = _nativeReader!.dataStream.listen(
       (nativeData) => _onNativeDataReceived(nativeData),
       onError:
           (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
+
+    // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
+    if (!_nativeReader!.startReading(timeoutMs: 10)) {
+      await _nativeSubscription?.cancel();
+      _nativeSubscription = null;
+      _nativeReader!.close();
+      _nativeReader = null;
+      throw Exception('failed to start native serial read thread');
+    }
 
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
