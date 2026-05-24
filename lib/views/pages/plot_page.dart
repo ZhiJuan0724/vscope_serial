@@ -1256,7 +1256,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               ...visibleChannels.map((channel) {
                 final name =
                     channel.alias.isNotEmpty
-                        ? 'Ch${channel.index}  ${channel.alias}'
+                        ? channel.alias
                         : 'Ch${channel.index}';
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),

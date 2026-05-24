@@ -111,11 +111,19 @@ class HighPrecisionTimer:
 class DataGenerator:
     """生成4通道模拟数据"""
     
-    def __init__(self, mode: str = 'sine', amplitude: int = 10000):
+    def __init__(self, mode: str = 'sine', amplitude: int = 10000, channel_count: int = 4):
         self.mode = mode
         self.amplitude = amplitude
         self._tick = 0
-        self._phase = [0.0, math.pi / 4, math.pi / 2, 3 * math.pi / 4]
+        self.channel_count = channel_count
+        self._update_phase()
+
+    def set_channel_count(self, channel_count: int):
+        self.channel_count = channel_count
+        self._update_phase()
+
+    def _update_phase(self):
+        self._phase = [i * math.pi / 4 for i in range(self.channel_count)]
     
     def next(self) -> List[int]:
         """生成下一组4通道数据"""
@@ -128,23 +136,23 @@ class DataGenerator:
             # 正弦波，不同相位
             values = [
                 int(self.amplitude * (1 + math.sin(t + self._phase[i]))) 
-                for i in range(4)
+                for i in range(self.channel_count)
             ]
         elif self.mode == 'random':
             # 随机数据
             import random
-            values = [random.randint(0, self.amplitude * 2) for _ in range(4)]
+            values = [random.randint(0, self.amplitude * 2) for _ in range(self.channel_count)]
         elif self.mode == 'ramp':
             # 锯齿波
             values = [
                 int((self._tick * 100 + i * 500) % (self.amplitude * 2))
-                for i in range(4)
+                for i in range(self.channel_count)
             ]
         else:
             # 固定递增
             values = [
                 int((self._tick * 10 + i * 1000) % 65536)
-                for i in range(4)
+                for i in range(self.channel_count)
             ]
         
         return values
@@ -168,10 +176,11 @@ class JackFourChannelDevice:
         self.interval_ms = interval_ms
         
         self.serial: Optional[serial.Serial] = None
+        self.channel_count = 4
         self.channel_ids = [0x0001, 0x0002, 0x0003, 0x0004]
         self.configured = False
         self.running = False
-        self.data_gen = DataGenerator(mode=data_mode)
+        self.data_gen = DataGenerator(mode=data_mode, channel_count=self.channel_count)
         self.timer = HighPrecisionTimer(interval_ms)
         self.verbose = False  # 是否打印每帧数据（高频率时关闭）
     
@@ -205,24 +214,27 @@ class JackFourChannelDevice:
         配置帧格式：
         4个uint32 little-endian通道号 + 2字节CRC16/MODBUS little-endian
         """
-        if len(data) != 18:
+        if len(data) not in (18, 34):
             return False
+
+        payload_length = len(data) - 2
+        channel_count = payload_length // 4
         
         # 验证CRC
-        received_crc = struct.unpack('<H', data[16:18])[0]
-        calculated_crc = crc16_modbus(data[0:16])
+        received_crc = struct.unpack('<H', data[payload_length:payload_length + 2])[0]
+        calculated_crc = crc16_modbus(data[0:payload_length])
         
         if received_crc != calculated_crc:
             print(f"[设备] 配置帧CRC错误: received=0x{received_crc:04X}, calculated=0x{calculated_crc:04X}")
             return False
         
         # 提取通道号
+        self.channel_count = channel_count
         self.channel_ids = [
-            struct.unpack('<I', data[0:4])[0],
-            struct.unpack('<I', data[4:8])[0],
-            struct.unpack('<I', data[8:12])[0],
-            struct.unpack('<I', data[12:16])[0],
+            struct.unpack('<I', data[i * 4:(i + 1) * 4])[0]
+            for i in range(channel_count)
         ]
+        self.data_gen.set_channel_count(channel_count)
         
         print(f"[设备] 收到配置帧，通道号: {[f'0x{id:08X}' for id in self.channel_ids]}")
         return True
@@ -244,7 +256,8 @@ class JackFourChannelDevice:
         self.serial.flush()
         
         if self.verbose:
-            print(f"[设备] 发送数据: {[f'0x{v:04X}' for v in values]} | CRC=0x{struct.unpack('<H', frame[8:10])[0]:04X}")
+            crc_offset = len(values) * 2
+            print(f"[设备] 发送数据: {[f'0x{v:04X}' for v in values]} | CRC=0x{struct.unpack('<H', frame[crc_offset:crc_offset + 2])[0]:04X}")
     
     def run(self):
         """主循环：接收配置 → 发送数据"""
@@ -266,15 +279,23 @@ class JackFourChannelDevice:
                     
                     # 尝试解析配置帧
                     while len(buffer) >= 18:
-                        if self._parse_config_frame(bytes(buffer[:18])):
+                        frame_length = 0
+                        if len(buffer) >= 34 and self._parse_config_frame(bytes(buffer[:34])):
+                            frame_length = 34
+                        elif self._parse_config_frame(bytes(buffer[:18])):
+                            frame_length = 18
+
+                        if frame_length > 0:
                             self.configured = True
-                            buffer = buffer[18:]
+                            buffer = buffer[frame_length:]
                             print("[设备] 配置完成，开始发送数据...")
                             # 高频率时关闭逐帧打印
                             if self.interval_ms < 5:
                                 self.verbose = False
                                 print(f"[设备] 发送间隔 {self.interval_ms}ms (<5ms)，关闭逐帧打印")
                             self.timer.start()
+                            break
+                        elif len(buffer) < 34:
                             break
                         else:
                             # CRC失败，滑动窗口
