@@ -673,10 +673,6 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       if (elapsed >= notifyIntervalMs && viewportChanged) {
         _lastNotifiedViewport = _dragViewport!.copy();
         _lastNotifyTime = now;
-        AppLogger().trace(
-          '平移拖动通知: dx=$dx,dy=$dy | viewport xMin=${_dragViewport!.xMin.toStringAsFixed(1)} | elapsed=${elapsed}ms',
-          category: 'GESTURE',
-        );
         widget.onViewportChanged(_dragViewport!, fromDrag: true);
       }
     }

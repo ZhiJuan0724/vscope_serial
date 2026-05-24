@@ -263,7 +263,7 @@ class PlotPainter extends CustomPainter {
     // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
     final dataCount = visibleIndices.end - visibleIndices.start;
-    final useMinMaxBuckets = dataCount > plotW * 2;
+    final useMinMaxBuckets = dataCount > plotW;
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length; ch++) {

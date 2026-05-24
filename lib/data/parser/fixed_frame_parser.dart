@@ -14,7 +14,7 @@ class FixedFrameParser extends IDataParser {
   final _controller = StreamController<ParseResult>.broadcast();
 
   FixedFrameParser([ParserConfig? config])
-      : super(config ?? ParserConfig.fixedFrameDefault());
+    : super(config ?? ParserConfig.fixedFrameDefault());
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
@@ -109,9 +109,12 @@ class FixedFrameParser extends IDataParser {
 
     // 提取数据区
     final dataStart = config.frameHeaderLength;
-    final dataEnd = config.totalFrameLength -
+    final dataEnd =
+        config.totalFrameLength -
         (config.hasChecksum ? config.checksumBytes : 0) -
-        (config.hasFrameTail && config.frameTail != null ? config.frameTail!.length : 0);
+        (config.hasFrameTail && config.frameTail != null
+            ? config.frameTail!.length
+            : 0);
 
     if (dataEnd <= dataStart) {
       return ParseResult.fail('数据区长度无效');
@@ -135,26 +138,61 @@ class FixedFrameParser extends IDataParser {
       values.add(value);
     }
 
-    return ParseResult.ok(values, bytesConsumed: config.totalFrameLength);
+    return ParseResult.ok(
+      values,
+      bytesConsumed: config.totalFrameLength,
+      rawBytes: Uint8List.fromList(frame),
+    );
   }
 
   /// 字节转数值
-  double _bytesToValue(Uint8List bytes, DataType type) {
+  static List<double> decodeFrameValues(Uint8List frame, ParserConfig config) {
+    final dataStart = config.frameHeaderLength;
+    final dataEnd =
+        config.totalFrameLength -
+        (config.hasChecksum ? config.checksumBytes : 0) -
+        (config.hasFrameTail && config.frameTail != null
+            ? config.frameTail!.length
+            : 0);
+    final dataBytes = frame.sublist(dataStart, dataEnd);
+    final values = <double>[];
+    for (int ch = 0; ch < config.channelCount; ch++) {
+      final offset = ch * config.dataType.byteSize;
+      if (offset + config.dataType.byteSize > dataBytes.length) break;
+      final bytes = Uint8List.fromList(
+        dataBytes.sublist(offset, offset + config.dataType.byteSize),
+      );
+      values.add(_bytesToValue(bytes, config.dataType));
+    }
+    return values;
+  }
+
+  static double _bytesToValue(Uint8List bytes, DataType type) {
     switch (type) {
       case DataType.uint8:
         return bytes[0].toDouble();
       case DataType.uint16:
-        return ByteData.sublistView(bytes).getUint16(0, Endian.little).toDouble();
+        return ByteData.sublistView(
+          bytes,
+        ).getUint16(0, Endian.little).toDouble();
       case DataType.uint32:
-        return ByteData.sublistView(bytes).getUint32(0, Endian.little).toDouble();
+        return ByteData.sublistView(
+          bytes,
+        ).getUint32(0, Endian.little).toDouble();
       case DataType.int8:
         return ByteData.sublistView(bytes).getInt8(0).toDouble();
       case DataType.int16:
-        return ByteData.sublistView(bytes).getInt16(0, Endian.little).toDouble();
+        return ByteData.sublistView(
+          bytes,
+        ).getInt16(0, Endian.little).toDouble();
       case DataType.int32:
-        return ByteData.sublistView(bytes).getInt32(0, Endian.little).toDouble();
+        return ByteData.sublistView(
+          bytes,
+        ).getInt32(0, Endian.little).toDouble();
       case DataType.float:
-        return ByteData.sublistView(bytes).getFloat32(0, Endian.little).toDouble();
+        return ByteData.sublistView(
+          bytes,
+        ).getFloat32(0, Endian.little).toDouble();
       case DataType.double:
         return ByteData.sublistView(bytes).getFloat64(0, Endian.little);
     }
@@ -164,9 +202,12 @@ class FixedFrameParser extends IDataParser {
   bool _verifyChecksum(List<int> frame) {
     // 简化实现：仅支持 SUM8
     if (config.checksumType == ChecksumType.sum8) {
-      final dataEnd = config.totalFrameLength -
+      final dataEnd =
+          config.totalFrameLength -
           config.checksumBytes -
-          (config.hasFrameTail && config.frameTail != null ? config.frameTail!.length : 0);
+          (config.hasFrameTail && config.frameTail != null
+              ? config.frameTail!.length
+              : 0);
       int sum = 0;
       for (int i = config.frameHeaderLength; i < dataEnd; i++) {
         sum += frame[i];

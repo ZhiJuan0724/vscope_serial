@@ -115,6 +115,26 @@ void main() {
       expect(vm.viewport.xMax, 1000.0);
     });
 
+    test('测量和统计文本完整显示大数值', () {
+      vm.setParserType(ParserType.fireWater);
+      vm.ingestParsedResultForTest(ParseResult.ok([1234.5], bytesConsumed: 4));
+      vm.ingestParsedResultForTest(ParseResult.ok([2345.5], bytesConsumed: 4));
+
+      vm.toggleYMeasurement();
+      vm.setYCursor1(1234.5);
+      vm.setYCursor2(2345.5);
+      final measurement = vm.measurementText!;
+      expect(measurement, contains('1235'));
+      expect(measurement, contains('2346'));
+      expect(measurement, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
+
+      vm.toggleStats();
+      final stats = vm.statsText!;
+      expect(stats, contains('2346'));
+      expect(stats, contains('1235'));
+      expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
+    });
+
     test('Y轴全零时跳过自适应', () {
       for (int i = 0; i < 4; i++) {
         vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));

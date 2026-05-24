@@ -55,6 +55,12 @@ class PlotViewModel extends BaseViewModel {
   /// 当前绘图窗口的数据点（按 index 递增排序）
   final List<PlotDataPoint> _dataPoints = [];
 
+  /// FireWater 等无法按固定帧随机访问的协议使用紧凑历史值缓存。
+  ///
+  /// Zobow 和固定帧协议使用原始帧缓存作为历史源；文本协议保存解析后
+  /// 的数值块，并按视口重建当前绘图窗口。
+  final _ParsedValueHistory _parsedHistory = _ParsedValueHistory();
+
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
   static const int minVisiblePoints = 10000;
   static const int defaultVisiblePoints = 60000;
@@ -65,6 +71,10 @@ class PlotViewModel extends BaseViewModel {
   /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
   FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
     packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
+  );
+
+  FixedPacketByteBuffer _fixedFrameRawFrames = FixedPacketByteBuffer(
+    packetSize: ParserConfig.fixedFrameDefault().totalFrameLength,
   );
 
   /// 当前窗口起始点序号
@@ -617,6 +627,7 @@ class PlotViewModel extends BaseViewModel {
   /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
     final oldZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
+    final oldFixedFrameLength = _parserConfig.totalFrameLength;
     _parserConfig.type = config.type;
     _parserConfig.frameHeaderLength = config.frameHeaderLength;
     _parserConfig.frameHeader = List.from(config.frameHeader);
@@ -634,6 +645,9 @@ class PlotViewModel extends BaseViewModel {
     final newZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
     if (oldZobowFrameLength != newZobowFrameLength) {
       _resetZobowRawFrameBuffer();
+    }
+    if (oldFixedFrameLength != _parserConfig.totalFrameLength) {
+      _resetFixedFrameRawFrameBuffer();
     }
 
     // 更新随机数据源通道数以匹配 FireWater 配置
@@ -687,7 +701,9 @@ class PlotViewModel extends BaseViewModel {
 
     // 清空旧数据
     _dataPoints.clear();
+    _parsedHistory.clear();
     _zobowRawFrames.clear();
+    _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -746,6 +762,8 @@ class PlotViewModel extends BaseViewModel {
             ? _parserConfig.fireWaterChannelCount
             : 4;
     _sourceManager.updateConfig(_sourceConfig);
+    _isPlotting = true;
+    serialService.isPlotting = true;
     _sourceManager.start();
 
     // 连接数据源 → 解析器
@@ -764,8 +782,6 @@ class PlotViewModel extends BaseViewModel {
       },
     );
 
-    _isPlotting = true;
-    serialService.isPlotting = true;
     // 开始绘图时自动停止原始数据接收
     if (serialService.isRawReceiving) {
       serialService.stopRawReceiving();
@@ -831,7 +847,9 @@ class PlotViewModel extends BaseViewModel {
   /// 清空所有数据、速率统计、视口和光标
   void clearData() {
     _dataPoints.clear();
+    _parsedHistory.clear();
     _zobowRawFrames.clear();
+    _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -884,10 +902,14 @@ class PlotViewModel extends BaseViewModel {
 
     if (_parserType == ParserType.zobow && result.rawBytes != null) {
       _zobowRawFrames.appendPacket(result.rawBytes!);
+    } else if (_parserType == ParserType.fixedFrame &&
+        result.rawBytes != null) {
+      _fixedFrameRawFrames.appendPacket(result.rawBytes!);
+    } else {
+      _parsedHistory.add(point.values);
     }
 
-    final appendToVisibleWindow =
-        _parserType != ParserType.zobow || _isViewingTail || _followEnabled;
+    final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
       _dataPoints.add(point);
       _trimVisibleWindowToLimit();
@@ -967,7 +989,16 @@ class PlotViewModel extends BaseViewModel {
 
   bool get _isViewingTail {
     if (_dataPoints.isEmpty) return true;
-    return _visibleEndIndex >= _nextIndex - 1;
+    return _visibleEndIndex >= _historyPointCount - 1;
+  }
+
+  int get _historyPointCount {
+    if (_parserType == ParserType.zobow) return _zobowRawFrames.packetCount;
+    if (_parserType == ParserType.fixedFrame &&
+        _fixedFrameRawFrames.isNotEmpty) {
+      return _fixedFrameRawFrames.packetCount;
+    }
+    return _parsedHistory.length;
   }
 
   void _trimVisibleWindowToLimit() {
@@ -1001,6 +1032,113 @@ class PlotViewModel extends BaseViewModel {
     if (!force && start >= currentStart && end <= currentEnd) return;
 
     _rebuildZobowWindow(start, end - start);
+  }
+
+  void _loadWindowForViewport({bool force = false}) {
+    switch (_parserType) {
+      case ParserType.zobow:
+        _loadZobowWindowForViewport(force: force);
+        break;
+      case ParserType.fireWater:
+        _loadParsedWindowForViewport(force: force);
+        break;
+      case ParserType.fixedFrame:
+        if (_fixedFrameRawFrames.isNotEmpty) {
+          _loadFixedFrameWindowForViewport(force: force);
+        } else {
+          _loadParsedWindowForViewport(force: force);
+        }
+        break;
+    }
+  }
+
+  void _loadFixedFrameWindowForViewport({bool force = false}) {
+    if (_fixedFrameRawFrames.isEmpty) return;
+
+    var start =
+        viewport.xMin
+            .floor()
+            .clamp(0, _fixedFrameRawFrames.packetCount)
+            .toInt();
+    var end =
+        viewport.xMax
+            .ceil()
+            .clamp(start, _fixedFrameRawFrames.packetCount)
+            .toInt();
+    if (end - start > _maxVisiblePoints) {
+      end = start + _maxVisiblePoints;
+      viewport = viewport.copyWith(
+        xMin: start.toDouble(),
+        xMax: end.toDouble(),
+      );
+    }
+
+    final currentStart = _visibleStartIndex;
+    final currentEnd = _visibleEndIndex;
+    if (!force && start >= currentStart && end <= currentEnd) return;
+
+    _rebuildFixedFrameWindow(start, end - start);
+  }
+
+  void _loadParsedWindowForViewport({bool force = false}) {
+    if (_parsedHistory.isEmpty) return;
+
+    var start = viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
+    var end = viewport.xMax.ceil().clamp(start, _parsedHistory.length).toInt();
+    if (end - start > _maxVisiblePoints) {
+      end = start + _maxVisiblePoints;
+      viewport = viewport.copyWith(
+        xMin: start.toDouble(),
+        xMax: end.toDouble(),
+      );
+    }
+
+    final currentStart = _visibleStartIndex;
+    final currentEnd = _visibleEndIndex;
+    if (!force && start >= currentStart && end <= currentEnd) return;
+
+    _rebuildParsedWindow(start, end - start);
+  }
+
+  void _loadTailWindow() {
+    switch (_parserType) {
+      case ParserType.zobow:
+        _loadZobowTailWindow();
+        break;
+      case ParserType.fireWater:
+        final count = _parsedHistory.length.clamp(0, _maxVisiblePoints).toInt();
+        final start = _parsedHistory.length - count;
+        _rebuildParsedWindow(start, count);
+        break;
+      case ParserType.fixedFrame:
+        if (_fixedFrameRawFrames.isNotEmpty) {
+          _loadFixedFrameTailWindow();
+        } else {
+          final count =
+              _parsedHistory.length.clamp(0, _maxVisiblePoints).toInt();
+          final start = _parsedHistory.length - count;
+          _rebuildParsedWindow(start, count);
+        }
+        break;
+    }
+  }
+
+  void _rebuildParsedWindow(int start, int count) {
+    _dataPoints.clear();
+    _visibleStartIndex = start;
+    _dataRevision++;
+    if (count <= 0) return;
+
+    for (int i = 0; i < count; i++) {
+      final pointIndex = start + i;
+      _dataPoints.add(
+        PlotDataPoint(
+          index: pointIndex,
+          timestamp: pointIndex.toDouble(),
+          values: _parsedHistory.valuesAt(pointIndex),
+        ),
+      );
+    }
   }
 
   void _loadZobowTailWindow() {
@@ -1116,6 +1254,12 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 字节转16进制字符串（用于日志）
+  void _resetFixedFrameRawFrameBuffer() {
+    _fixedFrameRawFrames = FixedPacketByteBuffer(
+      packetSize: _parserConfig.totalFrameLength,
+    );
+  }
+
   String _bytesToHex(Uint8List bytes) {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
   }
@@ -1134,7 +1278,6 @@ class PlotViewModel extends BaseViewModel {
   /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
   /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
-    final oldXMin = viewport.xMin;
     // 保存当前的偏移通道数量，避免 copy() 丢失
     final offsetChannelCount = viewport.offsetChannelCount;
     if (!fromDrag) {
@@ -1142,14 +1285,14 @@ class PlotViewModel extends BaseViewModel {
     }
     viewport = _limitXRange(newViewport).copy();
     viewport.setOffsetChannelCount(offsetChannelCount);
-    _loadZobowWindowForViewport();
+    _loadWindowForViewport();
     if (!fromDrag) {
       _saveSettings();
+      AppLogger().trace(
+        'updateViewport: xMin=${viewport.xMin.toStringAsFixed(1)} | fromDrag=$fromDrag',
+        category: 'PLOT',
+      );
     }
-    AppLogger().trace(
-      'updateViewport: oldXMin=${oldXMin.toStringAsFixed(1)} → newXMin=${viewport.xMin.toStringAsFixed(1)} | delta=${(oldXMin - viewport.xMin).toStringAsFixed(1)} | fromDrag=$fromDrag',
-      category: 'PLOT',
-    );
     if (fromDrag) {
       // 拖动时同步通知，避免微任务堆积
       notifyListeners();
@@ -1164,7 +1307,7 @@ class PlotViewModel extends BaseViewModel {
   /// 最终视口保存到配置和历史记录。
   void saveDragViewport() {
     _saveViewport();
-    _loadZobowWindowForViewport();
+    _loadWindowForViewport();
     _saveSettings();
     AppLogger().trace(
       'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
@@ -1185,7 +1328,7 @@ class PlotViewModel extends BaseViewModel {
     if (_viewportHistory.isEmpty) return;
     final previous = _viewportHistory.removeLast();
     viewport = _limitXRange(previous).copy();
-    _loadZobowWindowForViewport();
+    _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1200,7 +1343,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = _limitXRange(viewport.zoomX(0.8, centerX));
-    _loadZobowWindowForViewport();
+    _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1210,7 +1353,7 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
     viewport = _limitXRange(viewport.zoomX(1.25, centerX));
-    _loadZobowWindowForViewport();
+    _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1292,9 +1435,35 @@ class PlotViewModel extends BaseViewModel {
 
     _saveViewport();
     viewport = viewport.copyWith(xMin: minX, xMax: maxX);
-    _loadZobowTailWindow();
+    _loadTailWindow();
     _saveSettings();
     Future.microtask(() => notifyListeners());
+  }
+
+  void _loadFixedFrameTailWindow() {
+    if (_fixedFrameRawFrames.isEmpty) return;
+    final count =
+        _fixedFrameRawFrames.packetCount.clamp(0, _maxVisiblePoints).toInt();
+    final start = _fixedFrameRawFrames.packetCount - count;
+    _rebuildFixedFrameWindow(start, count);
+  }
+
+  void _rebuildFixedFrameWindow(int start, int count) {
+    _dataPoints.clear();
+    _visibleStartIndex = start;
+    _dataRevision++;
+
+    for (int i = 0; i < count; i++) {
+      final packetIndex = start + i;
+      final frame = _fixedFrameRawFrames.readPacket(packetIndex);
+      _dataPoints.add(
+        PlotDataPoint(
+          index: packetIndex,
+          timestamp: packetIndex.toDouble(),
+          values: FixedFrameParser.decodeFrameValues(frame, _parserConfig),
+        ),
+      );
+    }
   }
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
@@ -1304,9 +1473,7 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
 
-    if (_parserType == ParserType.zobow) {
-      _loadZobowTailWindow();
-    }
+    _loadTailWindow();
 
     // X范围
     final maxX = _nextIndex.toDouble();
@@ -1390,11 +1557,11 @@ class PlotViewModel extends BaseViewModel {
   /// 设置跟随开关
   void setFollowEnabled(bool value) {
     _followEnabled = value;
-    if (value && _parserType == ParserType.zobow && _nextIndex > 0) {
+    if (value && _historyPointCount > 0) {
       final maxX = _nextIndex.toDouble();
       final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
       viewport = viewport.copyWith(xMin: minX, xMax: maxX);
-      _loadZobowTailWindow();
+      _loadTailWindow();
     }
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -1541,13 +1708,9 @@ class PlotViewModel extends BaseViewModel {
     if (next == _maxVisiblePoints) return;
     _maxVisiblePoints = next;
 
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+    if (_historyPointCount > 0) {
       viewport = _limitXRange(viewport).copy();
-      _loadZobowWindowForViewport(force: true);
-    } else if (_dataPoints.length > _maxVisiblePoints) {
-      _trimVisibleWindowToLimit();
-      _dataRevision++;
-      viewport = _limitXRange(viewport).copy();
+      _loadWindowForViewport(force: true);
     }
 
     _saveSettings();
@@ -1863,12 +2026,6 @@ class PlotViewModel extends BaseViewModel {
     if ((value - value.roundToDouble()).abs() < 1e-9) {
       return value.toInt().toString();
     }
-    if (absValue >= 1000000) {
-      return '${(value / 1000000).toStringAsFixed(1)}M';
-    }
-    if (absValue >= 1000) {
-      return '${(value / 1000).toStringAsFixed(1)}k';
-    }
     if (absValue >= 100) return value.toStringAsFixed(0);
     if (absValue >= 1) return value.toStringAsFixed(1);
     if (absValue >= 0.01) return value.toStringAsFixed(2);
@@ -1906,16 +2063,17 @@ class PlotViewModel extends BaseViewModel {
       final maxChannels =
           _parserType == ParserType.zobow
               ? 4
-              : _dataPoints
-                  .map((p) => p.channelCount)
-                  .reduce((a, b) => a > b ? a : b);
+              : _parserType == ParserType.fixedFrame &&
+                  _fixedFrameRawFrames.isNotEmpty
+              ? _parserConfig.channelCount
+              : _parsedHistory.maxChannelCount;
       buffer.write('x');
       for (int i = 0; i < maxChannels; i++) {
         buffer.write(',y${i + 1}');
       }
       buffer.writeln();
 
-      // 数据行。Zobow 使用全量原始帧导出，其他协议导出当前窗口。
+      // 数据行。所有协议导出历史全量数据；Zobow 从原始帧按需解析。
       if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
         for (
           int packetIndex = 0;
@@ -1933,13 +2091,38 @@ class PlotViewModel extends BaseViewModel {
           }
           buffer.writeln();
         }
-      } else {
-        for (final point in _dataPoints) {
-          buffer.write(point.index);
+      } else if (_parserType == ParserType.fixedFrame &&
+          _fixedFrameRawFrames.isNotEmpty) {
+        for (
+          int packetIndex = 0;
+          packetIndex < _fixedFrameRawFrames.packetCount;
+          packetIndex++
+        ) {
+          final values = FixedFrameParser.decodeFrameValues(
+            _fixedFrameRawFrames.readPacket(packetIndex),
+            _parserConfig,
+          );
+          buffer.write(packetIndex);
           for (int i = 0; i < maxChannels; i++) {
             buffer.write(',');
-            if (i < point.values.length) {
-              buffer.write(point.values[i].toStringAsFixed(6));
+            if (i < values.length) {
+              buffer.write(values[i].toStringAsFixed(6));
+            }
+          }
+          buffer.writeln();
+        }
+      } else {
+        for (
+          int pointIndex = 0;
+          pointIndex < _parsedHistory.length;
+          pointIndex++
+        ) {
+          final values = _parsedHistory.valuesAt(pointIndex);
+          buffer.write(pointIndex);
+          for (int i = 0; i < maxChannels; i++) {
+            buffer.write(',');
+            if (i < values.length) {
+              buffer.write(values[i].toStringAsFixed(6));
             }
           }
           buffer.writeln();
@@ -2027,13 +2210,11 @@ class PlotViewModel extends BaseViewModel {
 
       // 清空现有数据并替换
       _dataPoints.clear();
-      _dataRevision++;
-      if (importedPoints.length > _maxVisiblePoints) {
-        _visibleStartIndex = importedPoints.length - _maxVisiblePoints;
-        _dataPoints.addAll(importedPoints.skip(_visibleStartIndex));
-      } else {
-        _visibleStartIndex = 0;
-        _dataPoints.addAll(importedPoints);
+      _parsedHistory.clear();
+      _zobowRawFrames.clear();
+      _fixedFrameRawFrames.clear();
+      for (final point in importedPoints) {
+        _parsedHistory.add(point.values);
       }
       _nextIndex = importedPoints.length;
       _activeChannelCount = channelCount;
@@ -2046,6 +2227,7 @@ class PlotViewModel extends BaseViewModel {
         yMin: _calculateMinY(importedPoints),
         yMax: _calculateMaxY(importedPoints),
       );
+      _loadTailWindow();
       _viewportHistory.clear();
 
       // 重置光标
@@ -2164,6 +2346,63 @@ class PlotViewModel extends BaseViewModel {
 }
 
 /// 速率统计样本
+class _ParsedValueHistory {
+  static const int _chunkPointCount = 4096;
+  static const int _maxChannels = 16;
+
+  final List<Float64List> _valueChunks = [];
+  final List<Uint8List> _countChunks = [];
+
+  int _length = 0;
+  int _maxChannelCount = 0;
+
+  bool get isEmpty => _length == 0;
+  int get length => _length;
+  int get maxChannelCount => _maxChannelCount;
+
+  void clear() {
+    _valueChunks.clear();
+    _countChunks.clear();
+    _length = 0;
+    _maxChannelCount = 0;
+  }
+
+  void add(List<double> values) {
+    final chunkIndex = _length ~/ _chunkPointCount;
+    final chunkOffset = _length % _chunkPointCount;
+    if (chunkIndex == _valueChunks.length) {
+      _valueChunks.add(Float64List(_chunkPointCount * _maxChannels));
+      _countChunks.add(Uint8List(_chunkPointCount));
+    }
+
+    final count = values.length.clamp(0, _maxChannels).toInt();
+    _countChunks[chunkIndex][chunkOffset] = count;
+    final base = chunkOffset * _maxChannels;
+    final chunk = _valueChunks[chunkIndex];
+    for (int i = 0; i < count; i++) {
+      chunk[base + i] = values[i];
+    }
+
+    if (count > _maxChannelCount) _maxChannelCount = count;
+    _length++;
+  }
+
+  List<double> valuesAt(int index) {
+    RangeError.checkValueInInterval(index, 0, _length - 1, 'index');
+    final chunkIndex = index ~/ _chunkPointCount;
+    final chunkOffset = index % _chunkPointCount;
+    final count = _countChunks[chunkIndex][chunkOffset];
+    final base = chunkOffset * _maxChannels;
+    final chunk = _valueChunks[chunkIndex];
+
+    return List<double>.generate(
+      count,
+      (i) => chunk[base + i],
+      growable: false,
+    );
+  }
+}
+
 class _RateSample {
   final int index;
   final int timestampMs;
