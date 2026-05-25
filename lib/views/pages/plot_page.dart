@@ -41,6 +41,7 @@ class _PlotPageContent extends StatefulWidget {
 
 /// 通道面板尺寸常量
 const double kMinChannelPanelWidth = 240;
+const double kCompactChannelPanelWidth = 212;
 const double kMaxChannelPanelWidth = 400;
 const double kDefaultChannelPanelWidth = 240;
 const double kCollapsedPanelWidth = 26;
@@ -143,15 +144,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 展开后的可拉伸面板
   Widget _buildExpandedPanel(BuildContext context, PlotViewModel vm) {
+    final minPanelWidth = _minimumChannelPanelWidth(vm);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         // 通道面板内容
         SizedBox(
-          width: _panelWidth.clamp(
-            kMinChannelPanelWidth,
-            kMaxChannelPanelWidth,
-          ),
+          width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
           child: _buildChannelPanelContent(context, vm),
         ),
         // 右边缘拖动条
@@ -165,7 +164,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               setState(() {
                 _panelWidth += details.delta.dx;
                 _panelWidth = _panelWidth.clamp(
-                  kMinChannelPanelWidth,
+                  minPanelWidth,
                   kMaxChannelPanelWidth,
                 );
               });
@@ -198,6 +197,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
       ],
     );
+  }
+
+  double _minimumChannelPanelWidth(PlotViewModel vm) {
+    if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
+    final channelCount = vm.parserConfig.zobowChannelCount;
+    final allShort = vm.parserConfig.zobowChannelIds
+        .take(channelCount)
+        .every((address) => (address & 0xFFFF0000) == 0);
+    return allShort ? kCompactChannelPanelWidth : kMinChannelPanelWidth;
   }
 
   // ========== 工具栏 ==========
@@ -2014,6 +2022,12 @@ class _ChannelItemState extends State<_ChannelItem> {
     final isZobowMode =
         widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < widget.vm.parserConfig.zobowChannelCount;
+    final zobowAddress =
+        isZobowMode
+            ? widget.vm.parserConfig.zobowChannelIds[widget.ch.index]
+            : 0;
+    final usesShortZobowAddress =
+        isZobowMode && (zobowAddress & 0xFFFF0000) == 0;
 
     return Container(
       constraints: const BoxConstraints(minHeight: 34),
@@ -2097,7 +2111,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                 if (isZobowMode) ...[
                   const SizedBox(width: 6),
                   Container(
-                    width: 86,
+                    width: usesShortZobowAddress ? 58 : 86,
                     height: 20,
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.only(bottom: 2),
@@ -2107,10 +2121,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                         controller:
                             _idController
                               ..text = _formatZobowAddress(
-                                widget.vm.parserConfig.zobowChannelIds[widget
-                                    .ch
-                                    .index],
-                                compact: true,
+                                zobowAddress,
+                                compact: usesShortZobowAddress,
                               ),
                         style: TextStyle(
                           fontSize: 13,
