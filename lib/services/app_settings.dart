@@ -80,6 +80,9 @@ class AppSettings {
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
 
+  /// 快捷地址选择窗口显示模式: 'grid'(平铺) / 'list'(列表)
+  String zobowPresetViewMode = 'grid';
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -142,6 +145,8 @@ class AppSettings {
       followEnabled = json['followEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
       zobowProfileId = json['zobowProfileId'] as String? ?? '';
+      zobowPresetViewMode =
+          (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -180,6 +185,7 @@ class AppSettings {
       'followEnabled': followEnabled,
       'parserType': parserType,
       'zobowProfileId': zobowProfileId,
+      'zobowPresetViewMode': zobowPresetViewMode,
 
       // 视口设置
       'xMin': xMin,

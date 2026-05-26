@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
+import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/zobow_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
@@ -2568,44 +2569,197 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     });
   }
 
-  /// 构建颜色选择器（16色 4×4 网格）
+  /// 构建颜色选择器（15 个黑底可识别预设色 + 自选色入口）
   Widget _buildColorPicker() {
+    final presetColors = ChannelConfig.defaultColors.take(15).toList();
+    final usesCustomColor =
+        !presetColors.any(
+          (color) => color.toARGB32() == _selectedColor.toARGB32(),
+        );
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children:
-          ChannelConfig.defaultColors.map((color) {
-            final isSelected = color.toARGB32() == _selectedColor.toARGB32();
-            return InkWell(
-              onTap: () => setState(() => _selectedColor = color),
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(4),
-                  border:
-                      isSelected
-                          ? Border.all(color: Colors.white, width: 2)
-                          : null,
-                  boxShadow:
-                      isSelected
-                          ? [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.3),
-                              blurRadius: 4,
-                            ),
-                          ]
-                          : null,
-                ),
-                child:
+      children: [
+        ...presetColors.map((color) {
+          final isSelected = color.toARGB32() == _selectedColor.toARGB32();
+          return InkWell(
+            onTap: () => setState(() => _selectedColor = color),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(4),
+                border:
                     isSelected
-                        ? const Icon(Icons.check, size: 16, color: Colors.white)
+                        ? Border.all(color: Colors.white, width: 2)
+                        : null,
+                boxShadow:
+                    isSelected
+                        ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            blurRadius: 4,
+                          ),
+                        ]
                         : null,
               ),
-            );
-          }).toList(),
+              child:
+                  isSelected
+                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      : null,
+            ),
+          );
+        }),
+        Tooltip(
+          message: '自定义颜色',
+          child: InkWell(
+            onTap: _showCustomColorPicker,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: usesCustomColor ? _selectedColor : Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color:
+                      usesCustomColor
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey.shade400,
+                  width: usesCustomColor ? 2 : 1,
+                ),
+              ),
+              child: Icon(
+                Icons.palette_outlined,
+                size: 18,
+                color:
+                    usesCustomColor
+                        ? _foregroundForColor(_selectedColor)
+                        : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
+  }
+
+  Future<void> _showCustomColorPicker() async {
+    var selectedHsv = HSVColor.fromColor(_selectedColor);
+    final selectedColor = await showDialog<Color>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final color = selectedHsv.toColor();
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: const Text('自定义颜色'),
+              content: SizedBox(
+                width: 300,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.grey.shade400),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _buildColorSlider(
+                      label: '色相',
+                      value: selectedHsv.hue,
+                      max: 360,
+                      displayValue: '${selectedHsv.hue.round()}°',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withHue(value);
+                        });
+                      },
+                    ),
+                    _buildColorSlider(
+                      label: '饱和',
+                      value: selectedHsv.saturation * 100,
+                      max: 100,
+                      displayValue:
+                          '${(selectedHsv.saturation * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withSaturation(value / 100);
+                        });
+                      },
+                    ),
+                    _buildColorSlider(
+                      label: '亮度',
+                      value: selectedHsv.value * 100,
+                      max: 100,
+                      displayValue: '${(selectedHsv.value * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withValue(value / 100);
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, color),
+                  child: const Text('确定'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (selectedColor != null && mounted) {
+      setState(() => _selectedColor = selectedColor);
+    }
+  }
+
+  Widget _buildColorSlider({
+    required String label,
+    required double value,
+    required double max,
+    required String displayValue,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 34,
+          child: Text(label, style: const TextStyle(fontSize: 12)),
+        ),
+        Expanded(
+          child: Slider(value: value, min: 0, max: max, onChanged: onChanged),
+        ),
+        SizedBox(
+          width: 38,
+          child: Text(
+            displayValue,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _foregroundForColor(Color background) {
+    return ThemeData.estimateBrightnessForColor(background) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
   }
 }
 
@@ -3237,7 +3391,29 @@ class _PresetSelectorDialog extends StatefulWidget {
 enum _PresetViewMode { list, grid }
 
 class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
-  _PresetViewMode _viewMode = _PresetViewMode.grid;
+  late _PresetViewMode _viewMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewMode =
+        AppSettings().zobowPresetViewMode == 'list'
+            ? _PresetViewMode.list
+            : _PresetViewMode.grid;
+  }
+
+  void _toggleViewMode() {
+    setState(() {
+      _viewMode =
+          _viewMode == _PresetViewMode.list
+              ? _PresetViewMode.grid
+              : _PresetViewMode.list;
+    });
+    final settings = AppSettings();
+    settings.zobowPresetViewMode =
+        _viewMode == _PresetViewMode.list ? 'list' : 'grid';
+    settings.save();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3256,13 +3432,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
           Tooltip(
             message: _viewMode == _PresetViewMode.list ? '切换为平铺' : '切换为列表',
             child: InkWell(
-              onTap:
-                  () => setState(() {
-                    _viewMode =
-                        _viewMode == _PresetViewMode.list
-                            ? _PresetViewMode.grid
-                            : _PresetViewMode.list;
-                  }),
+              onTap: _toggleViewMode,
               child: Icon(
                 _viewMode == _PresetViewMode.list
                     ? Icons.grid_view

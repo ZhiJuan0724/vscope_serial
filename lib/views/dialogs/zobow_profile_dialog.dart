@@ -292,6 +292,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           ],
         ),
       ),
+      actionsAlignment: MainAxisAlignment.spaceBetween,
       actions: [
         if (widget.profile != null)
           TextButton.icon(
@@ -300,19 +301,23 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
             label: const Text('删除配置'),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
           ),
-        if (widget.profile != null) const Spacer(),
         if (widget.profile == null)
           TextButton.icon(
             onPressed: _importProfile,
             icon: const Icon(Icons.file_upload_outlined, size: 16),
             label: const Text('导入 JSON'),
           ),
-        if (widget.profile == null) const Spacer(),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
+          ],
         ),
-        ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
       ],
     );
   }
