@@ -64,6 +64,12 @@ class SerialService extends ChangeNotifier {
   // 原始文本数据（用于原始数据页面显示）
   final List<String> receivedLines = [];
   int _receivedTextBytes = 0;
+  String _pendingReceiveText = '';
+  int? _pendingReceiveLineIndex;
+  String _pendingReceiveLinePrefix = '';
+  String _pendingSendText = '';
+  int? _pendingSendLineIndex;
+  String _pendingSendLinePrefix = '';
   static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
   // 虚拟滚动窗口：最多保留500行在内存中用于显示，超出时按FIFO丢弃
   static const int _maxDisplayLines = 500;
@@ -248,8 +254,8 @@ class SerialService extends ChangeNotifier {
         nativeData.timestampUs,
       );
 
-      if (showTimestamp) {
-        // 开启时间戳时使用时间窗口聚合器分包
+      if (showTimestamp && receiveHex) {
+        // HEX + 时间戳显示时使用时间窗口聚合器分包
         _aggregator ??= TimeWindowAggregator(
           windowUs: timeWindowUs,
           onWindowComplete: (timestamp, aggregatedData) {
@@ -258,7 +264,7 @@ class SerialService extends ChangeNotifier {
         );
         _aggregator!.feed(data, receiveTime);
       } else {
-        // 不开启时间戳时直接显示，不强制分包
+        // 文本模式不按底层回调分包，只按换行符更新显示行
         _addRawDataLine(receiveTime, data);
       }
     }
@@ -339,57 +345,186 @@ class SerialService extends ChangeNotifier {
 
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
-    String text;
     if (receiveHex) {
-      text = data
+      final text = data
           .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
           .join(' ');
+      final prefix = showTimestamp ? '← [${_formatTimestamp(timestamp)}] ' : '';
+      _addDisplayLine('$prefix$text (${data.length} bytes)');
     } else {
-      text = utf8.decode(data, allowMalformed: true);
+      _addTextDataLines(
+        utf8.decode(data, allowMalformed: true),
+        timestamp: timestamp,
+        isReceive: true,
+      );
     }
+  }
 
-    final ts = showTimestamp ? '[${_formatTimestamp(timestamp)}] ' : '';
-    final line = '← $ts$text (${data.length} bytes)';
+  @visibleForTesting
+  void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
+    _addRawDataLine(timestamp ?? DateTime.now(), data);
+  }
 
-    _addDisplayLine(line);
+  @visibleForTesting
+  void debugAddSendData(Uint8List data) {
+    _addSendDataLine(data);
   }
 
   /// 添加一行发送数据显示
   void _addSendDataLine(Uint8List data) {
-    String text;
     if (sendHex) {
-      text = data
+      final text = data
           .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
           .join(' ');
+      final prefix =
+          showTimestamp ? '→ [${_formatTimestamp(DateTime.now())}] ' : '';
+      final hexMark = !receiveHex ? '[HEX] ' : '';
+      _addDisplayLine('$prefix$hexMark$text (${data.length} bytes)');
     } else {
-      text = utf8.decode(data, allowMalformed: true);
+      _addTextDataLines(
+        utf8.decode(data, allowMalformed: true),
+        timestamp: DateTime.now(),
+        isReceive: false,
+      );
+    }
+  }
+
+  void _addTextDataLines(
+    String text, {
+    required DateTime timestamp,
+    required bool isReceive,
+  }) {
+    if (text.isEmpty) return;
+
+    final prefix =
+        showTimestamp
+            ? '${isReceive ? '←' : '→'} [${_formatTimestamp(timestamp)}] '
+            : '';
+    var pendingText = isReceive ? _pendingReceiveText : _pendingSendText;
+    var pendingIndex =
+        isReceive ? _pendingReceiveLineIndex : _pendingSendLineIndex;
+    var pendingPrefix =
+        isReceive ? _pendingReceiveLinePrefix : _pendingSendLinePrefix;
+
+    void savePending() {
+      if (isReceive) {
+        _pendingReceiveText = pendingText;
+        _pendingReceiveLineIndex = pendingIndex;
+        _pendingReceiveLinePrefix = pendingPrefix;
+      } else {
+        _pendingSendText = pendingText;
+        _pendingSendLineIndex = pendingIndex;
+        _pendingSendLinePrefix = pendingPrefix;
+      }
     }
 
-    final ts = showTimestamp ? '[${_formatTimestamp(DateTime.now())}] ' : '';
-    // 当发送HEX但显示模式不是HEX时，标记为 [HEX] 以便区分
-    final hexMark = (sendHex && !receiveHex) ? '[HEX] ' : '';
-    final line = '→ $ts$hexMark$text (${data.length} bytes)';
+    void ensureLine() {
+      if (pendingIndex != null &&
+          pendingIndex! >= 0 &&
+          pendingIndex! < receivedLines.length) {
+        return;
+      }
+      pendingPrefix = prefix;
+      pendingIndex = _addDisplayLine(pendingPrefix);
+    }
 
-    _addDisplayLine(line);
+    void updateLine() {
+      ensureLine();
+      _updateDisplayLine(pendingIndex!, '$pendingPrefix$pendingText');
+    }
+
+    for (var i = 0; i < text.length; i++) {
+      final codeUnit = text.codeUnitAt(i);
+      if (codeUnit == 13 || codeUnit == 10) {
+        updateLine();
+        pendingText = '';
+        pendingIndex = null;
+        pendingPrefix = '';
+        if (codeUnit == 13 &&
+            i + 1 < text.length &&
+            text.codeUnitAt(i + 1) == 10) {
+          i++;
+        }
+      } else {
+        pendingText += text[i];
+      }
+    }
+
+    if (pendingText.isNotEmpty) {
+      updateLine();
+    }
+    savePending();
   }
 
   /// 添加一行到显示列表（通用）
-  void _addDisplayLine(String line) {
+  int _addDisplayLine(String line) {
     receivedLines.add(line);
     _receivedTextBytes += line.length * 2; // UTF-16 编码估算
 
+    _trimDisplayLines();
+    Future.microtask(() => notifyListeners());
+    return receivedLines.length - 1;
+  }
+
+  void _updateDisplayLine(int index, String line) {
+    if (index < 0 || index >= receivedLines.length) return;
+    final oldLine = receivedLines[index];
+    receivedLines[index] = line;
+    _receivedTextBytes += (line.length - oldLine.length) * 2;
+    _trimDisplayLines();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _trimDisplayLines() {
     // 文本缓存限制（按字节）
     while (_receivedTextBytes > _maxReceivedTextBytes &&
         receivedLines.isNotEmpty) {
       final removed = receivedLines.removeAt(0);
       _receivedTextBytes -= removed.length * 2;
+      _shiftPendingLineIndexesAfterRemove();
     }
     // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
     while (receivedLines.length > _maxDisplayLines) {
       final removed = receivedLines.removeAt(0);
       _receivedTextBytes -= removed.length * 2;
+      _shiftPendingLineIndexesAfterRemove();
     }
+  }
+
+  void _shiftPendingLineIndexesAfterRemove() {
+    _pendingReceiveLineIndex = _shiftPendingLineIndex(_pendingReceiveLineIndex);
+    _pendingSendLineIndex = _shiftPendingLineIndex(_pendingSendLineIndex);
+  }
+
+  int? _shiftPendingLineIndex(int? index) {
+    if (index == null) return null;
+    if (index <= 0) return null;
+    return index - 1;
+  }
+
+  void setReceiveHex(bool value) {
+    if (receiveHex == value) return;
+    receiveHex = value;
+    _aggregator = null;
+    _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
+  }
+
+  void setShowTimestamp(bool value) {
+    if (showTimestamp == value) return;
+    showTimestamp = value;
+    _aggregator = null;
+    _resetTextLineBuffers();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _resetTextLineBuffers() {
+    _pendingReceiveText = '';
+    _pendingReceiveLineIndex = null;
+    _pendingReceiveLinePrefix = '';
+    _pendingSendText = '';
+    _pendingSendLineIndex = null;
+    _pendingSendLinePrefix = '';
   }
 
   String _formatTimestamp(DateTime dt) {
@@ -411,6 +546,7 @@ class SerialService extends ChangeNotifier {
     _rawBytes.clear();
     receivedLines.clear();
     _receivedTextBytes = 0;
+    _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
   }
 
@@ -475,12 +611,17 @@ class SerialService extends ChangeNotifier {
   Uint8List get rawBytes => _rawBytes.toBytes();
 
   /// 获取数据大小信息
-  Map<String, String> get dataStats => {
-    '原始字节':
-        '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
-    '文本行数': '${receivedLines.length}',
-    '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
-  };
+  Map<String, String> get dataStats {
+    final stats = <String, String>{
+      '文本行数': '${receivedLines.length}',
+      '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+    };
+    if (receiveHex) {
+      stats['原始字节'] =
+          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)';
+    }
+    return stats;
+  }
 
   Uint8List? prepareSendData(String text) {
     if (!isConnected) {

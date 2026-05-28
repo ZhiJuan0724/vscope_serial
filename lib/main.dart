@@ -106,7 +106,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   final List<({String label, IconData icon, Widget page})> _tabs = [
-    (label: '原始数据', icon: Icons.terminal, page: const RawDataPage()),
+    (label: '数据收发', icon: Icons.terminal, page: const RawDataPage()),
     (label: '绘图', icon: Icons.show_chart, page: const PlotPage()),
     (label: '协议', icon: Icons.settings_ethernet, page: const ProtocolPage()),
   ];

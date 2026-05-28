@@ -7,7 +7,7 @@ import '../../services/serial_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
-/// 原始数据页面
+/// 数据收发页面
 class RawDataPage extends StatefulWidget {
   const RawDataPage({super.key});
 
@@ -121,7 +121,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       const Text(
-                        '数据窗口',
+                        '数据收发',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(width: 8),
@@ -344,7 +344,9 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                     ),
                     child: Text(
-                      '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                      vm.receiveHex
+                          ? '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}'
+                          : '行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -673,7 +675,7 @@ class _RawDataPageState extends State<RawDataPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('分包时间 (μs):'),
+                const Text('HEX分包时间 (μs):'),
                 const SizedBox(height: 8),
                 TextField(
                   controller: controller,
@@ -689,7 +691,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+                  '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
