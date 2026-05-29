@@ -126,6 +126,7 @@ class SerialService extends ChangeNotifier {
   /// 更新串口配置并通知监听者（供外部调用）
   void updateConfig(SerialConfig newConfig) {
     config = newConfig;
+    _saveSettings();
     notifyListeners();
   }
 

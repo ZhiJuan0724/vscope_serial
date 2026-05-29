@@ -108,7 +108,9 @@ class _StatusDialogState extends State<StatusDialog> {
                   onChanged: (value) {
                     final rate = int.tryParse(value);
                     if (rate != null && rate > 0) {
-                      service.config = service.config.copyWith(baudRate: rate);
+                      service.updateConfig(
+                        service.config.copyWith(baudRate: rate),
+                      );
                     }
                   },
                 ),
