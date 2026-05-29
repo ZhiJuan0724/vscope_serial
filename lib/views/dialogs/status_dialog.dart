@@ -46,25 +46,34 @@ class _StatusDialogState extends State<StatusDialog> {
                         decoration: const InputDecoration(
                           labelText: '串口',
                           border: OutlineInputBorder(),
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
-                        items: service.availablePorts.map((port) {
-                          return DropdownMenuItem(
-                            value: port,
-                            child: Text(port),
-                          );
-                        }).toList(),
-                        onChanged: service.isConnected
-                            ? null
-                            : (value) {
-                                service.updateConfig(service.config.copyWith(port: value));
-                              },
+                        items:
+                            service.availablePorts.map((port) {
+                              return DropdownMenuItem(
+                                value: port,
+                                child: Text(port),
+                              );
+                            }).toList(),
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) {
+                                  service.updateConfig(
+                                    service.config.copyWith(port: value),
+                                  );
+                                },
                       ),
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
-                      onPressed: service.isConnected ? null : () => service.refreshPorts(),
+                      onPressed:
+                          service.isConnected
+                              ? null
+                              : () => service.refreshPorts(),
                       icon: const Icon(Icons.refresh, size: 18),
                       label: const Text('刷新'),
                     ),
@@ -76,16 +85,25 @@ class _StatusDialogState extends State<StatusDialog> {
                   value: service.config.baudRate.toString(),
                   hint: '波特率',
                   items: const [
-                    '1200', '2400', '4800', '9600', '19200',
-                    '38400', '57600', '115200', '230400',
-                    '460800', '921600',
+                    '9600',
+                    '19200',
+                    '38400',
+                    '57600',
+                    '115200',
+                    '230400',
+                    '460800',
+                    '512000',
+                    '921600',
+                    '1152000',
                   ],
                   enabled: !service.isConnected,
                   decoration: const InputDecoration(
                     labelText: '波特率',
                     border: OutlineInputBorder(),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                   ),
                   onChanged: (value) {
                     final rate = int.tryParse(value);
@@ -105,20 +123,26 @@ class _StatusDialogState extends State<StatusDialog> {
                         decoration: const InputDecoration(
                           labelText: '数据位',
                           border: OutlineInputBorder(),
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
-                        items: [5, 6, 7, 8].map((bits) {
-                          return DropdownMenuItem(
-                            value: bits,
-                            child: Text('$bits'),
-                          );
-                        }).toList(),
-                        onChanged: service.isConnected
-                            ? null
-                            : (value) {
-                                service.updateConfig(service.config.copyWith(dataBits: value));
-                              },
+                        items:
+                            [5, 6, 7, 8].map((bits) {
+                              return DropdownMenuItem(
+                                value: bits,
+                                child: Text('$bits'),
+                              );
+                            }).toList(),
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) {
+                                  service.updateConfig(
+                                    service.config.copyWith(dataBits: value),
+                                  );
+                                },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -129,20 +153,26 @@ class _StatusDialogState extends State<StatusDialog> {
                         decoration: const InputDecoration(
                           labelText: '停止位',
                           border: OutlineInputBorder(),
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
-                        items: [1, 2].map((bits) {
-                          return DropdownMenuItem(
-                            value: bits,
-                            child: Text('$bits'),
-                          );
-                        }).toList(),
-                        onChanged: service.isConnected
-                            ? null
-                            : (value) {
-                                service.updateConfig(service.config.copyWith(stopBits: value));
-                              },
+                        items:
+                            [1, 2].map((bits) {
+                              return DropdownMenuItem(
+                                value: bits,
+                                child: Text('$bits'),
+                              );
+                            }).toList(),
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) {
+                                  service.updateConfig(
+                                    service.config.copyWith(stopBits: value),
+                                  );
+                                },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -153,8 +183,10 @@ class _StatusDialogState extends State<StatusDialog> {
                         decoration: const InputDecoration(
                           labelText: '校验位',
                           border: OutlineInputBorder(),
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
                         items: [
                           DropdownMenuItem(
@@ -170,11 +202,14 @@ class _StatusDialogState extends State<StatusDialog> {
                             child: const Text('偶校验'),
                           ),
                         ],
-                        onChanged: service.isConnected
-                            ? null
-                            : (value) {
-                                service.updateConfig(service.config.copyWith(parity: value));
-                              },
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) {
+                                  service.updateConfig(
+                                    service.config.copyWith(parity: value),
+                                  );
+                                },
                       ),
                     ),
                   ],
