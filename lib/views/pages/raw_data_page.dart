@@ -372,6 +372,17 @@ class _RawDataPageState extends State<RawDataPage> {
             children: [
               const Text('发送数据', style: TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Checkbox(
+                    value: vm.keepSendText,
+                    onChanged: (value) => vm.setKeepSendText(value!),
+                  ),
+                  const Text('发送后保留'),
+                ],
+              ),
+              const SizedBox(width: 8),
               if (!vm.sendHex) ...[
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -589,8 +600,10 @@ class _RawDataPageState extends State<RawDataPage> {
                             if (data != null) {
                               try {
                                 vm.send(data);
-                                _sendController.clear();
-                                setState(() {});
+                                if (!vm.keepSendText) {
+                                  _sendController.clear();
+                                  setState(() {});
+                                }
                               } catch (e) {
                                 if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(

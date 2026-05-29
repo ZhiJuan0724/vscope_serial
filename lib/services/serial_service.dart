@@ -81,6 +81,7 @@ class SerialService extends ChangeNotifier {
 
   // 发送选项
   bool sendHex = false;
+  bool keepSendText = false;
   bool appendLineEnding = false;
   String lineEnding = '\r\n';
   bool enableCrc = false;

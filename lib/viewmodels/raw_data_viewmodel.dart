@@ -13,6 +13,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get showTimestamp => serialService.showTimestamp;
   bool get autoScroll => serialService.autoScroll;
   bool get sendHex => serialService.sendHex;
+  bool get keepSendText => serialService.keepSendText;
   bool get appendLineEnding => serialService.appendLineEnding;
   String get lineEnding => serialService.lineEnding;
   bool get enableCrc => serialService.enableCrc;
@@ -52,6 +53,11 @@ class RawDataViewModel extends BaseViewModel {
   void setSendHex(bool value) {
     serialService.sendHex = value;
     if (!value) serialService.enableCrc = false;
+    Future.microtask(() => serialService.notifyListeners());
+  }
+
+  void setKeepSendText(bool value) {
+    serialService.keepSendText = value;
     Future.microtask(() => serialService.notifyListeners());
   }
 
