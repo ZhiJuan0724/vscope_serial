@@ -54,6 +54,19 @@ void main() {
       expect(service.receivedLines.single, '01 AB (2 bytes)');
       expect(service.dataStats.containsKey('原始字节'), isTrue);
     });
+
+    test('text send data can append configured line ending', () {
+      service.appendLineEnding = true;
+
+      service.lineEnding = '\r';
+      expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\r');
+
+      service.lineEnding = '\n';
+      expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\n');
+
+      service.lineEnding = '\r\n';
+      expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\r\n');
+    });
   });
 }
 

@@ -81,6 +81,8 @@ class SerialService extends ChangeNotifier {
 
   // 发送选项
   bool sendHex = false;
+  bool appendLineEnding = false;
+  String lineEnding = '\r\n';
   bool enableCrc = false;
   bool crcReverseBytes = false; // CRC 高低位反转
   CrcType crcType = CrcType.crc16;
@@ -654,7 +656,7 @@ class SerialService extends ChangeNotifier {
         }
         data = Uint8List.fromList(bytes);
       } else {
-        data = Uint8List.fromList(utf8.encode(text));
+        data = prepareTextSendData(text);
       }
 
       // 追加 CRC
@@ -679,6 +681,12 @@ class SerialService extends ChangeNotifier {
       AppLogger().error('发送失败: $e', category: 'SERIAL');
       return null;
     }
+  }
+
+  @visibleForTesting
+  Uint8List prepareTextSendData(String text) {
+    final content = appendLineEnding ? '$text$lineEnding' : text;
+    return Uint8List.fromList(utf8.encode(content));
   }
 
   void send(Uint8List data) {

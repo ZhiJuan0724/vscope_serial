@@ -90,6 +90,9 @@ class PlotGestureHandler extends StatefulWidget {
   /// 通道配置列表（用于偏移标签拖动检测）
   final List<ChannelConfig> channels;
 
+  /// 当前数据实际包含的活动通道数
+  final int activeChannelCount;
+
   /// 通道偏移拖动回调
   final void Function(int channelIndex, double yOffset)? onChannelOffsetDrag;
 
@@ -102,7 +105,7 @@ class PlotGestureHandler extends StatefulWidget {
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
   final int plotFontSizeDelta;
 
-  const PlotGestureHandler({
+  PlotGestureHandler({
     super.key,
     required this.viewport,
     required this.onViewportChanged,
@@ -128,11 +131,15 @@ class PlotGestureHandler extends StatefulWidget {
     this.onObservationDrag,
     this.onObservationDelete,
     required this.channels,
+    int? activeChannelCount,
     this.onChannelOffsetDrag,
     this.onChannelYScaleZoom,
     this.refreshFps = 30,
     this.plotFontSizeDelta = 0,
-  });
+  }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
+         0,
+         channels.length,
+       );
 
   @override
   State<PlotGestureHandler> createState() => _PlotGestureHandlerState();
@@ -562,7 +569,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final left = PlotViewport().marginLeft;
 
-    for (final ch in widget.channels) {
+    for (final ch in widget.channels.take(widget.activeChannelCount)) {
       if (!ch.visible || !ch.offsetEnabled) continue;
 
       // 计算标签位置（与 PlotPainter 中一致）
@@ -615,7 +622,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 收集可见且开启偏移的通道
     final offsetChannels = <ChannelConfig>[];
-    for (final ch in widget.channels) {
+    for (final ch in widget.channels.take(widget.activeChannelCount)) {
       if (ch.visible && ch.offsetEnabled) {
         offsetChannels.add(ch);
       }

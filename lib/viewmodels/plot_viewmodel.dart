@@ -927,9 +927,16 @@ class PlotViewModel extends BaseViewModel {
       _rateSamples.removeAt(0);
     }
 
-    // 更新实际通道数
-    if (point.channelCount > _activeChannelCount) {
-      _activeChannelCount = point.channelCount;
+    // 更新实际通道数。JustFloat 自动识别模式下以最新有效帧为准，
+    // 避免上一帧较多通道遗留的偏置轴继续显示。
+    final nextActiveChannelCount =
+        _parserType == ParserType.justFloat && _parserConfig.channelCount == 0
+            ? point.channelCount
+            : (point.channelCount > _activeChannelCount
+                ? point.channelCount
+                : _activeChannelCount);
+    if (nextActiveChannelCount != _activeChannelCount) {
+      _activeChannelCount = nextActiveChannelCount;
       // 通道数>8时自动关闭抗锯齿（用户可手动重新开启）
       if (_activeChannelCount > 8 && _antiAliasEnabled) {
         _antiAliasEnabled = false;
@@ -1390,6 +1397,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
   void fitYAxis() {
+    if (_historyPointCount > 0) {
+      _loadWindowForViewport(force: true);
+    }
     if (_dataPoints.isEmpty) return;
     final visiblePoints =
         _dataPoints.where((p) {
@@ -1523,8 +1533,14 @@ class PlotViewModel extends BaseViewModel {
 
   bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
     final valuesByChannel = <int, (double, double)>{};
+    final activeLimit =
+        _activeChannelCount > 0 ? _activeChannelCount : channels.length;
     for (final point in points) {
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+      for (
+        int i = 0;
+        i < point.values.length && i < channels.length && i < activeLimit;
+        i++
+      ) {
         final channel = channels[i];
         if (!channel.visible || !channel.offsetEnabled) continue;
         final value = point.values[i];

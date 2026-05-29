@@ -215,6 +215,53 @@ void main() {
       expect(vm.hintText, contains('Y轴数据范围为0'));
     });
 
+    test('JustFloat偏置通道参与Y轴自适应缩放', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+
+      for (final value in [1.0, 2.0, 5.0]) {
+        vm.ingestParsedResultForTest(ParseResult.ok([value], bytesConsumed: 4));
+      }
+
+      vm.fitYAxis();
+
+      expect(vm.channels[0].yScale, isNot(1.0));
+      expect(vm.channels[0].yOffset, isNot(0.0));
+
+      final fittedValues =
+          [1.0, 5.0]
+              .map(
+                (value) =>
+                    value * vm.channels[0].yScale + vm.channels[0].yOffset,
+              )
+              .toList();
+      expect(fittedValues[0], greaterThan(vm.viewport.yMin));
+      expect(fittedValues[1], lessThan(vm.viewport.yMax));
+    });
+
+    test('JustFloat重新识别更少通道时非活动偏置通道不参与自适应', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(2, true);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1.0, 2.0, 3.0], bytesConsumed: 12),
+      );
+      expect(vm.activeChannelCount, 3);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([10.0, 20.0], bytesConsumed: 8),
+      );
+
+      vm.fitYAxis();
+
+      expect(vm.activeChannelCount, 2);
+      expect(vm.channels[2].offsetEnabled, isTrue);
+      expect(vm.channels[2].yScale, 1.0);
+      expect(vm.channels[2].yOffset, 0.0);
+    });
+
     test('X轴点数小于等于3时跳过自适应', () {
       for (int i = 0; i < 3; i++) {
         vm.ingestParsedResultForTest(

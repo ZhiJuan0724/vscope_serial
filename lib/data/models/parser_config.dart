@@ -48,7 +48,7 @@ class ParserConfig {
   /// 数据类型
   DataType dataType;
 
-  /// 通道数 1-16
+  /// 通道数。JustFloat 使用 0 表示自动识别，其它固定长度协议使用 1-16。
   int channelCount;
 
   /// 是否有校验

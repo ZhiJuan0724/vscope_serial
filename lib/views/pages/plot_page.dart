@@ -975,8 +975,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
 
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
+    final activeChannelCount =
+        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
     final offsetChannelCount =
-        vm.channels.where((c) => c.visible && c.offsetEnabled).length;
+        vm.channels
+            .take(activeChannelCount)
+            .where((c) => c.visible && c.offsetEnabled)
+            .length;
     vm.viewport.setOffsetChannelCount(offsetChannelCount);
 
     return Stack(
@@ -988,6 +993,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           refreshFps: vm.refreshFps,
           plotFontSizeDelta: vm.plotFontSizeDelta,
           channels: vm.channels,
+          activeChannelCount: activeChannelCount,
           data: vm.dataPoints,
           observations: vm.observations,
           onObservationDrag: (index, x) => vm.updateObservation(index, x),
@@ -1038,6 +1044,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               data: vm.dataPoints,
               dataRevision: vm.dataRevision,
               channels: vm.channels,
+              activeChannelCount: activeChannelCount,
               showGrid: vm.showGrid,
               gridDensity: _parseGridDensity(vm.gridDensity),
               cursor: vm.cursor,
@@ -1319,8 +1326,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             .clamp(0, vm.channels.length)
             .toInt();
       case ParserType.fixedFrame:
-      case ParserType.justFloat:
         return vm.parserConfig.channelCount
+            .clamp(0, vm.channels.length)
+            .toInt();
+      case ParserType.justFloat:
+        final configured = vm.parserConfig.channelCount;
+        return (configured > 0 ? configured : vm.channels.length)
             .clamp(0, vm.channels.length)
             .toInt();
     }
@@ -2931,11 +2942,16 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 ),
                 onChanged: (value) {
                   final count = int.tryParse(value);
-                  if (count != null && count >= 1 && count <= 16) {
+                  if (count != null && count >= 0 && count <= 16) {
                     setState(() => _config.channelCount = count);
                   }
                 },
               ),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              '(0=自动识别)',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),

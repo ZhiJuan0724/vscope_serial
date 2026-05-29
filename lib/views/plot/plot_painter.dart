@@ -58,6 +58,9 @@ class PlotPainter extends CustomPainter {
   /// 通道配置列表
   final List<ChannelConfig> channels;
 
+  /// 当前数据实际包含的活动通道数
+  final int activeChannelCount;
+
   /// 是否显示网格
   final bool showGrid;
 
@@ -102,6 +105,7 @@ class PlotPainter extends CustomPainter {
     required this.data,
     this.dataRevision = 0,
     required this.channels,
+    int? activeChannelCount,
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
     this.cursor,
@@ -115,7 +119,10 @@ class PlotPainter extends CustomPainter {
     this.statsX2,
     this.antiAliasEnabled = true,
     this.plotFontSizeDelta = 0,
-  });
+  }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
+         0,
+         channels.length,
+       );
 
   double _fontSize(double base) {
     return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -672,7 +679,7 @@ class PlotPainter extends CustomPainter {
 
     // 收集所有可见且开启偏移的通道，分配列索引
     final offsetChannels = <ChannelConfig>[];
-    for (final ch in channels) {
+    for (final ch in channels.take(activeChannelCount)) {
       if (ch.visible && ch.offsetEnabled) {
         offsetChannels.add(ch);
       }

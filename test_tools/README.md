@@ -18,7 +18,7 @@ Windows 下可使用以下工具创建虚拟串口对：
 
 ## 测试脚本
 
-### 众邦电控协议 (`jack_four_channel_device.py`)
+### 众邦电控协议 (`zobow_device.py`)
 
 模拟 众邦电控设备：
 - 接收 18 字节配置帧（4 个 uint32 通道号，低位先发 + CRC16）
@@ -26,16 +26,16 @@ Windows 下可使用以下工具创建虚拟串口对：
 
 ```bash
 # 基本用法
-python jack_four_channel_device.py --port COM14
+python zobow_device.py --port COM14
 
 # 指定波特率和数据模式
-python jack_four_channel_device.py --port COM14 --baud 115200 --mode sine --interval 50
+python zobow_device.py --port COM14 --baud 115200 --mode sine --interval 50
 
 # 随机数据模式
-python jack_four_channel_device.py --port COM14 --mode random --interval 100
+python zobow_device.py --port COM14 --mode random --interval 100
 
 # 查看帮助
-python jack_four_channel_device.py --help
+python zobow_device.py --help
 ```
 
 **数据模式说明：**
@@ -47,7 +47,7 @@ python jack_four_channel_device.py --help
 ### 测试流程
 
 1. 创建虚拟串口对（如 COM13 <-> COM14）
-2. 启动测试脚本：`python jack_four_channel_device.py --port COM14`
+2. 启动测试脚本：`python zobow_device.py --port COM14`
 3. 在 vscope_serial 中：
    - 选择解析器："众邦电控"
    - 配置通道号（默认 0x00000001~0x00000004）
@@ -60,3 +60,15 @@ python jack_four_channel_device.py --help
 后续可添加其他协议的测试脚本：
 - `firewater_device.py` - FireWater 文本协议
 - `fixed_frame_device.py` - 固定帧头协议
+
+### JustFloat 协议 (`justfloat_device.py`)
+
+模拟 VOFA JustFloat 设备：
+- 接收文本命令：`r [通道1地址] [通道2地址] ...\n`
+- 按命令中的地址数量自动识别通道数，最大 16 通道
+- 周期性发送小端 float32 数组 + 帧尾 `00 00 80 7F`
+
+```bash
+python justfloat_device.py --port COM14
+python justfloat_device.py --port COM14 --mode sine --interval 1
+```
