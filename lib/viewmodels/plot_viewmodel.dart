@@ -1565,11 +1565,15 @@ class PlotViewModel extends BaseViewModel {
     for (final entry in valuesByChannel.entries) {
       final minY = entry.value.$1;
       final maxY = entry.value.$2;
-      if (minY == maxY) continue;
 
       final channel = channels[entry.key];
-      channel.yScale = targetRange / (maxY - minY);
-      channel.yOffset = targetMin - minY * channel.yScale;
+      if (minY == maxY) {
+        channel.yScale = 1.0;
+        channel.yOffset = (targetMin + targetMax) / 2 - minY;
+      } else {
+        channel.yScale = targetRange / (maxY - minY);
+        channel.yOffset = targetMin - minY * channel.yScale;
+      }
       changed = true;
     }
 

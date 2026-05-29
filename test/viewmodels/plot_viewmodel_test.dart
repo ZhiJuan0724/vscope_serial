@@ -240,6 +240,50 @@ void main() {
       expect(fittedValues[1], lessThan(vm.viewport.yMax));
     });
 
+    test('导入常量偏置通道时全自适应会将通道居中', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_const_bin_test_',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      for (int i = 0; i < 4; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([
+            10.0,
+            1.0,
+            3125.0,
+            3125.0,
+            3125.0,
+            3125.0,
+            4.0,
+          ], bytesConsumed: 32),
+        );
+      }
+
+      final binPath = '${dir.path}/constant.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+      for (int i = 0; i < 7; i++) {
+        imported.setChannelOffsetEnabled(i, true);
+      }
+
+      imported.fitAll();
+
+      final center = (imported.viewport.yMin + imported.viewport.yMax) / 2;
+      final values = imported.dataPoints.first.values;
+      for (int i = 0; i < 7; i++) {
+        final displayValue =
+            values[i] * imported.channels[i].yScale +
+            imported.channels[i].yOffset;
+        expect(displayValue, closeTo(center, 1e-9));
+      }
+    });
+
     test('JustFloat重新识别更少通道时非活动偏置通道不参与自适应', () {
       vm.setParserType(ParserType.justFloat);
       vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
