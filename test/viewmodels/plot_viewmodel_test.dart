@@ -69,6 +69,22 @@ void main() {
       expect(vm.cursor!.x, 31.0); // 30.6 吸附到 31
     });
 
+    test('添加观察时旧光标在视口外则放到当前视口内', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
+      vm.updateFollowCursor(1000, 0, const Offset(50, 50));
+
+      vm.addObservation();
+
+      expect(vm.observations, hasLength(1));
+      expect(vm.observations.first.x, inInclusiveRange(20, 40));
+      expect(vm.observations.first.x, 30);
+    });
+
     test('clearData清空数据', () {
       // 先添加一些数据
       vm.startPlotting();

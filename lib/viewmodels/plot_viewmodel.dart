@@ -1871,8 +1871,13 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void addObservation() {
+    final cursorX = _cursor?.x;
+    final sourceX =
+        cursorX != null && viewport.isVisibleX(cursorX)
+            ? cursorX
+            : viewport.xMin + viewport.xRange / 2;
     final x =
-        (_cursor?.x ?? (viewport.xMin + viewport.xRange / 2)).roundToDouble();
+        sourceX.roundToDouble().clamp(viewport.xMin, viewport.xMax).toDouble();
     _observations.add(_buildCursorAtX(x));
     scheduleMicrotask(notifyListeners);
   }
