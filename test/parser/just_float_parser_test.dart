@@ -62,6 +62,19 @@ void main() {
       expect(result.channelCount, 5);
     });
 
+    test('default config uses auto channel detection', () async {
+      final parser = JustFloatParser(ParserConfig.justFloatDefault());
+      addTearDown(parser.dispose);
+
+      final future = parser.outputStream.first;
+      parser.feed(buildFrame([1, 2, 3, 4, 5]));
+      final result = await future;
+
+      expect(result.success, isTrue);
+      expect(result.channelCount, 5);
+      expect(ParserConfig.justFloatDefault().channelCount, 0);
+    });
+
     test('auto detect rejects more than 16 channels', () async {
       final parser = JustFloatParser(
         ParserConfig.justFloatDefault()..channelCount = 0,

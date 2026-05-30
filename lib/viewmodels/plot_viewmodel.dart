@@ -320,6 +320,10 @@ class PlotViewModel extends BaseViewModel {
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
     _parserConfig.type = _parserType;
+    if (_parserType == ParserType.justFloat) {
+      _parserConfig.channelCount =
+          settings.justFloatChannelCount.clamp(0, 16).toInt();
+    }
   }
 
   /// 保存绘图配置到 AppSettings
@@ -334,6 +338,10 @@ class PlotViewModel extends BaseViewModel {
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
     settings.parserType = _parserType.name;
+    if (_parserType == ParserType.justFloat) {
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+    }
     settings.zobowProfileId = _profileService.selectedProfileId;
     // vCursorEnabled 不持久化
     settings.xMin = viewport.xMin;
@@ -606,6 +614,9 @@ class PlotViewModel extends BaseViewModel {
     if (type == ParserType.zobow &&
         _parserConfig.channelCount != ParserConfig.maxZobowChannelCount) {
       _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
+    } else if (type == ParserType.justFloat) {
+      _parserConfig.channelCount =
+          AppSettings().justFloatChannelCount.clamp(0, 16).toInt();
     }
 
     if (type != ParserType.fireWater && _useRandomSource) {
@@ -616,6 +627,10 @@ class PlotViewModel extends BaseViewModel {
     // 保存解析器类型到设置
     final settings = AppSettings();
     settings.parserType = type.name;
+    if (type == ParserType.justFloat) {
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+    }
     settings.save();
 
     if (_isPlotting) {
@@ -656,6 +671,12 @@ class PlotViewModel extends BaseViewModel {
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
     _sourceManager.updateConfig(_sourceConfig);
+    if (_parserType == ParserType.justFloat) {
+      final settings = AppSettings();
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+      settings.save();
+    }
 
     if (_isPlotting) {
       _restartPlotting();

@@ -5,6 +5,7 @@ import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
@@ -320,6 +321,17 @@ void main() {
       expect(vm.channels[2].offsetEnabled, isTrue);
       expect(vm.channels[2].yScale, 1.0);
       expect(vm.channels[2].yOffset, 0.0);
+    });
+
+    test('JustFloat手动通道数写入持久化设置', () {
+      final settings = AppSettings();
+      settings.justFloatChannelCount = 0;
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 6);
+
+      expect(vm.parserConfig.channelCount, 6);
+      expect(settings.justFloatChannelCount, 6);
     });
 
     test('X轴点数小于等于3时跳过自适应', () {

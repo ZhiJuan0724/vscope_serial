@@ -74,8 +74,11 @@ class AppSettings {
   /// 最新点跟随模式开关
   bool followEnabled = false;
 
-  /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow'）
+  /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
+
+  /// JustFloat 通道数（0=自动识别）
+  int justFloatChannelCount = 0;
 
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
@@ -144,6 +147,10 @@ class AppSettings {
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
+      justFloatChannelCount =
+          ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
+              .clamp(0, 16)
+              .toInt();
       zobowProfileId = json['zobowProfileId'] as String? ?? '';
       zobowPresetViewMode =
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
@@ -184,6 +191,7 @@ class AppSettings {
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
       'parserType': parserType,
+      'justFloatChannelCount': justFloatChannelCount,
       'zobowProfileId': zobowProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
 

@@ -168,7 +168,7 @@ class ParserConfig {
 
   /// 创建默认 VOFA JustFloat 配置
   factory ParserConfig.justFloatDefault() {
-    return ParserConfig(type: ParserType.justFloat, channelCount: 4);
+    return ParserConfig(type: ParserType.justFloat, channelCount: 0);
   }
 
   static List<int> _normalizeZobowChannelIds(List<int>? ids) {
