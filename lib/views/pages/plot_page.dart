@@ -1061,6 +1061,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               statsRangeEnabled: vm.statsRangeEnabled,
               statsX1: vm.statsX1,
               statsX2: vm.statsX2,
+              snapHighlights: vm.snapHighlights,
+              snapHighlightEnabled: vm.snapHighlightEnabled,
+              snapHighlightDiameter: vm.snapHighlightDiameter,
               antiAliasEnabled: vm.antiAliasEnabled,
               plotFontSizeDelta: vm.plotFontSizeDelta,
             ),
@@ -1758,6 +1761,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 包含：网格开关、网格密度、刷新帧率、绘图窗口上限。
   void _showAdvancedSettingsDialog(BuildContext context, PlotViewModel vm) {
+    final refreshFpsController = TextEditingController(
+      text: vm.refreshFps.toString(),
+    );
+    final snapDiameterController = TextEditingController(
+      text: vm.snapHighlightDiameter.toStringAsFixed(0),
+    );
     final maxVisibleController = TextEditingController(
       text: vm.maxVisiblePoints.toString(),
     );
@@ -1813,14 +1822,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            Text(
-                              '${vm.refreshFps} fps',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                            SizedBox(
+                              width: 110,
+                              child: TextField(
+                                controller: refreshFpsController,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  suffixText: 'fps',
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                onSubmitted: (value) {
+                                  final fps = int.tryParse(value);
+                                  if (fps != null) {
+                                    vm.setRefreshFps(fps);
+                                    refreshFpsController.text =
+                                        vm.refreshFps.toString();
+                                    setState(() {});
+                                  }
+                                },
                               ),
                             ),
-                            const Spacer(),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                final fps = int.tryParse(
+                                  refreshFpsController.text,
+                                );
+                                if (fps != null) {
+                                  vm.setRefreshFps(fps);
+                                  refreshFpsController.text =
+                                      vm.refreshFps.toString();
+                                  setState(() {});
+                                }
+                              },
+                              child: const Text('应用'),
+                            ),
+                            const SizedBox(width: 8),
                             Text(
                               '${(1000 / vm.refreshFps).round()}ms',
                               style: const TextStyle(
@@ -1830,17 +1872,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ],
                         ),
-                        Slider(
-                          value: vm.refreshFps.toDouble(),
-                          min: 30,
-                          max: 60,
-                          divisions: 30,
-                          label: '${vm.refreshFps} fps',
-                          onChanged: (value) {
-                            vm.setRefreshFps(value.round());
-                            setState(() {}); // 刷新对话框内部状态
-                          },
-                        ),
+                        const SizedBox(height: 4),
                         const Text(
                           '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率',
                           style: TextStyle(fontSize: 11, color: Colors.grey),
@@ -1893,6 +1925,79 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ),
                         const Divider(),
                         // 窗口点数上限
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                '吸附点高亮',
+                                style: TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            Switch(
+                              value: vm.snapHighlightEnabled,
+                              onChanged: (value) {
+                                vm.setSnapHighlightEnabled(value);
+                                setState(() {});
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 110,
+                              child: TextField(
+                                controller: snapDiameterController,
+                                keyboardType: TextInputType.number,
+                                enabled: vm.snapHighlightEnabled,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  suffixText: 'px',
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                onSubmitted: (value) {
+                                  final diameter = double.tryParse(value);
+                                  if (diameter != null) {
+                                    vm.setSnapHighlightDiameter(diameter);
+                                    snapDiameterController.text = vm
+                                        .snapHighlightDiameter
+                                        .toStringAsFixed(0);
+                                    setState(() {});
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed:
+                                  vm.snapHighlightEnabled
+                                      ? () {
+                                        final diameter = double.tryParse(
+                                          snapDiameterController.text,
+                                        );
+                                        if (diameter != null) {
+                                          vm.setSnapHighlightDiameter(diameter);
+                                          snapDiameterController.text = vm
+                                              .snapHighlightDiameter
+                                              .toStringAsFixed(0);
+                                          setState(() {});
+                                        }
+                                      }
+                                      : null,
+                              child: const Text('应用'),
+                            ),
+                          ],
+                        ),
+                        const Text(
+                          '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                        const Divider(),
                         const Text('绘图窗口上限', style: TextStyle(fontSize: 14)),
                         const SizedBox(height: 8),
                         Row(
@@ -1960,7 +2065,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               ),
             ],
           ),
-    ).whenComplete(maxVisibleController.dispose);
+    ).whenComplete(() {
+      refreshFpsController.dispose();
+      snapDiameterController.dispose();
+      maxVisibleController.dispose();
+    });
   }
 
   /// 显示新建Zobow配置文件对话框

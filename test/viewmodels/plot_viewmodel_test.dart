@@ -56,21 +56,31 @@ void main() {
       expect(vm.viewport.xMax, 500.0);
     });
 
-    test('updateFollowCursor X吸附到整数', () {
+    test('updateFollowCursor 没有数据时保留指针 X', () {
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 100));
       vm.updateFollowCursor(30.4, 100.0, const Offset(50, 50));
 
       expect(vm.cursor, isNotNull);
-      expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
-      expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
+      expect(vm.cursor!.x, 30.4);
+      expect(vm.cursor!.hasData, false);
     });
 
-    test('updateFollowCursor 小数部分>=0.5向上取整', () {
-      vm.updateFollowCursor(30.6, 100.0, const Offset(50, 50));
+    test('updateFollowCursor 吸附到当前显示窗口内的最近点', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
 
-      expect(vm.cursor!.x, 31.0); // 30.6 吸附到 31
+      vm.updateFollowCursor(10, 100.0, const Offset(50, 50));
+
+      expect(vm.cursor!.x, 20.0);
+      expect(vm.cursor!.hasData, true);
+      expect(vm.cursor!.channelValues, [20.0]);
     });
 
-    test('添加观察时旧光标在视口外则放到当前视口内', () {
+    test('添加观察时使用当前显示窗口内的最近点', () {
       for (int i = 0; i < 100; i++) {
         vm.ingestParsedResultForTest(
           ParseResult.ok([i.toDouble()], bytesConsumed: 1),
@@ -83,7 +93,7 @@ void main() {
 
       expect(vm.observations, hasLength(1));
       expect(vm.observations.first.x, inInclusiveRange(20, 40));
-      expect(vm.observations.first.x, 30);
+      expect(vm.observations.first.x, 40);
     });
 
     test('clearData清空数据', () {
@@ -229,14 +239,14 @@ void main() {
       vm.setYCursor1(1234.5);
       vm.setYCursor2(2345.5);
       final measurement = vm.measurementText!;
-      expect(measurement, contains('1235'));
-      expect(measurement, contains('2346'));
+      expect(measurement, contains('1234.5'));
+      expect(measurement, contains('2345.5'));
       expect(measurement, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
 
       vm.toggleStats();
       final stats = vm.statsText!;
-      expect(stats, contains('2346'));
-      expect(stats, contains('1235'));
+      expect(stats, contains('2345.5'));
+      expect(stats, contains('1234.5'));
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
     });
 

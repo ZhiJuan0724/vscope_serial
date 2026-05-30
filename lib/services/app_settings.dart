@@ -58,6 +58,8 @@ class AppSettings {
 
   /// 绘图窗口点数上限，范围 1000000~40000000
   int maxVisiblePoints = 1000000;
+  bool snapHighlightEnabled = true;
+  double snapHighlightDiameter = 8.0;
 
   /// 是否显示网格
   bool showGrid = true;
@@ -142,6 +144,12 @@ class AppSettings {
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
               1000000)
           .clamp(1000000, 40000000);
+      snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
+      snapHighlightDiameter =
+          ((json['snapHighlightDiameter'] as num?)?.toDouble() ?? 8.0).clamp(
+            6.0,
+            12.0,
+          );
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
@@ -186,6 +194,8 @@ class AppSettings {
       'refreshFps': refreshFps,
       'plotFontSizeDelta': plotFontSizeDelta,
       'maxVisiblePoints': maxVisiblePoints,
+      'snapHighlightEnabled': snapHighlightEnabled,
+      'snapHighlightDiameter': snapHighlightDiameter,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'useRandomSource': useRandomSource,

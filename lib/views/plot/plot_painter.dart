@@ -35,6 +35,18 @@ class CursorState {
   });
 }
 
+class SnapHighlightPoint {
+  final double x;
+  final double y;
+  final Color color;
+
+  const SnapHighlightPoint({
+    required this.x,
+    required this.y,
+    required this.color,
+  });
+}
+
 /// 网格密度枚举
 ///
 /// - [sparse]: 每 160px 一条线（最稀疏）
@@ -97,6 +109,9 @@ class PlotPainter extends CustomPainter {
 
   /// 统计范围右边界
   final double? statsX2;
+  final List<SnapHighlightPoint> snapHighlights;
+  final bool snapHighlightEnabled;
+  final double snapHighlightDiameter;
 
   /// 抗锯齿状态。高级设置中不再提供开关，默认固定开启。
   final bool antiAliasEnabled;
@@ -122,6 +137,9 @@ class PlotPainter extends CustomPainter {
     this.statsRangeEnabled = false,
     this.statsX1,
     this.statsX2,
+    this.snapHighlights = const [],
+    this.snapHighlightEnabled = true,
+    this.snapHighlightDiameter = 8,
     this.antiAliasEnabled = true,
     this.plotFontSizeDelta = 0,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
@@ -182,6 +200,8 @@ class PlotPainter extends CustomPainter {
     }
 
     // 统计范围框（独立绘制）
+    _drawSnapHighlights(canvas, size);
+
     if (statsEnabled &&
         statsRangeEnabled &&
         statsX1 != null &&
@@ -627,6 +647,52 @@ class PlotPainter extends CustomPainter {
   }
 
   /// 绘制坐标轴、刻度线和刻度值
+  void _drawSnapHighlights(Canvas canvas, Size size) {
+    if (!snapHighlightEnabled || snapHighlights.isEmpty) return;
+    for (final highlight in snapHighlights) {
+      _drawSnapHighlightAt(
+        canvas,
+        size,
+        highlight.x,
+        highlight.y,
+        highlight.color,
+      );
+    }
+  }
+
+  void _drawSnapHighlightAt(
+    Canvas canvas,
+    Size size,
+    double x,
+    double y,
+    Color color,
+  ) {
+    final sx = viewport.dataToScreenX(x, size.width);
+    final sy = viewport.dataToScreenY(y, size.height);
+    final plotLeft = PlotViewport().marginLeft;
+    final plotRight = size.width - PlotViewport().marginRight;
+    final plotTop = PlotViewport().marginTop;
+    final plotBottom = size.height - PlotViewport().marginBottom;
+    if (sx < plotLeft || sx > plotRight || sy < plotTop || sy > plotBottom) {
+      return;
+    }
+
+    final fillPaint =
+        Paint()
+          ..color = color.withValues(alpha: 0.28)
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+    final strokePaint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..isAntiAlias = true;
+    final radius = (snapHighlightDiameter / 2).clamp(3.0, 6.0).toDouble();
+    canvas.drawCircle(Offset(sx, sy), radius, fillPaint);
+    canvas.drawCircle(Offset(sx, sy), radius, strokePaint);
+  }
+
   void _drawAxes(Canvas canvas, Size size) {
     final axisPaint =
         Paint()
@@ -1286,7 +1352,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X1',
           sx1,
-          PlotViewport().marginTop + 10,
+          PlotViewport().marginTop - 12,
           Colors.cyan,
         );
       }
@@ -1306,7 +1372,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X2',
           sx2,
-          PlotViewport().marginTop + 10,
+          PlotViewport().marginTop - 12,
           Colors.yellow,
         );
       }
@@ -1347,7 +1413,7 @@ class PlotPainter extends CustomPainter {
         _drawMeasurementLabel(
           canvas,
           'Y1',
-          PlotViewport().marginLeft + 10,
+          PlotViewport().marginLeft - 18,
           sy1,
           Colors.cyan,
         );
@@ -1367,7 +1433,7 @@ class PlotPainter extends CustomPainter {
         _drawMeasurementLabel(
           canvas,
           'Y2',
-          PlotViewport().marginLeft + 10,
+          PlotViewport().marginLeft - 18,
           sy2,
           Colors.yellow,
         );
@@ -1577,6 +1643,9 @@ class PlotPainter extends CustomPainter {
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
         oldDelegate.statsX2 != statsX2 ||
+        oldDelegate.snapHighlights != snapHighlights ||
+        oldDelegate.snapHighlightEnabled != snapHighlightEnabled ||
+        oldDelegate.snapHighlightDiameter != snapHighlightDiameter ||
         oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
     final cursorChanged =
         oldDelegate.cursor != cursor ||
