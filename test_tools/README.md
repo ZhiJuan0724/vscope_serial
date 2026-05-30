@@ -77,3 +77,17 @@ python zobow_device.py --help
 python justfloat_device.py --port COM14
 python justfloat_device.py --port COM14 --mode sine --interval 1
 ```
+
+### 绘图 BIN 生成 (`generate_plot_bin.py`)
+
+生成可直接在绘图界面导入的 `.bin` 测试文件：
+
+```bash
+python generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 1800000 --channels 8
+python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
+```
+
+参数：
+- `--packets/-n`：生成包数
+- `--channels/-c`：通道数，1~16
+- `--mode/-m`：`sine`、`step`、`ramp`、`constant`

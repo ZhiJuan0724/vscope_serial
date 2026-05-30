@@ -161,6 +161,27 @@ void main() {
       expect(vm.dataPoints[1].values, [33.0, 44.0]);
     });
 
+    test('CSV 导入会报告读取解析和索引进度', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_progress_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1\n0,11\n1,22\n');
+      final stages = <String>[];
+
+      final error = await vm.importFromCsv(
+        csv.path,
+        onProgress: (progress) => stages.add(progress.stage),
+      );
+
+      expect(error, isNull);
+      expect(stages, contains('读取 CSV'));
+      expect(stages, contains('建立绘图索引'));
+      expect(stages, contains('加载可见窗口'));
+    });
+
     test('setVCursorEnabled切换状态', () {
       expect(vm.vCursorEnabled, false);
 

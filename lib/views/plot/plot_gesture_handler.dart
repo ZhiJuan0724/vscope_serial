@@ -134,7 +134,7 @@ class PlotGestureHandler extends StatefulWidget {
     int? activeChannelCount,
     this.onChannelOffsetDrag,
     this.onChannelYScaleZoom,
-    this.refreshFps = 30,
+    this.refreshFps = 60,
     this.plotFontSizeDelta = 0,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
          0,
@@ -438,7 +438,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _dragViewport = widget.viewport.copy();
       _lastNotifiedViewport = _dragViewport!.copy();
       _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-      _targetFps = widget.refreshFps.clamp(10, 60);
+      _targetFps = widget.refreshFps.clamp(30, 60);
       AppLogger().trace(
         '平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}, targetFps=$_targetFps',
         category: 'GESTURE',

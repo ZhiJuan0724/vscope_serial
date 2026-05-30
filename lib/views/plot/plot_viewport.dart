@@ -24,10 +24,13 @@ class PlotViewport {
 
   /// 绘图区域左边距（留给 Y 轴刻度）
   final double marginLeft = 60;
+
   /// 绘图区域基础右边距
   static const double _baseMarginRight = 20;
+
   /// 每列偏移 Y 轴宽度
   static const double offsetAxisColumnWidth = 42;
+
   /// 可见的偏移通道数量（用于动态计算右边距）
   int _offsetChannelCount = 0;
 
@@ -35,23 +38,29 @@ class PlotViewport {
   int get offsetChannelCount => _offsetChannelCount;
 
   /// 绘图区域右边距（动态：基础边距 + 偏移通道列宽）
-  double get marginRight => _baseMarginRight + _offsetChannelCount * offsetAxisColumnWidth;
+  double get marginRight =>
+      _baseMarginRight + _offsetChannelCount * offsetAxisColumnWidth;
 
   /// 设置偏移通道数量
   void setOffsetChannelCount(int count) {
     _offsetChannelCount = count.clamp(0, 20);
   }
+
   /// 绘图区域上边距
   final double marginTop = 20;
+
   /// 绘图区域下边距（留给 X 轴刻度）
   final double marginBottom = 40;
 
   /// X 轴最小显示范围
   static const double minXRange = 10;
+
   /// X 轴最大显示范围
-  static const double maxXRange = 600000;
+  static const double maxXRange = 40000000;
+
   /// Y 轴最小显示范围
   static const double minYRange = 1;
+
   /// Y 轴最大显示范围
   static const double maxYRange = 1000000000;
 
@@ -71,10 +80,12 @@ class PlotViewport {
   double get yRange => yMax - yMin;
 
   /// 有效绘图区域宽度（去除边距）
-  double plotWidth(double canvasWidth) => canvasWidth - marginLeft - marginRight;
+  double plotWidth(double canvasWidth) =>
+      canvasWidth - marginLeft - marginRight;
 
   /// 有效绘图区域高度（去除边距）
-  double plotHeight(double canvasHeight) => canvasHeight - marginTop - marginBottom;
+  double plotHeight(double canvasHeight) =>
+      canvasHeight - marginTop - marginBottom;
 
   /// 数据 X 坐标 → 屏幕 X 坐标
   double dataToScreenX(double x, double canvasWidth) {
@@ -150,10 +161,7 @@ class PlotViewport {
     final w = plotWidth(canvasWidth);
     if (w <= 0) return copy();
     final dx = deltaX / w * xRange;
-    return copyWith(
-      xMin: xMin - dx,
-      xMax: xMax - dx,
-    );
+    return copyWith(xMin: xMin - dx, xMax: xMax - dx);
   }
 
   /// 垂直平移 Y 轴，返回新的视口
@@ -163,10 +171,7 @@ class PlotViewport {
     final h = plotHeight(canvasHeight);
     if (h <= 0) return copy();
     final dy = deltaY / h * yRange;
-    return copyWith(
-      yMin: yMin + dy,
-      yMax: yMax + dy,
-    );
+    return copyWith(yMin: yMin + dy, yMax: yMax + dy);
   }
 
   /// 重置为默认视图（X: 0~1000, Y: 0~32768），返回新的视口

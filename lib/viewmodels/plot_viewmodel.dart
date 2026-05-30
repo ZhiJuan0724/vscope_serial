@@ -13,6 +13,7 @@ import '../data/models/data_source_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
+import '../data/models/plot_lod_index.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
@@ -26,6 +27,27 @@ import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
 
+typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
+
+class PlotImportProgress {
+  final String stage;
+  final int current;
+  final int total;
+  final String? detail;
+
+  const PlotImportProgress({
+    required this.stage,
+    required this.current,
+    required this.total,
+    this.detail,
+  });
+
+  double? get fraction {
+    if (total <= 0) return null;
+    return (current / total).clamp(0.0, 1.0);
+  }
+}
+
 /// 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
 ///
 /// 主要职责：
@@ -35,7 +57,7 @@ import 'base_viewmodel.dart';
 /// - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
 /// - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
 /// - 管理通道配置（可见性、颜色、缩放、偏移）
-/// - 控制 UI 刷新频率（10~60 fps），实现数据接收与 UI 刷新解耦
+/// - 控制 UI 刷新频率（30~60 fps），实现数据接收与 UI 刷新解耦
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
@@ -63,10 +85,13 @@ class PlotViewModel extends BaseViewModel {
   /// 的数值块，并按视口重建当前绘图窗口。
   final _ParsedValueHistory _parsedHistory = _ParsedValueHistory();
 
+  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放绘制。
+  final PlotLodIndex _lodIndex = PlotLodIndex();
+
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
-  static const int minVisiblePoints = 10000;
-  static const int defaultVisiblePoints = 60000;
-  static const int maxVisiblePointsLimit = 3600000;
+  static const int minVisiblePoints = 1000000;
+  static const int defaultVisiblePoints = 1000000;
+  static const int maxVisiblePointsLimit = 40000000;
   int _maxVisiblePoints = defaultVisiblePoints;
   int _dataRevision = 0;
 
@@ -139,8 +164,8 @@ class PlotViewModel extends BaseViewModel {
   bool _useRandomSource = false;
 
   // ========== 高级设置 ==========
-  /// UI 刷新帧率 (fps)，范围 10~60，默认 30
-  int _refreshFps = 30;
+  /// UI 刷新帧率 (fps)，范围 30~60，默认 60
+  int _refreshFps = 60;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int _plotFontSizeDelta = 0;
@@ -148,8 +173,8 @@ class PlotViewModel extends BaseViewModel {
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
 
-  /// 抗锯齿开关，默认开启，通道>8时自动关闭但可手动修改
-  bool _antiAliasEnabled = true;
+  /// 抗锯齿固定开启。
+  static const bool _antiAliasEnabled = true;
 
   /// 最新点跟随模式：最新数据点保持在视口 3/4 宽度处
   bool _followEnabled = false;
@@ -377,6 +402,7 @@ class PlotViewModel extends BaseViewModel {
   List<CursorState> get observations => List.unmodifiable(_observations);
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
+  PlotLodIndex get lodIndex => _lodIndex;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
@@ -725,6 +751,7 @@ class PlotViewModel extends BaseViewModel {
     // 清空旧数据
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
@@ -871,6 +898,7 @@ class PlotViewModel extends BaseViewModel {
   void clearData() {
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
@@ -903,7 +931,7 @@ class PlotViewModel extends BaseViewModel {
   /// 每包数据都处理（不丢失），但 UI 刷新按 [_notifyBatchSize] 批量触发：
   /// - 添加数据点到缓冲区，超限时从头部批量移除
   /// - 更新速率统计样本
-  /// - 更新实际通道数（>8时自动关闭抗锯齿）
+  /// - 更新实际通道数
   /// - 跟随模式下自动平移视口
   /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
   void _onParseResult(ParseResult result) {
@@ -931,6 +959,7 @@ class PlotViewModel extends BaseViewModel {
     } else {
       _parsedHistory.add(point.values);
     }
+    _lodIndex.add(point.index, point.values);
 
     final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
@@ -958,10 +987,6 @@ class PlotViewModel extends BaseViewModel {
                 : _activeChannelCount);
     if (nextActiveChannelCount != _activeChannelCount) {
       _activeChannelCount = nextActiveChannelCount;
-      // 通道数>8时自动关闭抗锯齿（用户可手动重新开启）
-      if (_activeChannelCount > 8 && _antiAliasEnabled) {
-        _antiAliasEnabled = false;
-      }
     }
 
     // 自动跟随最新数据（仅跟随模式开启时）
@@ -1319,7 +1344,9 @@ class PlotViewModel extends BaseViewModel {
     }
     viewport = _limitXRange(newViewport).copy();
     viewport.setOffsetChannelCount(offsetChannelCount);
-    _loadWindowForViewport();
+    if (!fromDrag) {
+      _loadWindowForViewport();
+    }
     if (!fromDrag) {
       _saveSettings();
       AppLogger().trace(
@@ -1347,6 +1374,7 @@ class PlotViewModel extends BaseViewModel {
       'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
       category: 'PLOT',
     );
+    Future.microtask(() => notifyListeners());
   }
 
   /// 重置视口到默认值并保存历史记录
@@ -1735,9 +1763,9 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 UI 刷新帧率（10~60 fps）
+  /// 设置 UI 刷新帧率（30~60 fps）
   void setRefreshFps(int fps) {
-    _refreshFps = fps.clamp(10, 60);
+    _refreshFps = fps.clamp(30, 60);
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1749,7 +1777,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置绘图窗口点数上限（10000~3600000）
+  /// 设置绘图窗口点数上限（1000000~40000000）
   void setMaxVisiblePoints(int points) {
     final next = points.clamp(minVisiblePoints, maxVisiblePointsLimit).toInt();
     if (next == _maxVisiblePoints) return;
@@ -1772,13 +1800,6 @@ class PlotViewModel extends BaseViewModel {
       _saveSettings();
       Future.microtask(() => notifyListeners());
     }
-  }
-
-  /// 设置抗锯齿开关
-  void setAntiAlias(bool value) {
-    _antiAliasEnabled = value;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
   }
 
   /// 切换 X-X 测量开关
@@ -2328,21 +2349,52 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 导入 ==========
+  static const int _importProgressBatchSize = 10000;
+
+  Future<void> _reportImportProgress(
+    PlotImportProgressCallback? onProgress,
+    String stage,
+    int current,
+    int total, {
+    String? detail,
+  }) async {
+    onProgress?.call(
+      PlotImportProgress(
+        stage: stage,
+        current: current,
+        total: total,
+        detail: detail,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+  }
+
   /// 从 CSV 文件导入数据
   ///
   /// 支持格式：表头 x,y1,y2,...，最大16通道。
   /// 导入成功后会清空现有数据并替换，返回 null；失败返回错误信息。
-  Future<String?> importFromCsv(String filePath) async {
+  Future<String?> importFromCsv(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     try {
       final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
       if (!await file.exists()) {
         return '文件不存在';
       }
 
+      await _reportImportProgress(onProgress, '读取 CSV', 0, 0);
       final lines = await file.readAsLines();
       if (lines.isEmpty) {
         return '文件为空';
       }
+      await _reportImportProgress(
+        onProgress,
+        '读取 CSV',
+        lines.length,
+        lines.length,
+      );
 
       final metadata = <String, dynamic>{};
       var headerLineIndex = 0;
@@ -2379,16 +2431,50 @@ class PlotViewModel extends BaseViewModel {
 
       // 解析数据行
       final importedPoints = <PlotDataPoint>[];
+      final dataLineCount = lines.length - headerLineIndex - 1;
       int index = 0;
       for (int i = headerLineIndex + 1; i < lines.length; i++) {
         final line = lines[i].trim();
-        if (line.isEmpty) continue;
+        if (line.isEmpty) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final parts = line.split(',');
-        if (parts.length < 2) continue;
+        if (parts.length < 2) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final xValue = double.tryParse(parts[0].trim());
-        if (xValue == null) continue;
+        if (xValue == null) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final values = <double>[];
         for (int c = 1; c < parts.length && c <= channelCount; c++) {
@@ -2409,13 +2495,28 @@ class PlotViewModel extends BaseViewModel {
           PlotDataPoint(index: index, timestamp: xValue, values: values),
         );
         index++;
+
+        if (index % _importProgressBatchSize == 0) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 CSV',
+            i - headerLineIndex,
+            dataLineCount,
+            detail: '$index 点',
+          );
+        }
       }
 
       if (importedPoints.isEmpty) {
         return '未找到有效数据行';
       }
 
-      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: metadata,
+        onProgress: onProgress,
+      );
 
       AppLogger().info(
         'CSV 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
@@ -2428,17 +2529,29 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  Future<String?> importFromBin(String filePath) async {
+  Future<String?> importFromBin(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     try {
       final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
       if (!await file.exists()) {
         return '文件不存在';
       }
 
+      await _reportImportProgress(onProgress, '读取 BIN', 0, 0);
       final bytes = await file.readAsBytes();
       if (bytes.length < 24) {
         return 'BIN 文件头不完整';
       }
+      await _reportImportProgress(
+        onProgress,
+        '读取 BIN',
+        bytes.length,
+        bytes.length,
+        detail: '${bytes.length} 字节',
+      );
 
       const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
       for (int i = 0; i < magic.length; i++) {
@@ -2467,10 +2580,17 @@ class PlotViewModel extends BaseViewModel {
       }
 
       final dataBlock = Uint8List.sublistView(bytes, headerLength);
+      await _reportImportProgress(onProgress, '校验 BIN', 0, payloadLength);
       final actualChecksum = calculateCrc(dataBlock, crc32Polys['CRC-32']!);
       if (actualChecksum != expectedChecksum) {
         return 'BIN 校验失败';
       }
+      await _reportImportProgress(
+        onProgress,
+        '校验 BIN',
+        payloadLength,
+        payloadLength,
+      );
 
       final metadata = <String, dynamic>{};
       if (metadataLength > 0) {
@@ -2503,13 +2623,27 @@ class PlotViewModel extends BaseViewModel {
         importedPoints.add(
           PlotDataPoint(index: i, timestamp: x, values: values),
         );
+        if ((i + 1) % _importProgressBatchSize == 0) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 BIN',
+            i + 1,
+            pointCount,
+            detail: '${i + 1} 点',
+          );
+        }
       }
 
       if (importedPoints.isEmpty) {
         return '未找到有效数据行';
       }
 
-      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: metadata,
+        onProgress: onProgress,
+      );
       AppLogger().info(
         'BIN 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
         category: 'PLOT',
@@ -2521,17 +2655,37 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  void _replaceImportedPoints(
+  Future<void> _replaceImportedPoints(
     List<PlotDataPoint> importedPoints,
     int channelCount, {
     Map<String, dynamic>? metadata,
-  }) {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
-    for (final point in importedPoints) {
+    var minY = double.infinity;
+    var maxY = double.negativeInfinity;
+    for (int i = 0; i < importedPoints.length; i++) {
+      final point = importedPoints[i];
       _parsedHistory.add(point.values);
+      _lodIndex.add(point.index, point.values);
+      for (final value in point.values) {
+        if (value < minY) minY = value;
+        if (value > maxY) maxY = value;
+      }
+      if ((i + 1) % _importProgressBatchSize == 0 ||
+          i + 1 == importedPoints.length) {
+        await _reportImportProgress(
+          onProgress,
+          '建立绘图索引',
+          i + 1,
+          importedPoints.length,
+          detail: '${i + 1} 点',
+        );
+      }
     }
     _nextIndex = importedPoints.length;
     _activeChannelCount = channelCount;
@@ -2544,10 +2698,24 @@ class PlotViewModel extends BaseViewModel {
     viewport = PlotViewport(
       xMin: visibleStart.toDouble(),
       xMax: importedPoints.length.toDouble(),
-      yMin: _calculateMinY(importedPoints),
-      yMax: _calculateMaxY(importedPoints),
+      yMin: minY == double.infinity ? 0 : minY,
+      yMax: maxY == double.negativeInfinity ? 1 : maxY,
+    );
+    await _reportImportProgress(
+      onProgress,
+      '加载可见窗口',
+      0,
+      visibleCount,
+      detail: '$visibleCount 点',
     );
     _rebuildParsedWindow(visibleStart, visibleCount);
+    await _reportImportProgress(
+      onProgress,
+      '加载可见窗口',
+      visibleCount,
+      visibleCount,
+      detail: '$visibleCount 点',
+    );
     _viewportHistory.clear();
 
     _cursor = null;
@@ -2612,28 +2780,6 @@ class PlotViewModel extends BaseViewModel {
       AppSettings().parserType = ParserType.zobow.name;
       _saveSettings();
     }
-  }
-
-  /// 计算数据点列表的最小 Y 值
-  double _calculateMinY(List<PlotDataPoint> points) {
-    double min = double.infinity;
-    for (final p in points) {
-      for (final v in p.values) {
-        if (v < min) min = v;
-      }
-    }
-    return min == double.infinity ? 0 : min;
-  }
-
-  /// 计算数据点列表的最大 Y 值
-  double _calculateMaxY(List<PlotDataPoint> points) {
-    double max = double.negativeInfinity;
-    for (final p in points) {
-      for (final v in p.values) {
-        if (v > max) max = v;
-      }
-    }
-    return max == double.negativeInfinity ? 1 : max;
   }
 
   // ========== 众邦电控配置文件操作 ==========

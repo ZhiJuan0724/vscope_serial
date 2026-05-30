@@ -36,7 +36,7 @@ void main() {
       vm.dispose();
     });
 
-    test('keeps total point count while visible window is capped', () {
+    test('keeps total point count while visible window is below cap', () {
       const total = 70000;
       for (int i = 0; i < total; i++) {
         final frame = _zobowFrame(i);
@@ -50,13 +50,37 @@ void main() {
       }
 
       expect(vm.pointCount, total);
-      expect(vm.dataPoints.length, vm.maxVisiblePoints);
-      expect(vm.visibleStartIndex, total - vm.maxVisiblePoints);
-      expect(vm.dataPoints.first.index, total - vm.maxVisiblePoints);
+      expect(vm.dataPoints.length, total);
+      expect(vm.visibleStartIndex, 0);
+      expect(vm.dataPoints.first.index, 0);
       expect(vm.dataPoints.last.index, total - 1);
     });
 
-    test('loads arbitrary historical window from raw frames', () {
+    test(
+      'historical viewport stays inside loaded exact window when below cap',
+      () {
+        const total = 70000;
+        for (int i = 0; i < total; i++) {
+          final frame = _zobowFrame(i);
+          vm.ingestParsedResultForTest(
+            ParseResult.ok(
+              ZobowParser.decodeFrameValues(frame, vm.parserConfig),
+              bytesConsumed: 10,
+              rawBytes: frame,
+            ),
+          );
+        }
+
+        vm.updateViewport(vm.viewport.copyWith(xMin: 1000, xMax: 1100));
+
+        expect(vm.visibleStartIndex, 0);
+        expect(vm.dataPoints.length, total);
+        expect(vm.dataPoints[1000].index, 1000);
+        expect(vm.dataPoints[1000].values, [1000, 1001, 1002, 1003]);
+      },
+    );
+
+    test('drag viewport keeps current exact window until drag ends', () {
       const total = 70000;
       for (int i = 0; i < total; i++) {
         final frame = _zobowFrame(i);
@@ -69,16 +93,40 @@ void main() {
         );
       }
 
-      vm.updateViewport(vm.viewport.copyWith(xMin: 1000, xMax: 1100));
+      final tailStart = vm.visibleStartIndex;
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 1000, xMax: 1100),
+        fromDrag: true,
+      );
 
-      expect(vm.visibleStartIndex, 1000);
-      expect(vm.dataPoints.length, 100);
-      expect(vm.dataPoints.first.index, 1000);
-      expect(vm.dataPoints.first.values, [1000, 1001, 1002, 1003]);
-      expect(vm.dataPoints.last.index, 1099);
+      expect(vm.visibleStartIndex, tailStart);
+
+      vm.saveDragViewport();
+
+      expect(vm.visibleStartIndex, tailStart);
+      expect(vm.dataPoints.length, total);
     });
 
-    test('applies configurable visible window cap', () {
+    test('clearData clears LOD index', () {
+      for (int i = 0; i < 512; i++) {
+        final frame = _zobowFrame(i);
+        vm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(frame, vm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: frame,
+          ),
+        );
+      }
+
+      expect(vm.lodIndex.isNotEmpty, isTrue);
+
+      vm.clearData();
+
+      expect(vm.lodIndex.isEmpty, isTrue);
+    });
+
+    test('clamps configurable visible window cap', () {
       vm.setMaxVisiblePoints(10000);
 
       const total = 25000;
@@ -93,10 +141,10 @@ void main() {
         );
       }
 
-      expect(vm.maxVisiblePoints, 10000);
+      expect(vm.maxVisiblePoints, PlotViewModel.minVisiblePoints);
       expect(vm.pointCount, total);
-      expect(vm.dataPoints.length, 10000);
-      expect(vm.visibleStartIndex, 15000);
+      expect(vm.dataPoints.length, total);
+      expect(vm.visibleStartIndex, 0);
     });
   });
 }

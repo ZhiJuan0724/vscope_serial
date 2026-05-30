@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -1001,6 +1004,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           onViewportChanged:
               (viewport, {fromDrag = false}) =>
                   vm.updateViewport(viewport, fromDrag: fromDrag),
+          onDragEnd: vm.saveDragViewport,
           onCursorChanged: (cursor) {
             if (cursor != null) {
               vm.updateFollowCursor(
@@ -1043,6 +1047,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               viewport: vm.viewport,
               data: vm.dataPoints,
               dataRevision: vm.dataRevision,
+              lodIndex: vm.lodIndex,
               channels: vm.channels,
               activeChannelCount: activeChannelCount,
               showGrid: vm.showGrid,
@@ -1489,15 +1494,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final filePath = result.files.single.path;
     if (filePath == null) return;
+    if (!context.mounted) return;
 
-    final error = await vm.importFromCsv(filePath);
-    if (context.mounted) {
-      if (error == null) {
-        vm.showStatusMessage('CSV 导入成功');
-      } else {
-        vm.showStatusMessage('导入失败: $error');
-      }
-    }
+    await _runImportWithProgress(
+      context: context,
+      vm: vm,
+      filePath: filePath,
+      title: '导入 CSV',
+      importFile: vm.importFromCsv,
+      successMessage: 'CSV 导入成功',
+    );
   }
 
   void _importBin(BuildContext context, PlotViewModel vm) async {
@@ -1511,14 +1517,63 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final filePath = result.files.single.path;
     if (filePath == null) return;
+    if (!context.mounted) return;
 
-    final error = await vm.importFromBin(filePath);
-    if (context.mounted) {
-      if (error == null) {
-        vm.showStatusMessage('BIN 导入成功');
-      } else {
-        vm.showStatusMessage('导入失败: $error');
-      }
+    await _runImportWithProgress(
+      context: context,
+      vm: vm,
+      filePath: filePath,
+      title: '导入 BIN',
+      importFile: vm.importFromBin,
+      successMessage: 'BIN 导入成功',
+    );
+  }
+
+  Future<void> _runImportWithProgress({
+    required BuildContext context,
+    required PlotViewModel vm,
+    required String filePath,
+    required String title,
+    required Future<String?> Function(
+      String filePath, {
+      PlotImportProgressCallback? onProgress,
+    })
+    importFile,
+    required String successMessage,
+  }) async {
+    final progressNotifier = ValueNotifier<PlotImportProgress>(
+      const PlotImportProgress(stage: '准备导入', current: 0, total: 0),
+    );
+    var dialogClosed = false;
+
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (dialogContext) => _PlotImportProgressDialog(
+              title: title,
+              progressListenable: progressNotifier,
+            ),
+      ).whenComplete(() => dialogClosed = true),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final error = await importFile(
+      filePath,
+      onProgress: (progress) => progressNotifier.value = progress,
+    );
+
+    if (context.mounted && !dialogClosed) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    progressNotifier.dispose();
+
+    if (!context.mounted) return;
+    if (error == null) {
+      vm.showStatusMessage(successMessage);
+    } else {
+      vm.showStatusMessage('导入失败: $error');
     }
   }
 
@@ -1701,7 +1756,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 显示高级设置对话框
   ///
-  /// 包含：网格开关、网格密度、刷新帧率、抗锯齿开关。
+  /// 包含：网格开关、网格密度、刷新帧率、绘图窗口上限。
   void _showAdvancedSettingsDialog(BuildContext context, PlotViewModel vm) {
     final maxVisibleController = TextEditingController(
       text: vm.maxVisiblePoints.toString(),
@@ -1777,9 +1832,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ),
                         Slider(
                           value: vm.refreshFps.toDouble(),
-                          min: 10,
+                          min: 30,
                           max: 60,
-                          divisions: 50,
+                          divisions: 30,
                           label: '${vm.refreshFps} fps',
                           onChanged: (value) {
                             vm.setRefreshFps(value.round());
@@ -1787,7 +1842,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           },
                         ),
                         const Text(
-                          '范围: 10~60 fps，默认 30 fps\n值越高绘图越流畅，但可能降低数据接收速率',
+                          '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率',
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                         const Divider(),
@@ -1892,34 +1947,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             color: Colors.grey,
                           ),
                         ),
-                        const Divider(),
-                        // 抗锯齿开关
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('抗锯齿', style: TextStyle(fontSize: 14)),
-                                  Text(
-                                    '默认开启，通道>8时自动关闭',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Switch(
-                              value: vm.antiAliasEnabled,
-                              onChanged: (value) {
-                                vm.setAntiAlias(value);
-                                setState(() {});
-                              },
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   );
@@ -1959,6 +1986,65 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 }
 
 enum _PlotFileFormat { csv, bin }
+
+class _PlotImportProgressDialog extends StatelessWidget {
+  final String title;
+  final ValueListenable<PlotImportProgress> progressListenable;
+
+  const _PlotImportProgressDialog({
+    required this.title,
+    required this.progressListenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 360,
+          child: ValueListenableBuilder<PlotImportProgress>(
+            valueListenable: progressListenable,
+            builder: (context, progress, _) {
+              final fraction = progress.fraction;
+              final percent =
+                  fraction == null ? null : (fraction * 100).clamp(0, 100);
+              final countText =
+                  progress.total <= 0
+                      ? ''
+                      : '${progress.current}/${progress.total}';
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(value: fraction),
+                  const SizedBox(height: 12),
+                  Text(
+                    progress.stage,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    [
+                      if (percent != null) '${percent.toStringAsFixed(1)}%',
+                      if (countText.isNotEmpty) countText,
+                      if (progress.detail != null) progress.detail!,
+                    ].join('  '),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 String _formatZobowAddress(int address, {bool compact = false}) {
   final value = address & 0xFFFFFFFF;
