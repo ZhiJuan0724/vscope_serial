@@ -63,9 +63,22 @@ class JustFloatParser extends IDataParser {
   }
 
   ParseResult _parsePayload(Uint8List payload) {
-    final channelCount = config.channelCount.clamp(1, 16).toInt();
+    if (payload.isEmpty || payload.length % 4 != 0) {
+      return ParseResult.fail('JustFloat帧长度异常，实际 ${payload.length} 字节');
+    }
+
+    final configuredChannelCount = config.channelCount;
+    final channelCount =
+        configuredChannelCount == 0
+            ? payload.length ~/ 4
+            : configuredChannelCount;
+
+    if (channelCount < 1 || channelCount > 16) {
+      return ParseResult.fail('JustFloat通道数异常: $channelCount');
+    }
+
     final expectedLength = channelCount * 4;
-    if (payload.length != expectedLength) {
+    if (configuredChannelCount > 0 && payload.length != expectedLength) {
       return ParseResult.fail(
         'JustFloat帧长度错误，需要 $expectedLength 字节，实际 ${payload.length} 字节',
       );

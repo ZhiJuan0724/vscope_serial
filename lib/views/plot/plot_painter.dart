@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../data/models/channel_config.dart';
+import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_viewport.dart';
 
@@ -34,6 +35,18 @@ class CursorState {
   });
 }
 
+class SnapHighlightPoint {
+  final double x;
+  final double y;
+  final Color color;
+
+  const SnapHighlightPoint({
+    required this.x,
+    required this.y,
+    required this.color,
+  });
+}
+
 /// 网格密度枚举
 ///
 /// - [sparse]: 每 160px 一条线（最稀疏）
@@ -55,8 +68,14 @@ class PlotPainter extends CustomPainter {
   /// 数据版本，窗口长度不变但内容滚动时也会变化
   final int dataRevision;
 
+  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
+  final PlotLodIndex? lodIndex;
+
   /// 通道配置列表
   final List<ChannelConfig> channels;
+
+  /// 当前数据实际包含的活动通道数
+  final int activeChannelCount;
 
   /// 是否显示网格
   final bool showGrid;
@@ -90,8 +109,11 @@ class PlotPainter extends CustomPainter {
 
   /// 统计范围右边界
   final double? statsX2;
+  final List<SnapHighlightPoint> snapHighlights;
+  final bool snapHighlightEnabled;
+  final double snapHighlightDiameter;
 
-  /// 抗锯齿开关
+  /// 抗锯齿状态。高级设置中不再提供开关，默认固定开启。
   final bool antiAliasEnabled;
 
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
@@ -101,7 +123,9 @@ class PlotPainter extends CustomPainter {
     required this.viewport,
     required this.data,
     this.dataRevision = 0,
+    this.lodIndex,
     required this.channels,
+    int? activeChannelCount,
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
     this.cursor,
@@ -113,9 +137,15 @@ class PlotPainter extends CustomPainter {
     this.statsRangeEnabled = false,
     this.statsX1,
     this.statsX2,
+    this.snapHighlights = const [],
+    this.snapHighlightEnabled = true,
+    this.snapHighlightDiameter = 8,
     this.antiAliasEnabled = true,
     this.plotFontSizeDelta = 0,
-  });
+  }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
+         0,
+         channels.length,
+       );
 
   double _fontSize(double base) {
     return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -170,6 +200,8 @@ class PlotPainter extends CustomPainter {
     }
 
     // 统计范围框（独立绘制）
+    _drawSnapHighlights(canvas, size);
+
     if (statsEnabled &&
         statsRangeEnabled &&
         statsX1 != null &&
@@ -258,18 +290,25 @@ class PlotPainter extends CustomPainter {
 
     // 找到可见范围内的数据索引（缓存）
     final visibleIndices = _getVisibleRange();
-    if (visibleIndices.start >= visibleIndices.end) return;
 
     // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
+    final viewportDataCount = math.max(0.0, viewport.xRange);
+    final canUseLod =
+        lodIndex?.canQuery(viewportDataCount, plotW) == true &&
+        activeChannelCount > 0;
     final dataCount = visibleIndices.end - visibleIndices.start;
     final useMinMaxBuckets = dataCount > plotW;
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
-    for (int ch = 0; ch < channels.length; ch++) {
+    for (int ch = 0; ch < channels.length && ch < activeChannelCount; ch++) {
       final channel = channels[ch];
       if (!channel.visible) continue;
-      if (ch >= data.first.values.length) continue;
+      if (!canUseLod &&
+          (visibleIndices.start >= visibleIndices.end ||
+              ch >= data.first.values.length)) {
+        continue;
+      }
 
       _drawChannelOptimized(
         canvas,
@@ -278,6 +317,7 @@ class PlotPainter extends CustomPainter {
         channel,
         visibleIndices,
         useMinMaxBuckets,
+        canUseLod,
       );
     }
   }
@@ -306,8 +346,12 @@ class PlotPainter extends CustomPainter {
     ChannelConfig channel,
     _Range visibleRange,
     bool useMinMaxBuckets,
+    bool canUseLod,
   ) {
-    final visibleCount = visibleRange.end - visibleRange.start;
+    final visibleCount =
+        canUseLod
+            ? math.max(0, viewport.xRange.round())
+            : visibleRange.end - visibleRange.start;
     if (channel.showLine && visibleCount > 1) {
       final linePaint =
           Paint()
@@ -316,7 +360,18 @@ class PlotPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..isAntiAlias = antiAliasEnabled;
 
-      if (useMinMaxBuckets) {
+      final lodSeries =
+          canUseLod
+              ? lodIndex?.query(
+                channelIndex: channelIndex,
+                xMin: viewport.xMin,
+                xMax: viewport.xMax,
+                plotWidth: viewport.plotWidth(size.width),
+              )
+              : null;
+      if (lodSeries != null && lodSeries.isNotEmpty) {
+        _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
+      } else if (useMinMaxBuckets) {
         _drawChannelMinMaxBuckets(
           canvas,
           size,
@@ -340,7 +395,7 @@ class PlotPainter extends CustomPainter {
     final plotW = viewport.plotWidth(size.width);
     final hidePointsForDenseLine =
         channel.showLine && visibleCount > math.max(1, plotW).round();
-    if (!hidePointsForDenseLine) {
+    if (!hidePointsForDenseLine && !canUseLod) {
       final pointPaint =
           Paint()
             ..color = channel.color
@@ -354,7 +409,82 @@ class PlotPainter extends CustomPainter {
         visibleRange,
         pointPaint,
       );
+    } else if (canUseLod && !channel.showLine) {
+      final lodSeries = lodIndex?.query(
+        channelIndex: channelIndex,
+        xMin: viewport.xMin,
+        xMax: viewport.xMax,
+        plotWidth: viewport.plotWidth(size.width),
+      );
+      if (lodSeries != null && lodSeries.isNotEmpty) {
+        final pointPaint =
+            Paint()
+              ..color = channel.color
+              ..style = PaintingStyle.fill
+              ..strokeWidth = channel.pointSize;
+        _drawChannelLodPoints(canvas, size, channel, lodSeries, pointPaint);
+      }
     }
+  }
+
+  void _drawChannelLodSeries(
+    Canvas canvas,
+    Size size,
+    ChannelConfig channel,
+    PlotLodSeries series,
+    Paint paint,
+  ) {
+    if (series.length < 2) return;
+
+    final rawPoints = Float32List(series.length * 2);
+    var rawIndex = 0;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+
+    for (int i = 0; i < series.length; i++) {
+      rawPoints[rawIndex++] = viewport.dataToScreenX(
+        series.indices[i].toDouble(),
+        size.width,
+      );
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(
+            series.values[i] * channel.yScale + channel.yOffset,
+            size.height,
+          )
+          .clamp(marginTop, marginBottom);
+    }
+
+    canvas.drawRawPoints(ui.PointMode.polygon, rawPoints, paint);
+  }
+
+  void _drawChannelLodPoints(
+    Canvas canvas,
+    Size size,
+    ChannelConfig channel,
+    PlotLodSeries series,
+    Paint paint,
+  ) {
+    if (series.isEmpty) return;
+
+    final rawPoints = Float32List(series.length * 2);
+    var rawIndex = 0;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+
+    for (int i = 0; i < series.length; i++) {
+      rawPoints[rawIndex++] = viewport.dataToScreenX(
+        series.indices[i].toDouble(),
+        size.width,
+      );
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(
+            series.values[i] * channel.yScale + channel.yOffset,
+            size.height,
+          )
+          .clamp(marginTop, marginBottom);
+    }
+
+    canvas.drawRawPoints(ui.PointMode.points, rawPoints, paint);
   }
 
   void _drawChannelRawPath(
@@ -517,6 +647,52 @@ class PlotPainter extends CustomPainter {
   }
 
   /// 绘制坐标轴、刻度线和刻度值
+  void _drawSnapHighlights(Canvas canvas, Size size) {
+    if (!snapHighlightEnabled || snapHighlights.isEmpty) return;
+    for (final highlight in snapHighlights) {
+      _drawSnapHighlightAt(
+        canvas,
+        size,
+        highlight.x,
+        highlight.y,
+        highlight.color,
+      );
+    }
+  }
+
+  void _drawSnapHighlightAt(
+    Canvas canvas,
+    Size size,
+    double x,
+    double y,
+    Color color,
+  ) {
+    final sx = viewport.dataToScreenX(x, size.width);
+    final sy = viewport.dataToScreenY(y, size.height);
+    final plotLeft = PlotViewport().marginLeft;
+    final plotRight = size.width - PlotViewport().marginRight;
+    final plotTop = PlotViewport().marginTop;
+    final plotBottom = size.height - PlotViewport().marginBottom;
+    if (sx < plotLeft || sx > plotRight || sy < plotTop || sy > plotBottom) {
+      return;
+    }
+
+    final fillPaint =
+        Paint()
+          ..color = color.withValues(alpha: 0.28)
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+    final strokePaint =
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..isAntiAlias = true;
+    final radius = (snapHighlightDiameter / 2).clamp(3.0, 6.0).toDouble();
+    canvas.drawCircle(Offset(sx, sy), radius, fillPaint);
+    canvas.drawCircle(Offset(sx, sy), radius, strokePaint);
+  }
+
   void _drawAxes(Canvas canvas, Size size) {
     final axisPaint =
         Paint()
@@ -672,7 +848,7 @@ class PlotPainter extends CustomPainter {
 
     // 收集所有可见且开启偏移的通道，分配列索引
     final offsetChannels = <ChannelConfig>[];
-    for (final ch in channels) {
+    for (final ch in channels.take(activeChannelCount)) {
       if (ch.visible && ch.offsetEnabled) {
         offsetChannels.add(ch);
       }
@@ -1176,7 +1352,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X1',
           sx1,
-          PlotViewport().marginTop + 10,
+          PlotViewport().marginTop - 12,
           Colors.cyan,
         );
       }
@@ -1196,7 +1372,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X2',
           sx2,
-          PlotViewport().marginTop + 10,
+          PlotViewport().marginTop - 12,
           Colors.yellow,
         );
       }
@@ -1237,7 +1413,7 @@ class PlotPainter extends CustomPainter {
         _drawMeasurementLabel(
           canvas,
           'Y1',
-          PlotViewport().marginLeft + 10,
+          PlotViewport().marginLeft - 18,
           sy1,
           Colors.cyan,
         );
@@ -1257,7 +1433,7 @@ class PlotPainter extends CustomPainter {
         _drawMeasurementLabel(
           canvas,
           'Y2',
-          PlotViewport().marginLeft + 10,
+          PlotViewport().marginLeft - 18,
           sy2,
           Colors.yellow,
         );
@@ -1460,12 +1636,16 @@ class PlotPainter extends CustomPainter {
         viewportChanged ||
         dataChanged ||
         dataRevisionChanged ||
+        oldDelegate.lodIndex != lodIndex ||
         oldDelegate.cursor != cursor ||
         oldDelegate.showGrid != showGrid ||
         oldDelegate.statsEnabled != statsEnabled ||
         oldDelegate.statsRangeEnabled != statsRangeEnabled ||
         oldDelegate.statsX1 != statsX1 ||
         oldDelegate.statsX2 != statsX2 ||
+        oldDelegate.snapHighlights != snapHighlights ||
+        oldDelegate.snapHighlightEnabled != snapHighlightEnabled ||
+        oldDelegate.snapHighlightDiameter != snapHighlightDiameter ||
         oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
     final cursorChanged =
         oldDelegate.cursor != cursor ||

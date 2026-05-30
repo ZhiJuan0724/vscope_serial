@@ -1,50 +1,49 @@
-# VScope Serial — 高性能串口波形助手
+# VScope Serial
 
-一款基于 Flutter 开发的 Windows 串口数据可视化工具，支持实时波形绘制、多通道数据分析、统计测量等功能。
+VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串口数据接收、协议解析、实时绘图、测量统计和大文件回看。
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)
 
-## 功能特性
+## 功能概览
 
 ### 串口通信
-- **串口连接**：支持 Windows 串口自动枚举与连接
-- **状态栏连接**：底部状态栏可快速打开串口连接弹窗
-- **波特率配置**：常用波特率快速选择
-- **虚拟串口支持**：兼容 com0com 等虚拟串口工具
 
-### 数据解析
-- **FireWater 格式**：CSV 风格文本协议，自动识别通道数
-- **定长帧格式**：自定义帧头、数据类型、通道数、校验方式
-- **众邦电控格式**：固定 10 字节帧，4 通道数据 + CRC16/MODBUS 校验
-- **实时解析**：流式解析，无数据堆积
+- Windows 串口枚举、连接和配置。
+- 底部状态栏快速打开串口连接弹窗。
+- 原始数据收发页支持文本/HEX 显示、发送内容回显、时间戳和自动行尾。
+- Windows 读取路径使用原生 DLL，降低 Dart 层串口读取不稳定的影响。
 
-### 波形绘制
-- **多通道显示**：最多 16 通道，独立颜色/可见性控制
-- **窗口化绘图**：默认仅持有并绘制当前 60000 包窗口，避免 UI 持有全量点对象
-- **原始帧保留**：众邦电控固定 10 字节包在本次运行内全量保留，支持历史窗口按需回看
-- **高性能渲染**：CustomPainter 自绘，极值桶降采样 + 批量绘制
-- **抗锯齿控制**：默认开启，通道>8 自动关闭（可手动调整）
-- **网格系统**：稀疏/普通/密集三档密度
-- **通道样式**：每通道可调整线宽和点半径
+### 协议解析
 
-### 交互操作
-- **滚轮缩放**：X/Y 轴独立缩放，Shift+滚轮精确控制
-- **拖拽平移**：鼠标拖拽移动视口
-- **框选放大**：框选区域放大，支持撤回
-- **自适应**：Y自适应 / X自适应 / 全自适应
+- FireWater：CSV 风格文本数据，支持自动识别或固定通道数。
+- 固定帧头：自定义帧头、数据类型、通道数、校验和帧尾。
+- Zobow：4/8 通道固定帧，CRC16/MODBUS 校验。
+- JustFloat：VOFA 小端 `float32` 数组 + `00 00 80 7F` 帧尾，支持自动通道数识别。
 
-### 测量功能
-- **X-X 测量**：两条垂直线，显示 X1/X2/ΔX，吸附整数
-- **Y-Y 测量**：两条水平线，显示 Y1/Y2/ΔY
-- **统计测量**：各通道 Max/Min/Avg，默认统计当前显示窗口，支持 S1/S2 范围限定
-- **可拖动信息框**：测量结果半透明窗口可拖动位置
+### 绘图
 
-### 数据与导出
-- **CSV 导出**：可选导出路径；众邦电控导出使用全量原始帧，不限当前窗口
-- **配置持久化**：JSON 文件自动保存用户设置
-- **随机数据源**：内置正弦波测试源，频率可调；随机源数据格式适配 FireWater
-- **统一提示**：绘图提示、导入导出结果、不可启动原因显示在底部状态栏右侧
+- 最多 16 通道显示，每通道可设置颜色、名称、显示、偏置、缩放、线宽和点半径。
+- 当前精确窗口默认上限 `1,000,000` 点，可在高级设置中调整到 `40,000,000` 点。
+- 内存级 `PlotLodIndex` 用于大窗口绘制，拖动/缩放时优先绘制 LOD 预览，小窗口使用精确点。
+- 抗锯齿固定开启。
+- 网格支持稀疏、普通、密集三档。
+
+### 交互与测量
+
+- 鼠标滚轮缩放，Shift+滚轮进行 Y 轴缩放。
+- 拖拽平移、框选放大、撤回视口。
+- X-X、Y-Y、统计范围和观察线都吸附当前显示窗口内的数据点。
+- 吸附点可高亮显示，高级设置中可开关，直径范围 `6~12 px`，默认 `8 px`。
+- 吸附高亮固定在吸附时的数据点；缩放后若该点不在当前窗口内则自动隐藏。
+- 统计显示 Max/Min/Avg、样本数和实际数据点 index 范围；大范围统计会采样并标注近似。
+
+### 文件与测试数据
+
+- CSV/BIN 导入导出。
+- 大文件导入异步执行，并显示进度弹窗。
+- Zobow/FixedFrame 导出可基于运行期内保留的原始固定帧数据。
+- `test_tools/generate_plot_bin.py` 可生成大规模 BIN 测试文件，便于直接导入绘图页测试。
 
 ## 快速开始
 
@@ -54,81 +53,117 @@
 - Visual Studio 2022（Windows 桌面开发）
 
 ### 运行
+
 ```bash
 flutter pub get
-flutter run -d windows --release
+flutter run -d windows
 ```
 
 ### 构建 Release
+
 ```bash
 flutter build windows --release
 ```
 
-## CI 与发布
+## 基本使用
 
-项目包含 GitHub Actions 工作流：
+1. 在底部状态栏连接串口，或在绘图页启用随机数据源。
+2. 在绘图页选择并配置解析器：FireWater、固定帧头、Zobow 或 JustFloat。
+3. 点击“开始”进入绘图。
+4. 使用滚轮、拖拽、框选、测量和观察线查看波形细节。
+5. 需要大文件回看时，使用文件导入，等待进度弹窗完成。
 
-- `pull_request` 到 `main`：自动执行静态分析、单元测试和 Windows Release 构建
-- 推送 `v*` 标签：自动执行测试、构建、打包并创建 GitHub Release
-- `workflow_dispatch`：支持在 GitHub 页面手动触发
-- `main` 直接 push 不触发该工作流，避免 `main` 更新后再推送 `v*` 标签时重复执行
+## 高级设置
 
-发布示例：
+绘图页工具栏的设置按钮打开高级设置：
+
+- 网格显示和网格密度。
+- 绘图刷新率：`30~60 fps`，默认 `60 fps`，使用输入框设置。
+- 绘图字体大小偏移。
+- 吸附点高亮：开关和直径 `6~12 px`。
+- 绘图窗口上限：`1,000,000~40,000,000` 点，默认 `1,000,000` 点。
+
+## 测试工具
+
+测试工具位于 `test_tools/`：
+
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+pip install pyserial
 ```
 
-## 使用说明
+Zobow 设备模拟：
 
-### 基本流程
-1. 点击底部状态栏左侧连接状态，连接串口；或在绘图页启用随机数据源
-2. 配置解析器格式（FireWater/定长帧/众邦电控）
-3. 点击"开始"按钮开始绘图
-4. 使用滚轮/拖拽/框选查看波形细节
+```bash
+python test_tools/zobow_device.py --port COM14 --mode sine --interval 1
+```
 
-### 测量功能
-- **X-X/Y-Y**：点击工具栏按钮开启，拖动标签移动测量线
-- **统计**：点击"统计"按钮查看各通道统计值
-- **范围**：点击"范围"按钮限定统计区域，拖动 S1/S2 调整
+JustFloat 设备模拟：
 
-### 高级设置
-- 点击工具栏「⚙️」图标打开高级设置
-- 调整刷新帧率（10~60 fps）
-- 设置绘图窗口上限（10000~3600000 包，默认 60000 包）
-- 切换网格密度、抗锯齿开关
+```bash
+python test_tools/justfloat_device.py --port COM14 --mode sine --interval 1
+```
+
+模拟脚本运行时支持单键控制：`p` 暂停/恢复发送，`r` 复位到等待命令状态，`c` 关闭脚本。
+
+生成可导入绘图页的 BIN 文件：
+
+```bash
+python test_tools/generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 1800000 --channels 8
+python test_tools/generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
+```
 
 ## 项目结构
 
-```
+```text
 lib/
-├── core/           # 工具类、日志
+├── core/           # 工具类、日志、CRC
 ├── data/           # 数据模型、解析器、数据源
-├── services/       # 串口服务、配置持久化
+├── services/       # 串口服务、设置持久化、原生读取
 ├── viewmodels/     # MVVM 视图模型
-├── views/          # UI 页面、绘图组件
+├── views/          # 页面、弹窗和绘图组件
 │   ├── plot/       # PlotPainter、PlotViewport、手势处理
-│   └── pages/      # 主页面
+│   └── pages/      # 绘图、数据收发、协议页面
 └── main.dart
 ```
 
-## 技术亮点
+## 开发检查
 
-- **Isolate 数据生成**：随机源在独立 Isolate 运行，避免阻塞 UI
-- **分块原始字节缓冲**：固定包按包序号直接定位，支持长时间接收后的历史窗口解析
-- **窗口化解析绘图**：全量原始帧保留，`PlotDataPoint` 只维护当前窗口
-- **O(log n) 统计计算**：二分查找加速数据点定位
-- **UI 刷新降频**：数据全接收，UI 按 fps 批量刷新
-- **极值桶降采样**：缩小时保留像素桶 min/max，减少绘制压力并降低尖峰丢失风险
-- **不可变视口**：避免 shouldRepaint 误判，精确控制重绘
+```bash
+dart format lib test
+flutter test
+flutter analyze
+```
 
-## 依赖
+常用定向测试：
 
-- `flutter_libserialport` — 串口通信
-- `provider` — 状态管理
-- `path_provider` — 文件路径
-- `file_picker` — 文件选择
-- `logger` — 日志记录
+```bash
+flutter test test/data/models/plot_lod_index_test.dart
+flutter test test/viewmodels/plot_viewmodel_test.dart
+flutter test test/viewmodels/plot_viewmodel_window_test.dart
+flutter test test/viewmodels/plot_viewmodel_stats_test.dart
+flutter test test/parser/just_float_parser_test.dart
+```
+
+## CI 与发布
+
+- PR 到 `main` 会运行静态分析、测试和 Windows Release 构建。
+- 手动构建可通过 GitHub Actions `workflow_dispatch` 触发。
+- 推送 `v*` tag 会构建发布包并创建 GitHub Release。
+
+```bash
+git tag v1.0.3
+git push origin v1.0.3
+```
+
+## 主要依赖
+
+- `flutter_libserialport`：串口枚举
+- `provider`：状态管理
+- `path_provider`：路径获取
+- `file_picker`：文件选择
+- `logger`：日志
+- `ffi`：原生 DLL 接入
+- `window_manager`：窗口生命周期管理
 
 ## License
 

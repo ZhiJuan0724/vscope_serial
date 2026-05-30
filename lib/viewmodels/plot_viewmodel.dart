@@ -13,6 +13,7 @@ import '../data/models/data_source_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
+import '../data/models/plot_lod_index.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
@@ -26,6 +27,27 @@ import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
 
+typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
+
+class PlotImportProgress {
+  final String stage;
+  final int current;
+  final int total;
+  final String? detail;
+
+  const PlotImportProgress({
+    required this.stage,
+    required this.current,
+    required this.total,
+    this.detail,
+  });
+
+  double? get fraction {
+    if (total <= 0) return null;
+    return (current / total).clamp(0.0, 1.0);
+  }
+}
+
 /// 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
 ///
 /// 主要职责：
@@ -35,7 +57,7 @@ import 'base_viewmodel.dart';
 /// - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
 /// - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
 /// - 管理通道配置（可见性、颜色、缩放、偏移）
-/// - 控制 UI 刷新频率（10~60 fps），实现数据接收与 UI 刷新解耦
+/// - 控制 UI 刷新频率（30~60 fps），实现数据接收与 UI 刷新解耦
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
@@ -63,10 +85,13 @@ class PlotViewModel extends BaseViewModel {
   /// 的数值块，并按视口重建当前绘图窗口。
   final _ParsedValueHistory _parsedHistory = _ParsedValueHistory();
 
+  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放绘制。
+  final PlotLodIndex _lodIndex = PlotLodIndex();
+
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
-  static const int minVisiblePoints = 10000;
-  static const int defaultVisiblePoints = 60000;
-  static const int maxVisiblePointsLimit = 3600000;
+  static const int minVisiblePoints = 1000000;
+  static const int defaultVisiblePoints = 1000000;
+  static const int maxVisiblePointsLimit = 40000000;
   int _maxVisiblePoints = defaultVisiblePoints;
   int _dataRevision = 0;
 
@@ -139,8 +164,8 @@ class PlotViewModel extends BaseViewModel {
   bool _useRandomSource = false;
 
   // ========== 高级设置 ==========
-  /// UI 刷新帧率 (fps)，范围 10~60，默认 30
-  int _refreshFps = 30;
+  /// UI 刷新帧率 (fps)，范围 30~60，默认 60
+  int _refreshFps = 60;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int _plotFontSizeDelta = 0;
@@ -148,8 +173,10 @@ class PlotViewModel extends BaseViewModel {
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
 
-  /// 抗锯齿开关，默认开启，通道>8时自动关闭但可手动修改
-  bool _antiAliasEnabled = true;
+  /// 抗锯齿固定开启。
+  static const bool _antiAliasEnabled = true;
+  bool _snapHighlightEnabled = true;
+  double _snapHighlightDiameter = 8.0;
 
   /// 最新点跟随模式：最新数据点保持在视口 3/4 宽度处
   bool _followEnabled = false;
@@ -174,6 +201,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// 统计范围右边界
   double? _statsX2;
+  String? _cachedStatsText;
+  String? _cachedStatsKey;
 
   /// 当前光标模式
   // cursorMode 已废弃，保留 CursorMode.follow 用于垂直光标标识
@@ -208,6 +237,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
+  List<SnapHighlightPoint> _xCursor1SnapHighlights = const [];
+  List<SnapHighlightPoint> _xCursor2SnapHighlights = const [];
+  List<SnapHighlightPoint> _yCursor1SnapHighlights = const [];
+  List<SnapHighlightPoint> _yCursor2SnapHighlights = const [];
 
   // ========== 众邦电控配置文件 ==========
   /// 配置文件服务
@@ -304,6 +337,8 @@ class PlotViewModel extends BaseViewModel {
     );
     _showGrid = settings.showGrid;
     _gridDensity = settings.gridDensity;
+    _snapHighlightEnabled = settings.snapHighlightEnabled;
+    _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
     _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency)
@@ -320,6 +355,10 @@ class PlotViewModel extends BaseViewModel {
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
     _parserConfig.type = _parserType;
+    if (_parserType == ParserType.justFloat) {
+      _parserConfig.channelCount =
+          settings.justFloatChannelCount.clamp(0, 16).toInt();
+    }
   }
 
   /// 保存绘图配置到 AppSettings
@@ -328,12 +367,18 @@ class PlotViewModel extends BaseViewModel {
     settings.refreshFps = _refreshFps;
     settings.plotFontSizeDelta = _plotFontSizeDelta;
     settings.maxVisiblePoints = _maxVisiblePoints;
+    settings.snapHighlightEnabled = _snapHighlightEnabled;
+    settings.snapHighlightDiameter = _snapHighlightDiameter;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
     settings.parserType = _parserType.name;
+    if (_parserType == ParserType.justFloat) {
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+    }
     settings.zobowProfileId = _profileService.selectedProfileId;
     // vCursorEnabled 不持久化
     settings.xMin = viewport.xMin;
@@ -365,10 +410,24 @@ class PlotViewModel extends BaseViewModel {
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
+  bool get snapHighlightEnabled => _snapHighlightEnabled;
+  double get snapHighlightDiameter => _snapHighlightDiameter;
   CursorState? get cursor => _cursor;
   List<CursorState> get observations => List.unmodifiable(_observations);
+  List<SnapHighlightPoint> get snapHighlights {
+    if (!_snapHighlightEnabled) return const [];
+    return [
+      ..._xCursor1SnapHighlights,
+      ..._xCursor2SnapHighlights,
+      ..._yCursor1SnapHighlights,
+      ..._yCursor2SnapHighlights,
+      ..._observationSnapHighlights(),
+    ];
+  }
+
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
+  PlotLodIndex get lodIndex => _lodIndex;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
@@ -606,6 +665,9 @@ class PlotViewModel extends BaseViewModel {
     if (type == ParserType.zobow &&
         _parserConfig.channelCount != ParserConfig.maxZobowChannelCount) {
       _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
+    } else if (type == ParserType.justFloat) {
+      _parserConfig.channelCount =
+          AppSettings().justFloatChannelCount.clamp(0, 16).toInt();
     }
 
     if (type != ParserType.fireWater && _useRandomSource) {
@@ -616,6 +678,10 @@ class PlotViewModel extends BaseViewModel {
     // 保存解析器类型到设置
     final settings = AppSettings();
     settings.parserType = type.name;
+    if (type == ParserType.justFloat) {
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+    }
     settings.save();
 
     if (_isPlotting) {
@@ -656,6 +722,12 @@ class PlotViewModel extends BaseViewModel {
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
     _sourceManager.updateConfig(_sourceConfig);
+    if (_parserType == ParserType.justFloat) {
+      final settings = AppSettings();
+      settings.justFloatChannelCount =
+          _parserConfig.channelCount.clamp(0, 16).toInt();
+      settings.save();
+    }
 
     if (_isPlotting) {
       _restartPlotting();
@@ -704,6 +776,7 @@ class PlotViewModel extends BaseViewModel {
     // 清空旧数据
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
@@ -737,6 +810,7 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _clearSnapHighlights();
 
     // 创建解析器
     _parser = _createParser();
@@ -850,6 +924,7 @@ class PlotViewModel extends BaseViewModel {
   void clearData() {
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
     _visibleStartIndex = 0;
@@ -868,6 +943,7 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _clearSnapHighlights();
     Future.microtask(() => notifyListeners());
   }
 
@@ -882,7 +958,7 @@ class PlotViewModel extends BaseViewModel {
   /// 每包数据都处理（不丢失），但 UI 刷新按 [_notifyBatchSize] 批量触发：
   /// - 添加数据点到缓冲区，超限时从头部批量移除
   /// - 更新速率统计样本
-  /// - 更新实际通道数（>8时自动关闭抗锯齿）
+  /// - 更新实际通道数
   /// - 跟随模式下自动平移视口
   /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
   void _onParseResult(ParseResult result) {
@@ -910,6 +986,7 @@ class PlotViewModel extends BaseViewModel {
     } else {
       _parsedHistory.add(point.values);
     }
+    _lodIndex.add(point.index, point.values);
 
     final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
@@ -927,13 +1004,16 @@ class PlotViewModel extends BaseViewModel {
       _rateSamples.removeAt(0);
     }
 
-    // 更新实际通道数
-    if (point.channelCount > _activeChannelCount) {
-      _activeChannelCount = point.channelCount;
-      // 通道数>8时自动关闭抗锯齿（用户可手动重新开启）
-      if (_activeChannelCount > 8 && _antiAliasEnabled) {
-        _antiAliasEnabled = false;
-      }
+    // 更新实际通道数。JustFloat 自动识别模式下以最新有效帧为准，
+    // 避免上一帧较多通道遗留的偏置轴继续显示。
+    final nextActiveChannelCount =
+        _parserType == ParserType.justFloat && _parserConfig.channelCount == 0
+            ? point.channelCount
+            : (point.channelCount > _activeChannelCount
+                ? point.channelCount
+                : _activeChannelCount);
+    if (nextActiveChannelCount != _activeChannelCount) {
+      _activeChannelCount = nextActiveChannelCount;
     }
 
     // 自动跟随最新数据（仅跟随模式开启时）
@@ -1291,7 +1371,9 @@ class PlotViewModel extends BaseViewModel {
     }
     viewport = _limitXRange(newViewport).copy();
     viewport.setOffsetChannelCount(offsetChannelCount);
-    _loadWindowForViewport();
+    if (!fromDrag) {
+      _loadWindowForViewport();
+    }
     if (!fromDrag) {
       _saveSettings();
       AppLogger().trace(
@@ -1319,6 +1401,7 @@ class PlotViewModel extends BaseViewModel {
       'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
       category: 'PLOT',
     );
+    Future.microtask(() => notifyListeners());
   }
 
   /// 重置视口到默认值并保存历史记录
@@ -1390,6 +1473,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
   void fitYAxis() {
+    if (_historyPointCount > 0) {
+      _loadWindowForViewport(force: true);
+    }
     if (_dataPoints.isEmpty) return;
     final visiblePoints =
         _dataPoints.where((p) {
@@ -1523,8 +1609,14 @@ class PlotViewModel extends BaseViewModel {
 
   bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
     final valuesByChannel = <int, (double, double)>{};
+    final activeLimit =
+        _activeChannelCount > 0 ? _activeChannelCount : channels.length;
     for (final point in points) {
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+      for (
+        int i = 0;
+        i < point.values.length && i < channels.length && i < activeLimit;
+        i++
+      ) {
         final channel = channels[i];
         if (!channel.visible || !channel.offsetEnabled) continue;
         final value = point.values[i];
@@ -1549,11 +1641,15 @@ class PlotViewModel extends BaseViewModel {
     for (final entry in valuesByChannel.entries) {
       final minY = entry.value.$1;
       final maxY = entry.value.$2;
-      if (minY == maxY) continue;
 
       final channel = channels[entry.key];
-      channel.yScale = targetRange / (maxY - minY);
-      channel.yOffset = targetMin - minY * channel.yScale;
+      if (minY == maxY) {
+        channel.yScale = 1.0;
+        channel.yOffset = (targetMin + targetMax) / 2 - minY;
+      } else {
+        channel.yScale = targetRange / (maxY - minY);
+        channel.yOffset = targetMin - minY * channel.yScale;
+      }
       changed = true;
     }
 
@@ -1694,9 +1790,24 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 UI 刷新帧率（10~60 fps）
+  /// 设置 UI 刷新帧率（30~60 fps）
   void setRefreshFps(int fps) {
-    _refreshFps = fps.clamp(10, 60);
+    _refreshFps = fps.clamp(30, 60);
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setSnapHighlightEnabled(bool value) {
+    if (_snapHighlightEnabled == value) return;
+    _snapHighlightEnabled = value;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setSnapHighlightDiameter(double value) {
+    final next = value.clamp(6.0, 12.0).toDouble();
+    if ((_snapHighlightDiameter - next).abs() < 1e-9) return;
+    _snapHighlightDiameter = next;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1708,7 +1819,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置绘图窗口点数上限（10000~3600000）
+  /// 设置绘图窗口点数上限（1000000~40000000）
   void setMaxVisiblePoints(int points) {
     final next = points.clamp(minVisiblePoints, maxVisiblePointsLimit).toInt();
     if (next == _maxVisiblePoints) return;
@@ -1733,13 +1844,6 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  /// 设置抗锯齿开关
-  void setAntiAlias(bool value) {
-    _antiAliasEnabled = value;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
   /// 切换 X-X 测量开关
   ///
   /// 开启时自动在视口中心初始化两条测量线，间隔为 X 范围的 1/4。
@@ -1749,12 +1853,14 @@ class PlotViewModel extends BaseViewModel {
       // 自动初始化两条线，间隔为X范围的1/4
       final range = viewport.xRange;
       final center = viewport.xMin + range / 2;
-      _xCursor1 = center - range / 8;
-      _xCursor2 = center + range / 8;
+      _xCursor1 = _snapXToNearestVisiblePoint(center - range / 8);
+      _xCursor2 = _snapXToNearestVisiblePoint(center + range / 8);
     }
     if (!_xMeasurementEnabled) {
       _xCursor1 = null;
       _xCursor2 = null;
+      _xCursor1SnapHighlights = const [];
+      _xCursor2SnapHighlights = const [];
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
@@ -1776,6 +1882,8 @@ class PlotViewModel extends BaseViewModel {
     if (!_yMeasurementEnabled) {
       _yCursor1 = null;
       _yCursor2 = null;
+      _yCursor1SnapHighlights = const [];
+      _yCursor2SnapHighlights = const [];
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
@@ -1851,9 +1959,12 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void addObservation() {
-    final x =
-        (_cursor?.x ?? (viewport.xMin + viewport.xRange / 2)).roundToDouble();
-    _observations.add(_buildCursorAtX(x));
+    final cursorX = _cursor?.x;
+    final sourceX =
+        cursorX != null && viewport.isVisibleX(cursorX)
+            ? cursorX
+            : viewport.xMin + viewport.xRange / 2;
+    _observations.add(_buildCursorAtX(sourceX));
     scheduleMicrotask(notifyListeners);
   }
 
@@ -1870,25 +1981,13 @@ class PlotViewModel extends BaseViewModel {
   }
 
   CursorState _buildCursorAtX(double x, {double? y, Offset? screenPosition}) {
-    final snappedX = x.round().toDouble();
-    List<double>? channelValues;
-    var hasData = false;
-    if (_dataPoints.isNotEmpty) {
-      int left = 0, right = _dataPoints.length - 1;
-      while (left <= right) {
-        final mid = (left + right) ~/ 2;
-        final midIndex = _dataPoints[mid].index;
-        if (midIndex == snappedX) {
-          channelValues = List.from(_dataPoints[mid].values);
-          hasData = true;
-          break;
-        } else if (midIndex < snappedX) {
-          left = mid + 1;
-        } else {
-          right = mid - 1;
-        }
-      }
-    }
+    final point = _nearestVisiblePointByX(x);
+    final snappedX =
+        point?.index.toDouble() ??
+        x.clamp(viewport.xMin, viewport.xMax).toDouble();
+    final channelValues =
+        point == null ? null : List<double>.from(point.values);
+    final hasData = point != null;
 
     return CursorState(
       x: snappedX,
@@ -1899,30 +1998,150 @@ class PlotViewModel extends BaseViewModel {
     );
   }
 
+  PlotDataPoint? _nearestVisiblePointByX(double x) {
+    if (_dataPoints.isEmpty) return null;
+    final range = _dataPointRangeByX(viewport.xMin, viewport.xMax);
+    if (range == null) return null;
+
+    int left = range.start;
+    int right = range.end - 1;
+    while (left <= right) {
+      final mid = (left + right) ~/ 2;
+      final midX = _dataPoints[mid].index.toDouble();
+      if (midX < x) {
+        left = mid + 1;
+      } else if (midX > x) {
+        right = mid - 1;
+      } else {
+        return _dataPoints[mid];
+      }
+    }
+
+    final candidates = <int>[
+      if (right >= range.start && right < range.end) right,
+      if (left >= range.start && left < range.end) left,
+    ];
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) {
+      final da = (_dataPoints[a].index.toDouble() - x).abs();
+      final db = (_dataPoints[b].index.toDouble() - x).abs();
+      return da.compareTo(db);
+    });
+    return _dataPoints[candidates.first];
+  }
+
+  double _snapXToNearestVisiblePoint(double x) {
+    return _nearestVisiblePointByX(x)?.index.toDouble() ??
+        x.clamp(viewport.xMin, viewport.xMax).toDouble();
+  }
+
   // ========== x-x / y-y 光标控制 ==========
   /// 设置 X1 光标位置（拖动时使用）
   ///
   /// 同时保留 xCursor2 和 yCursor2，避免拖动时覆盖另一组测量线。
+  List<SnapHighlightPoint> _snapHighlightsForX(double x, Color color) {
+    final point = _nearestVisiblePointByX(x);
+    if (point == null) return const [];
+    final highlights = <SnapHighlightPoint>[];
+    for (int i = 0; i < point.values.length && i < channels.length; i++) {
+      final channel = channels[i];
+      if (!channel.visible) continue;
+      highlights.add(
+        SnapHighlightPoint(
+          x: point.index.toDouble(),
+          y: point.values[i] * channel.yScale + channel.yOffset,
+          color: color,
+        ),
+      );
+    }
+    return highlights;
+  }
+
+  List<SnapHighlightPoint> _snapHighlightForY(double y, Color color) {
+    if (_dataPoints.isEmpty) return const [];
+    const maxScanPoints = 4096;
+    final range = _dataPointRangeByX(viewport.xMin, viewport.xMax);
+    if (range == null) return const [];
+    final visibleCount = range.end - range.start;
+    final step = (visibleCount / maxScanPoints).ceil().clamp(1, visibleCount);
+
+    SnapHighlightPoint? best;
+    var bestDistance = double.infinity;
+    void visit(PlotDataPoint point) {
+      for (int i = 0; i < point.values.length && i < channels.length; i++) {
+        final channel = channels[i];
+        if (!channel.visible) continue;
+        final pointY = point.values[i] * channel.yScale + channel.yOffset;
+        final distance = (pointY - y).abs();
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = SnapHighlightPoint(
+            x: point.index.toDouble(),
+            y: pointY,
+            color: color,
+          );
+        }
+      }
+    }
+
+    for (int i = range.start; i < range.end; i += step) {
+      visit(_dataPoints[i]);
+    }
+    if (step > 1) visit(_dataPoints[range.end - 1]);
+    return best == null ? const [] : [best!];
+  }
+
+  List<SnapHighlightPoint> _observationSnapHighlights() {
+    final highlights = <SnapHighlightPoint>[];
+    for (final observation in _observations) {
+      final values = observation.channelValues;
+      if (!observation.hasData || values == null) continue;
+      for (int i = 0; i < values.length && i < channels.length; i++) {
+        final channel = channels[i];
+        if (!channel.visible) continue;
+        highlights.add(
+          SnapHighlightPoint(
+            x: observation.x,
+            y: values[i] * channel.yScale + channel.yOffset,
+            color: Colors.amber,
+          ),
+        );
+      }
+    }
+    return highlights;
+  }
+
+  void _clearSnapHighlights() {
+    _xCursor1SnapHighlights = const [];
+    _xCursor2SnapHighlights = const [];
+    _yCursor1SnapHighlights = const [];
+    _yCursor2SnapHighlights = const [];
+  }
+
   void setXCursor1(double x) {
-    _xCursor1 = x;
+    _xCursor1 = _snapXToNearestVisiblePoint(x);
+    _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 X2 光标位置（拖动时使用）
   void setXCursor2(double x) {
-    _xCursor2 = x;
+    _xCursor2 = _snapXToNearestVisiblePoint(x);
+    _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y1 光标位置（拖动时使用）
   void setYCursor1(double y) {
     _yCursor1 = y;
+    _yCursor1SnapHighlights = _snapHighlightForY(y, Colors.cyan);
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置 Y2 光标位置（拖动时使用）
   void setYCursor2(double y) {
     _yCursor2 = y;
+    _yCursor2SnapHighlights = _snapHighlightForY(y, Colors.yellow);
     Future.microtask(() => notifyListeners());
   }
 
@@ -1932,6 +2151,7 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _clearSnapHighlights();
     _cursor = null;
     Future.microtask(() => notifyListeners());
   }
@@ -1973,19 +2193,31 @@ class PlotViewModel extends BaseViewModel {
         _statsRangeEnabled && _statsX1 != null && _statsX2 != null
             ? (_statsX1! > _statsX2! ? _statsX1! : _statsX2!)
             : viewport.xMax;
+    final visibleChannelKey =
+        channels.map((channel) => channel.visible ? '1' : '0').join();
+    final cacheKey =
+        '$_dataRevision|$xMin|$xMax|$_statsRangeEnabled|$visibleChannelKey|$_activeChannelCount';
+    if (_cachedStatsKey == cacheKey) return _cachedStatsText;
+
+    final range = _dataPointRangeByX(xMin, xMax);
+    if (range == null) {
+      _cachedStatsKey = cacheKey;
+      _cachedStatsText = null;
+      return null;
+    }
 
     final buffer = StringBuffer();
     bool hasVisibleChannel = false;
-    int commonCount = 0;
-
-    // 先计算统一的样本数（所有可见通道在范围内的点数应该相同）
-    for (final point in _dataPoints) {
-      if (point.index < xMin) continue;
-      if (point.index > xMax) continue;
-      commonCount++;
-    }
+    final commonCount = range.end - range.start;
 
     if (commonCount == 0) return null;
+    const exactStatsPointLimit = 100000;
+    final approximate = commonCount > exactStatsPointLimit;
+    final sampleStep =
+        approximate
+            ? (commonCount / exactStatsPointLimit).ceil().clamp(1, commonCount)
+            : 1;
+    final statPrefix = approximate ? '约' : '';
 
     for (int i = 0; i < channels.length; i++) {
       if (!channels[i].visible) continue;
@@ -1993,10 +2225,13 @@ class PlotViewModel extends BaseViewModel {
       double? maxVal, minVal, sum;
       int count = 0;
 
-      for (final point in _dataPoints) {
+      for (
+        int pointIndex = range.start;
+        pointIndex < range.end;
+        pointIndex += sampleStep
+      ) {
+        final point = _dataPoints[pointIndex];
         if (i >= point.channelCount) continue;
-        if (point.index < xMin) continue;
-        if (point.index > xMax) continue;
 
         final val = point.values[i];
         maxVal = maxVal == null || val > maxVal ? val : maxVal;
@@ -2010,32 +2245,69 @@ class PlotViewModel extends BaseViewModel {
       hasVisibleChannel = true;
 
       buffer.writeln('Ch$i:');
-      buffer.writeln('  Max: ${_formatDisplayNumber(maxVal!)}');
-      buffer.writeln('  Min: ${_formatDisplayNumber(minVal!)}');
-      buffer.writeln('  Avg: ${_formatDisplayNumber(sum! / count)}');
+      buffer.writeln('  Max: $statPrefix${_formatDisplayNumber(maxVal!)}');
+      buffer.writeln('  Min: $statPrefix${_formatDisplayNumber(minVal!)}');
+      buffer.writeln('  Avg: $statPrefix${_formatDisplayNumber(sum! / count)}');
     }
 
-    if (!hasVisibleChannel) return null;
+    if (!hasVisibleChannel) {
+      _cachedStatsKey = cacheKey;
+      _cachedStatsText = null;
+      return null;
+    }
 
     // 统一显示 N 和 Range
     buffer.writeln('---');
     buffer.writeln('N: $commonCount');
-    buffer.writeln(
-      'Range: ${_formatDisplayNumber(xMin)} ~ ${_formatDisplayNumber(xMax)}',
-    );
+    if (approximate) buffer.writeln('Mode: 约 $exactStatsPointLimit samples');
+    final rangeStart = _dataPoints[range.start].index;
+    final rangeEnd = _dataPoints[range.end - 1].index;
+    buffer.writeln('Range: $rangeStart ~ $rangeEnd');
 
-    return buffer.toString().trim();
+    _cachedStatsKey = cacheKey;
+    _cachedStatsText = buffer.toString().trim();
+    return _cachedStatsText;
   }
 
   String _formatDisplayNumber(double value) {
-    final absValue = value.abs();
     if ((value - value.roundToDouble()).abs() < 1e-9) {
       return value.toInt().toString();
     }
-    if (absValue >= 100) return value.toStringAsFixed(0);
-    if (absValue >= 1) return value.toStringAsFixed(1);
-    if (absValue >= 0.01) return value.toStringAsFixed(2);
-    return value.toStringAsFixed(3);
+    return value
+        .toStringAsFixed(6)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+
+  ({int start, int end})? _dataPointRangeByX(double xMin, double xMax) {
+    if (_dataPoints.isEmpty) return null;
+
+    int left = 0;
+    int right = _dataPoints.length;
+    while (left < right) {
+      final mid = (left + right) ~/ 2;
+      if (_dataPoints[mid].index < xMin) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    final start = left;
+
+    left = start;
+    right = _dataPoints.length;
+    while (left < right) {
+      final mid = (left + right) ~/ 2;
+      if (_dataPoints[mid].index <= xMax) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    final end = left;
+
+    if (start >= end) return null;
+    return (start: start, end: end);
   }
 
   // ========== 导出 ==========
@@ -2282,21 +2554,52 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 导入 ==========
+  static const int _importProgressBatchSize = 10000;
+
+  Future<void> _reportImportProgress(
+    PlotImportProgressCallback? onProgress,
+    String stage,
+    int current,
+    int total, {
+    String? detail,
+  }) async {
+    onProgress?.call(
+      PlotImportProgress(
+        stage: stage,
+        current: current,
+        total: total,
+        detail: detail,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+  }
+
   /// 从 CSV 文件导入数据
   ///
   /// 支持格式：表头 x,y1,y2,...，最大16通道。
   /// 导入成功后会清空现有数据并替换，返回 null；失败返回错误信息。
-  Future<String?> importFromCsv(String filePath) async {
+  Future<String?> importFromCsv(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     try {
       final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
       if (!await file.exists()) {
         return '文件不存在';
       }
 
+      await _reportImportProgress(onProgress, '读取 CSV', 0, 0);
       final lines = await file.readAsLines();
       if (lines.isEmpty) {
         return '文件为空';
       }
+      await _reportImportProgress(
+        onProgress,
+        '读取 CSV',
+        lines.length,
+        lines.length,
+      );
 
       final metadata = <String, dynamic>{};
       var headerLineIndex = 0;
@@ -2333,16 +2636,50 @@ class PlotViewModel extends BaseViewModel {
 
       // 解析数据行
       final importedPoints = <PlotDataPoint>[];
+      final dataLineCount = lines.length - headerLineIndex - 1;
       int index = 0;
       for (int i = headerLineIndex + 1; i < lines.length; i++) {
         final line = lines[i].trim();
-        if (line.isEmpty) continue;
+        if (line.isEmpty) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final parts = line.split(',');
-        if (parts.length < 2) continue;
+        if (parts.length < 2) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final xValue = double.tryParse(parts[0].trim());
-        if (xValue == null) continue;
+        if (xValue == null) {
+          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
+            await _reportImportProgress(
+              onProgress,
+              '解析 CSV',
+              i - headerLineIndex - 1,
+              dataLineCount,
+              detail: '${importedPoints.length} 点',
+            );
+          }
+          continue;
+        }
 
         final values = <double>[];
         for (int c = 1; c < parts.length && c <= channelCount; c++) {
@@ -2363,13 +2700,28 @@ class PlotViewModel extends BaseViewModel {
           PlotDataPoint(index: index, timestamp: xValue, values: values),
         );
         index++;
+
+        if (index % _importProgressBatchSize == 0) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 CSV',
+            i - headerLineIndex,
+            dataLineCount,
+            detail: '$index 点',
+          );
+        }
       }
 
       if (importedPoints.isEmpty) {
         return '未找到有效数据行';
       }
 
-      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: metadata,
+        onProgress: onProgress,
+      );
 
       AppLogger().info(
         'CSV 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
@@ -2382,17 +2734,29 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  Future<String?> importFromBin(String filePath) async {
+  Future<String?> importFromBin(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     try {
       final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
       if (!await file.exists()) {
         return '文件不存在';
       }
 
+      await _reportImportProgress(onProgress, '读取 BIN', 0, 0);
       final bytes = await file.readAsBytes();
       if (bytes.length < 24) {
         return 'BIN 文件头不完整';
       }
+      await _reportImportProgress(
+        onProgress,
+        '读取 BIN',
+        bytes.length,
+        bytes.length,
+        detail: '${bytes.length} 字节',
+      );
 
       const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
       for (int i = 0; i < magic.length; i++) {
@@ -2421,10 +2785,17 @@ class PlotViewModel extends BaseViewModel {
       }
 
       final dataBlock = Uint8List.sublistView(bytes, headerLength);
+      await _reportImportProgress(onProgress, '校验 BIN', 0, payloadLength);
       final actualChecksum = calculateCrc(dataBlock, crc32Polys['CRC-32']!);
       if (actualChecksum != expectedChecksum) {
         return 'BIN 校验失败';
       }
+      await _reportImportProgress(
+        onProgress,
+        '校验 BIN',
+        payloadLength,
+        payloadLength,
+      );
 
       final metadata = <String, dynamic>{};
       if (metadataLength > 0) {
@@ -2457,13 +2828,27 @@ class PlotViewModel extends BaseViewModel {
         importedPoints.add(
           PlotDataPoint(index: i, timestamp: x, values: values),
         );
+        if ((i + 1) % _importProgressBatchSize == 0) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 BIN',
+            i + 1,
+            pointCount,
+            detail: '${i + 1} 点',
+          );
+        }
       }
 
       if (importedPoints.isEmpty) {
         return '未找到有效数据行';
       }
 
-      _replaceImportedPoints(importedPoints, channelCount, metadata: metadata);
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: metadata,
+        onProgress: onProgress,
+      );
       AppLogger().info(
         'BIN 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
         category: 'PLOT',
@@ -2475,17 +2860,37 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  void _replaceImportedPoints(
+  Future<void> _replaceImportedPoints(
     List<PlotDataPoint> importedPoints,
     int channelCount, {
     Map<String, dynamic>? metadata,
-  }) {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     _dataPoints.clear();
     _parsedHistory.clear();
+    _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
-    for (final point in importedPoints) {
+    var minY = double.infinity;
+    var maxY = double.negativeInfinity;
+    for (int i = 0; i < importedPoints.length; i++) {
+      final point = importedPoints[i];
       _parsedHistory.add(point.values);
+      _lodIndex.add(point.index, point.values);
+      for (final value in point.values) {
+        if (value < minY) minY = value;
+        if (value > maxY) maxY = value;
+      }
+      if ((i + 1) % _importProgressBatchSize == 0 ||
+          i + 1 == importedPoints.length) {
+        await _reportImportProgress(
+          onProgress,
+          '建立绘图索引',
+          i + 1,
+          importedPoints.length,
+          detail: '${i + 1} 点',
+        );
+      }
     }
     _nextIndex = importedPoints.length;
     _activeChannelCount = channelCount;
@@ -2498,10 +2903,24 @@ class PlotViewModel extends BaseViewModel {
     viewport = PlotViewport(
       xMin: visibleStart.toDouble(),
       xMax: importedPoints.length.toDouble(),
-      yMin: _calculateMinY(importedPoints),
-      yMax: _calculateMaxY(importedPoints),
+      yMin: minY == double.infinity ? 0 : minY,
+      yMax: maxY == double.negativeInfinity ? 1 : maxY,
+    );
+    await _reportImportProgress(
+      onProgress,
+      '加载可见窗口',
+      0,
+      visibleCount,
+      detail: '$visibleCount 点',
     );
     _rebuildParsedWindow(visibleStart, visibleCount);
+    await _reportImportProgress(
+      onProgress,
+      '加载可见窗口',
+      visibleCount,
+      visibleCount,
+      detail: '$visibleCount 点',
+    );
     _viewportHistory.clear();
 
     _cursor = null;
@@ -2566,28 +2985,6 @@ class PlotViewModel extends BaseViewModel {
       AppSettings().parserType = ParserType.zobow.name;
       _saveSettings();
     }
-  }
-
-  /// 计算数据点列表的最小 Y 值
-  double _calculateMinY(List<PlotDataPoint> points) {
-    double min = double.infinity;
-    for (final p in points) {
-      for (final v in p.values) {
-        if (v < min) min = v;
-      }
-    }
-    return min == double.infinity ? 0 : min;
-  }
-
-  /// 计算数据点列表的最大 Y 值
-  double _calculateMaxY(List<PlotDataPoint> points) {
-    double max = double.negativeInfinity;
-    for (final p in points) {
-      for (final v in p.values) {
-        if (v > max) max = v;
-      }
-    }
-    return max == double.negativeInfinity ? 1 : max;
   }
 
   // ========== 众邦电控配置文件操作 ==========

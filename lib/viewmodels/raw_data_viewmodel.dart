@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import '../core/utils/crc.dart';
 import 'base_viewmodel.dart';
 
-/// 原始数据页面 ViewModel
+/// 数据收发页面 ViewModel
 class RawDataViewModel extends BaseViewModel {
   RawDataViewModel(super.serialService);
 
@@ -13,6 +13,9 @@ class RawDataViewModel extends BaseViewModel {
   bool get showTimestamp => serialService.showTimestamp;
   bool get autoScroll => serialService.autoScroll;
   bool get sendHex => serialService.sendHex;
+  bool get keepSendText => serialService.keepSendText;
+  bool get appendLineEnding => serialService.appendLineEnding;
+  String get lineEnding => serialService.lineEnding;
   bool get enableCrc => serialService.enableCrc;
   bool get crcReverseBytes => serialService.crcReverseBytes;
   CrcType get crcType => serialService.crcType;
@@ -22,7 +25,7 @@ class RawDataViewModel extends BaseViewModel {
   int get timeWindowUs => serialService.timeWindowUs;
 
   /// 设置随机数据源开关
-  /// 当启用随机数据源且未开始绘图时，随机数据会显示在原始数据页面
+  /// 当启用随机数据源且未开始绘图时，随机数据会显示在数据收发页面
   void setUseRandomSource(bool value) {
     serialService.useRandomSource = value;
     Future.microtask(() => serialService.notifyListeners());
@@ -35,13 +38,11 @@ class RawDataViewModel extends BaseViewModel {
   void stopReceiving() => serialService.stopRawReceiving();
 
   void setReceiveHex(bool value) {
-    serialService.receiveHex = value;
-    Future.microtask(() => serialService.notifyListeners());
+    serialService.setReceiveHex(value);
   }
 
   void setShowTimestamp(bool value) {
-    serialService.showTimestamp = value;
-    Future.microtask(() => serialService.notifyListeners());
+    serialService.setShowTimestamp(value);
   }
 
   void setAutoScroll(bool value) {
@@ -52,6 +53,21 @@ class RawDataViewModel extends BaseViewModel {
   void setSendHex(bool value) {
     serialService.sendHex = value;
     if (!value) serialService.enableCrc = false;
+    Future.microtask(() => serialService.notifyListeners());
+  }
+
+  void setKeepSendText(bool value) {
+    serialService.keepSendText = value;
+    Future.microtask(() => serialService.notifyListeners());
+  }
+
+  void setAppendLineEnding(bool value) {
+    serialService.appendLineEnding = value;
+    Future.microtask(() => serialService.notifyListeners());
+  }
+
+  void setLineEnding(String value) {
+    serialService.lineEnding = value;
     Future.microtask(() => serialService.notifyListeners());
   }
 
@@ -85,12 +101,11 @@ class RawDataViewModel extends BaseViewModel {
 
   void clearData() => serialService.clearReceivedData();
 
-  Uint8List? prepareSendData(String text) => serialService.prepareSendData(text);
+  Uint8List? prepareSendData(String text) =>
+      serialService.prepareSendData(text);
   void send(Uint8List data) => serialService.send(data);
 
   Future<String?> exportAsText() => serialService.exportAsText();
   Future<String?> exportAsRawBytes() => serialService.exportAsRawBytes();
   Map<String, String> get dataStats => serialService.dataStats;
 }
-
-

@@ -54,4 +54,4 @@ app.*.map.json
 # Local documentation scratch files
 docs/icons.md
 
-
+*.bin

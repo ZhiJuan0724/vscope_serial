@@ -90,6 +90,9 @@ class PlotGestureHandler extends StatefulWidget {
   /// 通道配置列表（用于偏移标签拖动检测）
   final List<ChannelConfig> channels;
 
+  /// 当前数据实际包含的活动通道数
+  final int activeChannelCount;
+
   /// 通道偏移拖动回调
   final void Function(int channelIndex, double yOffset)? onChannelOffsetDrag;
 
@@ -102,7 +105,7 @@ class PlotGestureHandler extends StatefulWidget {
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
   final int plotFontSizeDelta;
 
-  const PlotGestureHandler({
+  PlotGestureHandler({
     super.key,
     required this.viewport,
     required this.onViewportChanged,
@@ -128,11 +131,15 @@ class PlotGestureHandler extends StatefulWidget {
     this.onObservationDrag,
     this.onObservationDelete,
     required this.channels,
+    int? activeChannelCount,
     this.onChannelOffsetDrag,
     this.onChannelYScaleZoom,
-    this.refreshFps = 30,
+    this.refreshFps = 60,
     this.plotFontSizeDelta = 0,
-  });
+  }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
+         0,
+         channels.length,
+       );
 
   @override
   State<PlotGestureHandler> createState() => _PlotGestureHandlerState();
@@ -157,6 +164,8 @@ enum _DragTarget {
 ///
 /// 管理拖动状态、框选状态、测量线拖动目标等。
 class _PlotGestureHandlerState extends State<PlotGestureHandler> {
+  static const int _maxSnapScanPoints = 4096;
+
   /// 是否正在拖拽平移
   bool _isDragging = false;
 
@@ -193,38 +202,140 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     return (base + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
-  double _snapYToNearestVisiblePoint(double y, Size size) {
-    if (widget.data.isEmpty) return y;
+  double _snapXToNearestVisiblePoint(double x) {
+    if (widget.data.isEmpty) return x;
 
-    final targetScreenY = widget.viewport.dataToScreenY(y, size.height);
-    var bestY = y;
-    var bestDistance = double.infinity;
+    final index = _nearestPointListIndexByX(x);
+    return index == null
+        ? x.clamp(widget.viewport.xMin, widget.viewport.xMax).toDouble()
+        : widget.data[index].index.toDouble();
+  }
 
-    for (final point in widget.data) {
-      if (point.index < widget.viewport.xMin ||
-          point.index > widget.viewport.xMax) {
-        continue;
-      }
+  int? _nearestPointListIndexByX(double x) {
+    if (widget.data.isEmpty) return null;
+    final range = _visibleDataRange();
+    if (range == null) return null;
 
-      for (
-        int i = 0;
-        i < point.values.length && i < widget.channels.length;
-        i++
-      ) {
-        final channel = widget.channels[i];
-        if (!channel.visible) continue;
-
-        final pointY = point.values[i] * channel.yScale + channel.yOffset;
-        final pointScreenY = widget.viewport.dataToScreenY(pointY, size.height);
-        final distance = (pointScreenY - targetScreenY).abs();
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestY = pointY;
-        }
+    int left = range.start;
+    int right = range.end - 1;
+    while (left <= right) {
+      final mid = (left + right) ~/ 2;
+      final midX = widget.data[mid].index.toDouble();
+      if (midX < x) {
+        left = mid + 1;
+      } else if (midX > x) {
+        right = mid - 1;
+      } else {
+        return mid;
       }
     }
 
-    return bestDistance.isFinite ? bestY : y;
+    final candidates = <int>[
+      if (right >= range.start && right < range.end) right,
+      if (left >= range.start && left < range.end) left,
+    ];
+    if (candidates.isEmpty) return null;
+    candidates.sort((a, b) {
+      final da = (widget.data[a].index.toDouble() - x).abs();
+      final db = (widget.data[b].index.toDouble() - x).abs();
+      return da.compareTo(db);
+    });
+    return candidates.first;
+  }
+
+  ({int start, int end})? _visibleDataRange() {
+    if (widget.data.isEmpty) return null;
+
+    int start = 0;
+    int end = widget.data.length;
+    var left = 0;
+    var right = widget.data.length;
+    while (left < right) {
+      final mid = (left + right) ~/ 2;
+      if (widget.data[mid].index < widget.viewport.xMin) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    start = left;
+
+    left = start;
+    right = widget.data.length;
+    while (left < right) {
+      final mid = (left + right) ~/ 2;
+      if (widget.data[mid].index <= widget.viewport.xMax) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+    end = left;
+
+    if (start >= end) return null;
+    return (start: start, end: end);
+  }
+
+  double _snapYToNearestVisiblePoint(Offset pos, Size size) {
+    final targetScreenY =
+        pos.dy
+            .clamp(
+              PlotViewport().marginTop,
+              size.height - PlotViewport().marginBottom,
+            )
+            .toDouble();
+    var bestY = widget.viewport.screenToDataY(targetScreenY, size.height);
+    if (widget.data.isEmpty) return bestY;
+
+    final range = _visibleDataRange();
+    if (range == null) return bestY;
+
+    final visibleCount = range.end - range.start;
+    final step = (visibleCount / _maxSnapScanPoints).ceil().clamp(
+      1,
+      visibleCount,
+    );
+    var bestDistance = double.infinity;
+
+    for (int index = range.start; index < range.end; index += step) {
+      _visitSnapYPoint(index, targetScreenY, size, (distance, y) {
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestY = y;
+        }
+      });
+    }
+    if (step > 1) {
+      _visitSnapYPoint(range.end - 1, targetScreenY, size, (distance, y) {
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestY = y;
+        }
+      });
+    }
+
+    return bestY;
+  }
+
+  void _visitSnapYPoint(
+    int pointIndex,
+    double targetScreenY,
+    Size size,
+    void Function(double distance, double y) visit,
+  ) {
+    final point = widget.data[pointIndex];
+    for (
+      int i = 0;
+      i < point.values.length && i < widget.channels.length;
+      i++
+    ) {
+      final channel = widget.channels[i];
+      if (!channel.visible) continue;
+
+      final pointY = point.values[i] * channel.yScale + channel.yOffset;
+      final pointScreenY = widget.viewport.dataToScreenY(pointY, size.height);
+      visit((pointScreenY - targetScreenY).abs(), pointY);
+    }
   }
 
   /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
@@ -431,7 +542,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _dragViewport = widget.viewport.copy();
       _lastNotifiedViewport = _dragViewport!.copy();
       _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-      _targetFps = widget.refreshFps.clamp(10, 60);
+      _targetFps = widget.refreshFps.clamp(30, 60);
       AppLogger().trace(
         '平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}, targetFps=$_targetFps',
         category: 'GESTURE',
@@ -450,7 +561,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // X-X 测量：检测 X1/X2 标签（标签在测量线顶部）
     if (widget.xCursor1 != null || widget.xCursor2 != null) {
-      final topY = PlotViewport().marginTop + 10;
+      final topY = PlotViewport().marginTop - 12;
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
         if (widget.xCursor1 != null) {
           final sx1 = widget.viewport.dataToScreenX(
@@ -475,7 +586,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // Y-Y 测量：检测 Y1/Y2 标签（标签在测量线左侧）
     if (widget.yCursor1 != null || widget.yCursor2 != null) {
-      final leftX = PlotViewport().marginLeft + 10;
+      final leftX = PlotViewport().marginLeft - 18;
       if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
         if (widget.yCursor1 != null) {
           final sy1 = widget.viewport.dataToScreenY(
@@ -562,7 +673,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final left = PlotViewport().marginLeft;
 
-    for (final ch in widget.channels) {
+    for (final ch in widget.channels.take(widget.activeChannelCount)) {
       if (!ch.visible || !ch.offsetEnabled) continue;
 
       // 计算标签位置（与 PlotPainter 中一致）
@@ -615,7 +726,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 收集可见且开启偏移的通道
     final offsetChannels = <ChannelConfig>[];
-    for (final ch in widget.channels) {
+    for (final ch in widget.channels.take(widget.activeChannelCount)) {
       if (ch.visible && ch.offsetEnabled) {
         offsetChannels.add(ch);
       }
@@ -680,7 +791,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   /// 处理测量线拖动，根据 [_dragTarget] 将屏幕坐标转换为数据坐标并回调
   ///
-  /// X 轴测量线和统计范围线吸附到整数（数据点索引），Y 轴保留原始精度。
+  /// X 轴测量线、统计范围线和 Y-Y 测量线都吸附到当前显示窗口内的可见数据点。
   void _handleMeasurementDrag(Offset pos, Size size) {
     switch (_dragTarget) {
       case _DragTarget.xCursor1:
@@ -692,7 +803,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onXCursor1Drag!(x.round().toDouble());
+          widget.onXCursor1Drag!(_snapXToNearestVisiblePoint(x));
         }
         break;
       case _DragTarget.xCursor2:
@@ -704,31 +815,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onXCursor2Drag!(x.round().toDouble());
+          widget.onXCursor2Drag!(_snapXToNearestVisiblePoint(x));
         }
         break;
       case _DragTarget.yCursor1:
         if (widget.onYCursor1Drag != null && widget.yCursor1 != null) {
-          final y = widget.viewport.screenToDataY(
-            pos.dy.clamp(
-              PlotViewport().marginTop,
-              size.height - PlotViewport().marginBottom,
-            ),
-            size.height,
-          );
-          widget.onYCursor1Drag!(_snapYToNearestVisiblePoint(y, size));
+          widget.onYCursor1Drag!(_snapYToNearestVisiblePoint(pos, size));
         }
         break;
       case _DragTarget.yCursor2:
         if (widget.onYCursor2Drag != null && widget.yCursor2 != null) {
-          final y = widget.viewport.screenToDataY(
-            pos.dy.clamp(
-              PlotViewport().marginTop,
-              size.height - PlotViewport().marginBottom,
-            ),
-            size.height,
-          );
-          widget.onYCursor2Drag!(_snapYToNearestVisiblePoint(y, size));
+          widget.onYCursor2Drag!(_snapYToNearestVisiblePoint(pos, size));
         }
         break;
       case _DragTarget.statsX1:
@@ -740,7 +837,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onStatsX1Drag!(x.round().toDouble());
+          widget.onStatsX1Drag!(_snapXToNearestVisiblePoint(x));
         }
         break;
       case _DragTarget.statsX2:
@@ -752,7 +849,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onStatsX2Drag!(x.round().toDouble());
+          widget.onStatsX2Drag!(_snapXToNearestVisiblePoint(x));
         }
         break;
       case _DragTarget.channelOffset:
@@ -777,7 +874,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onObservationDrag!(_observationIndex, x.round().toDouble());
+          widget.onObservationDrag!(
+            _observationIndex,
+            _snapXToNearestVisiblePoint(x),
+          );
         }
         break;
       case _DragTarget.none:

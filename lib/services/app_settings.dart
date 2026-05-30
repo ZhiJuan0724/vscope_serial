@@ -50,14 +50,16 @@ class AppSettings {
   bool dtr = false;
 
   // ========== 绘图设置 ==========
-  /// UI 刷新帧率 (fps)，范围 10~60
-  int refreshFps = 30;
+  /// UI 刷新帧率 (fps)，范围 30~60
+  int refreshFps = 60;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int plotFontSizeDelta = 0;
 
-  /// 绘图窗口点数上限，范围 10000~3600000
-  int maxVisiblePoints = 60000;
+  /// 绘图窗口点数上限，范围 1000000~40000000
+  int maxVisiblePoints = 1000000;
+  bool snapHighlightEnabled = true;
+  double snapHighlightDiameter = 8.0;
 
   /// 是否显示网格
   bool showGrid = true;
@@ -74,11 +76,17 @@ class AppSettings {
   /// 最新点跟随模式开关
   bool followEnabled = false;
 
-  /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow'）
+  /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
+
+  /// JustFloat 通道数（0=自动识别）
+  int justFloatChannelCount = 0;
 
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
+
+  /// 快捷地址选择窗口显示模式: 'grid'(平铺) / 'list'(列表)
+  String zobowPresetViewMode = 'grid';
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
@@ -131,17 +139,30 @@ class AppSettings {
       dtr = json['dtr'] as bool? ?? false;
 
       // 绘图设置
-      refreshFps = json['refreshFps'] as int? ?? 30;
+      refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
       plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
-      maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ?? 60000)
-          .clamp(10000, 3600000);
+      maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
+              1000000)
+          .clamp(1000000, 40000000);
+      snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
+      snapHighlightDiameter =
+          ((json['snapHighlightDiameter'] as num?)?.toDouble() ?? 8.0).clamp(
+            6.0,
+            12.0,
+          );
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
+      justFloatChannelCount =
+          ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
+              .clamp(0, 16)
+              .toInt();
       zobowProfileId = json['zobowProfileId'] as String? ?? '';
+      zobowPresetViewMode =
+          (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -173,13 +194,17 @@ class AppSettings {
       'refreshFps': refreshFps,
       'plotFontSizeDelta': plotFontSizeDelta,
       'maxVisiblePoints': maxVisiblePoints,
+      'snapHighlightEnabled': snapHighlightEnabled,
+      'snapHighlightDiameter': snapHighlightDiameter,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
       'parserType': parserType,
+      'justFloatChannelCount': justFloatChannelCount,
       'zobowProfileId': zobowProfileId,
+      'zobowPresetViewMode': zobowPresetViewMode,
 
       // 视口设置
       'xMin': xMin,

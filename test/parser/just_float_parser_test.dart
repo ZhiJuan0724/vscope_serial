@@ -46,5 +46,63 @@ void main() {
       expect(result.success, isTrue);
       expect(result.values, [10.5, 20.25]);
     });
+
+    test('auto detects channel count when configured as 0', () async {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 0,
+      );
+      addTearDown(parser.dispose);
+
+      final future = parser.outputStream.first;
+      parser.feed(buildFrame([1, 2, 3, 4, 5]));
+      final result = await future;
+
+      expect(result.success, isTrue);
+      expect(result.values, [1, 2, 3, 4, 5]);
+      expect(result.channelCount, 5);
+    });
+
+    test('default config uses auto channel detection', () async {
+      final parser = JustFloatParser(ParserConfig.justFloatDefault());
+      addTearDown(parser.dispose);
+
+      final future = parser.outputStream.first;
+      parser.feed(buildFrame([1, 2, 3, 4, 5]));
+      final result = await future;
+
+      expect(result.success, isTrue);
+      expect(result.channelCount, 5);
+      expect(ParserConfig.justFloatDefault().channelCount, 0);
+    });
+
+    test('auto detect rejects more than 16 channels', () async {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 0,
+      );
+      addTearDown(parser.dispose);
+
+      final future = parser.outputStream.first;
+      parser.feed(buildFrame(List<double>.generate(17, (i) => i.toDouble())));
+      final result = await future;
+
+      expect(result.success, isFalse);
+      expect(result.error, contains('通道数异常'));
+    });
+
+    test('auto detect rejects non float aligned payload', () async {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 0,
+      );
+      addTearDown(parser.dispose);
+
+      final future = parser.outputStream.first;
+      parser.feed(
+        Uint8List.fromList([0x01, 0x02, 0x03, ...JustFloatParser.tail]),
+      );
+      final result = await future;
+
+      expect(result.success, isFalse);
+      expect(result.error, contains('帧长度异常'));
+    });
   });
 }

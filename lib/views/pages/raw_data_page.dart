@@ -7,7 +7,7 @@ import '../../services/serial_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
-/// 原始数据页面
+/// 数据收发页面
 class RawDataPage extends StatefulWidget {
   const RawDataPage({super.key});
 
@@ -121,7 +121,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       const Text(
-                        '数据窗口',
+                        '数据收发',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(width: 8),
@@ -344,7 +344,9 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                     ),
                     child: Text(
-                      '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                      vm.receiveHex
+                          ? '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}'
+                          : '行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -370,6 +372,57 @@ class _RawDataPageState extends State<RawDataPage> {
             children: [
               const Text('发送数据', style: TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Checkbox(
+                    value: vm.keepSendText,
+                    onChanged: (value) => vm.setKeepSendText(value!),
+                  ),
+                  const Text('发送后保留'),
+                ],
+              ),
+              const SizedBox(width: 8),
+              if (!vm.sendHex) ...[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Checkbox(
+                      value: vm.appendLineEnding,
+                      onChanged: (value) => vm.setAppendLineEnding(value!),
+                    ),
+                    const Text('末尾回车'),
+                  ],
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 90,
+                  child: NoAnimDropdown<String>(
+                    value: vm.lineEnding,
+                    hint: '回车',
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      isDense: true,
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: '\r', child: Text(r'\r')),
+                      DropdownMenuItem(value: '\n', child: Text(r'\n')),
+                      DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
+                    ],
+                    onChanged:
+                        vm.appendLineEnding
+                            ? (value) {
+                              if (value != null) vm.setLineEnding(value);
+                            }
+                            : null,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -547,8 +600,10 @@ class _RawDataPageState extends State<RawDataPage> {
                             if (data != null) {
                               try {
                                 vm.send(data);
-                                _sendController.clear();
-                                setState(() {});
+                                if (!vm.keepSendText) {
+                                  _sendController.clear();
+                                  setState(() {});
+                                }
                               } catch (e) {
                                 if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -673,7 +728,7 @@ class _RawDataPageState extends State<RawDataPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('分包时间 (μs):'),
+                const Text('HEX分包时间 (μs):'),
                 const SizedBox(height: 8),
                 TextField(
                   controller: controller,
@@ -689,7 +744,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+                  '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],

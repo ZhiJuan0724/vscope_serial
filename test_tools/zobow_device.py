@@ -16,10 +16,17 @@
 
 import argparse
 import math
+import queue
 import struct
 import sys
+import threading
 import time
 from typing import List, Optional
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 try:
     import serial
@@ -160,6 +167,55 @@ class DataGenerator:
 
 # ========== 众邦电控设备模拟器 ==========
 
+class ConsoleCommandReader:
+    """后台读取控制台命令，避免阻塞串口收发循环。"""
+
+    def __init__(self):
+        self._commands: queue.Queue[str] = queue.Queue()
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def _read_loop(self):
+        if msvcrt is not None:
+            self._read_key_loop()
+            return
+
+        while True:
+            line = sys.stdin.readline()
+            if line == "":
+                return
+            command = line.strip().lower()
+            if command:
+                self._commands.put(command)
+
+    def _read_key_loop(self):
+        while True:
+            if not msvcrt.kbhit():
+                time.sleep(0.05)
+                continue
+
+            key = msvcrt.getwch()
+            if key in ("\x00", "\xe0"):
+                # Consume extended-key suffix.
+                if msvcrt.kbhit():
+                    msvcrt.getwch()
+                continue
+
+            command = key.strip().lower()
+            if command:
+                self._commands.put(command)
+
+    def drain(self) -> List[str]:
+        commands: List[str] = []
+        while True:
+            try:
+                commands.append(self._commands.get_nowait())
+            except queue.Empty:
+                return commands
+
+
 class JackFourChannelDevice:
     """众邦电控协议下位机模拟器"""
     
@@ -179,6 +235,7 @@ class JackFourChannelDevice:
         self.channel_count = 4
         self.channel_ids = [0x0001, 0x0002, 0x0003, 0x0004]
         self.configured = False
+        self.paused = False
         self.running = False
         self.data_gen = DataGenerator(mode=data_mode, channel_count=self.channel_count)
         self.timer = HighPrecisionTimer(interval_ms)
@@ -238,6 +295,39 @@ class JackFourChannelDevice:
         
         print(f"[设备] 收到配置帧，通道号: {[f'0x{id:08X}' for id in self.channel_ids]}")
         return True
+
+    def _toggle_pause(self):
+        if not self.configured:
+            print("[控制] 当前未开始发送，等待配置帧")
+            return
+        if self.paused:
+            self.paused = False
+            self.timer.start()
+            print("[控制] 已恢复发送")
+            return
+        self.paused = True
+        print("[控制] 已暂停发送；再次输入 p 恢复，输入 r 复位，输入 c 关闭脚本")
+
+    def _reset_to_waiting(self):
+        self.configured = False
+        self.paused = False
+        print("[控制] 已复位，等待配置帧...")
+
+    def _handle_console_commands(self, commands: List[str]) -> bool:
+        """处理控制台命令。返回 True 表示需要清空串口输入缓冲。"""
+        reset_requested = False
+        for command in commands:
+            if command == 'p':
+                self._toggle_pause()
+            elif command == 'r':
+                self._reset_to_waiting()
+                reset_requested = True
+            elif command == 'c':
+                print("[控制] 收到关闭命令")
+                self.running = False
+            else:
+                print(f"[控制] 未知命令: {command}，可用命令: p 暂停/恢复 / r 复位 / c 关闭")
+        return reset_requested
     
     def _send_data_frame(self):
         """发送一帧数据"""
@@ -266,12 +356,21 @@ class JackFourChannelDevice:
         
         self.running = True
         buffer = bytearray()
+        console = ConsoleCommandReader()
+        console.start()
         
         print("[设备] 等待配置帧...")
-        print("[设备] 按 Ctrl+C 退出")
+        print("[控制] 按 p 暂停/恢复发送，r 复位等待配置，c 关闭脚本；也可按 Ctrl+C 退出")
         
         try:
             while self.running:
+                if self._handle_console_commands(console.drain()):
+                    buffer.clear()
+                    if self.serial:
+                        self.serial.reset_input_buffer()
+                if not self.running:
+                    break
+
                 # 读取串口数据
                 if self.serial.in_waiting > 0:
                     data = self.serial.read(self.serial.in_waiting)
@@ -287,6 +386,7 @@ class JackFourChannelDevice:
 
                         if frame_length > 0:
                             self.configured = True
+                            self.paused = False
                             buffer = buffer[frame_length:]
                             print("[设备] 配置完成，开始发送数据...")
                             # 高频率时关闭逐帧打印
@@ -302,9 +402,11 @@ class JackFourChannelDevice:
                             buffer.pop(0)
                 
                 # 如果已配置，周期性发送数据
-                if self.configured:
+                if self.configured and not self.paused:
                     self._send_data_frame()
                     self.timer.wait()
+                elif self.paused:
+                    time.sleep(0.05)
                 else:
                     time.sleep(0.01)  # 10ms轮询
                     

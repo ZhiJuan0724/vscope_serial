@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -288,14 +292,119 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           ],
         ),
       ),
+      actionsAlignment: MainAxisAlignment.spaceBetween,
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
+        if (widget.profile != null)
+          TextButton.icon(
+            onPressed: _confirmDeleteProfile,
+            icon: const Icon(Icons.delete_outline, size: 16),
+            label: const Text('删除配置'),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+          ),
+        if (widget.profile == null)
+          TextButton.icon(
+            onPressed: _importProfile,
+            icon: const Icon(Icons.file_upload_outlined, size: 16),
+            label: const Text('导入 JSON'),
+          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
+          ],
         ),
-        ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
       ],
     );
+  }
+
+  Future<void> _confirmDeleteProfile() async {
+    final profile = widget.profile;
+    if (profile == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: const Text('删除配置文件'),
+            content: Text('确定删除“${profile.name}”吗？此操作无法撤销。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('删除'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    await widget.vm.deleteZobowProfile(profile.id);
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
+
+  Future<void> _importProfile() async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '导入众邦配置文件',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      allowMultiple: false,
+    );
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+
+    try {
+      final json = jsonDecode(await File(path).readAsString());
+      if (json is! Map<String, dynamic>) {
+        throw const FormatException('配置文件格式不正确');
+      }
+      final profile = ZobowConfigProfile.fromJson(json);
+      if (profile.presets.isEmpty) {
+        throw const FormatException('配置文件没有可导入的地址预设');
+      }
+
+      for (final row in _rows) {
+        row.dispose();
+      }
+      setState(() {
+        _nameController.text = profile.name;
+        _rows
+          ..clear()
+          ..addAll(
+            profile.presets.map(
+              (preset) => _PresetRow(
+                nameController: TextEditingController(text: preset.name),
+                addressController: TextEditingController(
+                  text:
+                      '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+                ),
+              ),
+            ),
+          );
+        _selectedRowIndex = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('导入配置失败: $error')));
+    }
   }
 
   void _addRow() {

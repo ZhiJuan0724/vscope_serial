@@ -5,6 +5,7 @@ import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
@@ -55,18 +56,44 @@ void main() {
       expect(vm.viewport.xMax, 500.0);
     });
 
-    test('updateFollowCursor X吸附到整数', () {
+    test('updateFollowCursor 没有数据时保留指针 X', () {
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 100));
       vm.updateFollowCursor(30.4, 100.0, const Offset(50, 50));
 
       expect(vm.cursor, isNotNull);
-      expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
-      expect(vm.cursor!.x, 30.0); // 30.4 吸附到 30
+      expect(vm.cursor!.x, 30.4);
+      expect(vm.cursor!.hasData, false);
     });
 
-    test('updateFollowCursor 小数部分>=0.5向上取整', () {
-      vm.updateFollowCursor(30.6, 100.0, const Offset(50, 50));
+    test('updateFollowCursor 吸附到当前显示窗口内的最近点', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
 
-      expect(vm.cursor!.x, 31.0); // 30.6 吸附到 31
+      vm.updateFollowCursor(10, 100.0, const Offset(50, 50));
+
+      expect(vm.cursor!.x, 20.0);
+      expect(vm.cursor!.hasData, true);
+      expect(vm.cursor!.channelValues, [20.0]);
+    });
+
+    test('添加观察时使用当前显示窗口内的最近点', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
+      vm.updateFollowCursor(1000, 0, const Offset(50, 50));
+
+      vm.addObservation();
+
+      expect(vm.observations, hasLength(1));
+      expect(vm.observations.first.x, inInclusiveRange(20, 40));
+      expect(vm.observations.first.x, 40);
     });
 
     test('clearData清空数据', () {
@@ -144,6 +171,27 @@ void main() {
       expect(vm.dataPoints[1].values, [33.0, 44.0]);
     });
 
+    test('CSV 导入会报告读取解析和索引进度', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_progress_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1\n0,11\n1,22\n');
+      final stages = <String>[];
+
+      final error = await vm.importFromCsv(
+        csv.path,
+        onProgress: (progress) => stages.add(progress.stage),
+      );
+
+      expect(error, isNull);
+      expect(stages, contains('读取 CSV'));
+      expect(stages, contains('建立绘图索引'));
+      expect(stages, contains('加载可见窗口'));
+    });
+
     test('setVCursorEnabled切换状态', () {
       expect(vm.vCursorEnabled, false);
 
@@ -191,14 +239,14 @@ void main() {
       vm.setYCursor1(1234.5);
       vm.setYCursor2(2345.5);
       final measurement = vm.measurementText!;
-      expect(measurement, contains('1235'));
-      expect(measurement, contains('2346'));
+      expect(measurement, contains('1234.5'));
+      expect(measurement, contains('2345.5'));
       expect(measurement, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
 
       vm.toggleStats();
       final stats = vm.statsText!;
-      expect(stats, contains('2346'));
-      expect(stats, contains('1235'));
+      expect(stats, contains('2345.5'));
+      expect(stats, contains('1234.5'));
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
     });
 
@@ -213,6 +261,108 @@ void main() {
       expect(vm.viewport.yMin, oldViewport.yMin);
       expect(vm.viewport.yMax, oldViewport.yMax);
       expect(vm.hintText, contains('Y轴数据范围为0'));
+    });
+
+    test('JustFloat偏置通道参与Y轴自适应缩放', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+
+      for (final value in [1.0, 2.0, 5.0]) {
+        vm.ingestParsedResultForTest(ParseResult.ok([value], bytesConsumed: 4));
+      }
+
+      vm.fitYAxis();
+
+      expect(vm.channels[0].yScale, isNot(1.0));
+      expect(vm.channels[0].yOffset, isNot(0.0));
+
+      final fittedValues =
+          [1.0, 5.0]
+              .map(
+                (value) =>
+                    value * vm.channels[0].yScale + vm.channels[0].yOffset,
+              )
+              .toList();
+      expect(fittedValues[0], greaterThan(vm.viewport.yMin));
+      expect(fittedValues[1], lessThan(vm.viewport.yMax));
+    });
+
+    test('导入常量偏置通道时全自适应会将通道居中', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_const_bin_test_',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      for (int i = 0; i < 4; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([
+            10.0,
+            1.0,
+            3125.0,
+            3125.0,
+            3125.0,
+            3125.0,
+            4.0,
+          ], bytesConsumed: 32),
+        );
+      }
+
+      final binPath = '${dir.path}/constant.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+      for (int i = 0; i < 7; i++) {
+        imported.setChannelOffsetEnabled(i, true);
+      }
+
+      imported.fitAll();
+
+      final center = (imported.viewport.yMin + imported.viewport.yMax) / 2;
+      final values = imported.dataPoints.first.values;
+      for (int i = 0; i < 7; i++) {
+        final displayValue =
+            values[i] * imported.channels[i].yScale +
+            imported.channels[i].yOffset;
+        expect(displayValue, closeTo(center, 1e-9));
+      }
+    });
+
+    test('JustFloat重新识别更少通道时非活动偏置通道不参与自适应', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(2, true);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1.0, 2.0, 3.0], bytesConsumed: 12),
+      );
+      expect(vm.activeChannelCount, 3);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([10.0, 20.0], bytesConsumed: 8),
+      );
+
+      vm.fitYAxis();
+
+      expect(vm.activeChannelCount, 2);
+      expect(vm.channels[2].offsetEnabled, isTrue);
+      expect(vm.channels[2].yScale, 1.0);
+      expect(vm.channels[2].yOffset, 0.0);
+    });
+
+    test('JustFloat手动通道数写入持久化设置', () {
+      final settings = AppSettings();
+      settings.justFloatChannelCount = 0;
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 6);
+
+      expect(vm.parserConfig.channelCount, 6);
+      expect(settings.justFloatChannelCount, 6);
     });
 
     test('X轴点数小于等于3时跳过自适应', () {
