@@ -2314,6 +2314,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   late bool _offsetEnabled;
   late DataType _zobowDataType;
   late final TextEditingController _aliasController;
+  bool _isClosing = false;
 
   @override
   void initState() {
@@ -2536,35 +2537,57 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _isClosing ? null : _closeDialog,
           child: const Text('取消'),
         ),
         TextButton(onPressed: _resetLocalChannel, child: const Text('重置')),
         ElevatedButton(
-          onPressed: () {
-            widget.vm.setChannelColor(widget.ch.index, _selectedColor);
-            widget.vm.setChannelAlias(
-              widget.ch.index,
-              _aliasController.text.trim(),
-            );
-            widget.vm.setChannelShowLine(widget.ch.index, _showLine);
-            widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
-            widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
-            widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
-            // 众邦电控模式下同步数据类型
-            if (widget.vm.parserType == ParserType.zobow &&
-                widget.ch.index < 4) {
-              widget.vm.setZobowChannelType(widget.ch.index, _zobowDataType);
-            }
-            Navigator.pop(context);
-          },
+          onPressed:
+              _isClosing
+                  ? null
+                  : () {
+                    if (_isClosing) return;
+                    _isClosing = true;
+                    widget.vm.setChannelColor(widget.ch.index, _selectedColor);
+                    widget.vm.setChannelAlias(
+                      widget.ch.index,
+                      _aliasController.text.trim(),
+                    );
+                    widget.vm.setChannelShowLine(widget.ch.index, _showLine);
+                    widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
+                    widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
+                    widget.vm.setChannelOffsetEnabled(
+                      widget.ch.index,
+                      _offsetEnabled,
+                    );
+                    // 众邦电控模式下同步数据类型
+                    if (widget.vm.parserType == ParserType.zobow &&
+                        widget.ch.index < 4) {
+                      widget.vm.setZobowChannelType(
+                        widget.ch.index,
+                        _zobowDataType,
+                      );
+                    }
+                    if (mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
           child: const Text('确定'),
         ),
       ],
     );
   }
 
+  void _closeDialog() {
+    if (_isClosing) return;
+    _isClosing = true;
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
   void _resetLocalChannel() {
+    if (_isClosing) return;
     final defaultColor =
         ChannelConfig.defaultColors[widget.ch.index %
             ChannelConfig.defaultColors.length];
