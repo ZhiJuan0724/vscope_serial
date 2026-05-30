@@ -17,11 +17,18 @@ VOFA JustFloat 协议下位机模拟器
 
 import argparse
 import math
+import queue
 import random
 import struct
 import sys
+import threading
 import time
 from typing import List, Optional
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 try:
     import serial
@@ -161,6 +168,55 @@ def build_justfloat_frame(values: List[float]) -> bytes:
     return payload + JUSTFLOAT_TAIL
 
 
+class ConsoleCommandReader:
+    """后台读取控制台命令，避免阻塞串口收发循环。"""
+
+    def __init__(self):
+        self._commands: queue.Queue[str] = queue.Queue()
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def _read_loop(self):
+        if msvcrt is not None:
+            self._read_key_loop()
+            return
+
+        while True:
+            line = sys.stdin.readline()
+            if line == "":
+                return
+            command = line.strip().lower()
+            if command:
+                self._commands.put(command)
+
+    def _read_key_loop(self):
+        while True:
+            if not msvcrt.kbhit():
+                time.sleep(0.05)
+                continue
+
+            key = msvcrt.getwch()
+            if key in ("\x00", "\xe0"):
+                # Consume extended-key suffix.
+                if msvcrt.kbhit():
+                    msvcrt.getwch()
+                continue
+
+            command = key.strip().lower()
+            if command:
+                self._commands.put(command)
+
+    def drain(self) -> List[str]:
+        commands: List[str] = []
+        while True:
+            try:
+                commands.append(self._commands.get_nowait())
+            except queue.Empty:
+                return commands
+
+
 class JustFloatDevice:
     """JustFloat 协议下位机模拟器。"""
 
@@ -178,6 +234,7 @@ class JustFloatDevice:
         self.serial: Optional[serial.Serial] = None
         self.running = False
         self.configured = False
+        self.paused = False
         self.channel_addresses: List[int] = []
         self.data_gen = DataGenerator(mode=data_mode, amplitude=amplitude)
         self.timer = HighPrecisionTimer(interval_ms)
@@ -213,12 +270,48 @@ class JustFloatDevice:
         self.channel_addresses = addresses
         self.data_gen.set_channels(addresses)
         self.configured = True
+        self.paused = False
         self.timer.start()
         print(
             f"[设备] 收到读取命令，通道数: {len(addresses)}，"
             f"地址: {[f'0x{addr:X}' for addr in addresses]}"
         )
         return True
+
+    def _toggle_pause(self):
+        if not self.configured:
+            print("[控制] 当前未开始发送，等待读取命令")
+            return
+        if self.paused:
+            self.paused = False
+            self.timer.start()
+            print("[控制] 已恢复发送")
+            return
+        self.paused = True
+        print("[控制] 已暂停发送；再次输入 p 恢复，输入 r 复位，输入 c 关闭脚本")
+
+    def _reset_to_waiting(self):
+        self.configured = False
+        self.paused = False
+        self.channel_addresses = []
+        self.data_gen.set_channels([])
+        print("[控制] 已复位，等待读取命令: r [通道1地址] [通道2地址] ...")
+
+    def _handle_console_commands(self, commands: List[str]) -> bool:
+        """处理控制台命令。返回 True 表示需要清空串口输入缓冲。"""
+        reset_requested = False
+        for command in commands:
+            if command == "p":
+                self._toggle_pause()
+            elif command == "r":
+                self._reset_to_waiting()
+                reset_requested = True
+            elif command == "c":
+                print("[控制] 收到关闭命令")
+                self.running = False
+            else:
+                print(f"[控制] 未知命令: {command}，可用命令: p 暂停/恢复 / r 复位 / c 关闭")
+        return reset_requested
 
     def _send_data_frame(self):
         if not self.serial or not self.serial.is_open or not self.configured:
@@ -238,12 +331,21 @@ class JustFloatDevice:
 
         self.running = True
         buffer = bytearray()
+        console = ConsoleCommandReader()
+        console.start()
 
         print("[设备] 等待读取命令: r [通道1地址] [通道2地址] ...")
-        print("[设备] 命令以 \\n 结尾，按 Ctrl+C 退出")
+        print("[控制] 按 p 暂停/恢复发送，r 复位等待读取命令，c 关闭脚本；也可按 Ctrl+C 退出")
 
         try:
             while self.running:
+                if self._handle_console_commands(console.drain()):
+                    buffer.clear()
+                    if self.serial:
+                        self.serial.reset_input_buffer()
+                if not self.running:
+                    break
+
                 if self.serial and self.serial.in_waiting > 0:
                     data = self.serial.read(self.serial.in_waiting)
                     buffer.extend(data)
@@ -256,9 +358,11 @@ class JustFloatDevice:
                             self.verbose = False
                             print(f"[设备] 发送间隔 {self.interval_ms}ms (<5ms)，关闭逐帧打印")
 
-                if self.configured:
+                if self.configured and not self.paused:
                     self._send_data_frame()
                     self.timer.wait()
+                elif self.paused:
+                    time.sleep(0.05)
                 else:
                     time.sleep(0.01)
         except KeyboardInterrupt:
