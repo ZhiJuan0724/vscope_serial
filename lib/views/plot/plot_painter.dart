@@ -59,6 +59,8 @@ enum GridDensity { sparse, normal, dense }
 /// 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
 /// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
 class PlotPainter extends CustomPainter {
+  static const double _denseLinePointThresholdRatio = 0.5;
+
   /// 当前绘图视口
   final PlotViewport viewport;
 
@@ -394,7 +396,9 @@ class PlotPainter extends CustomPainter {
 
     final plotW = viewport.plotWidth(size.width);
     final hidePointsForDenseLine =
-        channel.showLine && visibleCount > math.max(1, plotW).round();
+        channel.showLine &&
+        visibleCount >
+            math.max(1, plotW * _denseLinePointThresholdRatio).round();
     if (!hidePointsForDenseLine && !canUseLod) {
       final pointPaint =
           Paint()
@@ -495,31 +499,32 @@ class PlotPainter extends CustomPainter {
     _Range visibleRange,
     Paint paint,
   ) {
-    final path = Path();
-    var hasPoint = false;
+    final rawPoints = Float32List((visibleRange.end - visibleRange.start) * 2);
+    var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
     for (int i = visibleRange.start; i < visibleRange.end; i++) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
-      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-      final y = _screenY(
+      rawPoints[rawIndex++] = viewport.dataToScreenX(
+        point.index.toDouble(),
+        size.width,
+      );
+      rawPoints[rawIndex++] = _screenY(
         point,
         channelIndex,
         channel,
         size.height,
       ).clamp(marginTop, marginBottom);
-      if (hasPoint) {
-        path.lineTo(x, y);
-      } else {
-        path.moveTo(x, y);
-        hasPoint = true;
-      }
     }
 
-    if (hasPoint) {
-      canvas.drawPath(path, paint);
+    if (rawIndex >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.polygon,
+        Float32List.sublistView(rawPoints, 0, rawIndex),
+        paint,
+      );
     }
   }
 

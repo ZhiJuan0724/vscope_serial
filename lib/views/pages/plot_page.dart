@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -1560,7 +1561,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
       ).whenComplete(() => dialogClosed = true),
     );
-    await Future<void>.delayed(Duration.zero);
+    await _waitForImportDialogPresentation();
 
     final error = await importFile(
       filePath,
@@ -1578,6 +1579,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     } else {
       vm.showStatusMessage('导入失败: $error');
     }
+  }
+
+  Future<void> _waitForImportDialogPresentation() async {
+    await SchedulerBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await SchedulerBinding.instance.endOfFrame;
   }
 
   /// 将字符串网格密度转换为 [GridDensity] 枚举

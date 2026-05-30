@@ -2563,7 +2563,12 @@ class PlotViewModel extends BaseViewModel {
     int total, {
     String? detail,
   }) async {
-    onProgress?.call(
+    if (onProgress == null) {
+      await Future<void>.delayed(Duration.zero);
+      return;
+    }
+
+    onProgress.call(
       PlotImportProgress(
         stage: stage,
         current: current,
@@ -2571,7 +2576,7 @@ class PlotViewModel extends BaseViewModel {
         detail: detail,
       ),
     );
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 1));
   }
 
   /// 从 CSV 文件导入数据
