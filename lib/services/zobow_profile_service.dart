@@ -67,10 +67,9 @@ class ZobowProfileService {
 
     if (_configDir == null || !_configDir!.existsSync()) return;
 
-    final files = _configDir!
-        .listSync()
-        .whereType<File>()
-        .where((f) => f.path.endsWith(_fileExtension));
+    final files = _configDir!.listSync().whereType<File>().where(
+      (f) => f.path.endsWith(_fileExtension),
+    );
 
     for (final file in files) {
       try {

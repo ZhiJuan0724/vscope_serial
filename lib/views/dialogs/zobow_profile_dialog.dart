@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/models/zobow_config_profile.dart';
 import '../../services/app_notifications.dart';
+import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
 /// 众邦电控配置文件编辑弹窗
@@ -31,6 +32,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   late final TextEditingController _nameController;
   late final List<_PresetRow> _rows;
   int? _selectedRowIndex;
+  bool _ignoreCImportComments = false;
 
   @override
   void initState() {
@@ -304,9 +306,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           ),
         if (widget.profile == null)
           TextButton.icon(
-            onPressed: _importProfile,
+            onPressed: _showExternalImportDialog,
             icon: const Icon(Icons.file_upload_outlined, size: 16),
-            label: const Text('导入 JSON'),
+            label: const Text('从外部导入'),
           ),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -360,7 +362,83 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     }
   }
 
-  Future<void> _importProfile() async {
+  Future<void> _showExternalImportDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (dialogContext, setDialogState) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  title: const Text('从外部导入'),
+                  content: SizedBox(
+                    width: 340,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        CheckboxListTile(
+                          value: _ignoreCImportComments,
+                          onChanged: (value) {
+                            final checked = value ?? false;
+                            setDialogState(
+                              () => _ignoreCImportComments = checked,
+                            );
+                            setState(() => _ignoreCImportComments = checked);
+                          },
+                          title: const Text('忽略注释'),
+                          subtitle: const Text('C 导入时全部使用变量名'),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _importJsonProfile();
+                          },
+                          icon: const Icon(
+                            Icons.file_upload_outlined,
+                            size: 16,
+                          ),
+                          label: const Text('导入 JSON'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _importCProfileFile();
+                          },
+                          icon: const Icon(Icons.code, size: 16),
+                          label: const Text('导入 C 文件'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _pasteCProfileCode();
+                          },
+                          icon: const Icon(Icons.content_paste, size: 16),
+                          label: const Text('粘贴 C 代码'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('取消'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  Future<void> _importJsonProfile() async {
     final result = await FilePicker.pickFiles(
       dialogTitle: '导入众邦配置文件',
       type: FileType.custom,
@@ -409,6 +487,124 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     }
   }
 
+  Future<void> _importCProfileFile() async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '导入 Zobow C 配置',
+      type: FileType.custom,
+      allowedExtensions: ['c', 'h', 'txt'],
+      allowMultiple: false,
+    );
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+
+    try {
+      final imported = await ZobowCProfileImporter.parseFile(
+        path,
+        useComments: !_ignoreCImportComments,
+      );
+      _applyImportedCProfile(imported, profileName: _fileBaseName(path));
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        '导入 C 配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  Future<void> _pasteCProfileCode() async {
+    final code = await _showPasteCCodeDialog();
+    if (code == null || code.trim().isEmpty || !mounted) return;
+
+    try {
+      final imported = ZobowCProfileImporter.parseSource(
+        code,
+        useComments: !_ignoreCImportComments,
+      );
+      _applyImportedCProfile(imported);
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        '导入 C 配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  Future<String?> _showPasteCCodeDialog() async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: const Text('粘贴 C 代码'),
+              content: SizedBox(
+                width: 560,
+                height: 360,
+                child: TextField(
+                  controller: controller,
+                  expands: true,
+                  maxLines: null,
+                  minLines: null,
+                  textAlignVertical: TextAlignVertical.top,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '粘贴包含 ChxValueTable 的 C 代码',
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, controller.text),
+                  child: const Text('导入'),
+                ),
+              ],
+            ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  void _applyImportedCProfile(
+    ZobowCProfileImportResult imported, {
+    String? profileName,
+  }) {
+    if (imported.presets.isEmpty) {
+      AppNotifications.show(
+        '未找到 ChxValueTable 内可导入的 switch 配置',
+        messenger: ScaffoldMessenger.of(context),
+      );
+      return;
+    }
+
+    for (final row in _rows) {
+      row.dispose();
+    }
+    setState(() {
+      if (profileName != null && profileName.trim().isNotEmpty) {
+        _nameController.text = profileName.trim();
+      }
+      _rows
+        ..clear()
+        ..addAll(imported.presets.map(_rowFromPreset));
+      _selectedRowIndex = null;
+    });
+    AppNotifications.show(
+      '已导入 ${imported.presets.length} 个地址预设',
+      messenger: ScaffoldMessenger.of(context),
+    );
+  }
+
   void _addRow() {
     setState(() {
       _rows.add(
@@ -419,6 +615,23 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       );
       _selectedRowIndex = _rows.length - 1;
     });
+  }
+
+  _PresetRow _rowFromPreset(ZobowChannelPreset preset) {
+    return _PresetRow(
+      nameController: TextEditingController(text: preset.name),
+      addressController: TextEditingController(
+        text:
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+      ),
+    );
+  }
+
+  String _fileBaseName(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final name = normalized.substring(normalized.lastIndexOf('/') + 1);
+    final dot = name.lastIndexOf('.');
+    return dot > 0 ? name.substring(0, dot) : name;
   }
 
   void _deleteSelectedRow() {

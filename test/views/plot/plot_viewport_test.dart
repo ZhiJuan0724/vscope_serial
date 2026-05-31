@@ -84,7 +84,10 @@ void main() {
       expect(vp.screenToDataX(vp.marginLeft, canvasWidth), 0.0);
 
       // canvasWidth - marginRight 处应为 x=1000
-      expect(vp.screenToDataX(canvasWidth - vp.marginRight, canvasWidth), 1000.0);
+      expect(
+        vp.screenToDataX(canvasWidth - vp.marginRight, canvasWidth),
+        1000.0,
+      );
     });
 
     test('copyWith只修改指定字段', () {
@@ -93,7 +96,7 @@ void main() {
 
       expect(newVp.xMin, 100.0);
       expect(newVp.xMax, 1000.0); // 未修改
-      expect(newVp.yMin, 0.0);    // 未修改
+      expect(newVp.yMin, 0.0); // 未修改
       expect(newVp.yMax, 1000.0); // 未修改
     });
 

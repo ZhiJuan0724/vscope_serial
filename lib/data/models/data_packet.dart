@@ -5,10 +5,8 @@ class DataPacket {
   final Uint8List data;
   final DateTime timestamp;
 
-  DataPacket({
-    required this.data,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+  DataPacket({required this.data, DateTime? timestamp})
+    : timestamp = timestamp ?? DateTime.now();
 
   String get text => String.fromCharCodes(data);
 

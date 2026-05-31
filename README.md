@@ -19,7 +19,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 
 - FireWater：CSV 风格文本数据，支持自动识别或固定通道数。
 - 固定帧头：自定义帧头、数据类型、通道数、校验和帧尾。
-- Zobow：4/8 通道固定帧，CRC16/MODBUS 校验。
+- Zobow：4/8 通道固定帧，CRC16/MODBUS 校验；地址和 `uint16/int16` 类型在通道面板中配置。
 - JustFloat：VOFA 小端 `float32` 数组 + `00 00 80 7F` 帧尾，支持自动通道数识别。
 
 ### 绘图
@@ -41,7 +41,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 
 ### 文件与测试数据
 
-- CSV/BIN 导入导出。
+- CSV/BIN 导入导出，支持导入旧版虚拟示波器 `.dat` 文件。
 - 大文件导入异步执行，并显示进度弹窗。
 - Zobow/FixedFrame 导出可基于运行期内保留的原始固定帧数据。
 - `test_tools/generate_plot_bin.py` 可生成大规模 BIN 测试文件，便于直接导入绘图页测试。

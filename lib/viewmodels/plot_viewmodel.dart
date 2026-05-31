@@ -146,6 +146,11 @@ class PlotViewModel extends BaseViewModel {
   // ========== 通道配置 ==========
   /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
+  List<int>? _importedChannelAddresses;
+  List<int>? get importedChannelAddresses =>
+      _importedChannelAddresses == null
+          ? null
+          : List.unmodifiable(_importedChannelAddresses!);
 
   // ========== 状态 ==========
   /// 是否正在绘图（数据源运行中）
@@ -428,6 +433,7 @@ class PlotViewModel extends BaseViewModel {
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
   PlotLodIndex get lodIndex => _lodIndex;
+  int get zobowRawFrameCount => _zobowRawFrames.packetCount;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
@@ -697,11 +703,17 @@ class PlotViewModel extends BaseViewModel {
     _parserConfig.zobowChannelIds = List.from(config.zobowChannelIds);
     _parserConfig.zobowChannelTypes = List.from(config.zobowChannelTypes);
     final newZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
-    if (oldZobowFrameLength != newZobowFrameLength) {
+    final zobowFrameLengthChanged = oldZobowFrameLength != newZobowFrameLength;
+    final fixedFrameLengthChanged =
+        oldFixedFrameLength != _parserConfig.totalFrameLength;
+    if (zobowFrameLengthChanged) {
       _resetZobowRawFrameBuffer();
     }
-    if (oldFixedFrameLength != _parserConfig.totalFrameLength) {
+    if (fixedFrameLengthChanged) {
       _resetFixedFrameRawFrameBuffer();
+    }
+    if (zobowFrameLengthChanged || fixedFrameLengthChanged) {
+      clearData();
     }
 
     // 更新随机数据源通道数以匹配 FireWater 配置
@@ -775,6 +787,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -921,6 +934,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -1242,6 +1256,35 @@ class PlotViewModel extends BaseViewModel {
           values: ZobowParser.decodeFrameValues(frame, _parserConfig),
         ),
       );
+    }
+  }
+
+  Future<void> _rebuildZobowWindowAsync(
+    int start,
+    int count, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    _dataPoints.clear();
+    _visibleStartIndex = start;
+    _dataRevision++;
+
+    const batchSize = 4096;
+    for (int i = 0; i < count; i++) {
+      final packetIndex = start + i;
+      final frame = _zobowRawFrames.readPacket(packetIndex);
+      _dataPoints.add(
+        PlotDataPoint(
+          index: packetIndex,
+          timestamp: packetIndex.toDouble(),
+          values: ZobowParser.decodeFrameValues(frame, _parserConfig),
+        ),
+      );
+      if ((i + 1) % batchSize == 0 || i + 1 == count) {
+        onProgress?.call(
+          PlotImportProgress(stage: '刷新绘图窗口', current: i + 1, total: count),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
     }
   }
 
@@ -1764,16 +1807,64 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 众邦电控的通道数据类型
-  void setZobowChannelType(int index, DataType type) {
-    if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
-    if (type != DataType.uint16 && type != DataType.int16) return;
-    _parserConfig.zobowChannelTypes[index] = type;
-    // 同步更新通道配置的数据类型（影响绘图显示）
+  /// 设置 众邦电控的通道数据类型，并重新解释已缓存的原始帧。
+  Future<bool> setZobowChannelType(
+    int index,
+    DataType type, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    if (index < 0 || index >= _parserConfig.zobowChannelCount) return false;
+    if (type != DataType.uint16 && type != DataType.int16) return false;
+    if (_isPlotting || _isStopping) {
+      showStatusMessage('请停止绘图后再修改众邦通道数据类型');
+      return false;
+    }
     if (index < channels.length) {
       channels[index].dataType = type;
     }
+    if (_parserConfig.zobowChannelTypes[index] == type) return true;
+
+    _parserConfig.zobowChannelTypes[index] = type;
+
+    final total = _zobowRawFrames.packetCount;
+    if (total > 0) {
+      final visibleStart = _visibleStartIndex;
+      final visibleCount = _dataPoints.length;
+      final stopwatch = Stopwatch()..start();
+      _lodIndex.clear();
+
+      const batchSize = 4096;
+      for (int packetIndex = 0; packetIndex < total; packetIndex++) {
+        final frame = _zobowRawFrames.readPacket(packetIndex);
+        _lodIndex.add(
+          packetIndex,
+          ZobowParser.decodeFrameValues(frame, _parserConfig),
+        );
+        if ((packetIndex + 1) % batchSize == 0 || packetIndex + 1 == total) {
+          onProgress?.call(
+            PlotImportProgress(
+              stage: '重新解释众邦数据',
+              current: packetIndex + 1,
+              total: total,
+            ),
+          );
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+
+      await _rebuildZobowWindowAsync(
+        visibleStart,
+        visibleCount,
+        onProgress: onProgress,
+      );
+      AppLogger().info(
+        '众邦通道类型转换完成: $total 帧, ${stopwatch.elapsedMilliseconds}ms',
+        category: 'PLOT',
+      );
+    }
+
     Future.microtask(() => notifyListeners());
+    return true;
   }
 
   // ========== 显示控制 ==========
@@ -2492,6 +2583,12 @@ class PlotViewModel extends BaseViewModel {
       return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
     }, growable: false);
     final metadata = <String, dynamic>{'channelNames': names};
+    if (_importedChannelAddresses != null) {
+      metadata['channelAddresses'] = _importedChannelAddresses!
+          .take(channelCount)
+          .map((id) => id & 0xFFFFFFFF)
+          .toList(growable: false);
+    }
     if (_parserType == ParserType.zobow) {
       metadata['parserType'] = ParserType.zobow.name;
       metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
@@ -2859,6 +2956,117 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  /// Import data exported by the legacy VisualScope application.
+  ///
+  /// The legacy format stores four independent little-endian int16 channel
+  /// blocks. Its first 50,000 samples are a reserved history area and are not
+  /// part of the user-visible capture.
+  Future<String?> importFromLegacyDat(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    try {
+      final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
+      if (!await file.exists()) {
+        return '文件不存在';
+      }
+
+      await _reportImportProgress(onProgress, '读取 DAT', 0, 0);
+      final bytes = await file.readAsBytes();
+      const channelCount = 4;
+      const reservedPointCount = 50000;
+      const minimumHeaderLength = 0x24;
+      if (bytes.length < minimumHeaderLength) {
+        return 'DAT 文件头不完整';
+      }
+      await _reportImportProgress(
+        onProgress,
+        '读取 DAT',
+        bytes.length,
+        bytes.length,
+        detail: '${bytes.length} 字节',
+      );
+
+      final data = ByteData.sublistView(bytes);
+      final declaredLength = data.getUint32(0, Endian.little);
+      if (declaredLength != bytes.length) {
+        return 'DAT 文件长度校验失败';
+      }
+
+      final storedPointCount = data.getUint32(0x20, Endian.little);
+      if (storedPointCount <= reservedPointCount) {
+        return 'DAT 文件没有有效数据';
+      }
+      final expectedLength = 4 + channelCount * (32 + storedPointCount * 2);
+      if (expectedLength != bytes.length) {
+        return 'DAT 数据布局不匹配';
+      }
+
+      final importedPointCount = storedPointCount - reservedPointCount;
+      final addresses = <int>[];
+      final channelDataOffsets = <int>[];
+      for (int channel = 0; channel < channelCount; channel++) {
+        final channelNumber = channel + 1;
+        final blockOffset = channel * storedPointCount * 2;
+        final dataOffset =
+            0x04 + channelNumber * 32 + blockOffset + reservedPointCount * 2;
+        // Each channel block has a 32-byte header. Its address field is the
+        // uint32 value 12 bytes before the raw sample data.
+        final addressOffset = dataOffset - reservedPointCount * 2 - 12;
+        final dataEnd =
+            0x04 + channelNumber * 32 + blockOffset + storedPointCount * 2;
+        if (addressOffset + 4 > bytes.length ||
+            dataOffset > dataEnd ||
+            dataEnd > bytes.length) {
+          return 'DAT 通道数据不完整';
+        }
+        addresses.add(data.getUint32(addressOffset, Endian.little));
+        channelDataOffsets.add(dataOffset);
+      }
+
+      final importedPoints = <PlotDataPoint>[];
+      for (int pointIndex = 0; pointIndex < importedPointCount; pointIndex++) {
+        final byteOffset = pointIndex * 2;
+        importedPoints.add(
+          PlotDataPoint(
+            index: pointIndex,
+            timestamp: pointIndex.toDouble(),
+            values: [
+              for (final offset in channelDataOffsets)
+                data.getInt16(offset + byteOffset, Endian.little).toDouble(),
+            ],
+          ),
+        );
+        if ((pointIndex + 1) % _importProgressBatchSize == 0 ||
+            pointIndex + 1 == importedPointCount) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 DAT',
+            pointIndex + 1,
+            importedPointCount,
+            detail: '${pointIndex + 1} 点',
+          );
+        }
+      }
+
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: {'channelAddresses': addresses},
+        onProgress: onProgress,
+      );
+      AppLogger().info(
+        '旧版 DAT 导入成功: $filePath, $importedPointCount 点, 地址=${addresses.map((address) => '0x${address.toRadixString(16).toUpperCase()}').join(',')}',
+        category: 'PLOT',
+      );
+      return null;
+    } catch (e) {
+      AppLogger().error('旧版 DAT 导入失败: $e', category: 'PLOT');
+      return '解析错误: $e';
+    }
+  }
+
   Future<void> _replaceImportedPoints(
     List<PlotDataPoint> importedPoints,
     int channelCount, {
@@ -2870,6 +3078,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     var minY = double.infinity;
     var maxY = double.negativeInfinity;
     for (int i = 0; i < importedPoints.length; i++) {
@@ -2951,6 +3160,14 @@ class PlotViewModel extends BaseViewModel {
       }
     }
 
+    final addresses = metadata['channelAddresses'];
+    if (addresses is List) {
+      _importedChannelAddresses = _applyChannelAddresses(
+        addresses,
+        channelCount,
+      );
+    }
+
     final ids = metadata['zobowChannelIds'];
     if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
       _parserType = ParserType.zobow;
@@ -2959,31 +3176,38 @@ class PlotViewModel extends BaseViewModel {
           channelCount >= ParserConfig.maxZobowChannelCount
               ? ParserConfig.maxZobowChannelCount
               : ParserConfig.minZobowChannelCount;
-      for (
-        int i = 0;
-        i < ids.length &&
-            i < _parserConfig.zobowChannelIds.length &&
-            i < _parserConfig.zobowChannelCount;
-        i++
-      ) {
-        final id = ids[i];
-        if (id is int) {
-          _parserConfig.zobowChannelIds[i] = id & 0xFFFFFFFF;
-        } else if (id is num) {
-          _parserConfig.zobowChannelIds[i] = id.toInt() & 0xFFFFFFFF;
-        } else if (id is String) {
-          final parsed = int.tryParse(
-            id.replaceAll('0x', '').replaceAll('0X', ''),
-            radix: 16,
-          );
-          if (parsed != null) {
-            _parserConfig.zobowChannelIds[i] = parsed & 0xFFFFFFFF;
-          }
-        }
-      }
+      _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
       AppSettings().parserType = ParserType.zobow.name;
       _saveSettings();
     }
+  }
+
+  List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {
+    final addresses = <int>[];
+    for (
+      int i = 0;
+      i < values.length &&
+          i < channelCount &&
+          i < _parserConfig.zobowChannelIds.length;
+      i++
+    ) {
+      final value = values[i];
+      final address = switch (value) {
+        int value => value,
+        num value => value.toInt(),
+        String value => int.tryParse(
+          value.replaceAll('0x', '').replaceAll('0X', ''),
+          radix: 16,
+        ),
+        _ => null,
+      };
+      if (address != null) {
+        final normalized = address & 0xFFFFFFFF;
+        _parserConfig.zobowChannelIds[i] = normalized;
+        addresses.add(normalized);
+      }
+    }
+    return addresses;
   }
 
   // ========== 众邦电控配置文件操作 ==========

@@ -3,15 +3,13 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
-
-
 /// 自定义文件输出 - 每次启动新建日志，旧日志自动归档，最多保留20份
 class FileLogOutput extends LogOutput {
   RandomAccessFile? _raf;
   File? _file;
   static const int _maxLogFiles = 20;
   static const String _latestName = 'latest.log';
-  
+
   /// 批量flush：累计一定量或定时flush，减少磁盘IO
   static const int _flushThresholdBytes = 4096;
   int _pendingBytes = 0;
@@ -53,17 +51,25 @@ class FileLogOutput extends LogOutput {
 
   /// 清理超期日志，只保留最新的 _maxLogFiles 份
   Future<void> _cleanupOldLogs(Directory logDir) async {
-    final entities = await logDir
-        .list()
-        .where((e) =>
-            e is File &&
-            e.path.split(Platform.pathSeparator).last.startsWith('vscope_log_'))
-        .toList();
+    final entities =
+        await logDir
+            .list()
+            .where(
+              (e) =>
+                  e is File &&
+                  e.path
+                      .split(Platform.pathSeparator)
+                      .last
+                      .startsWith('vscope_log_'),
+            )
+            .toList();
 
     if (entities.length <= _maxLogFiles) return;
 
     // 按修改时间排序，旧的在前
-    entities.sort((a, b) => a.statSync().modified.compareTo(b.statSync().modified));
+    entities.sort(
+      (a, b) => a.statSync().modified.compareTo(b.statSync().modified),
+    );
 
     // 删除多余的旧日志，确保归档后总数不超过 _maxLogFiles
     final toDelete = entities.length - _maxLogFiles;
@@ -91,8 +97,10 @@ class FileLogOutput extends LogOutput {
       _pendingBytes += lineBytes.length;
     }
     // 批量flush策略：超过阈值或超过100ms未flush
-    final shouldFlush = _pendingBytes >= _flushThresholdBytes ||
-        (_lastFlushTime != null && now.difference(_lastFlushTime!).inMilliseconds > 100);
+    final shouldFlush =
+        _pendingBytes >= _flushThresholdBytes ||
+        (_lastFlushTime != null &&
+            now.difference(_lastFlushTime!).inMilliseconds > 100);
     if (shouldFlush) {
       _raf!.flushSync();
       _pendingBytes = 0;
@@ -106,7 +114,6 @@ class FileLogOutput extends LogOutput {
     _raf = null;
   }
 }
-
 
 /// 自定义日志打印机 - 使用完整级别名称 + ANSI 颜色
 class _AppLogPrinter extends LogPrinter {
@@ -212,12 +219,24 @@ class AppLogger {
     }
   }
 
-  void trace(String msg, {String? category}) => _log('T', msg, category: category);
-  void debug(String msg, {String? category}) => _log('D', msg, category: category);
-  void info(String msg, {String? category}) => _log('I', msg, category: category);
-  void warning(String msg, {String? category}) => _log('W', msg, category: category);
-  void error(String msg, {String? category, dynamic error, StackTrace? stackTrace}) =>
-      _log('E', msg, category: category);
-  void fatal(String msg, {String? category, dynamic error, StackTrace? stackTrace}) =>
-      _log('F', msg, category: category);
+  void trace(String msg, {String? category}) =>
+      _log('T', msg, category: category);
+  void debug(String msg, {String? category}) =>
+      _log('D', msg, category: category);
+  void info(String msg, {String? category}) =>
+      _log('I', msg, category: category);
+  void warning(String msg, {String? category}) =>
+      _log('W', msg, category: category);
+  void error(
+    String msg, {
+    String? category,
+    dynamic error,
+    StackTrace? stackTrace,
+  }) => _log('E', msg, category: category);
+  void fatal(
+    String msg, {
+    String? category,
+    dynamic error,
+    StackTrace? stackTrace,
+  }) => _log('F', msg, category: category);
 }

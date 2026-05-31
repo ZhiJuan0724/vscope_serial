@@ -754,7 +754,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Tooltip(
-          message: '导入 CSV/BIN（最大16通道）',
+          message: '导入 CSV/BIN/旧版 DAT',
           child: IconButton(
             onPressed: () => _importPlotData(context, vm),
             icon: const Icon(Icons.file_upload, size: 18),
@@ -1410,8 +1410,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   Future<_PlotFileFormat?> _choosePlotFileFormat(
     BuildContext context,
-    String title,
-  ) {
+    String title, {
+    bool includeLegacyDat = false,
+  }) {
     return showDialog<_PlotFileFormat>(
       context: context,
       builder:
@@ -1426,6 +1427,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 onPressed: () => Navigator.pop(context, _PlotFileFormat.bin),
                 child: const Text('BIN 二进制'),
               ),
+              if (includeLegacyDat)
+                SimpleDialogOption(
+                  onPressed:
+                      () => Navigator.pop(context, _PlotFileFormat.legacyDat),
+                  child: const Text('旧版虚拟示波器 DAT'),
+                ),
             ],
           ),
     );
@@ -1440,6 +1447,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         break;
       case _PlotFileFormat.bin:
         _exportBin(context, vm);
+        break;
+      case _PlotFileFormat.legacyDat:
         break;
     }
   }
@@ -1475,7 +1484,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
-    final format = await _choosePlotFileFormat(context, '选择导入格式');
+    final format = await _choosePlotFileFormat(
+      context,
+      '选择导入格式',
+      includeLegacyDat: true,
+    );
     if (format == null || !context.mounted) return;
     switch (format) {
       case _PlotFileFormat.csv:
@@ -1483,6 +1496,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         break;
       case _PlotFileFormat.bin:
         _importBin(context, vm);
+        break;
+      case _PlotFileFormat.legacyDat:
+        _importLegacyDat(context, vm);
         break;
     }
   }
@@ -1530,6 +1546,28 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       title: '导入 BIN',
       importFile: vm.importFromBin,
       successMessage: 'BIN 导入成功',
+    );
+  }
+
+  void _importLegacyDat(BuildContext context, PlotViewModel vm) async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '选择旧版虚拟示波器 DAT 文件',
+      type: FileType.custom,
+      allowedExtensions: ['dat'],
+      allowMultiple: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final filePath = result.files.single.path;
+    if (filePath == null || !context.mounted) return;
+
+    await _runImportWithProgress(
+      context: context,
+      vm: vm,
+      filePath: filePath,
+      title: '导入旧版 DAT',
+      importFile: vm.importFromLegacyDat,
+      successMessage: '旧版 DAT 导入成功',
     );
   }
 
@@ -2101,7 +2139,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 }
 
-enum _PlotFileFormat { csv, bin }
+enum _PlotFileFormat { csv, bin, legacyDat }
 
 class _PlotImportProgressDialog extends StatelessWidget {
   final String title;
@@ -2508,6 +2546,8 @@ class _ChannelEditDialog extends StatefulWidget {
 }
 
 class _ChannelEditDialogState extends State<_ChannelEditDialog> {
+  static const int _progressDialogFrameThreshold = 50000;
+
   late Color _selectedColor;
   late String _alias;
   late bool _showLine;
@@ -2527,9 +2567,14 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _pointSize = widget.ch.pointSize;
     _lineWidth = widget.ch.lineWidth;
     _offsetEnabled = widget.ch.offsetEnabled;
-    // 众邦电控模式下，使用通道配置的数据类型
+    // 众邦电控模式下，使用解析器当前生效的数据类型。
+    final zobowType =
+        widget.vm.parserType == ParserType.zobow &&
+                widget.ch.index < widget.vm.parserConfig.zobowChannelCount
+            ? widget.vm.parserConfig.zobowChannelTypes[widget.ch.index]
+            : widget.ch.dataType;
     _zobowDataType =
-        widget.ch.dataType == DataType.int16 ? DataType.int16 : DataType.uint16;
+        zobowType == DataType.int16 ? DataType.int16 : DataType.uint16;
     _aliasController = TextEditingController(text: _alias);
   }
 
@@ -2686,7 +2731,8 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 ],
                 // 众邦电控模式下显示数据类型选择
                 if (widget.vm.parserType == ParserType.zobow &&
-                    widget.ch.index < 4) ...[
+                    widget.ch.index <
+                        widget.vm.parserConfig.zobowChannelCount) ...[
                   const SizedBox(height: 12),
                   const Text(
                     '数据类型',
@@ -2694,7 +2740,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    '仅在众邦电控协议生效',
+                    '仅在众邦电控协议停止绘图后可修改',
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
@@ -2722,11 +2768,14 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                                   ),
                                 );
                               }).toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() => _zobowDataType = value);
-                            }
-                          },
+                          onChanged:
+                              widget.vm.isPlotting
+                                  ? null
+                                  : (value) {
+                                    if (value != null) {
+                                      setState(() => _zobowDataType = value);
+                                    }
+                                  },
                         ),
                       ),
                     ],
@@ -2744,36 +2793,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
         ),
         TextButton(onPressed: _resetLocalChannel, child: const Text('重置')),
         ElevatedButton(
-          onPressed:
-              _isClosing
-                  ? null
-                  : () {
-                    if (_isClosing) return;
-                    _isClosing = true;
-                    widget.vm.setChannelColor(widget.ch.index, _selectedColor);
-                    widget.vm.setChannelAlias(
-                      widget.ch.index,
-                      _aliasController.text.trim(),
-                    );
-                    widget.vm.setChannelShowLine(widget.ch.index, _showLine);
-                    widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
-                    widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
-                    widget.vm.setChannelOffsetEnabled(
-                      widget.ch.index,
-                      _offsetEnabled,
-                    );
-                    // 众邦电控模式下同步数据类型
-                    if (widget.vm.parserType == ParserType.zobow &&
-                        widget.ch.index < 4) {
-                      widget.vm.setZobowChannelType(
-                        widget.ch.index,
-                        _zobowDataType,
-                      );
-                    }
-                    if (mounted) {
-                      Navigator.of(context).pop();
-                    }
-                  },
+          onPressed: _isClosing ? null : _saveChannel,
           child: const Text('确定'),
         ),
       ],
@@ -2803,6 +2823,68 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       _offsetEnabled = false;
       _zobowDataType = DataType.uint16;
     });
+  }
+
+  Future<void> _saveChannel() async {
+    if (_isClosing) return;
+    _isClosing = true;
+    widget.vm.setChannelColor(widget.ch.index, _selectedColor);
+    widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
+    widget.vm.setChannelShowLine(widget.ch.index, _showLine);
+    widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
+    widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
+    widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
+
+    if (widget.vm.parserType == ParserType.zobow &&
+        widget.ch.index < widget.vm.parserConfig.zobowChannelCount &&
+        _zobowDataType !=
+            widget.vm.parserConfig.zobowChannelTypes[widget.ch.index]) {
+      await _applyZobowDataType();
+    }
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _applyZobowDataType() async {
+    final showProgress =
+        widget.vm.zobowRawFrameCount >= _progressDialogFrameThreshold;
+    final progressNotifier = ValueNotifier<PlotImportProgress>(
+      PlotImportProgress(
+        stage: '准备重新解释众邦数据',
+        current: 0,
+        total: widget.vm.zobowRawFrameCount,
+      ),
+    );
+    var dialogClosed = false;
+
+    if (showProgress) {
+      unawaited(
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder:
+              (dialogContext) => _PlotImportProgressDialog(
+                title: '更新通道数据类型',
+                progressListenable: progressNotifier,
+              ),
+        ).whenComplete(() => dialogClosed = true),
+      );
+      await SchedulerBinding.instance.endOfFrame;
+      await Future<void>.delayed(const Duration(milliseconds: 220));
+      await SchedulerBinding.instance.endOfFrame;
+    }
+
+    await widget.vm.setZobowChannelType(
+      widget.ch.index,
+      _zobowDataType,
+      onProgress: (progress) => progressNotifier.value = progress,
+    );
+
+    if (mounted && showProgress && !dialogClosed) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    progressNotifier.dispose();
   }
 
   /// 构建颜色选择器（15 个黑底可识别预设色 + 自选色入口）
@@ -3186,134 +3268,58 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
 
   /// 构建 众邦电控解析器配置界面
   ///
-  /// 包含4个通道的通道号（4字节16进制）和数据类型（uint16/int16）设置。
+  /// 众邦通道号和数据类型在通道面板中维护，此处只选择通道数。
   Widget _buildZobowConfig() {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('众邦电控配置', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Text('通道数:', style: TextStyle(fontSize: 12)),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 90,
-                child: NoAnimDropdown<int>(
-                  value: _config.zobowChannelCount,
-                  hint: '通道数',
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('众邦电控配置', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Text('通道数:', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 90,
+              child: NoAnimDropdown<int>(
+                value: _config.zobowChannelCount,
+                hint: '通道数',
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
                   ),
-                  items:
-                      const [4, 8].map((count) {
-                        return DropdownMenuItem(
-                          value: count,
-                          child: Text('$count 通道'),
-                        );
-                      }).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() => _config.channelCount = value);
-                    }
-                  },
                 ),
+                items:
+                    const [4, 8].map((count) {
+                      return DropdownMenuItem(
+                        value: count,
+                        child: Text('$count 通道'),
+                      );
+                    }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _config.channelCount = value);
+                  }
+                },
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '${_config.zobowChannelCount * 2}字节数据 + 2字节CRC16(MODBUS)',
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
-          ),
-          const SizedBox(height: 12),
-          ...List.generate(_config.zobowChannelCount, (i) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  Text('Ch$i:', style: const TextStyle(fontSize: 12)),
-                  const SizedBox(width: 6),
-                  // 通道号输入（4字节16进制）
-                  SizedBox(
-                    width: 96,
-                    child: TextField(
-                      controller: TextEditingController(
-                        text: _formatZobowAddress(_config.zobowChannelIds[i]),
-                      ),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        hintText: '通道号',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 4,
-                        ),
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(
-                          RegExp(r'[0-9a-fA-FxX]'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        final hex = value
-                            .replaceAll('0x', '')
-                            .replaceAll('0X', '');
-                        final id = int.tryParse(hex, radix: 16);
-                        if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
-                          setState(() => _config.zobowChannelIds[i] = id);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // 数据类型选择
-                  SizedBox(
-                    width: 90,
-                    child: NoAnimDropdown<DataType>(
-                      value: _config.zobowChannelTypes[i],
-                      hint: '类型',
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 4,
-                        ),
-                      ),
-                      items:
-                          [DataType.uint16, DataType.int16].map((type) {
-                            return DropdownMenuItem(
-                              value: type,
-                              child: Text(
-                                type.label,
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                            );
-                          }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() => _config.zobowChannelTypes[i] = value);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-          const SizedBox(height: 8),
-          // 众邦电控协议固定发送配置，无需开关
-        ],
-      ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${_config.zobowChannelCount * 2}字节数据 + 2字节CRC16(MODBUS)',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '通道号和数据类型请在通道面板中设置',
+          style: TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      ],
     );
   }
 

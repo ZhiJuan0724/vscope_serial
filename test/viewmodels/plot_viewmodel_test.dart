@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
@@ -8,6 +9,34 @@ import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+
+Future<void> _writeLegacyDat(File file) async {
+  const channelCount = 4;
+  const storedPointCount = 50010;
+  final bytes = Uint8List(4 + channelCount * (32 + storedPointCount * 2));
+  final data = ByteData.sublistView(bytes);
+  data.setUint32(0, bytes.length, Endian.little);
+  data.setUint32(0x20, storedPointCount, Endian.little);
+  const addresses = [0x91, 0x94, 0x73, 0x93];
+  const values = [
+    [1, -2],
+    [3, -4],
+    [5, -6],
+    [7, -8],
+  ];
+
+  for (int channel = 0; channel < channelCount; channel++) {
+    final channelNumber = channel + 1;
+    final blockOffset = channel * storedPointCount * 2;
+    final dataOffset = 0x04 + channelNumber * 32 + blockOffset + 50000 * 2;
+    final addressOffset = dataOffset - 50000 * 2 - 12;
+    data.setUint32(addressOffset, addresses[channel], Endian.little);
+    for (int i = 0; i < values[channel].length; i++) {
+      data.setInt16(dataOffset + i * 2, values[channel][i], Endian.little);
+    }
+  }
+  await file.writeAsBytes(bytes);
+}
 
 void main() {
   group('PlotViewModel', () {
@@ -190,6 +219,44 @@ void main() {
       expect(stages, contains('读取 CSV'));
       expect(stages, contains('建立绘图索引'));
       expect(stages, contains('加载可见窗口'));
+    });
+
+    test('旧版 DAT 导入跳过预留区并保留通道地址', () async {
+      final dir = await Directory.systemTemp.createTemp('vscope_dat_test_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final dat = File('${dir.path}/legacy.dat');
+      await _writeLegacyDat(dat);
+      final stages = <String>[];
+
+      final error = await vm.importFromLegacyDat(
+        dat.path,
+        onProgress: (progress) => stages.add(progress.stage),
+      );
+
+      expect(error, isNull);
+      expect(vm.dataPoints.length, 10);
+      expect(vm.dataPoints[0].values, [1, 3, 5, 7]);
+      expect(vm.dataPoints[1].values, [-2, -4, -6, -8]);
+      expect(vm.channels[0].alias, isEmpty);
+      expect(vm.importedChannelAddresses, [
+        0x00000091,
+        0x00000094,
+        0x00000073,
+        0x00000093,
+      ]);
+      expect(vm.parserConfig.zobowChannelIds[0], 0x00000091);
+      expect(vm.parserConfig.zobowChannelIds[2], 0x00000073);
+      expect(stages, contains('读取 DAT'));
+      expect(stages, contains('解析 DAT'));
+      expect(stages, contains('建立绘图索引'));
+
+      final binPath = '${dir.path}/legacy.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+      expect(imported.channels[0].alias, isEmpty);
+      expect(imported.importedChannelAddresses, vm.importedChannelAddresses);
     });
 
     test('setVCursorEnabled切换状态', () {

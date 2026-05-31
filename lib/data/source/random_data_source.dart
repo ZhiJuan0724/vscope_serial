@@ -7,9 +7,9 @@ import 'data_source.dart';
 
 /// 内部随机数据源
 /// 按 FireWater 格式生成随机数据: "value1,value2,...,valueN\n"
-/// 
+///
 /// 各通道使用正弦波叠加少量噪声，相位不同，呈现有规律的波形而非完全随机。
-/// 
+///
 /// 数据生成在独立 Isolate 中执行，避免阻塞 UI 线程。
 class RandomDataSource implements IDataSource {
   /// 通道数
@@ -25,11 +25,13 @@ class RandomDataSource implements IDataSource {
   final int intervalMs;
 
   final _controller = StreamController<Uint8List>.broadcast();
-  
+
   /// 与生成 Isolate 通信的端口
   SendPort? _sendPort;
+
   /// 接收生成数据的端口
   ReceivePort? _receivePort;
+
   /// Isolate 实例
   Isolate? _isolate;
 
@@ -153,18 +155,15 @@ class _DataGenerator {
   final _random = Random();
 
   _DataGenerator(_IsolateInitData initData)
-      : channelCount = initData.channelCount,
-        minValue = initData.minValue,
-        maxValue = initData.maxValue,
-        sendPort = initData.sendPort {
+    : channelCount = initData.channelCount,
+      minValue = initData.minValue,
+      maxValue = initData.maxValue,
+      sendPort = initData.sendPort {
     _phaseOffsets = List.generate(
       channelCount,
       (i) => (i * pi / channelCount) + _random.nextDouble() * 0.5,
     );
-    _frequencies = List.generate(
-      channelCount,
-      (i) => 0.05 + (i + 1) * 0.02,
-    );
+    _frequencies = List.generate(channelCount, (i) => 0.05 + (i + 1) * 0.02);
   }
 
   void generate() {
@@ -179,7 +178,8 @@ class _DataGenerator {
 
     _time += 1;
 
-    final line = '${values.map((v) => v.clamp(minValue, maxValue).toStringAsFixed(2)).join(',')}\n';
+    final line =
+        '${values.map((v) => v.clamp(minValue, maxValue).toStringAsFixed(2)).join(',')}\n';
     final bytes = Uint8List.fromList(line.codeUnits);
     sendPort.send(bytes);
   }

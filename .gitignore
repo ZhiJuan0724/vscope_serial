@@ -55,3 +55,4 @@ app.*.map.json
 docs/icons.md
 
 *.bin
+__pychache__
