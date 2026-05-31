@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/utils/crc.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
@@ -51,6 +52,8 @@ const double kCompactChannelPanelWidth = 212;
 const double kMaxChannelPanelWidth = 400;
 const double kDefaultChannelPanelWidth = 240;
 const double kCollapsedPanelWidth = 26;
+const double kRProtocolAddressWidth = 86;
+const double kFixedFrameConfigLabelWidth = 72;
 
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
@@ -1030,6 +1033,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final displayCount =
         vm.parserType == ParserType.zobow
             ? vm.parserConfig.zobowChannelCount
+            : vm.parserType == ParserType.fixedFrame
+            ? vm.parserConfig.channelCount
             : vm.effectiveSendProtocolType == SendProtocolType.rProtocol
             ? math.max(vm.activeChannelCount, vm.rAddressDisplayCount)
             : activeCount;
@@ -2504,9 +2509,12 @@ class _ChannelItemState extends State<_ChannelItem> {
         isZobowMode && (zobowAddress & 0xFFFF0000) == 0;
     final rAddress =
         isRProtocolMode ? widget.vm.rChannelAddresses[widget.ch.index] : '';
+    final reservesRAddressSpace =
+        !showsAddress &&
+        widget.vm.effectiveSendProtocolType == SendProtocolType.none;
 
     return Container(
-      constraints: const BoxConstraints(minHeight: 34),
+      constraints: const BoxConstraints(minHeight: 40),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         border: Border(
@@ -2589,10 +2597,10 @@ class _ChannelItemState extends State<_ChannelItem> {
                   Container(
                     width:
                         isRProtocolMode
-                            ? 86
+                            ? kRProtocolAddressWidth
                             : usesShortZobowAddress
                             ? 58
-                            : 86,
+                            : kRProtocolAddressWidth,
                     height: 26,
                     alignment: Alignment.centerLeft,
                     child: Focus(
@@ -2658,6 +2666,9 @@ class _ChannelItemState extends State<_ChannelItem> {
                   ),
                   // 预设选择按钮
                   _buildPresetButton(context),
+                ] else if (reservesRAddressSpace) ...[
+                  const SizedBox(width: 6),
+                  const SizedBox(width: kRProtocolAddressWidth, height: 26),
                 ],
               ],
             ),
@@ -2814,14 +2825,18 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _pointSize = widget.ch.pointSize;
     _lineWidth = widget.ch.lineWidth;
     _offsetEnabled = widget.ch.offsetEnabled;
-    // 众邦电控模式下，使用解析器当前生效的数据类型。
-    final zobowType =
-        widget.vm.parserType == ParserType.zobow &&
-                widget.ch.index < widget.vm.parserConfig.zobowChannelCount
-            ? widget.vm.parserConfig.zobowChannelTypes[widget.ch.index]
-            : widget.ch.dataType;
-    _zobowDataType =
-        zobowType == DataType.int16 ? DataType.int16 : DataType.uint16;
+    final parserConfig = widget.vm.parserConfig;
+    if (widget.vm.parserType == ParserType.zobow &&
+        widget.ch.index < parserConfig.zobowChannelCount) {
+      final zobowType = parserConfig.zobowChannelTypes[widget.ch.index];
+      _zobowDataType =
+          zobowType == DataType.int16 ? DataType.int16 : DataType.uint16;
+    } else if (widget.vm.parserType == ParserType.fixedFrame &&
+        widget.ch.index < parserConfig.channelCount) {
+      _zobowDataType = parserConfig.fixedFrameChannelTypes[widget.ch.index];
+    } else {
+      _zobowDataType = widget.ch.dataType;
+    }
     _aliasController = TextEditingController(text: _alias);
   }
 
@@ -3028,6 +3043,46 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     ],
                   ),
                 ],
+                if (widget.vm.parserType == ParserType.fixedFrame &&
+                    !widget.vm.parserConfig.fixedFrameUniformDataType &&
+                    widget.ch.index < widget.vm.parserConfig.channelCount) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    '数据类型',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '固定帧类型不一致时，按当前通道类型解析',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 8),
+                  NoAnimDropdown<DataType>(
+                    value: _zobowDataType,
+                    hint: '类型',
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    items:
+                        DataType.values
+                            .map(
+                              (type) => DropdownMenuItem(
+                                value: type,
+                                child: Text(type.label),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        widget.vm.isPlotting
+                            ? null
+                            : (value) {
+                              if (value != null) {
+                                setState(() => _zobowDataType = value);
+                              }
+                            },
+                  ),
+                ],
               ],
             ),
           ),
@@ -3087,6 +3142,13 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
         _zobowDataType !=
             widget.vm.parserConfig.zobowChannelTypes[widget.ch.index]) {
       await _applyZobowDataType();
+    }
+    if (widget.vm.parserType == ParserType.fixedFrame &&
+        !widget.vm.parserConfig.fixedFrameUniformDataType &&
+        widget.ch.index < widget.vm.parserConfig.channelCount &&
+        _zobowDataType !=
+            widget.vm.parserConfig.fixedFrameChannelTypes[widget.ch.index]) {
+      await widget.vm.setFixedFrameChannelType(widget.ch.index, _zobowDataType);
     }
     if (mounted) {
       Navigator.of(context).pop();
@@ -3352,6 +3414,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   late final TextEditingController _fixedFrameController;
 
   late final TextEditingController _justFloatController;
+  String? _validationError;
 
   @override
   void initState() {
@@ -3366,6 +3429,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
     _justFloatController = TextEditingController(
       text: _config.channelCount.toString(),
     );
+    if (_config.hasChecksum) {
+      _setCrcType(
+        _isCrcChecksum(_config.checksumType)
+            ? _config.checksumType
+            : ChecksumType.crc16,
+      );
+    }
   }
 
   @override
@@ -3389,6 +3459,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         ),
         ElevatedButton(
           onPressed: () {
+            if (_config.type == ParserType.fixedFrame) {
+              final error = _config.fixedFrameValidationError;
+              if (error != null) {
+                setState(() => _validationError = error);
+                return;
+              }
+            }
             widget.vm.updateParserConfig(_config);
             Navigator.of(context).pop();
           },
@@ -3580,18 +3657,58 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('帧头设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('启用帧头'),
+            value: _config.hasFrameHeader,
+            onChanged: (value) {
+              setState(() {
+                _config.hasFrameHeader = value ?? false;
+                if (_config.hasFrameHeader && _config.frameHeader.isEmpty) {
+                  _config.frameHeader = [0xAA, 0x55];
+                  _config.frameHeaderLength = 2;
+                }
+              });
+            },
+          ),
+          if (_config.hasFrameHeader)
+            TextField(
+              controller: TextEditingController(
+                text: _formatHexBytes(
+                  _config.frameHeader.take(_config.frameHeaderLength).toList(),
+                ),
+              ),
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: '帧头字节',
+                hintText: '例如: AA 55',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                final bytes = _parseHexBytes(value);
+                if (bytes != null && bytes.isNotEmpty) {
+                  setState(() {
+                    _config.frameHeader = bytes;
+                    _config.frameHeaderLength = bytes.length;
+                  });
+                }
+              },
+            ),
+          const SizedBox(height: 16),
+          const Text('数据设置', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Row(
             children: [
-              const Text('长度:'),
+              const SizedBox(
+                width: kFixedFrameConfigLabelWidth,
+                child: Text('通道类型:', softWrap: false),
+              ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 60,
-                child: TextField(
-                  controller: TextEditingController(
-                    text: _config.frameHeaderLength.toString(),
-                  ),
-                  keyboardType: TextInputType.number,
+              Expanded(
+                child: NoAnimDropdown<bool>(
+                  value: _config.fixedFrameUniformDataType,
+                  hint: '通道类型模式',
                   decoration: const InputDecoration(
                     isDense: true,
                     border: OutlineInputBorder(),
@@ -3600,15 +3717,23 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                       vertical: 4,
                     ),
                   ),
+                  items: const [
+                    DropdownMenuItem(value: true, child: Text('统一')),
+                    DropdownMenuItem(value: false, child: Text('不一致')),
+                  ],
                   onChanged: (value) {
-                    final len = int.tryParse(value);
-                    if (len != null && len >= 1 && len <= 4) {
+                    if (value != null) {
                       setState(() {
-                        _config.frameHeaderLength = len;
-                        while (_config.frameHeader.length < len) {
-                          _config.frameHeader.add(0);
+                        _config.fixedFrameUniformDataType = value;
+                        if (!value) {
+                          _config.fixedFrameChannelTypes = List.generate(
+                            SendProtocolConfig.maxChannelCount,
+                            (index) =>
+                                index < widget.vm.channels.length
+                                    ? widget.vm.channels[index].dataType
+                                    : _config.dataType,
+                          );
                         }
-                        _config.frameHeader.length = len;
                       });
                     }
                   },
@@ -3616,85 +3741,52 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Text('帧头值:'),
-              const SizedBox(width: 8),
-              ...List.generate(_config.frameHeaderLength, (i) {
-                return Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: SizedBox(
-                    width: 40,
-                    child: TextField(
-                      controller: TextEditingController(
-                        text:
-                            '0x${_config.frameHeader[i].toRadixString(16).toUpperCase().padLeft(2, '0')}',
-                      ),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 4,
-                        ),
-                      ),
-                      style: const TextStyle(fontSize: 11),
-                      onChanged: (value) {
-                        final hex = value
-                            .replaceAll('0x', '')
-                            .replaceAll('0X', '');
-                        final byte = int.tryParse(hex, radix: 16);
-                        if (byte != null && byte >= 0 && byte <= 255) {
-                          setState(() {
-                            _config.frameHeader[i] = byte;
-                          });
-                        }
-                      },
-                    ),
-                  ),
-                );
-              }),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const Text('数据设置', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Text('数据类型:'),
-              const SizedBox(width: 8),
-              Expanded(
-                child: NoAnimDropdown<DataType>(
-                  value: _config.dataType,
-                  hint: '类型',
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                  ),
-                  items:
-                      DataType.values.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(
-                            type.label,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        );
-                      }).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() => _config.dataType = value);
-                    }
-                  },
+          if (_config.fixedFrameUniformDataType) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(
+                  width: kFixedFrameConfigLabelWidth,
+                  child: Text('数据类型:', softWrap: false),
                 ),
-              ),
-            ],
-          ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: NoAnimDropdown<DataType>(
+                    value: _config.dataType,
+                    hint: '类型',
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                    ),
+                    items:
+                        DataType.values
+                            .map(
+                              (type) => DropdownMenuItem(
+                                value: type,
+                                child: Text(type.label),
+                              ),
+                            )
+                            .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _config.dataType = value);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            const Text(
+              '请在通道列表的通道设置中分别选择数据类型',
+              style: TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
           const SizedBox(height: 8),
           Row(
             children: [
@@ -3723,9 +3815,212 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               ),
             ],
           ),
+          if (_validationError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _validationError!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 12,
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          const Text('帧尾设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('启用帧尾'),
+            value: _config.hasFrameTail,
+            onChanged: (value) {
+              setState(() {
+                _config.hasFrameTail = value ?? false;
+                if (_config.hasFrameTail &&
+                    (_config.frameTail == null || _config.frameTail!.isEmpty)) {
+                  _config.frameTail = [0x0D, 0x0A];
+                }
+              });
+            },
+          ),
+          if (_config.hasFrameTail)
+            TextField(
+              controller: TextEditingController(
+                text: _formatHexBytes(_config.frameTail ?? const []),
+              ),
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: '帧尾字节',
+                hintText: '例如: 0D 0A',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                final bytes = _parseHexBytes(value);
+                if (bytes != null && bytes.isNotEmpty) {
+                  setState(() => _config.frameTail = bytes);
+                }
+              },
+            ),
+          const SizedBox(height: 16),
+          const Text('CRC 设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('启用 CRC'),
+            value: _config.hasChecksum,
+            onChanged: (value) {
+              setState(() {
+                _config.hasChecksum = value ?? false;
+                if (_config.hasChecksum &&
+                    !_isCrcChecksum(_config.checksumType)) {
+                  _setCrcType(ChecksumType.crc16);
+                }
+              });
+            },
+          ),
+          if (_config.hasChecksum) ...[
+            NoAnimDropdown<ChecksumType>(
+              value: _config.checksumType,
+              hint: 'CRC 类型',
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items:
+                  const [
+                    ChecksumType.crc8,
+                    ChecksumType.crc16,
+                    ChecksumType.crc32,
+                  ].map((type) {
+                    return DropdownMenuItem(
+                      value: type,
+                      child: Text(type.label),
+                    );
+                  }).toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => _setCrcType(value));
+              },
+            ),
+            const SizedBox(height: 8),
+            NoAnimDropdown<String>(
+              value: _config.crcPolynomialName,
+              hint: 'CRC 多项式',
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items:
+                  _crcPolynomialNames
+                      .map(
+                        (name) => DropdownMenuItem(
+                          value: name,
+                          child: Text(
+                            name,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _config.crcPolynomialName = value);
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+            NoAnimDropdown<ChecksumPosition>(
+              value: _config.checksumPosition,
+              hint: 'CRC 位置',
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items:
+                  ChecksumPosition.values
+                      .map(
+                        (position) => DropdownMenuItem(
+                          value: position,
+                          child: Text('CRC 位于${position.label}'),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _config.checksumPosition = value);
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+            NoAnimDropdown<ChecksumEndian>(
+              value: _config.checksumEndian,
+              hint: 'CRC 字节序',
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items:
+                  ChecksumEndian.values
+                      .map(
+                        (endian) => DropdownMenuItem(
+                          value: endian,
+                          child: Text('CRC ${endian.label}'),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => _config.checksumEndian = value);
+                }
+              },
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  bool _isCrcChecksum(ChecksumType type) {
+    return type == ChecksumType.crc8 ||
+        type == ChecksumType.crc16 ||
+        type == ChecksumType.crc32;
+  }
+
+  List<String> get _crcPolynomialNames {
+    final type = switch (_config.checksumType) {
+      ChecksumType.crc8 => CrcType.crc8,
+      ChecksumType.crc32 => CrcType.crc32,
+      _ => CrcType.crc16,
+    };
+    return getPolysByType(type).keys.toList();
+  }
+
+  void _setCrcType(ChecksumType type) {
+    _config.checksumType = type;
+    _config.checksumBytes = _config.effectiveChecksumBytes;
+    final names = _crcPolynomialNames;
+    if (!names.contains(_config.crcPolynomialName)) {
+      _config.crcPolynomialName = names.first;
+    }
+  }
+
+  String _formatHexBytes(List<int> bytes) {
+    return bytes
+        .map((byte) => byte.toRadixString(16).toUpperCase().padLeft(2, '0'))
+        .join(' ');
+  }
+
+  List<int>? _parseHexBytes(String value) {
+    final parts = value.trim().split(RegExp(r'\s+'));
+    if (parts.length == 1 && parts.single.isEmpty) return const [];
+    final bytes = <int>[];
+    for (final part in parts) {
+      final byte = int.tryParse(
+        part.replaceFirst(RegExp(r'^0[xX]'), ''),
+        radix: 16,
+      );
+      if (byte == null || byte < 0 || byte > 0xFF) return null;
+      bytes.add(byte);
+    }
+    return bytes;
   }
 }
 

@@ -2,13 +2,15 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import '../../core/utils/app_logger.dart';
+import '../../core/utils/crc.dart';
 import '../models/channel_config.dart';
 import '../models/parse_result.dart';
 import '../models/parser_config.dart';
 import 'data_parser.dart';
 
-/// 固定帧头解析器
-/// 格式：[帧头 1-4字节] + [数据] + [可选校验] + [可选帧尾]
+/// 固定帧协议解析器
+/// 格式：[帧头] + [数据] + [可选 CRC] + [可选帧尾]
+/// 或：[帧头] + [数据] + [可选帧尾] + [可选 CRC]
 class FixedFrameParser extends IDataParser {
   final _buffer = <int>[];
   final _controller = StreamController<ParseResult>.broadcast();
@@ -25,7 +27,7 @@ class FixedFrameParser extends IDataParser {
       _buffer.addAll(data);
       _processBuffer();
     } catch (e) {
-      AppLogger().debug('固定帧头解析异常: $e', category: 'PARSER');
+      AppLogger().debug('固定帧协议解析异常: $e', category: 'PARSER');
     }
   }
 
@@ -35,7 +37,7 @@ class FixedFrameParser extends IDataParser {
       final headerIndex = _findFrameHeader();
       if (headerIndex == -1) {
         // 未找到帧头，清空缓冲区（保留最后 frameHeaderLength - 1 字节，可能包含部分帧头）
-        final keep = config.frameHeaderLength - 1;
+        final keep = _frameHeaderLength - 1;
         if (_buffer.length > keep) {
           _buffer.removeRange(0, _buffer.length - keep);
         }
@@ -67,17 +69,18 @@ class FixedFrameParser extends IDataParser {
     // 防止缓冲区无限增长
     if (_buffer.length > config.totalFrameLength * 100) {
       _buffer.clear();
-      AppLogger().warning('固定帧头解析缓冲区溢出，已清空', category: 'PARSER');
+      AppLogger().warning('固定帧协议解析缓冲区溢出，已清空', category: 'PARSER');
     }
   }
 
   /// 查找帧头位置
   int _findFrameHeader() {
-    if (_buffer.length < config.frameHeaderLength) return -1;
+    if (!config.hasFrameHeader) return 0;
+    if (_buffer.length < _frameHeaderLength) return -1;
 
-    for (int i = 0; i <= _buffer.length - config.frameHeaderLength; i++) {
+    for (int i = 0; i <= _buffer.length - _frameHeaderLength; i++) {
       bool match = true;
-      for (int j = 0; j < config.frameHeaderLength; j++) {
+      for (int j = 0; j < _frameHeaderLength; j++) {
         if (_buffer[i + j] != config.frameHeader[j]) {
           match = false;
           break;
@@ -91,7 +94,7 @@ class FixedFrameParser extends IDataParser {
   ParseResult _parseFrame(List<int> frame) {
     // 校验帧尾
     if (config.hasFrameTail && config.frameTail != null) {
-      final tailStart = config.totalFrameLength - config.frameTail!.length;
+      final tailStart = _frameTailStart;
       for (int i = 0; i < config.frameTail!.length; i++) {
         if (frame[tailStart + i] != config.frameTail![i]) {
           return ParseResult.fail('帧尾不匹配');
@@ -108,20 +111,15 @@ class FixedFrameParser extends IDataParser {
     }
 
     // 提取数据区
-    final dataStart = config.frameHeaderLength;
-    final dataEnd =
-        config.totalFrameLength -
-        (config.hasChecksum ? config.checksumBytes : 0) -
-        (config.hasFrameTail && config.frameTail != null
-            ? config.frameTail!.length
-            : 0);
+    final dataStart = _frameHeaderLength;
+    final dataEnd = dataStart + config.dataBytesPerFrame;
 
     if (dataEnd <= dataStart) {
       return ParseResult.fail('数据区长度无效');
     }
 
     final dataBytes = frame.sublist(dataStart, dataEnd);
-    final expectedBytes = config.dataType.byteSize * config.channelCount;
+    final expectedBytes = config.dataBytesPerFrame;
 
     if (dataBytes.length < expectedBytes) {
       return ParseResult.fail('数据区长度不足');
@@ -129,13 +127,15 @@ class FixedFrameParser extends IDataParser {
 
     // 解析各通道数据
     final values = <double>[];
+    int offset = 0;
     for (int ch = 0; ch < config.channelCount; ch++) {
-      final offset = ch * config.dataType.byteSize;
+      final type = config.fixedFrameChannelTypeAt(ch);
       final bytes = Uint8List.fromList(
-        dataBytes.sublist(offset, offset + config.dataType.byteSize),
+        dataBytes.sublist(offset, offset + type.byteSize),
       );
-      final value = _bytesToValue(bytes, config.dataType);
+      final value = _bytesToValue(bytes, type);
       values.add(value);
+      offset += type.byteSize;
     }
 
     return ParseResult.ok(
@@ -147,22 +147,19 @@ class FixedFrameParser extends IDataParser {
 
   /// 字节转数值
   static List<double> decodeFrameValues(Uint8List frame, ParserConfig config) {
-    final dataStart = config.frameHeaderLength;
-    final dataEnd =
-        config.totalFrameLength -
-        (config.hasChecksum ? config.checksumBytes : 0) -
-        (config.hasFrameTail && config.frameTail != null
-            ? config.frameTail!.length
-            : 0);
+    final dataStart = config.hasFrameHeader ? config.frameHeaderLength : 0;
+    final dataEnd = dataStart + config.dataBytesPerFrame;
     final dataBytes = frame.sublist(dataStart, dataEnd);
     final values = <double>[];
+    int offset = 0;
     for (int ch = 0; ch < config.channelCount; ch++) {
-      final offset = ch * config.dataType.byteSize;
-      if (offset + config.dataType.byteSize > dataBytes.length) break;
+      final type = config.fixedFrameChannelTypeAt(ch);
+      if (offset + type.byteSize > dataBytes.length) break;
       final bytes = Uint8List.fromList(
-        dataBytes.sublist(offset, offset + config.dataType.byteSize),
+        dataBytes.sublist(offset, offset + type.byteSize),
       );
-      values.add(_bytesToValue(bytes, config.dataType));
+      values.add(_bytesToValue(bytes, type));
+      offset += type.byteSize;
     }
     return values;
   }
@@ -198,29 +195,72 @@ class FixedFrameParser extends IDataParser {
     }
   }
 
+  int get _frameTailLength =>
+      config.hasFrameTail && config.frameTail != null
+          ? config.frameTail!.length
+          : 0;
+
+  int get _frameTailStart =>
+      _frameHeaderLength +
+      config.dataBytesPerFrame +
+      (config.hasChecksum &&
+              config.checksumPosition == ChecksumPosition.beforeFrameTail
+          ? config.effectiveChecksumBytes
+          : 0);
+
+  int get _checksumStart =>
+      _frameHeaderLength +
+      config.dataBytesPerFrame +
+      (config.checksumPosition == ChecksumPosition.afterFrameTail
+          ? _frameTailLength
+          : 0);
+
   /// 校验和验证
   bool _verifyChecksum(List<int> frame) {
-    // 简化实现：仅支持 SUM8
-    if (config.checksumType == ChecksumType.sum8) {
-      final dataEnd =
-          config.totalFrameLength -
-          config.checksumBytes -
-          (config.hasFrameTail && config.frameTail != null
-              ? config.frameTail!.length
-              : 0);
-      int sum = 0;
-      for (int i = config.frameHeaderLength; i < dataEnd; i++) {
-        sum += frame[i];
-      }
-      final checksumPos = dataEnd;
-      final expected = sum & 0xFF;
-      final actual = frame[checksumPos] & 0xFF;
-      return expected == actual;
-    }
+    final checksumStart = _checksumStart;
+    final checksumBytes = config.effectiveChecksumBytes;
+    final dataStart = _frameHeaderLength;
+    final dataEnd = dataStart + config.dataBytesPerFrame;
+    final dataBytes = Uint8List.fromList(frame.sublist(dataStart, dataEnd));
 
-    // 其他校验类型暂不实现，默认通过
-    return true;
+    if (config.checksumType == ChecksumType.sum8) {
+      final expected = dataBytes.fold<int>(0, (sum, byte) => sum + byte) & 0xFF;
+      return expected == (frame[checksumStart] & 0xFF);
+    }
+    if (config.checksumType == ChecksumType.sum16) {
+      final expected =
+          dataBytes.fold<int>(0, (sum, byte) => sum + byte) & 0xFFFF;
+      return _readChecksum(frame, checksumStart, checksumBytes) == expected;
+    }
+    final poly = _selectedCrcPoly;
+    if (poly == null) return false;
+    final expected = calculateCrc(dataBytes, poly);
+    return _readChecksum(frame, checksumStart, checksumBytes) == expected;
   }
+
+  CrcPoly? get _selectedCrcPoly {
+    return switch (config.checksumType) {
+      ChecksumType.crc8 => crc8Polys[config.crcPolynomialName],
+      ChecksumType.crc16 => crc16Polys[config.crcPolynomialName],
+      ChecksumType.crc32 => crc32Polys[config.crcPolynomialName],
+      _ => null,
+    };
+  }
+
+  int _readChecksum(List<int> frame, int start, int length) {
+    int value = 0;
+    for (int i = 0; i < length; i++) {
+      final index =
+          config.checksumEndian == ChecksumEndian.big
+              ? start + i
+              : start + length - 1 - i;
+      value = (value << 8) | (frame[index] & 0xFF);
+    }
+    return value;
+  }
+
+  int get _frameHeaderLength =>
+      config.hasFrameHeader ? config.frameHeaderLength : 0;
 
   @override
   void reset() {

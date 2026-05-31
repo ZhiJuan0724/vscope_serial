@@ -36,6 +36,16 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
   void _showOverlay() {
     final renderBox = context.findRenderObject() as RenderBox;
     final size = renderBox.size;
+    final position = renderBox.localToGlobal(Offset.zero);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final availableBelow = screenHeight - position.dy - size.height - 8;
+    final availableAbove = position.dy - 8;
+    final estimatedHeight = widget.items.length * 40.0;
+    final desiredMaxHeight = estimatedHeight.clamp(80.0, 280.0);
+    final opensUp =
+        availableBelow < desiredMaxHeight && availableAbove > availableBelow;
+    final availableSpace = opensUp ? availableAbove : availableBelow;
+    final menuMaxHeight = availableSpace.clamp(56.0, desiredMaxHeight);
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -51,7 +61,10 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
             CompositedTransformFollower(
               link: _layerLink,
               showWhenUnlinked: false,
-              offset: Offset(0, size.height + 2),
+              targetAnchor: opensUp ? Alignment.topLeft : Alignment.bottomLeft,
+              followerAnchor:
+                  opensUp ? Alignment.bottomLeft : Alignment.topLeft,
+              offset: Offset(0, opensUp ? -2 : 2),
               child: Material(
                 elevation: 4,
                 borderRadius: BorderRadius.circular(4),
@@ -59,7 +72,7 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                   constraints: BoxConstraints(
                     minWidth: size.width,
                     maxWidth: size.width,
-                    maxHeight: 280,
+                    maxHeight: menuMaxHeight.toDouble(),
                   ),
                   child: Container(
                     decoration: BoxDecoration(

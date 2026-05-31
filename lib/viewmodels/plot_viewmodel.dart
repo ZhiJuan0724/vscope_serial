@@ -793,17 +793,32 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
+    if (config.type == ParserType.fixedFrame) {
+      final error = config.fixedFrameValidationError;
+      if (error != null) {
+        throw ArgumentError(error);
+      }
+    }
     final oldZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
     final oldFixedFrameLength = _parserConfig.totalFrameLength;
+    final oldFixedFrameTypeLayout = _fixedFrameTypeLayoutKey(_parserConfig);
     _parserConfig.type = config.type;
+    _parserConfig.hasFrameHeader = config.hasFrameHeader;
     _parserConfig.frameHeaderLength = config.frameHeaderLength;
     _parserConfig.frameHeader = List.from(config.frameHeader);
     _parserConfig.dataType = config.dataType;
+    _parserConfig.fixedFrameUniformDataType = config.fixedFrameUniformDataType;
+    _parserConfig.fixedFrameChannelTypes = List.from(
+      config.fixedFrameChannelTypes,
+    );
     _parserConfig.channelCount = config.channelCount;
     _parserConfig.fireWaterChannelCount = config.fireWaterChannelCount;
     _parserConfig.hasChecksum = config.hasChecksum;
     _parserConfig.checksumType = config.checksumType;
-    _parserConfig.checksumBytes = config.checksumBytes;
+    _parserConfig.checksumBytes = config.effectiveChecksumBytes;
+    _parserConfig.checksumPosition = config.checksumPosition;
+    _parserConfig.crcPolynomialName = config.crcPolynomialName;
+    _parserConfig.checksumEndian = config.checksumEndian;
     _parserConfig.hasFrameTail = config.hasFrameTail;
     _parserConfig.frameTail =
         config.frameTail != null ? List.from(config.frameTail!) : null;
@@ -813,13 +828,17 @@ class PlotViewModel extends BaseViewModel {
     final zobowFrameLengthChanged = oldZobowFrameLength != newZobowFrameLength;
     final fixedFrameLengthChanged =
         oldFixedFrameLength != _parserConfig.totalFrameLength;
+    final fixedFrameTypeLayoutChanged =
+        oldFixedFrameTypeLayout != _fixedFrameTypeLayoutKey(_parserConfig);
     if (zobowFrameLengthChanged) {
       _resetZobowRawFrameBuffer();
     }
-    if (fixedFrameLengthChanged) {
+    if (fixedFrameLengthChanged || fixedFrameTypeLayoutChanged) {
       _resetFixedFrameRawFrameBuffer();
     }
-    if (zobowFrameLengthChanged || fixedFrameLengthChanged) {
+    if (zobowFrameLengthChanged ||
+        fixedFrameLengthChanged ||
+        fixedFrameTypeLayoutChanged) {
       clearData();
     }
 
@@ -838,6 +857,11 @@ class PlotViewModel extends BaseViewModel {
       _restartPlotting();
     }
     Future.microtask(() => notifyListeners());
+  }
+
+  String _fixedFrameTypeLayoutKey(ParserConfig config) {
+    return '${config.fixedFrameUniformDataType}|${config.dataType.name}|'
+        '${config.fixedFrameChannelTypes.take(config.channelCount).map((type) => type.name).join(',')}';
   }
 
   // ========== 绘图控制 ==========
@@ -1445,7 +1469,9 @@ class PlotViewModel extends BaseViewModel {
         validateRProtocolAddresses(
           _sendProtocolConfig.rChannelAddresses,
           requiredCount: _fixedReceiveChannelCount,
+          allowZeroValues: _parserType == ParserType.fixedFrame,
         ),
+        allowZeroValues: _parserType == ParserType.fixedFrame,
       );
       serialService.send(bytes);
       AppLogger().info(
@@ -1483,7 +1509,26 @@ class PlotViewModel extends BaseViewModel {
   static List<String> validateRProtocolAddresses(
     List<String> addresses, {
     int? requiredCount,
+    bool allowZeroValues = false,
   }) {
+    if (allowZeroValues && requiredCount != null) {
+      final requiredAddresses =
+          addresses.take(requiredCount).map((address) {
+            final text = address.trim();
+            final value = parseRProtocolAddress(text);
+            if (value == null || value < 0) {
+              throw FormatException('r协议地址无效或未填写: $address');
+            }
+            return text;
+          }).toList();
+      if (requiredAddresses.length < requiredCount) {
+        throw FormatException(
+          'r协议地址数量不足：接收协议需要 $requiredCount 个通道，'
+          '当前仅填写 ${requiredAddresses.length} 个',
+        );
+      }
+      return requiredAddresses;
+    }
     final continuousAddresses = <String>[];
     bool foundEmpty = false;
     for (final rawAddress in addresses) {
@@ -1522,7 +1567,10 @@ class PlotViewModel extends BaseViewModel {
     );
   }
 
-  static Uint8List buildRProtocolCommand(List<String> addresses) {
+  static Uint8List buildRProtocolCommand(
+    List<String> addresses, {
+    bool allowZeroValues = false,
+  }) {
     if (addresses.isEmpty) {
       throw ArgumentError.value(addresses, 'addresses', 'must not be empty');
     }
@@ -1530,7 +1578,7 @@ class PlotViewModel extends BaseViewModel {
     for (final address in addresses) {
       final text = address.trim();
       final value = parseRProtocolAddress(text);
-      if (value == null || value <= 0) {
+      if (value == null || value < 0 || (!allowZeroValues && value == 0)) {
         throw FormatException('无效的 r 协议地址: $address');
       }
       normalized.add(text);
@@ -2084,6 +2132,22 @@ class PlotViewModel extends BaseViewModel {
       );
     }
 
+    Future.microtask(() => notifyListeners());
+    return true;
+  }
+
+  Future<bool> setFixedFrameChannelType(int index, DataType type) async {
+    if (index < 0 || index >= _parserConfig.channelCount) return false;
+    if (_isPlotting || _isStopping) {
+      showStatusMessage('请停止绘图后再修改固定帧通道数据类型');
+      return false;
+    }
+    channels[index].dataType = type;
+    if (_parserConfig.fixedFrameChannelTypes[index] == type) return true;
+
+    _parserConfig.fixedFrameChannelTypes[index] = type;
+    _resetFixedFrameRawFrameBuffer();
+    clearData();
     Future.microtask(() => notifyListeners());
     return true;
   }
