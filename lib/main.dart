@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -6,6 +8,8 @@ import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
 import 'services/app_settings.dart';
 import 'services/serial_service.dart';
+import 'services/update_checker.dart';
+import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/protocol_page.dart';
@@ -93,11 +97,26 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // Register window close handler: disconnect serial before closing
     _setupWindowCloseHandler();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (AppSettings().autoUpdateCheckEnabled) {
+        unawaited(_checkForUpdatesOnStartup());
+      }
+    });
   }
 
   void _setupWindowCloseHandler() {
     windowManager.setPreventClose(true);
     windowManager.addListener(_WindowCloseListener(context));
+  }
+
+  Future<void> _checkForUpdatesOnStartup() async {
+    final result = await UpdateChecker().check();
+    if (!mounted) return;
+    if (result.hasUpdate && result.latestRelease != null) {
+      await showUpdateAvailableDialog(context, result.latestRelease!);
+    } else if (result.error != null) {
+      AppLogger().warning('自动检查更新失败: ${result.error}', category: 'UPDATE');
+    }
   }
 
   @override

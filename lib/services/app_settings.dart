@@ -101,6 +101,10 @@ class AppSettings {
   /// 快捷地址选择窗口显示模式: 'grid'(平铺) / 'list'(列表)
   String zobowPresetViewMode = 'grid';
 
+  // ========== 应用更新 ==========
+  /// 启动时自动检查更新。默认关闭，避免启动时主动访问网络。
+  bool autoUpdateCheckEnabled = false;
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -182,6 +186,7 @@ class AppSettings {
       rProfileId = json['rProfileId'] as String? ?? '';
       zobowPresetViewMode =
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
+      autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -229,6 +234,7 @@ class AppSettings {
       'zobowProfileId': zobowProfileId,
       'rProfileId': rProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
+      'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
 
       // 视口设置
       'xMin': xMin,

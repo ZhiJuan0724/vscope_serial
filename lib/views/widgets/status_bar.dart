@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../dialogs/app_info_dialog.dart';
 import '../dialogs/status_dialog.dart';
 
 /// 底部共享状态栏
@@ -88,6 +89,19 @@ class StatusBar extends StatelessWidget {
                 ),
               ),
               const Spacer(),
+              Tooltip(
+                message: '应用信息',
+                child: IconButton(
+                  onPressed: () => showAppInfoDialog(context),
+                  icon: const Icon(Icons.info_outline, size: 16),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  splashRadius: 14,
+                ),
+              ),
             ],
           ),
         );
