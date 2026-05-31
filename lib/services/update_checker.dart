@@ -7,11 +7,13 @@ class ReleaseInfo {
   final String tagName;
   final String htmlUrl;
   final String source;
+  final String body;
 
   const ReleaseInfo({
     required this.tagName,
     required this.htmlUrl,
     required this.source,
+    required this.body,
   });
 }
 
@@ -108,6 +110,7 @@ class UpdateChecker {
   }) {
     final tagName = (json['tag_name'] ?? json['tagName'] ?? '').toString();
     final htmlUrl = (json['html_url'] ?? json['htmlUrl'] ?? '').toString();
+    final body = (json['body'] ?? '').toString();
     if (tagName.isEmpty) {
       throw const FormatException('release tag_name is empty');
     }
@@ -115,6 +118,7 @@ class UpdateChecker {
       tagName: tagName,
       htmlUrl: htmlUrl.isNotEmpty ? htmlUrl : '$fallbackPage/tag/$tagName',
       source: source,
+      body: body,
     );
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_info.dart';
 import '../../services/app_settings.dart';
+import '../../services/changelog_service.dart';
 import '../../services/update_checker.dart';
 
 Future<void> showAppInfoDialog(BuildContext context) {
@@ -29,6 +30,7 @@ Future<void> showUpdateAvailableDialog(
             '当前版本: $currentVersion\n'
             '最新版本: ${release.tagName}\n'
             '来源: ${release.source}\n\n'
+            '${release.body.isEmpty ? '' : '更新内容:\n${release.body}\n\n'}'
             '当前版本仅提示更新。Windows 程序运行时不能可靠覆盖自身，'
             '后续如需自动安装，需要外置更新程序在主程序退出后解压并替换文件。',
           ),
@@ -62,14 +64,20 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   bool _checking = false;
   String? _version;
   DateTime? _buildTime;
+  List<ChangelogEntry> _changelogEntries = const [];
   UpdateCheckResult? _lastResult;
 
   @override
   void initState() {
     super.initState();
-    AppInfo.displayVersion().then((value) {
-      if (mounted) setState(() => _version = value);
-    });
+    AppInfo.displayVersion()
+        .then((value) {
+          if (mounted) setState(() => _version = value);
+          return ChangelogService().currentAndPrevious(value);
+        })
+        .then((entries) {
+          if (mounted) setState(() => _changelogEntries = entries);
+        });
     AppInfo.buildTime().then((value) {
       if (mounted) setState(() => _buildTime = value);
     });
@@ -92,6 +100,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
             _InfoRow(label: '应用名称', value: AppInfo.name),
             _InfoRow(label: '版本', value: _version ?? '读取中...'),
             _InfoRow(label: '构建时间', value: _formatBuildTime(_buildTime)),
+            if (_changelogEntries.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('版本说明', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              _ChangelogPreview(entries: _changelogEntries),
+            ],
             const SizedBox(height: 16),
             const Divider(height: 1),
             const SizedBox(height: 12),
@@ -196,6 +210,47 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     }
     return '未发现更新（当前版本: $currentVersion；'
         '最新发布版本: ${release.tagName}，${release.source}）';
+  }
+}
+
+class _ChangelogPreview extends StatelessWidget {
+  final List<ChangelogEntry> entries;
+
+  const _ChangelogPreview({required this.entries});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 180),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children:
+              entries.map((entry) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        entry.body,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+        ),
+      ),
+    );
   }
 }
 

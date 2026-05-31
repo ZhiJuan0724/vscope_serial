@@ -15,6 +15,7 @@ void main() {
               (_) async => {
                 'tag_name': 'v$currentVersion',
                 'html_url': 'https://example.com/releases/v$currentVersion',
+                'body': '- 当前版本说明',
               },
         );
 
@@ -23,6 +24,7 @@ void main() {
         expect(result.error, isNull);
         expect(result.hasUpdate, isFalse);
         expect(result.latestRelease?.tagName, 'v$currentVersion');
+        expect(result.latestRelease?.body, contains('当前版本说明'));
       },
     );
 

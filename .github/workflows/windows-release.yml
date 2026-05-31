@@ -106,14 +106,45 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
           name: vscope_serial-windows
           path: dist
 
+      - name: Extract changelog
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $lines = Get-Content CHANGELOG.md
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s+$([regex]::Escape($tag))(\s+-\s+.*)?\s*$") {
+              $start = $i + 1
+              break
+            }
+          }
+          if ($start -lt 0) {
+            throw "Missing CHANGELOG.md section for $tag"
+          }
+          $end = $lines.Count
+          for ($i = $start; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s+v?\d+(\.\d+)+") {
+              $end = $i
+              break
+            }
+          }
+          $body = ($lines[$start..($end - 1)] -join "`n").Trim()
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "Empty CHANGELOG.md section for $tag"
+          }
+          $body | Out-File -FilePath release_notes.md -Encoding utf8
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.zip
-          generate_release_notes: true
+          body_path: release_notes.md
