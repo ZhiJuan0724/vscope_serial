@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:charset/charset.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/services/zobow_c_profile_importer.dart';
 
@@ -187,13 +188,13 @@ void ChxValueTable(INT16U Addr)
       expect(result.presets[1].name, 'Other.Value');
     });
 
-    test('uses system encoding candidate when UTF-8 is malformed', () {
+    test('uses GBK candidate when UTF-8 is malformed', () {
       final source = _source('''
       case 0x40:// 母线电压
         VsTemp[i] = Adc.VoltBus;
         break;
 ''');
-      final bytes = Uint8List.fromList(systemEncoding.encode(source));
+      final bytes = Uint8List.fromList(gbk.encode(source));
 
       final result = ZobowCProfileImporter.parseBytes(bytes);
 

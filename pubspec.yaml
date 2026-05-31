@@ -41,6 +41,7 @@ dependencies:
   ffi: ^2.1.4
   file_picker: ^11.0.2
   window_manager: ^0.5.1
+  charset: ^2.0.1
 
 dev_dependencies:
   flutter_test:

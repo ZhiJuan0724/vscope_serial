@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:charset/charset.dart';
+
 import '../data/models/zobow_config_profile.dart';
 
 class ZobowCProfileImportResult {
@@ -36,6 +38,17 @@ class ZobowCProfileImporter {
       candidates.add(
         parseSource(
           utf8.decode(bytes, allowMalformed: true),
+          useComments: useComments,
+        ),
+      );
+    }
+
+    try {
+      candidates.add(parseSource(gbk.decode(bytes), useComments: useComments));
+    } on FormatException {
+      candidates.add(
+        parseSource(
+          gbk.decode(bytes, allowMalformed: true),
           useComments: useComments,
         ),
       );
