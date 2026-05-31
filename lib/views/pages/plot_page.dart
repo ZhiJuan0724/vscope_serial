@@ -246,15 +246,33 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ],
           // 解析器选择
           _buildParserSelector(context, vm),
-          const Spacer(),
-          // 自适应工具组
-          _buildFitTools(context, vm),
           const SizedBox(width: 8),
-          // 文件工具组
-          _buildFileTools(context, vm),
-          const SizedBox(width: 8),
-          // 清空 + 高级设置
-          _buildClearAndSettings(context, vm),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        // 自适应工具组
+                        _buildFitTools(context, vm),
+                        const SizedBox(width: 8),
+                        // 文件工具组
+                        _buildFileTools(context, vm),
+                        const SizedBox(width: 8),
+                        // 清空 + 高级设置
+                        _buildClearAndSettings(context, vm),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -271,14 +289,25 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
       ),
-      child: Row(
-        children: [
-          // 光标和测量工具组
-          _buildCursorTools(context, vm),
-          const Spacer(),
-          // 缩放和框选工具组
-          _buildZoomTools(context, vm),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // 光标和测量工具组
+                  _buildCursorTools(context, vm),
+                  const SizedBox(width: 12),
+                  // 缩放和框选工具组
+                  _buildZoomTools(context, vm),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -309,6 +338,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             : vm.isPlotting
             ? '停止'
             : '开始',
+        style: const TextStyle(fontFamily: 'SarasaUiSC'),
       ),
       style: ElevatedButton.styleFrom(
         backgroundColor:
@@ -333,7 +363,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           value: vm.useRandomSource,
           onChanged: (value) => vm.setUseRandomSource(value!),
         ),
-        const Text('随机源', style: TextStyle(fontSize: 12)),
+        const Text(
+          '随机源',
+          style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+        ),
         Tooltip(
           message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
           child: InkWell(
@@ -376,7 +409,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     value: type,
                     child: Text(
                       type.label,
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'SarasaUiSC',
+                      ),
                     ),
                   );
                 }).toList(),
@@ -445,13 +481,19 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           // "不使用"选项
           const DropdownMenuItem<String?>(
             value: null,
-            child: Text('不使用配置', style: TextStyle(fontSize: 12)),
+            child: Text(
+              '不使用配置',
+              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+            ),
           ),
           // 所有配置文件
           ...vm.zobowProfiles.map((profile) {
             return DropdownMenuItem(
               value: profile.id,
-              child: Text(profile.name, style: const TextStyle(fontSize: 12)),
+              child: Text(
+                profile.name,
+                style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              ),
             );
           }),
         ],
@@ -487,6 +529,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               '光标',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.vCursorEnabled ? Colors.orange : null,
               ),
             ),
@@ -506,7 +549,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           child: TextButton.icon(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.addObservation(),
             icon: const Icon(Icons.add_location_alt, size: 16),
-            label: const Text('观察', style: TextStyle(fontSize: 11)),
+            label: const Text(
+              '观察',
+              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+            ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
@@ -528,6 +574,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               'X-X',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.xMeasurementEnabled ? Colors.blue : null,
               ),
             ),
@@ -555,6 +602,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               'Y-Y',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.yMeasurementEnabled ? Colors.blue : null,
               ),
             ),
@@ -583,6 +631,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               '统计',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.statsEnabled ? Colors.blue : null,
               ),
             ),
@@ -608,6 +657,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               '范围',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.statsRangeEnabled ? Colors.blue : null,
               ),
             ),
@@ -636,6 +686,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               '跟随',
               style: TextStyle(
                 fontSize: 11,
+                fontFamily: 'SarasaUiSC',
                 color: vm.followEnabled ? Colors.blue : null,
               ),
             ),
@@ -650,16 +701,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         const SizedBox(width: 4),
         Tooltip(
           message: '图例',
-          child: IconButton(
+          child: TextButton.icon(
             onPressed: () => setState(() => _legendVisible = !_legendVisible),
             icon: Icon(
               Icons.list_alt,
-              size: 18,
+              size: 16,
               color: _legendVisible ? Colors.teal : null,
             ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            style: IconButton.styleFrom(
+            label: Text(
+              '图例',
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'SarasaUiSC',
+                color: _legendVisible ? Colors.teal : null,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
               backgroundColor:
                   _legendVisible ? Colors.teal.withValues(alpha: 0.12) : null,
             ),
@@ -787,32 +846,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children: [
         Tooltip(
           message: 'Y轴自适应',
-          child: IconButton(
+          child: TextButton.icon(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
-            icon: const Icon(Icons.vertical_align_center, size: 18),
-            tooltip: 'Y轴自适应',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            icon: const Icon(Icons.vertical_align_center, size: 16),
+            label: const Text(
+              'Y自适应',
+              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              minimumSize: const Size(0, 28),
+            ),
           ),
         ),
         Tooltip(
           message: 'X轴自适应',
-          child: IconButton(
+          child: TextButton.icon(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
-            icon: const Icon(Icons.horizontal_rule, size: 18),
-            tooltip: 'X轴自适应',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            icon: const Icon(Icons.horizontal_rule, size: 16),
+            label: const Text(
+              'X自适应',
+              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              minimumSize: const Size(0, 28),
+            ),
           ),
         ),
         Tooltip(
           message: '全自适应',
-          child: IconButton(
+          child: TextButton.icon(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
-            icon: const Icon(Icons.fit_screen, size: 18),
-            tooltip: '全自适应',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            icon: const Icon(Icons.fit_screen, size: 16),
+            label: const Text(
+              '全自适应',
+              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              minimumSize: const Size(0, 28),
+            ),
           ),
         ),
       ],
@@ -1193,7 +1267,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 color: Colors.black,
                 fontSize: _plotFontSize(vm, 11),
                 fontWeight: FontWeight.bold,
-                fontFamily: 'monospace',
+                fontFamily: 'SarasaUiSC',
               ),
             ),
           ),
@@ -1204,7 +1278,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               color: Colors.white,
               fontSize: _plotFontSize(vm, 12),
               fontWeight: FontWeight.bold,
-              fontFamily: 'monospace',
+              fontFamily: 'SarasaUiSC',
             ),
           ),
         ],
@@ -1221,7 +1295,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             style: TextStyle(
               color: channel.color,
               fontSize: _plotFontSize(vm, 12),
-              fontFamily: 'monospace',
+              fontFamily: 'SarasaUiSC',
             ),
           ),
         );
@@ -1678,7 +1752,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           style: TextStyle(
             color: Colors.white,
             fontSize: _plotFontSize(vm, 12),
-            fontFamily: 'monospace',
+            fontFamily: 'SarasaUiSC',
             height: 1.5,
           ),
         ),
@@ -1754,7 +1828,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         style: TextStyle(
           color: Colors.white,
           fontSize: _plotFontSize(vm, 11),
-          fontFamily: 'monospace',
+          fontFamily: 'SarasaUiSC',
           height: 1.5,
         ),
       );
@@ -1784,7 +1858,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           style: TextStyle(
             color: Colors.white,
             fontSize: _plotFontSize(vm, 11),
-            fontFamily: 'monospace',
+            fontFamily: 'SarasaUiSC',
             height: 1.5,
           ),
         ),
@@ -2364,9 +2438,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                   const SizedBox(width: 6),
                   Container(
                     width: usesShortZobowAddress ? 58 : 86,
-                    height: 20,
+                    height: 26,
                     alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.only(bottom: 2),
                     child: Focus(
                       onFocusChange: _onZobowIdFocusChange,
                       child: TextField(
@@ -2379,13 +2452,14 @@ class _ChannelItemState extends State<_ChannelItem> {
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,
-                          height: 1.0,
+                          height: 1.15,
                         ),
+                        textAlignVertical: TextAlignVertical.center,
                         decoration: InputDecoration(
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 2,
-                            vertical: 0,
+                            vertical: 2,
                           ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(2),
@@ -3747,7 +3821,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xFF8888AA),
-                    fontFamily: 'monospace',
+                    fontFamily: 'SarasaUiSC',
                   ),
                 ),
               ],
@@ -3802,7 +3876,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                   style: const TextStyle(
                     fontSize: 10,
                     color: Color(0xFF8888AA),
-                    fontFamily: 'monospace',
+                    fontFamily: 'SarasaUiSC',
                   ),
                 ),
               ],

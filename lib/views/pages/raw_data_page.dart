@@ -307,7 +307,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                   return TextSpan(
                                     text: '$line\n',
                                     style: TextStyle(
-                                      fontFamily: 'monospace',
+                                      fontFamily: 'SarasaUiSC',
                                       fontSize: 13,
                                       backgroundColor: bgColor,
                                     ),

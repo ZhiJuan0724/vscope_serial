@@ -51,6 +51,10 @@ class MyApp extends StatelessWidget {
     // SerialService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
     final serialService = SerialService();
+    final baseTheme = ThemeData(
+      useMaterial3: false,
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+    );
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: serialService),
@@ -61,9 +65,11 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         title: 'VScope Serial',
         scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
-        theme: ThemeData(
-          useMaterial3: false,
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        theme: baseTheme.copyWith(
+          textTheme: baseTheme.textTheme.apply(fontFamily: 'SarasaUiSC'),
+          primaryTextTheme: baseTheme.primaryTextTheme.apply(
+            fontFamily: 'SarasaUiSC',
+          ),
         ),
         home: const MainFrame(),
       ),

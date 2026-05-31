@@ -234,7 +234,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               controller: _rows[index].addressController,
                               style: const TextStyle(
                                 fontSize: 12,
-                                fontFamily: 'monospace',
+                                fontFamily: 'SarasaUiSC',
                               ),
                               decoration: const InputDecoration(
                                 isDense: true,
@@ -551,7 +551,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   maxLines: null,
                   minLines: null,
                   textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  style: const TextStyle(
+                    fontFamily: 'SarasaUiSC',
+                    fontSize: 12,
+                  ),
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     hintText: '粘贴包含 ChxValueTable 的 C 代码',

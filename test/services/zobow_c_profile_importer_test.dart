@@ -203,7 +203,7 @@ void ChxValueTable(INT16U Addr)
     });
 
     test('parses repository VisualScope_2 sample', () async {
-      final file = File('docs/VisualScope_2.c');
+      final file = File('test_tools/test_data/VisualScope_2.c');
       final result = await ZobowCProfileImporter.parseFile(file.path);
 
       expect(result.presets.length, greaterThan(100));

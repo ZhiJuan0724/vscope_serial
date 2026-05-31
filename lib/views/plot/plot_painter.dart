@@ -707,7 +707,7 @@ class PlotPainter extends CustomPainter {
     final textStyle = TextStyle(
       color: const Color(0xFF8888AA),
       fontSize: _fontSize(12),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
 
     final plotW = viewport.plotWidth(size.width);
@@ -823,7 +823,7 @@ class PlotPainter extends CustomPainter {
         final zeroTextStyle = TextStyle(
           color: const Color(0xFFCCCCDD),
           fontSize: _fontSize(12),
-          fontFamily: 'monospace',
+          fontFamily: 'SarasaUiSC',
           fontWeight: FontWeight.bold,
         );
         _drawText(
@@ -893,6 +893,7 @@ class PlotPainter extends CustomPainter {
           color: Colors.white,
           fontSize: _fontSize(10),
           fontWeight: FontWeight.bold,
+          fontFamily: 'SarasaUiSC',
         );
 
         // 标签背景
@@ -958,7 +959,7 @@ class PlotPainter extends CustomPainter {
     final textStyle = TextStyle(
       color: ch.color,
       fontSize: _fontSize(11),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
 
     // 第一个刻度值：从 yMin 向上取整到 step 的倍数
@@ -1015,7 +1016,7 @@ class PlotPainter extends CustomPainter {
       final zeroTextStyle = TextStyle(
         color: ch.color,
         fontSize: _fontSize(11),
-        fontFamily: 'monospace',
+        fontFamily: 'SarasaUiSC',
         fontWeight: FontWeight.bold,
       );
       _drawText(
@@ -1074,7 +1075,7 @@ class PlotPainter extends CustomPainter {
     // 确定要显示的通道数：只显示有数据且可见的通道
     final valueStyle = TextStyle(
       fontSize: _fontSize(12),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
@@ -1142,7 +1143,7 @@ class PlotPainter extends CustomPainter {
       color: Colors.white,
       fontSize: _fontSize(12),
       fontWeight: FontWeight.bold,
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     _drawText(
       canvas,
@@ -1183,7 +1184,7 @@ class PlotPainter extends CustomPainter {
       final rowStyle = TextStyle(
         color: color,
         fontSize: _fontSize(12),
-        fontFamily: 'monospace',
+        fontFamily: 'SarasaUiSC',
       );
       _drawText(
         canvas,
@@ -1458,7 +1459,7 @@ class PlotPainter extends CustomPainter {
       color: color,
       fontSize: _fontSize(10),
       fontWeight: FontWeight.bold,
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     final textSpan = TextSpan(text: label, style: textStyle);
     final textPainter = TextPainter(
