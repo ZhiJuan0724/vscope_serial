@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:provider/provider.dart';
@@ -19,7 +21,7 @@ class _StatusDialogState extends State<StatusDialog> {
     super.initState();
     // 打开弹窗时自动刷新串口列表
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<SerialService>().refreshPorts();
+      unawaited(context.read<SerialService>().refreshConnectionStatus());
     });
   }
 
@@ -71,9 +73,7 @@ class _StatusDialogState extends State<StatusDialog> {
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
                       onPressed:
-                          service.isConnected
-                              ? null
-                              : () => service.refreshPorts(),
+                          () => unawaited(service.refreshConnectionStatus()),
                       icon: const Icon(Icons.refresh, size: 18),
                       label: const Text('刷新'),
                     ),
@@ -251,7 +251,17 @@ class _StatusDialogState extends State<StatusDialog> {
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('关闭'),
             ),
-            if (service.isConnected)
+            if (service.isConnecting)
+              ElevatedButton.icon(
+                onPressed: null,
+                icon: const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                label: const Text('连接中...'),
+              )
+            else if (service.isConnected)
               ElevatedButton.icon(
                 onPressed: () {
                   service.disconnect();

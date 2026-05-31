@@ -44,9 +44,13 @@ void main() {
 
       // print('发送: $sent 包, 解析: ${results.length} 包, 发送速率: ${actualRate.toStringAsFixed(0)}/s, 达成率: ${achievement.toStringAsFixed(1)}%');
 
-      expect(results.length, greaterThanOrEqualTo(minExpected),
-          reason: '1KHz数据流解析应达到90%速率(≥$minExpected包)，'
-                  '实际${results.length}包(发送$sent包, 达成率${achievement.toStringAsFixed(1)}%)');
+      expect(
+        results.length,
+        greaterThanOrEqualTo(minExpected),
+        reason:
+            '1KHz数据流解析应达到90%速率(≥$minExpected包)，'
+            '实际${results.length}包(发送$sent包, 达成率${achievement.toStringAsFixed(1)}%)',
+      );
     });
 
     test('解析器每秒稳定性', () async {
@@ -90,8 +94,11 @@ void main() {
       }
 
       for (int i = 0; i < counts.length; i++) {
-        expect(counts[i], greaterThanOrEqualTo((sentCounts[i] * minAchievement).round()),
-            reason: '第${i + 1}秒解析达成率应≥90%(发送${sentCounts[i]}包, 解析${counts[i]}包)');
+        expect(
+          counts[i],
+          greaterThanOrEqualTo((sentCounts[i] * minAchievement).round()),
+          reason: '第${i + 1}秒解析达成率应≥90%(发送${sentCounts[i]}包, 解析${counts[i]}包)',
+        );
       }
     });
 
@@ -111,8 +118,11 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
       await subscription.cancel();
 
-      expect(results.length, 1000,
-          reason: '发送1000包应解析出1000包，实际${results.length}包');
+      expect(
+        results.length,
+        1000,
+        reason: '发送1000包应解析出1000包，实际${results.length}包',
+      );
     });
   });
 }

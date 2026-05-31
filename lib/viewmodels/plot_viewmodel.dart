@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
 import '../data/source/data_source_manager.dart';
 import '../data/models/zobow_config_profile.dart';
+import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
 import '../services/zobow_profile_service.dart';
 import '../views/plot/plot_painter.dart';
@@ -145,6 +147,11 @@ class PlotViewModel extends BaseViewModel {
   // ========== 通道配置 ==========
   /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
+  List<int>? _importedChannelAddresses;
+  List<int>? get importedChannelAddresses =>
+      _importedChannelAddresses == null
+          ? null
+          : List.unmodifiable(_importedChannelAddresses!);
 
   // ========== 状态 ==========
   /// 是否正在绘图（数据源运行中）
@@ -214,6 +221,11 @@ class PlotViewModel extends BaseViewModel {
   /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
 
+  /// 用户选择的发送协议。Zobow 接收协议会临时覆盖为内置发送协议。
+  SendProtocolType _sendProtocolType = SendProtocolType.none;
+
+  final SendProtocolConfig _sendProtocolConfig = SendProtocolConfig();
+
   /// 解析器配置（FireWater 和固定帧共用）
   final ParserConfig _parserConfig = ParserConfig.fireWaterDefault();
 
@@ -245,6 +257,9 @@ class PlotViewModel extends BaseViewModel {
   // ========== 众邦电控配置文件 ==========
   /// 配置文件服务
   final ZobowProfileService _profileService = ZobowProfileService();
+  final ZobowProfileService _rProfileService = ZobowProfileService(
+    protocolType: AddressProfileProtocolType.rProtocol,
+  );
 
   /// 配置文件列表（供UI下拉框使用）
   List<ZobowConfigProfile> get zobowProfiles => _profileService.profiles;
@@ -256,13 +271,16 @@ class PlotViewModel extends BaseViewModel {
   /// 当前选中的配置文件ID
   String get selectedZobowProfileId => _profileService.selectedProfileId;
 
+  List<ZobowConfigProfile> get rProfiles => _rProfileService.profiles;
+  ZobowConfigProfile? get selectedRProfile => _rProfileService.selectedProfile;
+  String get selectedRProfileId => _rProfileService.selectedProfileId;
+
   // ========== 定时刷新 ==========
   /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
 
-  /// 状态栏右侧临时提示
-  String? _statusMessage;
-  Timer? _statusMessageTimer;
+  /// Last transient notification, retained for diagnostics and tests.
+  String? _lastStatusMessage;
   bool _disposed = false;
 
   /// 定时刷新间隔（ms），无数据时保持 UI 响应
@@ -318,12 +336,20 @@ class PlotViewModel extends BaseViewModel {
   /// 初始化Zobow配置文件服务
   Future<void> _initZobowProfileService() async {
     await _profileService.init();
+    await _rProfileService.init();
+    if (_disposed) return;
     // 加载上次选中的配置文件
     final savedProfileId = AppSettings().zobowProfileId;
     if (savedProfileId.isNotEmpty) {
       _profileService.selectProfile(savedProfileId);
     }
-    Future.microtask(() => notifyListeners());
+    final savedRProfileId = AppSettings().rProfileId;
+    if (savedRProfileId.isNotEmpty) {
+      _rProfileService.selectProfile(savedRProfileId);
+    }
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
   }
 
   /// 从 AppSettings 加载绘图配置
@@ -354,7 +380,28 @@ class PlotViewModel extends BaseViewModel {
     serialService.useRandomSource = _useRandomSource;
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
-    _parserConfig.type = _parserType;
+    _parserConfig
+      ..type = _parserType
+      ..source =
+          settings.receiveCustomProtocolId.isEmpty
+              ? ProtocolSource.builtIn
+              : ProtocolSource.lua
+      ..customProtocolId =
+          settings.receiveCustomProtocolId.isEmpty
+              ? null
+              : settings.receiveCustomProtocolId;
+    _sendProtocolType = _sendProtocolTypeFromString(settings.sendProtocolType);
+    _sendProtocolConfig
+      ..type = _sendProtocolType
+      ..source =
+          settings.sendCustomProtocolId.isEmpty
+              ? ProtocolSource.builtIn
+              : ProtocolSource.lua
+      ..customProtocolId =
+          settings.sendCustomProtocolId.isEmpty
+              ? null
+              : settings.sendCustomProtocolId
+      ..rChannelAddresses = List.from(settings.rChannelAddresses);
     if (_parserType == ParserType.justFloat) {
       _parserConfig.channelCount =
           settings.justFloatChannelCount.clamp(0, 16).toInt();
@@ -375,11 +422,18 @@ class PlotViewModel extends BaseViewModel {
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
     settings.parserType = _parserType.name;
+    settings.receiveCustomProtocolId = _parserConfig.customProtocolId ?? '';
+    settings.sendProtocolType = _sendProtocolType.name;
+    settings.sendCustomProtocolId = _sendProtocolConfig.customProtocolId ?? '';
+    settings.rChannelAddresses = List.from(
+      _sendProtocolConfig.rChannelAddresses,
+    );
     if (_parserType == ParserType.justFloat) {
       settings.justFloatChannelCount =
           _parserConfig.channelCount.clamp(0, 16).toInt();
     }
     settings.zobowProfileId = _profileService.selectedProfileId;
+    settings.rProfileId = _rProfileService.selectedProfileId;
     // vCursorEnabled 不持久化
     settings.xMin = viewport.xMin;
     settings.xMax = viewport.xMax;
@@ -427,7 +481,15 @@ class PlotViewModel extends BaseViewModel {
 
   ParserType get parserType => _parserType;
   ParserConfig get parserConfig => _parserConfig;
+  SendProtocolType get sendProtocolType => _sendProtocolType;
+  SendProtocolType get effectiveSendProtocolType =>
+      _parserType == ParserType.zobow
+          ? SendProtocolType.zobowBuiltIn
+          : _sendProtocolType;
+  List<String> get rChannelAddresses =>
+      List.unmodifiable(_sendProtocolConfig.rChannelAddresses);
   PlotLodIndex get lodIndex => _lodIndex;
+  int get zobowRawFrameCount => _zobowRawFrames.packetCount;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
@@ -475,9 +537,6 @@ class PlotViewModel extends BaseViewModel {
   /// - 串口已连接但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
-    if (_statusMessage != null && _statusMessage!.isNotEmpty) {
-      return _statusMessage!;
-    }
     if (serialService.isConnecting) {
       return '正在连接串口...';
     }
@@ -559,27 +618,16 @@ class PlotViewModel extends BaseViewModel {
     return recentCount * 2.0; // 500ms * 2 = 1s
   }
 
-  /// 在底部状态栏右侧显示一次性提示。
+  /// Show a floating transient notification.
+  String? get lastStatusMessage => _lastStatusMessage;
+
   void showStatusMessage(
     String message, {
     Duration duration = const Duration(seconds: 4),
   }) {
     if (_disposed) return;
-    _statusMessageTimer?.cancel();
-    _statusMessage = message;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-
-    if (duration > Duration.zero) {
-      _statusMessageTimer = Timer(duration, () {
-        if (_disposed) return;
-        if (_statusMessage == message) {
-          _statusMessage = null;
-          notifyListeners();
-        }
-      });
-    }
+    _lastStatusMessage = message;
+    AppNotifications.show(message, duration: duration);
   }
 
   // ========== 定时刷新 ==========
@@ -661,7 +709,10 @@ class PlotViewModel extends BaseViewModel {
   /// 状态，但不会把随机源接入当前解析链。
   void setParserType(ParserType type) {
     _parserType = type;
-    _parserConfig.type = type;
+    _parserConfig
+      ..type = type
+      ..source = ProtocolSource.builtIn
+      ..customProtocolId = null;
     if (type == ParserType.zobow &&
         _parserConfig.channelCount != ParserConfig.maxZobowChannelCount) {
       _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
@@ -690,32 +741,105 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setSendProtocolType(SendProtocolType type) {
+    if (type == SendProtocolType.zobowBuiltIn) return;
+    _sendProtocolType = type;
+    _sendProtocolConfig
+      ..type = type
+      ..source = ProtocolSource.builtIn
+      ..customProtocolId = null;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRChannelAddress(int index, String address) {
+    if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
+    _sendProtocolConfig.rChannelAddresses[index] = address.trim();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  int get rAddressDisplayCount {
+    if (!_isPlotting && _usesAutoDetectedReceiveChannels) {
+      return SendProtocolConfig.maxChannelCount;
+    }
+    final configured = _rContinuousAddressCount(throwOnGap: false);
+    final fixedCount = _fixedReceiveChannelCount;
+    return math.max(1, math.min(16, math.max(configured + 1, fixedCount ?? 0)));
+  }
+
+  bool get _usesAutoDetectedReceiveChannels {
+    return switch (_parserType) {
+      ParserType.fireWater => _parserConfig.fireWaterChannelCount == 0,
+      ParserType.justFloat => _parserConfig.channelCount == 0,
+      ParserType.fixedFrame || ParserType.zobow => false,
+    };
+  }
+
+  int? get _fixedReceiveChannelCount {
+    return switch (_parserType) {
+      ParserType.fireWater =>
+        _parserConfig.fireWaterChannelCount > 0
+            ? _parserConfig.fireWaterChannelCount
+            : null,
+      ParserType.justFloat =>
+        _parserConfig.channelCount > 0 ? _parserConfig.channelCount : null,
+      ParserType.fixedFrame => _parserConfig.channelCount,
+      ParserType.zobow => _parserConfig.zobowChannelCount,
+    };
+  }
+
   /// 更新解析器配置并同步到数据源
   ///
   /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
+    if (config.type == ParserType.fixedFrame) {
+      final error = config.fixedFrameValidationError;
+      if (error != null) {
+        throw ArgumentError(error);
+      }
+    }
     final oldZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
     final oldFixedFrameLength = _parserConfig.totalFrameLength;
+    final oldFixedFrameTypeLayout = _fixedFrameTypeLayoutKey(_parserConfig);
     _parserConfig.type = config.type;
+    _parserConfig.hasFrameHeader = config.hasFrameHeader;
     _parserConfig.frameHeaderLength = config.frameHeaderLength;
     _parserConfig.frameHeader = List.from(config.frameHeader);
     _parserConfig.dataType = config.dataType;
+    _parserConfig.fixedFrameUniformDataType = config.fixedFrameUniformDataType;
+    _parserConfig.fixedFrameChannelTypes = List.from(
+      config.fixedFrameChannelTypes,
+    );
     _parserConfig.channelCount = config.channelCount;
     _parserConfig.fireWaterChannelCount = config.fireWaterChannelCount;
     _parserConfig.hasChecksum = config.hasChecksum;
     _parserConfig.checksumType = config.checksumType;
-    _parserConfig.checksumBytes = config.checksumBytes;
+    _parserConfig.checksumBytes = config.effectiveChecksumBytes;
+    _parserConfig.checksumPosition = config.checksumPosition;
+    _parserConfig.crcPolynomialName = config.crcPolynomialName;
+    _parserConfig.checksumEndian = config.checksumEndian;
     _parserConfig.hasFrameTail = config.hasFrameTail;
     _parserConfig.frameTail =
         config.frameTail != null ? List.from(config.frameTail!) : null;
     _parserConfig.zobowChannelIds = List.from(config.zobowChannelIds);
     _parserConfig.zobowChannelTypes = List.from(config.zobowChannelTypes);
     final newZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
-    if (oldZobowFrameLength != newZobowFrameLength) {
+    final zobowFrameLengthChanged = oldZobowFrameLength != newZobowFrameLength;
+    final fixedFrameLengthChanged =
+        oldFixedFrameLength != _parserConfig.totalFrameLength;
+    final fixedFrameTypeLayoutChanged =
+        oldFixedFrameTypeLayout != _fixedFrameTypeLayoutKey(_parserConfig);
+    if (zobowFrameLengthChanged) {
       _resetZobowRawFrameBuffer();
     }
-    if (oldFixedFrameLength != _parserConfig.totalFrameLength) {
+    if (fixedFrameLengthChanged || fixedFrameTypeLayoutChanged) {
       _resetFixedFrameRawFrameBuffer();
+    }
+    if (zobowFrameLengthChanged ||
+        fixedFrameLengthChanged ||
+        fixedFrameTypeLayoutChanged) {
+      clearData();
     }
 
     // 更新随机数据源通道数以匹配 FireWater 配置
@@ -735,6 +859,11 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  String _fixedFrameTypeLayoutKey(ParserConfig config) {
+    return '${config.fixedFrameUniformDataType}|${config.dataType.name}|'
+        '${config.fixedFrameChannelTypes.take(config.channelCount).map((type) => type.name).join(',')}';
+  }
+
   // ========== 绘图控制 ==========
   /// 开始绘图
   ///
@@ -744,15 +873,34 @@ class PlotViewModel extends BaseViewModel {
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
-  void startPlotting() {
+  Future<void> startPlotting() async {
     if (_isStopping) {
       showStatusMessage('正在停止绘图，请稍候');
       return;
     }
     if (_isPlotting) return;
 
+    if (serialService.isConnected) {
+      final connected = await serialService.refreshConnectionStatus();
+      if (!connected && !_useRandomSource) {
+        const message = '检测到串口已断开，无法绘图；请重新连接串口';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        return;
+      }
+    }
+
     final canUseRandom =
         _useRandomSource && _parserType == ParserType.fireWater;
+
+    if (!serialService.isConnected &&
+        canUseRandom &&
+        _sendProtocolType == SendProtocolType.rProtocol) {
+      _sendProtocolType = SendProtocolType.none;
+      _sendProtocolConfig.type = SendProtocolType.none;
+      _saveSettings();
+      showStatusMessage('随机源未连接串口，发送协议已自动切换为无');
+    }
 
     // 检查是否有数据源
     if (!serialService.isConnected && !_useRandomSource) {
@@ -779,6 +927,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -897,8 +1046,6 @@ class PlotViewModel extends BaseViewModel {
 
       _notifyTimer?.cancel();
       _notifyTimer = null;
-      _statusMessageTimer?.cancel();
-      _statusMessageTimer = null;
       _pendingNotifyCount = 0;
       _isStopping = false;
       if (!_disposed) {
@@ -916,7 +1063,7 @@ class PlotViewModel extends BaseViewModel {
   /// 重启绘图（用于配置变更时）
   void _restartPlotting() {
     stopPlotting().then((_) {
-      if (!_disposed) startPlotting();
+      if (!_disposed) unawaited(startPlotting());
     });
   }
 
@@ -927,6 +1074,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
     _rateSamples.clear();
@@ -1251,6 +1399,35 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  Future<void> _rebuildZobowWindowAsync(
+    int start,
+    int count, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    _dataPoints.clear();
+    _visibleStartIndex = start;
+    _dataRevision++;
+
+    const batchSize = 4096;
+    for (int i = 0; i < count; i++) {
+      final packetIndex = start + i;
+      final frame = _zobowRawFrames.readPacket(packetIndex);
+      _dataPoints.add(
+        PlotDataPoint(
+          index: packetIndex,
+          timestamp: packetIndex.toDouble(),
+          values: ZobowParser.decodeFrameValues(frame, _parserConfig),
+        ),
+      );
+      if ((i + 1) % batchSize == 0 || i + 1 == count) {
+        onProgress?.call(
+          PlotImportProgress(stage: '刷新绘图窗口', current: i + 1, total: count),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+  }
+
   /// 根据当前解析器类型创建对应的解析器实例
   IDataParser _createParser() {
     switch (_parserType) {
@@ -1272,12 +1449,141 @@ class PlotViewModel extends BaseViewModel {
   /// 某些协议（如众邦电控）需要在开始绘图前发送配置数据。
   /// 返回是否发送成功，发送失败会阻止本次绘图启动。
   bool _sendProtocolInitData() {
-    switch (_parserType) {
-      case ParserType.zobow:
+    switch (effectiveSendProtocolType) {
+      case SendProtocolType.zobowBuiltIn:
         return _sendJackFourChannelInitData();
-      default:
-        return true; // 其他协议无需发送
+      case SendProtocolType.rProtocol:
+        return _sendRProtocolInitData();
+      case SendProtocolType.none:
+        return true;
     }
+  }
+
+  bool _sendRProtocolInitData() {
+    if (!serialService.isConnected) {
+      AppLogger().debug('串口未连接，跳过 r 协议初始化数据发送', category: 'PLOT');
+      return false;
+    }
+    try {
+      final bytes = buildRProtocolCommand(
+        validateRProtocolAddresses(
+          _sendProtocolConfig.rChannelAddresses,
+          requiredCount: _fixedReceiveChannelCount,
+          allowZeroValues: _parserType == ParserType.fixedFrame,
+        ),
+        allowZeroValues: _parserType == ParserType.fixedFrame,
+      );
+      serialService.send(bytes);
+      AppLogger().info(
+        'r协议初始化数据已发送: ${utf8.decode(bytes).trim()}',
+        category: 'PLOT',
+      );
+      return true;
+    } catch (e) {
+      showStatusMessage('$e');
+      AppLogger().error('r协议初始化数据发送失败: $e', category: 'PLOT');
+      return false;
+    }
+  }
+
+  int _rContinuousAddressCount({bool throwOnGap = true}) {
+    int count = 0;
+    bool foundEmpty = false;
+    for (final text in _sendProtocolConfig.rChannelAddresses) {
+      final value = parseRProtocolAddress(text);
+      if (value == null || value == 0) {
+        foundEmpty = true;
+        continue;
+      }
+      if (foundEmpty) {
+        if (throwOnGap) {
+          throw const FormatException('r协议地址必须从通道1开始连续填写，中间不能留空或填写0');
+        }
+        break;
+      }
+      count++;
+    }
+    return count;
+  }
+
+  static List<String> validateRProtocolAddresses(
+    List<String> addresses, {
+    int? requiredCount,
+    bool allowZeroValues = false,
+  }) {
+    if (allowZeroValues && requiredCount != null) {
+      final requiredAddresses =
+          addresses.take(requiredCount).map((address) {
+            final text = address.trim();
+            final value = parseRProtocolAddress(text);
+            if (value == null || value < 0) {
+              throw FormatException('r协议地址无效或未填写: $address');
+            }
+            return text;
+          }).toList();
+      if (requiredAddresses.length < requiredCount) {
+        throw FormatException(
+          'r协议地址数量不足：接收协议需要 $requiredCount 个通道，'
+          '当前仅填写 ${requiredAddresses.length} 个',
+        );
+      }
+      return requiredAddresses;
+    }
+    final continuousAddresses = <String>[];
+    bool foundEmpty = false;
+    for (final rawAddress in addresses) {
+      final address = rawAddress.trim();
+      final value = parseRProtocolAddress(address);
+      if (value == null || value == 0) {
+        foundEmpty = true;
+        continue;
+      }
+      if (foundEmpty) {
+        throw const FormatException('r协议地址必须从通道1开始连续填写，中间不能留空或填写0');
+      }
+      continuousAddresses.add(address);
+    }
+    if (continuousAddresses.isEmpty) {
+      throw const FormatException('r协议至少需要填写一个非零通道地址');
+    }
+    if (requiredCount != null && continuousAddresses.length < requiredCount) {
+      throw FormatException(
+        'r协议地址数量不足：接收协议需要 $requiredCount 个通道，'
+        '当前仅填写 ${continuousAddresses.length} 个',
+      );
+    }
+    return continuousAddresses
+        .take(requiredCount ?? continuousAddresses.length)
+        .toList();
+  }
+
+  static int? parseRProtocolAddress(String text) {
+    final value = text.trim();
+    if (value.isEmpty) return null;
+    final isHex = value.startsWith('0x') || value.startsWith('0X');
+    return int.tryParse(
+      isHex ? value.substring(2) : value,
+      radix: isHex ? 16 : 10,
+    );
+  }
+
+  static Uint8List buildRProtocolCommand(
+    List<String> addresses, {
+    bool allowZeroValues = false,
+  }) {
+    if (addresses.isEmpty) {
+      throw ArgumentError.value(addresses, 'addresses', 'must not be empty');
+    }
+    final normalized = <String>[];
+    for (final address in addresses) {
+      final text = address.trim();
+      final value = parseRProtocolAddress(text);
+      if (value == null || value < 0 || (!allowZeroValues && value == 0)) {
+        throw FormatException('无效的 r 协议地址: $address');
+      }
+      normalized.add(text);
+    }
+    return Uint8List.fromList(utf8.encode('r ${normalized.join(' ')}\n'));
   }
 
   /// 发送 众邦电控初始化数据
@@ -1770,16 +2076,80 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 众邦电控的通道数据类型
-  void setZobowChannelType(int index, DataType type) {
-    if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
-    if (type != DataType.uint16 && type != DataType.int16) return;
-    _parserConfig.zobowChannelTypes[index] = type;
-    // 同步更新通道配置的数据类型（影响绘图显示）
+  /// 设置 众邦电控的通道数据类型，并重新解释已缓存的原始帧。
+  Future<bool> setZobowChannelType(
+    int index,
+    DataType type, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    if (index < 0 || index >= _parserConfig.zobowChannelCount) return false;
+    if (type != DataType.uint16 && type != DataType.int16) return false;
+    if (_isPlotting || _isStopping) {
+      showStatusMessage('请停止绘图后再修改众邦通道数据类型');
+      return false;
+    }
     if (index < channels.length) {
       channels[index].dataType = type;
     }
+    if (_parserConfig.zobowChannelTypes[index] == type) return true;
+
+    _parserConfig.zobowChannelTypes[index] = type;
+
+    final total = _zobowRawFrames.packetCount;
+    if (total > 0) {
+      final visibleStart = _visibleStartIndex;
+      final visibleCount = _dataPoints.length;
+      final stopwatch = Stopwatch()..start();
+      _lodIndex.clear();
+
+      const batchSize = 4096;
+      for (int packetIndex = 0; packetIndex < total; packetIndex++) {
+        final frame = _zobowRawFrames.readPacket(packetIndex);
+        _lodIndex.add(
+          packetIndex,
+          ZobowParser.decodeFrameValues(frame, _parserConfig),
+        );
+        if ((packetIndex + 1) % batchSize == 0 || packetIndex + 1 == total) {
+          onProgress?.call(
+            PlotImportProgress(
+              stage: '重新解释众邦数据',
+              current: packetIndex + 1,
+              total: total,
+            ),
+          );
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+
+      await _rebuildZobowWindowAsync(
+        visibleStart,
+        visibleCount,
+        onProgress: onProgress,
+      );
+      AppLogger().info(
+        '众邦通道类型转换完成: $total 帧, ${stopwatch.elapsedMilliseconds}ms',
+        category: 'PLOT',
+      );
+    }
+
     Future.microtask(() => notifyListeners());
+    return true;
+  }
+
+  Future<bool> setFixedFrameChannelType(int index, DataType type) async {
+    if (index < 0 || index >= _parserConfig.channelCount) return false;
+    if (_isPlotting || _isStopping) {
+      showStatusMessage('请停止绘图后再修改固定帧通道数据类型');
+      return false;
+    }
+    channels[index].dataType = type;
+    if (_parserConfig.fixedFrameChannelTypes[index] == type) return true;
+
+    _parserConfig.fixedFrameChannelTypes[index] = type;
+    _resetFixedFrameRawFrameBuffer();
+    clearData();
+    Future.microtask(() => notifyListeners());
+    return true;
   }
 
   // ========== 显示控制 ==========
@@ -2498,6 +2868,12 @@ class PlotViewModel extends BaseViewModel {
       return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
     }, growable: false);
     final metadata = <String, dynamic>{'channelNames': names};
+    if (_importedChannelAddresses != null) {
+      metadata['channelAddresses'] = _importedChannelAddresses!
+          .take(channelCount)
+          .map((id) => id & 0xFFFFFFFF)
+          .toList(growable: false);
+    }
     if (_parserType == ParserType.zobow) {
       metadata['parserType'] = ParserType.zobow.name;
       metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
@@ -2563,7 +2939,12 @@ class PlotViewModel extends BaseViewModel {
     int total, {
     String? detail,
   }) async {
-    onProgress?.call(
+    if (onProgress == null) {
+      await Future<void>.delayed(Duration.zero);
+      return;
+    }
+
+    onProgress.call(
       PlotImportProgress(
         stage: stage,
         current: current,
@@ -2571,7 +2952,7 @@ class PlotViewModel extends BaseViewModel {
         detail: detail,
       ),
     );
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 1));
   }
 
   /// 从 CSV 文件导入数据
@@ -2860,6 +3241,117 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
+  /// Import data exported by the legacy VisualScope application.
+  ///
+  /// The legacy format stores four independent little-endian int16 channel
+  /// blocks. Its first 50,000 samples are a reserved history area and are not
+  /// part of the user-visible capture.
+  Future<String?> importFromLegacyDat(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    try {
+      final file = File(filePath);
+      await _reportImportProgress(onProgress, '检查文件', 0, 0);
+      if (!await file.exists()) {
+        return '文件不存在';
+      }
+
+      await _reportImportProgress(onProgress, '读取 DAT', 0, 0);
+      final bytes = await file.readAsBytes();
+      const channelCount = 4;
+      const reservedPointCount = 50000;
+      const minimumHeaderLength = 0x24;
+      if (bytes.length < minimumHeaderLength) {
+        return 'DAT 文件头不完整';
+      }
+      await _reportImportProgress(
+        onProgress,
+        '读取 DAT',
+        bytes.length,
+        bytes.length,
+        detail: '${bytes.length} 字节',
+      );
+
+      final data = ByteData.sublistView(bytes);
+      final declaredLength = data.getUint32(0, Endian.little);
+      if (declaredLength != bytes.length) {
+        return 'DAT 文件长度校验失败';
+      }
+
+      final storedPointCount = data.getUint32(0x20, Endian.little);
+      if (storedPointCount <= reservedPointCount) {
+        return 'DAT 文件没有有效数据';
+      }
+      final expectedLength = 4 + channelCount * (32 + storedPointCount * 2);
+      if (expectedLength != bytes.length) {
+        return 'DAT 数据布局不匹配';
+      }
+
+      final importedPointCount = storedPointCount - reservedPointCount;
+      final addresses = <int>[];
+      final channelDataOffsets = <int>[];
+      for (int channel = 0; channel < channelCount; channel++) {
+        final channelNumber = channel + 1;
+        final blockOffset = channel * storedPointCount * 2;
+        final dataOffset =
+            0x04 + channelNumber * 32 + blockOffset + reservedPointCount * 2;
+        // Each channel block has a 32-byte header. Its address field is the
+        // uint32 value 12 bytes before the raw sample data.
+        final addressOffset = dataOffset - reservedPointCount * 2 - 12;
+        final dataEnd =
+            0x04 + channelNumber * 32 + blockOffset + storedPointCount * 2;
+        if (addressOffset + 4 > bytes.length ||
+            dataOffset > dataEnd ||
+            dataEnd > bytes.length) {
+          return 'DAT 通道数据不完整';
+        }
+        addresses.add(data.getUint32(addressOffset, Endian.little));
+        channelDataOffsets.add(dataOffset);
+      }
+
+      final importedPoints = <PlotDataPoint>[];
+      for (int pointIndex = 0; pointIndex < importedPointCount; pointIndex++) {
+        final byteOffset = pointIndex * 2;
+        importedPoints.add(
+          PlotDataPoint(
+            index: pointIndex,
+            timestamp: pointIndex.toDouble(),
+            values: [
+              for (final offset in channelDataOffsets)
+                data.getInt16(offset + byteOffset, Endian.little).toDouble(),
+            ],
+          ),
+        );
+        if ((pointIndex + 1) % _importProgressBatchSize == 0 ||
+            pointIndex + 1 == importedPointCount) {
+          await _reportImportProgress(
+            onProgress,
+            '解析 DAT',
+            pointIndex + 1,
+            importedPointCount,
+            detail: '${pointIndex + 1} 点',
+          );
+        }
+      }
+
+      await _replaceImportedPoints(
+        importedPoints,
+        channelCount,
+        metadata: {'channelAddresses': addresses},
+        onProgress: onProgress,
+      );
+      AppLogger().info(
+        '旧版 DAT 导入成功: $filePath, $importedPointCount 点, 地址=${addresses.map((address) => '0x${address.toRadixString(16).toUpperCase()}').join(',')}',
+        category: 'PLOT',
+      );
+      return null;
+    } catch (e) {
+      AppLogger().error('旧版 DAT 导入失败: $e', category: 'PLOT');
+      return '解析错误: $e';
+    }
+  }
+
   Future<void> _replaceImportedPoints(
     List<PlotDataPoint> importedPoints,
     int channelCount, {
@@ -2871,6 +3363,7 @@ class PlotViewModel extends BaseViewModel {
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _importedChannelAddresses = null;
     var minY = double.infinity;
     var maxY = double.negativeInfinity;
     for (int i = 0; i < importedPoints.length; i++) {
@@ -2952,6 +3445,14 @@ class PlotViewModel extends BaseViewModel {
       }
     }
 
+    final addresses = metadata['channelAddresses'];
+    if (addresses is List) {
+      _importedChannelAddresses = _applyChannelAddresses(
+        addresses,
+        channelCount,
+      );
+    }
+
     final ids = metadata['zobowChannelIds'];
     if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
       _parserType = ParserType.zobow;
@@ -2960,31 +3461,38 @@ class PlotViewModel extends BaseViewModel {
           channelCount >= ParserConfig.maxZobowChannelCount
               ? ParserConfig.maxZobowChannelCount
               : ParserConfig.minZobowChannelCount;
-      for (
-        int i = 0;
-        i < ids.length &&
-            i < _parserConfig.zobowChannelIds.length &&
-            i < _parserConfig.zobowChannelCount;
-        i++
-      ) {
-        final id = ids[i];
-        if (id is int) {
-          _parserConfig.zobowChannelIds[i] = id & 0xFFFFFFFF;
-        } else if (id is num) {
-          _parserConfig.zobowChannelIds[i] = id.toInt() & 0xFFFFFFFF;
-        } else if (id is String) {
-          final parsed = int.tryParse(
-            id.replaceAll('0x', '').replaceAll('0X', ''),
-            radix: 16,
-          );
-          if (parsed != null) {
-            _parserConfig.zobowChannelIds[i] = parsed & 0xFFFFFFFF;
-          }
-        }
-      }
+      _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
       AppSettings().parserType = ParserType.zobow.name;
       _saveSettings();
     }
+  }
+
+  List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {
+    final addresses = <int>[];
+    for (
+      int i = 0;
+      i < values.length &&
+          i < channelCount &&
+          i < _parserConfig.zobowChannelIds.length;
+      i++
+    ) {
+      final value = values[i];
+      final address = switch (value) {
+        int value => value,
+        num value => value.toInt(),
+        String value => int.tryParse(
+          value.replaceAll('0x', '').replaceAll('0X', ''),
+          radix: 16,
+        ),
+        _ => null,
+      };
+      if (address != null) {
+        final normalized = address & 0xFFFFFFFF;
+        _parserConfig.zobowChannelIds[i] = normalized;
+        addresses.add(normalized);
+      }
+    }
+    return addresses;
   }
 
   // ========== 众邦电控配置文件操作 ==========
@@ -3020,7 +3528,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// 应用预设到指定通道
   void applyPresetToChannel(int channelIndex, ZobowChannelPreset preset) {
-    if (channelIndex < 0 || channelIndex >= 4) return;
+    if (channelIndex < 0 || channelIndex >= _parserConfig.zobowChannelCount) {
+      return;
+    }
     _parserConfig.zobowChannelIds[channelIndex] = preset.address & 0xFFFFFFFF;
     // 同时设置通道别名
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
@@ -3032,6 +3542,50 @@ class PlotViewModel extends BaseViewModel {
   /// 重新加载配置文件列表
   Future<void> reloadZobowProfiles() async {
     await _profileService.reload();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void selectRProfile(String? profileId) {
+    _rProfileService.selectProfile(profileId);
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  Future<ZobowConfigProfile?> createRProfile(String name) async {
+    final profile = await _rProfileService.createProfile(name);
+    Future.microtask(() => notifyListeners());
+    return profile;
+  }
+
+  Future<void> updateRProfile(ZobowConfigProfile profile) async {
+    await _rProfileService.updateProfile(profile);
+    Future.microtask(() => notifyListeners());
+  }
+
+  Future<void> deleteRProfile(String id) async {
+    await _rProfileService.deleteProfile(id);
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void applyRProtocolPresetToChannel(
+    int channelIndex,
+    ZobowChannelPreset preset,
+  ) {
+    if (channelIndex < 0 ||
+        channelIndex >= SendProtocolConfig.maxChannelCount) {
+      return;
+    }
+    final previous = _sendProtocolConfig.rChannelAddresses[channelIndex];
+    final useHex = previous.trim().toLowerCase().startsWith('0x');
+    _sendProtocolConfig.rChannelAddresses[channelIndex] =
+        useHex
+            ? '0x${preset.address.toRadixString(16).toUpperCase()}'
+            : '${preset.address}';
+    if (preset.name.isNotEmpty && channelIndex < channels.length) {
+      channels[channelIndex].alias = preset.name;
+    }
+    _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3132,5 +3686,12 @@ ParserType _parserTypeFromString(String value) {
     'zobow' => ParserType.zobow,
     'justFloat' => ParserType.justFloat,
     _ => ParserType.fireWater,
+  };
+}
+
+SendProtocolType _sendProtocolTypeFromString(String value) {
+  return switch (value) {
+    'rProtocol' => SendProtocolType.rProtocol,
+    _ => SendProtocolType.none,
   };
 }

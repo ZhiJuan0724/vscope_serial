@@ -79,14 +79,31 @@ class AppSettings {
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
 
+  /// 发送协议名称（'none' / 'rProtocol'）。
+  String sendProtocolType = 'none';
+
+  /// 预留给后续 Lua 自定义收发协议。
+  String receiveCustomProtocolId = '';
+  String sendCustomProtocolId = '';
+
+  /// r 协议通道地址文本。保留十进制或 0x 十六进制输入形式。
+  List<String> rChannelAddresses = List.filled(16, '');
+
   /// JustFloat 通道数（0=自动识别）
   int justFloatChannelCount = 0;
 
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
 
+  /// 当前选中的 r 协议配置文件ID（空字符串表示不使用）
+  String rProfileId = '';
+
   /// 快捷地址选择窗口显示模式: 'grid'(平铺) / 'list'(列表)
   String zobowPresetViewMode = 'grid';
+
+  // ========== 应用更新 ==========
+  /// 启动时自动检查更新。默认关闭，避免启动时主动访问网络。
+  bool autoUpdateCheckEnabled = false;
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
@@ -156,13 +173,20 @@ class AppSettings {
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
       parserType = json['parserType'] as String? ?? 'fireWater';
+      sendProtocolType = json['sendProtocolType'] as String? ?? 'none';
+      receiveCustomProtocolId =
+          json['receiveCustomProtocolId'] as String? ?? '';
+      sendCustomProtocolId = json['sendCustomProtocolId'] as String? ?? '';
+      rChannelAddresses = _normalizeStringList(json['rChannelAddresses']);
       justFloatChannelCount =
           ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
               .clamp(0, 16)
               .toInt();
       zobowProfileId = json['zobowProfileId'] as String? ?? '';
+      rProfileId = json['rProfileId'] as String? ?? '';
       zobowPresetViewMode =
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
+      autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -202,9 +226,15 @@ class AppSettings {
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
       'parserType': parserType,
+      'sendProtocolType': sendProtocolType,
+      'receiveCustomProtocolId': receiveCustomProtocolId,
+      'sendCustomProtocolId': sendCustomProtocolId,
+      'rChannelAddresses': rChannelAddresses,
       'justFloatChannelCount': justFloatChannelCount,
       'zobowProfileId': zobowProfileId,
+      'rProfileId': rProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
+      'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
 
       // 视口设置
       'xMin': xMin,
@@ -215,6 +245,17 @@ class AppSettings {
 
     final file = File(_settingsPath!);
     file.writeAsStringSync(jsonEncode(json));
+  }
+
+  static List<String> _normalizeStringList(Object? value) {
+    final values =
+        value is List
+            ? value.whereType<String>().map((item) => item.trim()).toList()
+            : <String>[];
+    while (values.length < 16) {
+      values.add('');
+    }
+    return values.take(16).toList();
   }
 
   /// 从 [SerialConfig] 加载串口设置

@@ -1,5 +1,18 @@
 import 'dart:convert';
 
+enum AddressProfileProtocolType {
+  zobow('zobow'),
+  rProtocol('rProtocol');
+
+  final String id;
+
+  const AddressProfileProtocolType(this.id);
+
+  static AddressProfileProtocolType fromJsonValue(Object? value) {
+    return value == rProtocol.id ? rProtocol : zobow;
+  }
+}
+
 /// Zobow通道预设：名称 + 地址（键值对）
 class ZobowChannelPreset {
   /// 预设名称（如 "温度传感器"、"压力传感器"）
@@ -31,6 +44,9 @@ class ZobowChannelPreset {
 
 /// 众邦电控配置文件
 class ZobowConfigProfile {
+  /// 配置所属协议。旧版 JSON 缺少该字段时默认按 Zobow 处理。
+  AddressProfileProtocolType protocolType;
+
   /// 配置文件唯一标识（文件名，不含扩展名）
   String id;
 
@@ -43,12 +59,22 @@ class ZobowConfigProfile {
   ZobowConfigProfile({
     required this.id,
     required this.name,
+    this.protocolType = AddressProfileProtocolType.zobow,
     List<ZobowChannelPreset>? presets,
   }) : presets = presets ?? [];
 
   /// 创建默认空配置文件
-  factory ZobowConfigProfile.empty(String id, {String? name}) {
-    return ZobowConfigProfile(id: id, name: name ?? '未命名配置', presets: []);
+  factory ZobowConfigProfile.empty(
+    String id, {
+    String? name,
+    AddressProfileProtocolType protocolType = AddressProfileProtocolType.zobow,
+  }) {
+    return ZobowConfigProfile(
+      id: id,
+      name: name ?? '未命名配置',
+      protocolType: protocolType,
+      presets: [],
+    );
   }
 
   /// 从JSON映射创建
@@ -60,6 +86,9 @@ class ZobowConfigProfile {
     return ZobowConfigProfile(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '未命名配置',
+      protocolType: AddressProfileProtocolType.fromJsonValue(
+        json['protocolType'],
+      ),
       presets: presetsList ?? [],
     );
   }
@@ -68,6 +97,7 @@ class ZobowConfigProfile {
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
+    'protocolType': protocolType.id,
     'presets': presets.map((p) => p.toJson()).toList(),
   };
 
@@ -77,11 +107,13 @@ class ZobowConfigProfile {
   ZobowConfigProfile copyWith({
     String? id,
     String? name,
+    AddressProfileProtocolType? protocolType,
     List<ZobowChannelPreset>? presets,
   }) {
     return ZobowConfigProfile(
       id: id ?? this.id,
       name: name ?? this.name,
+      protocolType: protocolType ?? this.protocolType,
       presets: presets ?? List.from(this.presets),
     );
   }

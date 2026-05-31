@@ -14,7 +14,7 @@ class FireWaterParser extends IDataParser {
   final _controller = StreamController<ParseResult>.broadcast();
 
   FireWaterParser([ParserConfig? config])
-      : super(config ?? ParserConfig.fireWaterDefault());
+    : super(config ?? ParserConfig.fireWaterDefault());
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
@@ -41,7 +41,8 @@ class FireWaterParser extends IDataParser {
     }
 
     // 处理完整行
-    final completeLines = bufferStr.endsWith('\n') ? lines : lines.sublist(0, lines.length - 1);
+    final completeLines =
+        bufferStr.endsWith('\n') ? lines : lines.sublist(0, lines.length - 1);
 
     for (final line in completeLines) {
       if (line.trim().isEmpty) continue;

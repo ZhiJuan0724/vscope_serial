@@ -36,6 +36,16 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
   void _showOverlay() {
     final renderBox = context.findRenderObject() as RenderBox;
     final size = renderBox.size;
+    final position = renderBox.localToGlobal(Offset.zero);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final availableBelow = screenHeight - position.dy - size.height - 8;
+    final availableAbove = position.dy - 8;
+    final estimatedHeight = widget.items.length * 40.0;
+    final desiredMaxHeight = estimatedHeight.clamp(80.0, 280.0);
+    final opensUp =
+        availableBelow < desiredMaxHeight && availableAbove > availableBelow;
+    final availableSpace = opensUp ? availableAbove : availableBelow;
+    final menuMaxHeight = availableSpace.clamp(56.0, desiredMaxHeight);
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -51,7 +61,10 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
             CompositedTransformFollower(
               link: _layerLink,
               showWhenUnlinked: false,
-              offset: Offset(0, size.height + 2),
+              targetAnchor: opensUp ? Alignment.topLeft : Alignment.bottomLeft,
+              followerAnchor:
+                  opensUp ? Alignment.bottomLeft : Alignment.topLeft,
+              offset: Offset(0, opensUp ? -2 : 2),
               child: Material(
                 elevation: 4,
                 borderRadius: BorderRadius.circular(4),
@@ -59,7 +72,7 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                   constraints: BoxConstraints(
                     minWidth: size.width,
                     maxWidth: size.width,
-                    maxHeight: 280,
+                    maxHeight: menuMaxHeight.toDouble(),
                   ),
                   child: Container(
                     decoration: BoxDecoration(
@@ -71,41 +84,44 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: widget.items.map((item) {
-                          final isSelected = item.value == widget.value;
-                          return InkWell(
-                            onTap: () {
-                              widget.onChanged?.call(item.value);
-                              _removeOverlay();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? Theme.of(context)
-                                        .colorScheme
-                                        .primaryContainer
-                                    : null,
-                              ),
-                              child: DefaultTextStyle(
-                                style: TextStyle(
-                                  color: isSelected
-                                      ? Theme.of(context)
-                                          .colorScheme
-                                          .onPrimaryContainer
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .onSurface,
-                                  fontSize: 14,
+                        children:
+                            widget.items.map((item) {
+                              final isSelected = item.value == widget.value;
+                              return InkWell(
+                                onTap: () {
+                                  widget.onChanged?.call(item.value);
+                                  _removeOverlay();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        isSelected
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.primaryContainer
+                                            : null,
+                                  ),
+                                  child: DefaultTextStyle(
+                                    style: TextStyle(
+                                      color:
+                                          isSelected
+                                              ? Theme.of(
+                                                context,
+                                              ).colorScheme.onPrimaryContainer
+                                              : Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                      fontSize: 14,
+                                    ),
+                                    child: item.child,
+                                  ),
                                 ),
-                                child: item.child,
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                              );
+                            }).toList(),
                       ),
                     ),
                   ),
@@ -153,11 +169,14 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
       child: InkWell(
         onTap: widget.onChanged == null ? null : _toggleMenu,
         child: InputDecorator(
-          decoration: widget.decoration ??
+          decoration:
+              widget.decoration ??
               const InputDecoration(
                 border: OutlineInputBorder(),
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
               ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -167,11 +186,12 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                   displayText,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: widget.onChanged == null
-                        ? Colors.grey
-                        : (widget.value != null
-                            ? Theme.of(context).colorScheme.onSurface
-                            : Colors.grey),
+                    color:
+                        widget.onChanged == null
+                            ? Colors.grey
+                            : (widget.value != null
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Colors.grey),
                     fontSize: 14,
                   ),
                 ),
@@ -285,42 +305,45 @@ class _ComboInputState extends State<ComboInput> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: widget.items.map((item) {
-                          final isSelected = item == _controller.text;
-                          return InkWell(
-                            onTap: () {
-                              _controller.text = item;
-                              widget.onChanged?.call(item);
-                              _removeOverlay();
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? Theme.of(context)
-                                        .colorScheme
-                                        .primaryContainer
-                                    : null,
-                              ),
-                              child: Text(
-                                item,
-                                style: TextStyle(
-                                  color: isSelected
-                                      ? Theme.of(context)
-                                          .colorScheme
-                                          .onPrimaryContainer
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .onSurface,
-                                  fontSize: 14,
+                        children:
+                            widget.items.map((item) {
+                              final isSelected = item == _controller.text;
+                              return InkWell(
+                                onTap: () {
+                                  _controller.text = item;
+                                  widget.onChanged?.call(item);
+                                  _removeOverlay();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        isSelected
+                                            ? Theme.of(
+                                              context,
+                                            ).colorScheme.primaryContainer
+                                            : null,
+                                  ),
+                                  child: Text(
+                                    item,
+                                    style: TextStyle(
+                                      color:
+                                          isSelected
+                                              ? Theme.of(
+                                                context,
+                                              ).colorScheme.onPrimaryContainer
+                                              : Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface,
+                                      fontSize: 14,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                              );
+                            }).toList(),
                       ),
                     ),
                   ),
@@ -348,17 +371,23 @@ class _ComboInputState extends State<ComboInput> {
         controller: _controller,
         focusNode: _focusNode,
         enabled: widget.enabled,
-        decoration: (widget.decoration ?? const InputDecoration(
-          border: OutlineInputBorder(),
-          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        )).copyWith(
-          suffixIcon: widget.enabled
-              ? InkWell(
-                  onTap: _toggleMenu,
-                  child: const Icon(Icons.arrow_drop_down),
-                )
-              : const Icon(Icons.arrow_drop_down, color: Colors.grey),
-        ),
+        decoration: (widget.decoration ??
+                const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ))
+            .copyWith(
+              suffixIcon:
+                  widget.enabled
+                      ? InkWell(
+                        onTap: _toggleMenu,
+                        child: const Icon(Icons.arrow_drop_down),
+                      )
+                      : const Icon(Icons.arrow_drop_down, color: Colors.grey),
+            ),
         style: const TextStyle(fontSize: 14),
         onChanged: widget.onChanged,
       ),

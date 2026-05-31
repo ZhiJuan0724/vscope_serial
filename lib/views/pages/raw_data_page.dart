@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
+import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
@@ -306,7 +307,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                   return TextSpan(
                                     text: '$line\n',
                                     style: TextStyle(
-                                      fontFamily: 'monospace',
+                                      fontFamily: 'SarasaUiSC',
                                       fontSize: 13,
                                       backgroundColor: bgColor,
                                     ),
@@ -606,9 +607,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                 }
                               } catch (e) {
                                 if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(e.toString())),
-                                );
+                                _showSnackBar(context, e.toString());
                               }
                             }
                           }
@@ -688,9 +687,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   void _showSnackBar(BuildContext context, String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    AppNotifications.show(message, messenger: ScaffoldMessenger.of(context));
   }
 
   void _formatHexInput(String value) {

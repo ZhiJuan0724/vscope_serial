@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/models/zobow_config_profile.dart';
+import '../../services/app_notifications.dart';
+import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
 /// 众邦电控配置文件编辑弹窗
@@ -16,11 +18,17 @@ import '../../viewmodels/plot_viewmodel.dart';
 /// - 底部：添加行 / 删除选中行 按钮
 class ZobowProfileDialog extends StatefulWidget {
   final PlotViewModel vm;
+  final AddressProfileProtocolType protocolType;
 
   /// 为 null 时创建新配置，否则编辑现有配置
   final ZobowConfigProfile? profile;
 
-  const ZobowProfileDialog({super.key, required this.vm, this.profile});
+  const ZobowProfileDialog({
+    super.key,
+    required this.vm,
+    this.profile,
+    this.protocolType = AddressProfileProtocolType.zobow,
+  });
 
   @override
   State<ZobowProfileDialog> createState() => _ZobowProfileDialogState();
@@ -30,6 +38,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   late final TextEditingController _nameController;
   late final List<_PresetRow> _rows;
   int? _selectedRowIndex;
+  bool _ignoreCImportComments = false;
+  bool get _isRProtocol =>
+      widget.protocolType == AddressProfileProtocolType.rProtocol;
 
   @override
   void initState() {
@@ -129,7 +140,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   Expanded(
                     flex: 2,
                     child: Text(
-                      '地址 (hex)',
+                      '地址',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -231,7 +242,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               controller: _rows[index].addressController,
                               style: const TextStyle(
                                 fontSize: 12,
-                                fontFamily: 'monospace',
+                                fontFamily: 'SarasaUiSC',
                               ),
                               decoration: const InputDecoration(
                                 isDense: true,
@@ -303,9 +314,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           ),
         if (widget.profile == null)
           TextButton.icon(
-            onPressed: _importProfile,
+            onPressed: _showExternalImportDialog,
             icon: const Icon(Icons.file_upload_outlined, size: 16),
-            label: const Text('导入 JSON'),
+            label: const Text('从外部导入'),
           ),
         Row(
           mainAxisSize: MainAxisSize.min,
@@ -353,13 +364,96 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     );
     if (confirmed != true || !mounted) return;
 
-    await widget.vm.deleteZobowProfile(profile.id);
+    if (_isRProtocol) {
+      await widget.vm.deleteRProfile(profile.id);
+    } else {
+      await widget.vm.deleteZobowProfile(profile.id);
+    }
     if (mounted) {
       Navigator.pop(context);
     }
   }
 
-  Future<void> _importProfile() async {
+  Future<void> _showExternalImportDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (dialogContext, setDialogState) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  title: const Text('从外部导入'),
+                  content: SizedBox(
+                    width: 340,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!_isRProtocol)
+                          CheckboxListTile(
+                            value: _ignoreCImportComments,
+                            onChanged: (value) {
+                              final checked = value ?? false;
+                              setDialogState(
+                                () => _ignoreCImportComments = checked,
+                              );
+                              setState(() => _ignoreCImportComments = checked);
+                            },
+                            title: const Text('忽略注释'),
+                            subtitle: const Text('C 导入时全部使用变量名'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                          ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _importJsonProfile();
+                          },
+                          icon: const Icon(
+                            Icons.file_upload_outlined,
+                            size: 16,
+                          ),
+                          label: const Text('导入 JSON'),
+                        ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
+                        if (!_isRProtocol)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _importCProfileFile();
+                            },
+                            icon: const Icon(Icons.code, size: 16),
+                            label: const Text('导入 C 文件'),
+                          ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
+                        if (!_isRProtocol)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _pasteCProfileCode();
+                            },
+                            icon: const Icon(Icons.content_paste, size: 16),
+                            label: const Text('粘贴 C 代码'),
+                          ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('取消'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  Future<void> _importJsonProfile() async {
     final result = await FilePicker.pickFiles(
       dialogTitle: '导入众邦配置文件',
       type: FileType.custom,
@@ -401,10 +495,132 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('导入配置失败: $error')));
+      AppNotifications.show(
+        '导入配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
     }
+  }
+
+  Future<void> _importCProfileFile() async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '导入 Zobow C 配置',
+      type: FileType.custom,
+      allowedExtensions: ['c', 'h', 'txt'],
+      allowMultiple: false,
+    );
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+
+    try {
+      final imported = await ZobowCProfileImporter.parseFile(
+        path,
+        useComments: !_ignoreCImportComments,
+      );
+      _applyImportedCProfile(imported, profileName: _fileBaseName(path));
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        '导入 C 配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  Future<void> _pasteCProfileCode() async {
+    final code = await _showPasteCCodeDialog();
+    if (code == null || code.trim().isEmpty || !mounted) return;
+
+    try {
+      final imported = ZobowCProfileImporter.parseSource(
+        code,
+        useComments: !_ignoreCImportComments,
+      );
+      _applyImportedCProfile(imported);
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        '导入 C 配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  Future<String?> _showPasteCCodeDialog() async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: const Text('粘贴 C 代码'),
+              content: SizedBox(
+                width: 560,
+                height: 360,
+                child: TextField(
+                  controller: controller,
+                  expands: true,
+                  maxLines: null,
+                  minLines: null,
+                  textAlignVertical: TextAlignVertical.top,
+                  style: const TextStyle(
+                    fontFamily: 'SarasaUiSC',
+                    fontSize: 12,
+                  ),
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    hintText: '粘贴包含 ChxValueTable 的 C 代码',
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, controller.text),
+                  child: const Text('导入'),
+                ),
+              ],
+            ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  void _applyImportedCProfile(
+    ZobowCProfileImportResult imported, {
+    String? profileName,
+  }) {
+    if (imported.presets.isEmpty) {
+      AppNotifications.show(
+        '未找到 ChxValueTable 内可导入的 switch 配置',
+        messenger: ScaffoldMessenger.of(context),
+      );
+      return;
+    }
+
+    for (final row in _rows) {
+      row.dispose();
+    }
+    setState(() {
+      if (profileName != null && profileName.trim().isNotEmpty) {
+        _nameController.text = profileName.trim();
+      }
+      _rows
+        ..clear()
+        ..addAll(imported.presets.map(_rowFromPreset));
+      _selectedRowIndex = null;
+    });
+    AppNotifications.show(
+      '已导入 ${imported.presets.length} 个地址预设',
+      messenger: ScaffoldMessenger.of(context),
+    );
   }
 
   void _addRow() {
@@ -417,6 +633,23 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       );
       _selectedRowIndex = _rows.length - 1;
     });
+  }
+
+  _PresetRow _rowFromPreset(ZobowChannelPreset preset) {
+    return _PresetRow(
+      nameController: TextEditingController(text: preset.name),
+      addressController: TextEditingController(
+        text:
+            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+      ),
+    );
+  }
+
+  String _fileBaseName(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final name = normalized.substring(normalized.lastIndexOf('/') + 1);
+    final dot = name.lastIndexOf('.');
+    return dot > 0 ? name.substring(0, dot) : name;
   }
 
   void _deleteSelectedRow() {
@@ -436,8 +669,15 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     for (final row in _rows) {
       final presetName = row.nameController.text.trim();
       final addrText = row.addressController.text.trim();
-      final hex = addrText.replaceAll('0x', '').replaceAll('0X', '');
-      final address = int.tryParse(hex, radix: 16) ?? 0;
+      final hasHexPrefix =
+          addrText.startsWith('0x') || addrText.startsWith('0X');
+      final valueText = hasHexPrefix ? addrText.substring(2) : addrText;
+      final address =
+          int.tryParse(
+            valueText,
+            radix: _isRProtocol && !hasHexPrefix ? 10 : 16,
+          ) ??
+          0;
 
       if (presetName.isNotEmpty) {
         presets.add(
@@ -448,19 +688,39 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
     if (widget.profile == null) {
       // 创建新配置
-      widget.vm.createZobowProfile(name).then((profile) {
+      final create =
+          _isRProtocol
+              ? widget.vm.createRProfile(name)
+              : widget.vm.createZobowProfile(name);
+      create.then((profile) {
         if (profile != null) {
           profile.presets = presets;
-          widget.vm.updateZobowProfile(profile).then((_) {
-            widget.vm.selectZobowProfile(profile.id);
+          final update =
+              _isRProtocol
+                  ? widget.vm.updateRProfile(profile)
+                  : widget.vm.updateZobowProfile(profile);
+          update.then((_) {
+            if (_isRProtocol) {
+              widget.vm.selectRProfile(profile.id);
+            } else {
+              widget.vm.selectZobowProfile(profile.id);
+            }
             if (mounted) Navigator.pop(context);
           });
         }
       });
     } else {
       // 更新现有配置
-      final updated = widget.profile!.copyWith(name: name, presets: presets);
-      widget.vm.updateZobowProfile(updated).then((_) {
+      final updated = widget.profile!.copyWith(
+        name: name,
+        protocolType: widget.protocolType,
+        presets: presets,
+      );
+      final update =
+          _isRProtocol
+              ? widget.vm.updateRProfile(updated)
+              : widget.vm.updateZobowProfile(updated);
+      update.then((_) {
         if (mounted) Navigator.pop(context);
       });
     }

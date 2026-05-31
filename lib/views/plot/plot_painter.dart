@@ -59,6 +59,8 @@ enum GridDensity { sparse, normal, dense }
 /// 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
 /// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
 class PlotPainter extends CustomPainter {
+  static const double _denseLinePointThresholdRatio = 0.5;
+
   /// 当前绘图视口
   final PlotViewport viewport;
 
@@ -394,7 +396,9 @@ class PlotPainter extends CustomPainter {
 
     final plotW = viewport.plotWidth(size.width);
     final hidePointsForDenseLine =
-        channel.showLine && visibleCount > math.max(1, plotW).round();
+        channel.showLine &&
+        visibleCount >
+            math.max(1, plotW * _denseLinePointThresholdRatio).round();
     if (!hidePointsForDenseLine && !canUseLod) {
       final pointPaint =
           Paint()
@@ -495,31 +499,32 @@ class PlotPainter extends CustomPainter {
     _Range visibleRange,
     Paint paint,
   ) {
-    final path = Path();
-    var hasPoint = false;
+    final rawPoints = Float32List((visibleRange.end - visibleRange.start) * 2);
+    var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
     for (int i = visibleRange.start; i < visibleRange.end; i++) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
-      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-      final y = _screenY(
+      rawPoints[rawIndex++] = viewport.dataToScreenX(
+        point.index.toDouble(),
+        size.width,
+      );
+      rawPoints[rawIndex++] = _screenY(
         point,
         channelIndex,
         channel,
         size.height,
       ).clamp(marginTop, marginBottom);
-      if (hasPoint) {
-        path.lineTo(x, y);
-      } else {
-        path.moveTo(x, y);
-        hasPoint = true;
-      }
     }
 
-    if (hasPoint) {
-      canvas.drawPath(path, paint);
+    if (rawIndex >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.polygon,
+        Float32List.sublistView(rawPoints, 0, rawIndex),
+        paint,
+      );
     }
   }
 
@@ -702,7 +707,7 @@ class PlotPainter extends CustomPainter {
     final textStyle = TextStyle(
       color: const Color(0xFF8888AA),
       fontSize: _fontSize(12),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
 
     final plotW = viewport.plotWidth(size.width);
@@ -818,7 +823,7 @@ class PlotPainter extends CustomPainter {
         final zeroTextStyle = TextStyle(
           color: const Color(0xFFCCCCDD),
           fontSize: _fontSize(12),
-          fontFamily: 'monospace',
+          fontFamily: 'SarasaUiSC',
           fontWeight: FontWeight.bold,
         );
         _drawText(
@@ -888,6 +893,7 @@ class PlotPainter extends CustomPainter {
           color: Colors.white,
           fontSize: _fontSize(10),
           fontWeight: FontWeight.bold,
+          fontFamily: 'SarasaUiSC',
         );
 
         // 标签背景
@@ -953,7 +959,7 @@ class PlotPainter extends CustomPainter {
     final textStyle = TextStyle(
       color: ch.color,
       fontSize: _fontSize(11),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
 
     // 第一个刻度值：从 yMin 向上取整到 step 的倍数
@@ -1010,7 +1016,7 @@ class PlotPainter extends CustomPainter {
       final zeroTextStyle = TextStyle(
         color: ch.color,
         fontSize: _fontSize(11),
-        fontFamily: 'monospace',
+        fontFamily: 'SarasaUiSC',
         fontWeight: FontWeight.bold,
       );
       _drawText(
@@ -1069,7 +1075,7 @@ class PlotPainter extends CustomPainter {
     // 确定要显示的通道数：只显示有数据且可见的通道
     final valueStyle = TextStyle(
       fontSize: _fontSize(12),
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
@@ -1137,7 +1143,7 @@ class PlotPainter extends CustomPainter {
       color: Colors.white,
       fontSize: _fontSize(12),
       fontWeight: FontWeight.bold,
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     _drawText(
       canvas,
@@ -1178,7 +1184,7 @@ class PlotPainter extends CustomPainter {
       final rowStyle = TextStyle(
         color: color,
         fontSize: _fontSize(12),
-        fontFamily: 'monospace',
+        fontFamily: 'SarasaUiSC',
       );
       _drawText(
         canvas,
@@ -1453,7 +1459,7 @@ class PlotPainter extends CustomPainter {
       color: color,
       fontSize: _fontSize(10),
       fontWeight: FontWeight.bold,
-      fontFamily: 'monospace',
+      fontFamily: 'SarasaUiSC',
     );
     final textSpan = TextSpan(text: label, style: textStyle);
     final textPainter = TextPainter(

@@ -17,11 +17,7 @@ class PlotDataPoint {
     required this.values,
   });
 
-  Map<String, dynamic> toJson() => {
-        'i': index,
-        't': timestamp,
-        'v': values,
-      };
+  Map<String, dynamic> toJson() => {'i': index, 't': timestamp, 'v': values};
 
   factory PlotDataPoint.fromJson(Map<String, dynamic> json) {
     return PlotDataPoint(
@@ -58,22 +54,24 @@ class PlotDataSet {
   int get channelCount => channelNames.length;
 
   Map<String, dynamic> toJson() => {
-        'startTime': startTime.millisecondsSinceEpoch,
-        'channelNames': channelNames,
-        'channelTypes': channelTypes.map((t) => t.label).toList(),
-        'points': points.map((p) => p.toJson()).toList(),
-      };
+    'startTime': startTime.millisecondsSinceEpoch,
+    'channelNames': channelNames,
+    'channelTypes': channelTypes.map((t) => t.label).toList(),
+    'points': points.map((p) => p.toJson()).toList(),
+  };
 
   factory PlotDataSet.fromJson(Map<String, dynamic> json) {
     return PlotDataSet(
       startTime: DateTime.fromMillisecondsSinceEpoch(json['startTime'] as int),
       channelNames: (json['channelNames'] as List).cast<String>(),
-      channelTypes: (json['channelTypes'] as List? ?? [])
-          .map((e) => DataType.fromLabel(e as String))
-          .toList(),
-      points: (json['points'] as List)
-          .map((e) => PlotDataPoint.fromJson(e as Map<String, dynamic>))
-          .toList(),
+      channelTypes:
+          (json['channelTypes'] as List? ?? [])
+              .map((e) => DataType.fromLabel(e as String))
+              .toList(),
+      points:
+          (json['points'] as List)
+              .map((e) => PlotDataPoint.fromJson(e as Map<String, dynamic>))
+              .toList(),
     );
   }
 }

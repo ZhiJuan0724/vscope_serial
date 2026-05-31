@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../dialogs/app_info_dialog.dart';
 import '../dialogs/status_dialog.dart';
 
 /// 底部共享状态栏
@@ -13,7 +14,6 @@ class StatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer2<SerialService, PlotViewModel>(
       builder: (context, service, plotVm, child) {
-        final message = plotVm.hintText;
         return Container(
           height: 26,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -36,12 +36,21 @@ class StatusBar extends StatelessWidget {
                       height: 8,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: service.isConnected ? Colors.green : Colors.grey,
+                        color:
+                            service.isConnected
+                                ? Colors.green
+                                : service.isConnecting
+                                ? Colors.orange
+                                : Colors.grey,
                       ),
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      service.isConnected ? '已连接' : '未连接',
+                      service.isConnected
+                          ? '已连接'
+                          : service.isConnecting
+                          ? '连接中...'
+                          : '未连接',
                       style: const TextStyle(fontSize: 12),
                     ),
                     if (service.isConnected && service.config.port != null) ...[
@@ -79,34 +88,19 @@ class StatusBar extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child:
-                    message.isEmpty
-                        ? const SizedBox.shrink()
-                        : Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Icon(
-                              _messageIcon(message),
-                              size: 13,
-                              color: _messageColor(context, message),
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                message,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: _messageColor(context, message),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+              const Spacer(),
+              Tooltip(
+                message: '应用信息',
+                child: IconButton(
+                  onPressed: () => showAppInfoDialog(context),
+                  icon: const Icon(Icons.info_outline, size: 16),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  splashRadius: 14,
+                ),
               ),
             ],
           ),
@@ -117,25 +111,5 @@ class StatusBar extends StatelessWidget {
 
   void _showStatusDialog(BuildContext context) {
     showDialog(context: context, builder: (context) => const StatusDialog());
-  }
-
-  IconData _messageIcon(String message) {
-    if (message.contains('无法') ||
-        message.contains('失败') ||
-        message.contains('未连接') ||
-        message.contains('请选择')) {
-      return Icons.warning_amber_rounded;
-    }
-    return Icons.info_outline;
-  }
-
-  Color _messageColor(BuildContext context, String message) {
-    if (message.contains('无法') ||
-        message.contains('失败') ||
-        message.contains('未连接') ||
-        message.contains('请选择')) {
-      return Colors.orange.shade800;
-    }
-    return Theme.of(context).colorScheme.onSurfaceVariant;
   }
 }

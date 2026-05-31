@@ -71,8 +71,7 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
       await subscription.cancel();
 
-      expect(results.length, 1000,
-          reason: '应解析出1000包数据，实际${results.length}包');
+      expect(results.length, 1000, reason: '应解析出1000包数据，实际${results.length}包');
 
       for (final result in results) {
         expect(result.success, true);
@@ -81,14 +80,15 @@ void main() {
     });
 
     test('固定通道数模式', () async {
-      final config = ParserConfig.fireWaterDefault()
-        ..fireWaterChannelCount = 4;
+      final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 4;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
       final subscription = parser.outputStream.listen((r) => results.add(r));
 
       // 发送8通道数据，应截断为4通道
-      parser.feed(Uint8List.fromList('1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0\n'.codeUnits));
+      parser.feed(
+        Uint8List.fromList('1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0\n'.codeUnits),
+      );
 
       await Future.delayed(const Duration(milliseconds: 10));
       await subscription.cancel();
@@ -99,8 +99,7 @@ void main() {
     });
 
     test('通道数不足返回失败', () async {
-      final config = ParserConfig.fireWaterDefault()
-        ..fireWaterChannelCount = 8;
+      final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 8;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
       final subscription = parser.outputStream.listen((r) => results.add(r));

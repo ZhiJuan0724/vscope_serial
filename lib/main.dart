@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/utils/app_logger.dart';
+import 'services/app_notifications.dart';
 import 'services/app_settings.dart';
 import 'services/serial_service.dart';
+import 'services/update_checker.dart';
+import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/protocol_page.dart';
@@ -50,6 +55,10 @@ class MyApp extends StatelessWidget {
     // SerialService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
     final serialService = SerialService();
+    final baseTheme = ThemeData(
+      useMaterial3: false,
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+    );
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: serialService),
@@ -59,9 +68,12 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'VScope Serial',
-        theme: ThemeData(
-          useMaterial3: false,
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
+        theme: baseTheme.copyWith(
+          textTheme: baseTheme.textTheme.apply(fontFamily: 'SarasaUiSC'),
+          primaryTextTheme: baseTheme.primaryTextTheme.apply(
+            fontFamily: 'SarasaUiSC',
+          ),
         ),
         home: const MainFrame(),
       ),
@@ -85,11 +97,26 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // Register window close handler: disconnect serial before closing
     _setupWindowCloseHandler();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (AppSettings().autoUpdateCheckEnabled) {
+        unawaited(_checkForUpdatesOnStartup());
+      }
+    });
   }
 
   void _setupWindowCloseHandler() {
     windowManager.setPreventClose(true);
     windowManager.addListener(_WindowCloseListener(context));
+  }
+
+  Future<void> _checkForUpdatesOnStartup() async {
+    final result = await UpdateChecker().check();
+    if (!mounted) return;
+    if (result.hasUpdate && result.latestRelease != null) {
+      await showUpdateAvailableDialog(context, result.latestRelease!);
+    } else if (result.error != null) {
+      AppLogger().warning('自动检查更新失败: ${result.error}', category: 'UPDATE');
+    }
   }
 
   @override

@@ -18,13 +18,14 @@ class DataSourceManager {
   final _controller = StreamController<Uint8List>.broadcast();
 
   DataSourceManager(this._serialService, {DataSourceConfig? config})
-      : config = config ?? DataSourceConfig();
+    : config = config ?? DataSourceConfig();
 
   /// 合并后的字节流
   Stream<Uint8List> get byteStream => _controller.stream;
 
   /// 是否有任何数据源处于活动状态
-  bool get isActive => _serialSource?.isActive == true || _randomSource?.isActive == true;
+  bool get isActive =>
+      _serialSource?.isActive == true || _randomSource?.isActive == true;
 
   /// 更新配置
   void updateConfig(DataSourceConfig newConfig) {
@@ -42,7 +43,8 @@ class DataSourceManager {
 
     // 如果配置变化且正在运行，重启数据源
     if (wasActive) {
-      if (oldUseSerial != config.useSerial || oldUseRandom != config.useRandom) {
+      if (oldUseSerial != config.useSerial ||
+          oldUseRandom != config.useRandom) {
         stop();
         start();
       } else if (_randomSource != null && config.useRandom) {

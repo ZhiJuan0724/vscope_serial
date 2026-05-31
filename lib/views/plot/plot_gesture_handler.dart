@@ -690,7 +690,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final textPainter = TextPainter(
         text: TextSpan(
           text: displayName,
-          style: TextStyle(fontSize: _fontSize(9), fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontSize: _fontSize(9),
+            fontWeight: FontWeight.bold,
+            fontFamily: 'SarasaUiSC',
+          ),
         ),
         textDirection: TextDirection.ltr,
       );

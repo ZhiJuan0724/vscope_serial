@@ -53,6 +53,10 @@ NSR_API int nsr_write(const uint8_t* data, int length);
 // Check if port is open
 NSR_API int nsr_is_open();
 
+// Check whether the current serial handle still responds to Windows serial
+// APIs. A handle may remain open after a USB serial device is unplugged.
+NSR_API int nsr_is_connection_healthy();
+
 #ifdef __cplusplus
 }
 #endif

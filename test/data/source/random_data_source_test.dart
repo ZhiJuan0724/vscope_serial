@@ -29,10 +29,7 @@ void main() {
     });
 
     test('启动后生成数据', () async {
-      final source = RandomDataSource(
-        channelCount: 4,
-        intervalMs: 10,
-      );
+      final source = RandomDataSource(channelCount: 4, intervalMs: 10);
 
       final receivedData = <Uint8List>[];
       final subscription = source.byteStream.listen((data) {
@@ -90,13 +87,19 @@ void main() {
       await subscription.cancel();
 
       // 允许一定误差，但至少应该生成50包以上
-      expect(receivedData.length, greaterThanOrEqualTo(50),
-          reason: '1KHz运行100ms应至少生成50包，实际生成${receivedData.length}包');
+      expect(
+        receivedData.length,
+        greaterThanOrEqualTo(50),
+        reason: '1KHz运行100ms应至少生成50包，实际生成${receivedData.length}包',
+      );
 
       // 验证生成速率接近1000包/秒
       final rate = receivedData.length * 10; // 100ms * 10 = 1s
-      expect(rate, greaterThanOrEqualTo(500),
-          reason: '实际生成速率约 $rate 包/秒，远低于1000Hz');
+      expect(
+        rate,
+        greaterThanOrEqualTo(500),
+        reason: '实际生成速率约 $rate 包/秒，远低于1000Hz',
+      );
     });
 
     test('不同通道数生成正确数据', () async {
@@ -120,8 +123,11 @@ void main() {
 
         final text = String.fromCharCodes(data);
         final parts = text.trim().split(',');
-        expect(parts.length, channelCount,
-            reason: '通道数$channelCount应生成$channelCount个值');
+        expect(
+          parts.length,
+          channelCount,
+          reason: '通道数$channelCount应生成$channelCount个值',
+        );
       }
     });
 
@@ -144,8 +150,7 @@ void main() {
 
       await subscription.cancel();
 
-      expect(receivedData.length, countAfterStop,
-          reason: '停止后不应再生成数据');
+      expect(receivedData.length, countAfterStop, reason: '停止后不应再生成数据');
       expect(source.isActive, false);
     });
 
@@ -173,8 +178,11 @@ void main() {
 
       for (final part in parts) {
         final value = double.parse(part);
-        expect(value >= 1000.0 && value <= 2000.0, true,
-            reason: '值 $value 不在范围 [1000, 2000] 内');
+        expect(
+          value >= 1000.0 && value <= 2000.0,
+          true,
+          reason: '值 $value 不在范围 [1000, 2000] 内',
+        );
       }
     });
   });

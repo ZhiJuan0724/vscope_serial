@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
@@ -9,6 +11,34 @@ import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
+Future<void> _writeLegacyDat(File file) async {
+  const channelCount = 4;
+  const storedPointCount = 50010;
+  final bytes = Uint8List(4 + channelCount * (32 + storedPointCount * 2));
+  final data = ByteData.sublistView(bytes);
+  data.setUint32(0, bytes.length, Endian.little);
+  data.setUint32(0x20, storedPointCount, Endian.little);
+  const addresses = [0x91, 0x94, 0x73, 0x93];
+  const values = [
+    [1, -2],
+    [3, -4],
+    [5, -6],
+    [7, -8],
+  ];
+
+  for (int channel = 0; channel < channelCount; channel++) {
+    final channelNumber = channel + 1;
+    final blockOffset = channel * storedPointCount * 2;
+    final dataOffset = 0x04 + channelNumber * 32 + blockOffset + 50000 * 2;
+    final addressOffset = dataOffset - 50000 * 2 - 12;
+    data.setUint32(addressOffset, addresses[channel], Endian.little);
+    for (int i = 0; i < values[channel].length; i++) {
+      data.setInt16(dataOffset + i * 2, values[channel][i], Endian.little);
+    }
+  }
+  await file.writeAsBytes(bytes);
+}
+
 void main() {
   group('PlotViewModel', () {
     late SerialService serialService;
@@ -16,6 +46,12 @@ void main() {
 
     setUp(() async {
       await AppLogger().init();
+      final settings = AppSettings();
+      settings.parserType = 'fireWater';
+      settings.useRandomSource = false;
+      settings.sendProtocolType = 'none';
+      settings.rChannelAddresses = List.filled(16, '');
+      settings.rProfileId = '';
       serialService = SerialService();
       vm = PlotViewModel(serialService);
     });
@@ -192,6 +228,44 @@ void main() {
       expect(stages, contains('加载可见窗口'));
     });
 
+    test('旧版 DAT 导入跳过预留区并保留通道地址', () async {
+      final dir = await Directory.systemTemp.createTemp('vscope_dat_test_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final dat = File('${dir.path}/legacy.dat');
+      await _writeLegacyDat(dat);
+      final stages = <String>[];
+
+      final error = await vm.importFromLegacyDat(
+        dat.path,
+        onProgress: (progress) => stages.add(progress.stage),
+      );
+
+      expect(error, isNull);
+      expect(vm.dataPoints.length, 10);
+      expect(vm.dataPoints[0].values, [1, 3, 5, 7]);
+      expect(vm.dataPoints[1].values, [-2, -4, -6, -8]);
+      expect(vm.channels[0].alias, isEmpty);
+      expect(vm.importedChannelAddresses, [
+        0x00000091,
+        0x00000094,
+        0x00000073,
+        0x00000093,
+      ]);
+      expect(vm.parserConfig.zobowChannelIds[0], 0x00000091);
+      expect(vm.parserConfig.zobowChannelIds[2], 0x00000073);
+      expect(stages, contains('读取 DAT'));
+      expect(stages, contains('解析 DAT'));
+      expect(stages, contains('建立绘图索引'));
+
+      final binPath = '${dir.path}/legacy.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+      expect(imported.channels[0].alias, isEmpty);
+      expect(imported.importedChannelAddresses, vm.importedChannelAddresses);
+    });
+
     test('setVCursorEnabled切换状态', () {
       expect(vm.vCursorEnabled, false);
 
@@ -260,7 +334,7 @@ void main() {
 
       expect(vm.viewport.yMin, oldViewport.yMin);
       expect(vm.viewport.yMax, oldViewport.yMax);
-      expect(vm.hintText, contains('Y轴数据范围为0'));
+      expect(vm.lastStatusMessage, contains('Y轴数据范围为0'));
     });
 
     test('JustFloat偏置通道参与Y轴自适应缩放', () {
@@ -377,7 +451,7 @@ void main() {
 
       expect(vm.viewport.xMin, oldViewport.xMin);
       expect(vm.viewport.xMax, oldViewport.xMax);
-      expect(vm.hintText, contains('X轴数据点过少'));
+      expect(vm.lastStatusMessage, contains('X轴数据点过少'));
     });
 
     test('状态文本包含关键信息', () {
@@ -392,7 +466,7 @@ void main() {
       vm.setParserType(ParserType.zobow);
 
       expect(vm.useRandomSource, true);
-      expect(vm.hintText, contains('随机源已保留'));
+      expect(vm.lastStatusMessage, contains('随机源已保留'));
 
       vm.startPlotting();
 
@@ -483,15 +557,100 @@ void main() {
       expect(frame[33], (crc >> 8) & 0xFF);
     });
 
-    test('众邦初始化发送失败时不进入绘图并断开连接', () {
+    test('接收协议内置顺序固定', () {
+      expect(ParserType.values, [
+        ParserType.fireWater,
+        ParserType.justFloat,
+        ParserType.fixedFrame,
+        ParserType.zobow,
+      ]);
+    });
+
+    test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
+      final bytes = PlotViewModel.buildRProtocolCommand([
+        ' 12 ',
+        '0x10',
+        '0X2A',
+      ]);
+
+      expect(utf8.decode(bytes), 'r 12 0x10 0X2A\n');
+    });
+
+    test('r协议地址校验支持自动连续前缀和固定通道截断', () {
+      expect(
+        PlotViewModel.validateRProtocolAddresses(['1', '0x10', '20', '']),
+        ['1', '0x10', '20'],
+      );
+      expect(
+        PlotViewModel.validateRProtocolAddresses([
+          '1',
+          '0x10',
+          '20',
+        ], requiredCount: 2),
+        ['1', '0x10'],
+      );
+    });
+
+    test('r协议地址校验拒绝空地址、固定通道不足和中间空洞', () {
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', '0']),
+        throwsFormatException,
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['1'], requiredCount: 2),
+        throwsFormatException,
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['1', '', '2']),
+        throwsFormatException,
+      );
+    });
+
+    test('自动识别接收协议未开始绘图时为r协议显示16个地址槽位', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault());
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(ParserConfig.fireWaterDefault());
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+    });
+
+    test('众邦模式强制内置发送协议并在离开后恢复选择', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+
+      vm.setParserType(ParserType.zobow);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.zobowBuiltIn);
+      expect(vm.sendProtocolType, SendProtocolType.rProtocol);
+
+      vm.setParserType(ParserType.fireWater);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+    });
+
+    test('随机源无串口时自动将r协议切回无并继续绘图', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+
+      await vm.startPlotting();
+
+      expect(vm.sendProtocolType, SendProtocolType.none);
+      expect(vm.isPlotting, isTrue);
+      await vm.stopPlotting();
+    });
+
+    test('开始绘图前检测陈旧串口状态并断开连接', () async {
+      vm.setUseRandomSource(false);
       serialService.isConnected = true;
       vm.setParserType(ParserType.zobow);
 
-      vm.startPlotting();
+      await vm.startPlotting();
 
       expect(vm.isPlotting, false);
       expect(serialService.isConnected, false);
-      expect(vm.hintText, contains('协议初始化发送失败'));
+      expect(vm.lastStatusMessage, contains('检测到串口已断开'));
     });
 
     test('stopPlotting先更新UI状态并阻止重复停止', () async {
