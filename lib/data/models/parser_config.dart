@@ -3,13 +3,52 @@ import 'channel_config.dart';
 /// 解析器类型
 enum ParserType {
   fireWater('FireWater'),
+  justFloat('JustFloat'),
   fixedFrame('固定帧头'),
-  zobow('众邦电控'),
-  justFloat('JustFloat');
+  zobow('众邦电控');
 
   final String label;
 
   const ParserType(this.label);
+}
+
+/// 绘图开始时使用的发送协议。
+enum SendProtocolType {
+  none('无'),
+  rProtocol('r协议'),
+  zobowBuiltIn('众邦内置');
+
+  final String label;
+
+  const SendProtocolType(this.label);
+}
+
+/// 协议来源。预留给后续 Lua 扩展。
+enum ProtocolSource { builtIn, lua }
+
+/// 发送协议配置。
+class SendProtocolConfig {
+  static const int maxChannelCount = 16;
+
+  SendProtocolType type;
+  ProtocolSource source;
+  String? customProtocolId;
+  List<String> rChannelAddresses;
+
+  SendProtocolConfig({
+    this.type = SendProtocolType.none,
+    this.source = ProtocolSource.builtIn,
+    this.customProtocolId,
+    List<String>? rChannelAddresses,
+  }) : rChannelAddresses = _normalizeAddresses(rChannelAddresses);
+
+  static List<String> _normalizeAddresses(List<String>? values) {
+    final result = List<String>.from(values ?? const []);
+    while (result.length < maxChannelCount) {
+      result.add('');
+    }
+    return result.take(maxChannelCount).map((value) => value.trim()).toList();
+  }
 }
 
 /// 校验类型
@@ -33,6 +72,8 @@ class ParserConfig {
 
   /// 解析器类型
   ParserType type;
+  ProtocolSource source;
+  String? customProtocolId;
 
   // ========== FireWater 参数 ==========
   /// FireWater 通道数（0=自动识别）
@@ -75,6 +116,8 @@ class ParserConfig {
 
   ParserConfig({
     this.type = ParserType.fireWater,
+    this.source = ProtocolSource.builtIn,
+    this.customProtocolId,
     this.frameHeaderLength = 2,
     List<int>? frameHeader,
     this.dataType = DataType.uint16,
@@ -109,6 +152,8 @@ class ParserConfig {
 
   ParserConfig copyWith({
     ParserType? type,
+    ProtocolSource? source,
+    String? customProtocolId,
     int? frameHeaderLength,
     List<int>? frameHeader,
     DataType? dataType,
@@ -123,6 +168,8 @@ class ParserConfig {
   }) {
     return ParserConfig(
       type: type ?? this.type,
+      source: source ?? this.source,
+      customProtocolId: customProtocolId ?? this.customProtocolId,
       frameHeaderLength: frameHeaderLength ?? this.frameHeaderLength,
       frameHeader: frameHeader ?? List.from(this.frameHeader),
       dataType: dataType ?? this.dataType,

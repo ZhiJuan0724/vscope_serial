@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
@@ -45,6 +46,12 @@ void main() {
 
     setUp(() async {
       await AppLogger().init();
+      final settings = AppSettings();
+      settings.parserType = 'fireWater';
+      settings.useRandomSource = false;
+      settings.sendProtocolType = 'none';
+      settings.rChannelAddresses = List.filled(16, '');
+      settings.rProfileId = '';
       serialService = SerialService();
       vm = PlotViewModel(serialService);
     });
@@ -548,6 +555,90 @@ void main() {
       );
       expect(frame[32], crc & 0xFF);
       expect(frame[33], (crc >> 8) & 0xFF);
+    });
+
+    test('接收协议内置顺序固定', () {
+      expect(ParserType.values, [
+        ParserType.fireWater,
+        ParserType.justFloat,
+        ParserType.fixedFrame,
+        ParserType.zobow,
+      ]);
+    });
+
+    test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
+      final bytes = PlotViewModel.buildRProtocolCommand([
+        ' 12 ',
+        '0x10',
+        '0X2A',
+      ]);
+
+      expect(utf8.decode(bytes), 'r 12 0x10 0X2A\n');
+    });
+
+    test('r协议地址校验支持自动连续前缀和固定通道截断', () {
+      expect(
+        PlotViewModel.validateRProtocolAddresses(['1', '0x10', '20', '']),
+        ['1', '0x10', '20'],
+      );
+      expect(
+        PlotViewModel.validateRProtocolAddresses([
+          '1',
+          '0x10',
+          '20',
+        ], requiredCount: 2),
+        ['1', '0x10'],
+      );
+    });
+
+    test('r协议地址校验拒绝空地址、固定通道不足和中间空洞', () {
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', '0']),
+        throwsFormatException,
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['1'], requiredCount: 2),
+        throwsFormatException,
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['1', '', '2']),
+        throwsFormatException,
+      );
+    });
+
+    test('自动识别接收协议未开始绘图时为r协议显示16个地址槽位', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault());
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(ParserConfig.fireWaterDefault());
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+    });
+
+    test('众邦模式强制内置发送协议并在离开后恢复选择', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+
+      vm.setParserType(ParserType.zobow);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.zobowBuiltIn);
+      expect(vm.sendProtocolType, SendProtocolType.rProtocol);
+
+      vm.setParserType(ParserType.fireWater);
+      expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+    });
+
+    test('随机源无串口时自动将r协议切回无并继续绘图', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+
+      await vm.startPlotting();
+
+      expect(vm.sendProtocolType, SendProtocolType.none);
+      expect(vm.isPlotting, isTrue);
+      await vm.stopPlotting();
     });
 
     test('开始绘图前检测陈旧串口状态并断开连接', () async {

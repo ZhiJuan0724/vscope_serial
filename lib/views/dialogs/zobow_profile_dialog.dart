@@ -18,11 +18,17 @@ import '../../viewmodels/plot_viewmodel.dart';
 /// - 底部：添加行 / 删除选中行 按钮
 class ZobowProfileDialog extends StatefulWidget {
   final PlotViewModel vm;
+  final AddressProfileProtocolType protocolType;
 
   /// 为 null 时创建新配置，否则编辑现有配置
   final ZobowConfigProfile? profile;
 
-  const ZobowProfileDialog({super.key, required this.vm, this.profile});
+  const ZobowProfileDialog({
+    super.key,
+    required this.vm,
+    this.profile,
+    this.protocolType = AddressProfileProtocolType.zobow,
+  });
 
   @override
   State<ZobowProfileDialog> createState() => _ZobowProfileDialogState();
@@ -33,6 +39,8 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   late final List<_PresetRow> _rows;
   int? _selectedRowIndex;
   bool _ignoreCImportComments = false;
+  bool get _isRProtocol =>
+      widget.protocolType == AddressProfileProtocolType.rProtocol;
 
   @override
   void initState() {
@@ -132,7 +140,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   Expanded(
                     flex: 2,
                     child: Text(
-                      '地址 (hex)',
+                      '地址',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -356,7 +364,11 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     );
     if (confirmed != true || !mounted) return;
 
-    await widget.vm.deleteZobowProfile(profile.id);
+    if (_isRProtocol) {
+      await widget.vm.deleteRProfile(profile.id);
+    } else {
+      await widget.vm.deleteZobowProfile(profile.id);
+    }
     if (mounted) {
       Navigator.pop(context);
     }
@@ -379,22 +391,23 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        CheckboxListTile(
-                          value: _ignoreCImportComments,
-                          onChanged: (value) {
-                            final checked = value ?? false;
-                            setDialogState(
-                              () => _ignoreCImportComments = checked,
-                            );
-                            setState(() => _ignoreCImportComments = checked);
-                          },
-                          title: const Text('忽略注释'),
-                          subtitle: const Text('C 导入时全部使用变量名'),
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          controlAffinity: ListTileControlAffinity.leading,
-                        ),
-                        const SizedBox(height: 8),
+                        if (!_isRProtocol)
+                          CheckboxListTile(
+                            value: _ignoreCImportComments,
+                            onChanged: (value) {
+                              final checked = value ?? false;
+                              setDialogState(
+                                () => _ignoreCImportComments = checked,
+                              );
+                              setState(() => _ignoreCImportComments = checked);
+                            },
+                            title: const Text('忽略注释'),
+                            subtitle: const Text('C 导入时全部使用变量名'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                          ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
                         OutlinedButton.icon(
                           onPressed: () {
                             Navigator.pop(dialogContext);
@@ -406,24 +419,26 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                           ),
                           label: const Text('导入 JSON'),
                         ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(dialogContext);
-                            _importCProfileFile();
-                          },
-                          icon: const Icon(Icons.code, size: 16),
-                          label: const Text('导入 C 文件'),
-                        ),
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(dialogContext);
-                            _pasteCProfileCode();
-                          },
-                          icon: const Icon(Icons.content_paste, size: 16),
-                          label: const Text('粘贴 C 代码'),
-                        ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
+                        if (!_isRProtocol)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _importCProfileFile();
+                            },
+                            icon: const Icon(Icons.code, size: 16),
+                            label: const Text('导入 C 文件'),
+                          ),
+                        if (!_isRProtocol) const SizedBox(height: 8),
+                        if (!_isRProtocol)
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(dialogContext);
+                              _pasteCProfileCode();
+                            },
+                            icon: const Icon(Icons.content_paste, size: 16),
+                            label: const Text('粘贴 C 代码'),
+                          ),
                       ],
                     ),
                   ),
@@ -654,8 +669,15 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     for (final row in _rows) {
       final presetName = row.nameController.text.trim();
       final addrText = row.addressController.text.trim();
-      final hex = addrText.replaceAll('0x', '').replaceAll('0X', '');
-      final address = int.tryParse(hex, radix: 16) ?? 0;
+      final hasHexPrefix =
+          addrText.startsWith('0x') || addrText.startsWith('0X');
+      final valueText = hasHexPrefix ? addrText.substring(2) : addrText;
+      final address =
+          int.tryParse(
+            valueText,
+            radix: _isRProtocol && !hasHexPrefix ? 10 : 16,
+          ) ??
+          0;
 
       if (presetName.isNotEmpty) {
         presets.add(
@@ -666,19 +688,39 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
     if (widget.profile == null) {
       // 创建新配置
-      widget.vm.createZobowProfile(name).then((profile) {
+      final create =
+          _isRProtocol
+              ? widget.vm.createRProfile(name)
+              : widget.vm.createZobowProfile(name);
+      create.then((profile) {
         if (profile != null) {
           profile.presets = presets;
-          widget.vm.updateZobowProfile(profile).then((_) {
-            widget.vm.selectZobowProfile(profile.id);
+          final update =
+              _isRProtocol
+                  ? widget.vm.updateRProfile(profile)
+                  : widget.vm.updateZobowProfile(profile);
+          update.then((_) {
+            if (_isRProtocol) {
+              widget.vm.selectRProfile(profile.id);
+            } else {
+              widget.vm.selectZobowProfile(profile.id);
+            }
             if (mounted) Navigator.pop(context);
           });
         }
       });
     } else {
       // 更新现有配置
-      final updated = widget.profile!.copyWith(name: name, presets: presets);
-      widget.vm.updateZobowProfile(updated).then((_) {
+      final updated = widget.profile!.copyWith(
+        name: name,
+        protocolType: widget.protocolType,
+        presets: presets,
+      );
+      final update =
+          _isRProtocol
+              ? widget.vm.updateRProfile(updated)
+              : widget.vm.updateZobowProfile(updated);
+      update.then((_) {
         if (mounted) Navigator.pop(context);
       });
     }

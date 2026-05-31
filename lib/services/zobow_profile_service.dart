@@ -8,9 +8,9 @@ import '../data/models/zobow_config_profile.dart';
 /// 配置文件存储在软件目录下的 `config/` 文件夹中，
 /// 每个配置文件为一个独立的 JSON 文件。
 class ZobowProfileService {
-  static final ZobowProfileService _instance = ZobowProfileService._internal();
-  factory ZobowProfileService() => _instance;
-  ZobowProfileService._internal();
+  final AddressProfileProtocolType protocolType;
+
+  ZobowProfileService({this.protocolType = AddressProfileProtocolType.zobow});
 
   /// 配置文件目录名称
   static const String _configDirName = 'config';
@@ -76,7 +76,9 @@ class ZobowProfileService {
         final content = file.readAsStringSync();
         final json = jsonDecode(content) as Map<String, dynamic>;
         final profile = ZobowConfigProfile.fromJson(json);
-        _profiles.add(profile);
+        if (profile.protocolType == protocolType) {
+          _profiles.add(profile);
+        }
       } catch (e) {
         // 跳过损坏的配置文件
       }
@@ -88,8 +90,12 @@ class ZobowProfileService {
 
   /// 创建新配置文件
   Future<ZobowConfigProfile> createProfile(String name) async {
-    final id = 'profile_${DateTime.now().millisecondsSinceEpoch}';
-    final profile = ZobowConfigProfile.empty(id, name: name);
+    final id = '${protocolType.id}_${DateTime.now().millisecondsSinceEpoch}';
+    final profile = ZobowConfigProfile.empty(
+      id,
+      name: name,
+      protocolType: protocolType,
+    );
 
     await _saveProfile(profile);
     _profiles.add(profile);

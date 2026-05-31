@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -205,6 +206,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   double _minimumChannelPanelWidth(PlotViewModel vm) {
+    if (vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
+      return kMinChannelPanelWidth;
+    }
     if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
     final channelCount = vm.parserConfig.zobowChannelCount;
     final allShort = vm.parserConfig.zobowChannelIds
@@ -388,7 +392,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
-  /// 解析器选择 + 配置按钮 + Zobow配置文件选择
+  /// 收发协议选择 + 配置按钮 + 地址配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -397,7 +401,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: 120,
           child: NoAnimDropdown<ParserType>(
             value: vm.parserType,
-            hint: '解析器',
+            hint: '接收协议',
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -429,6 +433,45 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 112,
+          child: NoAnimDropdown<SendProtocolType>(
+            value: vm.effectiveSendProtocolType,
+            hint: '发送协议',
+            decoration: const InputDecoration(
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              border: OutlineInputBorder(),
+            ),
+            items:
+                (vm.parserType == ParserType.zobow
+                        ? const [SendProtocolType.zobowBuiltIn]
+                        : const [
+                          SendProtocolType.none,
+                          SendProtocolType.rProtocol,
+                        ])
+                    .map(
+                      (type) => DropdownMenuItem(
+                        value: type,
+                        child: Text(
+                          type.label,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'SarasaUiSC',
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+            onChanged:
+                vm.parserType == ParserType.zobow
+                    ? null
+                    : (value) {
+                      if (value != null) vm.setSendProtocolType(value);
+                    },
+          ),
+        ),
         // Zobow模式下显示配置文件下拉框
         if (vm.parserType == ParserType.zobow) ...[
           const SizedBox(width: 8),
@@ -457,8 +500,67 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               ),
             ),
           ),
+        ] else if (vm.sendProtocolType == SendProtocolType.rProtocol) ...[
+          const SizedBox(width: 8),
+          _buildRProfileSelector(context, vm),
+          Tooltip(
+            message: '新建 r 协议配置',
+            child: InkWell(
+              onTap: () => _showCreateRProfileDialog(context, vm),
+              child: const SizedBox(
+                width: 28,
+                height: 28,
+                child: Icon(Icons.add, size: 16),
+              ),
+            ),
+          ),
+          Tooltip(
+            message: '编辑 r 协议配置',
+            child: InkWell(
+              onTap: () => _showEditRProfileDialog(context, vm),
+              child: const SizedBox(
+                width: 28,
+                height: 28,
+                child: Icon(Icons.edit, size: 16),
+              ),
+            ),
+          ),
         ],
       ],
+    );
+  }
+
+  Widget _buildRProfileSelector(BuildContext context, PlotViewModel vm) {
+    return SizedBox(
+      width: 140,
+      child: NoAnimDropdown<String?>(
+        value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
+        hint: '不使用配置',
+        decoration: const InputDecoration(
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          const DropdownMenuItem<String?>(
+            value: null,
+            child: Text(
+              '不使用配置',
+              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+            ),
+          ),
+          ...vm.rProfiles.map(
+            (profile) => DropdownMenuItem(
+              value: profile.id,
+              child: Text(
+                profile.name,
+                style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              ),
+            ),
+          ),
+        ],
+        onChanged: vm.selectRProfile,
+      ),
     );
   }
 
@@ -928,6 +1030,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final displayCount =
         vm.parserType == ParserType.zobow
             ? vm.parserConfig.zobowChannelCount
+            : vm.effectiveSendProtocolType == SendProtocolType.rProtocol
+            ? math.max(vm.activeChannelCount, vm.rAddressDisplayCount)
             : activeCount;
 
     return Container(
@@ -2211,6 +2315,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       builder: (context) => ZobowProfileDialog(vm: vm, profile: profile),
     );
   }
+
+  void _showCreateRProfileDialog(BuildContext context, PlotViewModel vm) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => ZobowProfileDialog(
+            vm: vm,
+            protocolType: AddressProfileProtocolType.rProtocol,
+          ),
+    );
+  }
+
+  void _showEditRProfileDialog(BuildContext context, PlotViewModel vm) {
+    final profile = vm.selectedRProfile;
+    if (profile == null) {
+      vm.showStatusMessage('请先选择一个 r 协议配置文件');
+      return;
+    }
+    showDialog(
+      context: context,
+      builder:
+          (context) => ZobowProfileDialog(
+            vm: vm,
+            profile: profile,
+            protocolType: AddressProfileProtocolType.rProtocol,
+          ),
+    );
+  }
 }
 
 enum _PlotFileFormat { csv, bin, legacyDat }
@@ -2333,13 +2465,25 @@ class _ChannelItemState extends State<_ChannelItem> {
     }
   }
 
-  void _onZobowIdFocusChange(bool hasFocus) {
+  void _saveRAddress() {
+    final text = _idController.text.trim();
+    final address = PlotViewModel.parseRProtocolAddress(text);
+    if (text.isEmpty || (address != null && address >= 0)) {
+      widget.vm.setRChannelAddress(widget.ch.index, text);
+    }
+  }
+
+  void _onAddressFocusChange(bool hasFocus) {
     if (!hasFocus) {
       // 失去焦点时取消文本选择
       _idController.selection = TextSelection.collapsed(
         offset: _idController.text.length,
       );
-      _saveZobowId();
+      if (widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
+        _saveRAddress();
+      } else {
+        _saveZobowId();
+      }
     }
   }
 
@@ -2348,12 +2492,18 @@ class _ChannelItemState extends State<_ChannelItem> {
     final isZobowMode =
         widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < widget.vm.parserConfig.zobowChannelCount;
+    final isRProtocolMode =
+        widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol &&
+        widget.ch.index < SendProtocolConfig.maxChannelCount;
+    final showsAddress = isZobowMode || isRProtocolMode;
     final zobowAddress =
         isZobowMode
             ? widget.vm.parserConfig.zobowChannelIds[widget.ch.index]
             : 0;
     final usesShortZobowAddress =
         isZobowMode && (zobowAddress & 0xFFFF0000) == 0;
+    final rAddress =
+        isRProtocolMode ? widget.vm.rChannelAddresses[widget.ch.index] : '';
 
     return Container(
       constraints: const BoxConstraints(minHeight: 34),
@@ -2434,21 +2584,29 @@ class _ChannelItemState extends State<_ChannelItem> {
                           ),
                 ),
                 // 众邦电控模式下显示地址，常驻可编辑 TextField
-                if (isZobowMode) ...[
+                if (showsAddress) ...[
                   const SizedBox(width: 6),
                   Container(
-                    width: usesShortZobowAddress ? 58 : 86,
+                    width:
+                        isRProtocolMode
+                            ? 86
+                            : usesShortZobowAddress
+                            ? 58
+                            : 86,
                     height: 26,
                     alignment: Alignment.centerLeft,
                     child: Focus(
-                      onFocusChange: _onZobowIdFocusChange,
+                      onFocusChange: _onAddressFocusChange,
                       child: TextField(
                         controller:
                             _idController
-                              ..text = _formatZobowAddress(
-                                zobowAddress,
-                                compact: usesShortZobowAddress,
-                              ),
+                              ..text =
+                                  isRProtocolMode
+                                      ? rAddress
+                                      : _formatZobowAddress(
+                                        zobowAddress,
+                                        compact: usesShortZobowAddress,
+                                      ),
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,
@@ -2488,8 +2646,13 @@ class _ChannelItemState extends State<_ChannelItem> {
                             RegExp(r'[0-9a-fA-FxX]'),
                           ),
                         ],
-                        onSubmitted: (_) => _saveZobowId(),
-                        onEditingComplete: _saveZobowId,
+                        onSubmitted:
+                            (_) =>
+                                isRProtocolMode
+                                    ? _saveRAddress()
+                                    : _saveZobowId(),
+                        onEditingComplete:
+                            isRProtocolMode ? _saveRAddress : _saveZobowId,
                       ),
                     ),
                   ),
@@ -2558,9 +2721,14 @@ class _ChannelItemState extends State<_ChannelItem> {
     );
   }
 
-  /// 构建预设选择按钮（仅在Zobow模式下且有选中配置文件时显示）
+  /// 构建预设选择按钮
   Widget _buildPresetButton(BuildContext context) {
-    final profile = widget.vm.selectedZobowProfile;
+    final isRProtocol =
+        widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol;
+    final profile =
+        isRProtocol
+            ? widget.vm.selectedRProfile
+            : widget.vm.selectedZobowProfile;
     if (profile == null || profile.presets.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -2598,7 +2766,12 @@ class _ChannelItemState extends State<_ChannelItem> {
         return _PresetSelectorDialog(
           profile: profile,
           onSelect: (preset) {
-            widget.vm.applyPresetToChannel(widget.ch.index, preset);
+            if (widget.vm.effectiveSendProtocolType ==
+                SendProtocolType.rProtocol) {
+              widget.vm.applyRProtocolPresetToChannel(widget.ch.index, preset);
+            } else {
+              widget.vm.applyPresetToChannel(widget.ch.index, preset);
+            }
           },
         );
       },
