@@ -277,3 +277,12 @@ int nsr_is_open() {
     std::lock_guard<std::mutex> lock(g_stateMutex);
     return g_hSerial != INVALID_HANDLE_VALUE ? 1 : 0;
 }
+
+int nsr_is_connection_healthy() {
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+    if (g_hSerial == INVALID_HANDLE_VALUE) return 0;
+
+    DWORD errors = 0;
+    COMSTAT status = {0};
+    return ClearCommError(g_hSerial, &errors, &status) ? 1 : 0;
+}

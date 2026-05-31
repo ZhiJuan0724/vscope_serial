@@ -21,6 +21,7 @@ import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
 import '../data/source/data_source_manager.dart';
 import '../data/models/zobow_config_profile.dart';
+import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
 import '../services/zobow_profile_service.dart';
 import '../views/plot/plot_painter.dart';
@@ -260,9 +261,8 @@ class PlotViewModel extends BaseViewModel {
   /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
 
-  /// 状态栏右侧临时提示
-  String? _statusMessage;
-  Timer? _statusMessageTimer;
+  /// Last transient notification, retained for diagnostics and tests.
+  String? _lastStatusMessage;
   bool _disposed = false;
 
   /// 定时刷新间隔（ms），无数据时保持 UI 响应
@@ -475,9 +475,6 @@ class PlotViewModel extends BaseViewModel {
   /// - 串口已连接但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
-    if (_statusMessage != null && _statusMessage!.isNotEmpty) {
-      return _statusMessage!;
-    }
     if (serialService.isConnecting) {
       return '正在连接串口...';
     }
@@ -559,27 +556,16 @@ class PlotViewModel extends BaseViewModel {
     return recentCount * 2.0; // 500ms * 2 = 1s
   }
 
-  /// 在底部状态栏右侧显示一次性提示。
+  /// Show a floating transient notification.
+  String? get lastStatusMessage => _lastStatusMessage;
+
   void showStatusMessage(
     String message, {
     Duration duration = const Duration(seconds: 4),
   }) {
     if (_disposed) return;
-    _statusMessageTimer?.cancel();
-    _statusMessage = message;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-
-    if (duration > Duration.zero) {
-      _statusMessageTimer = Timer(duration, () {
-        if (_disposed) return;
-        if (_statusMessage == message) {
-          _statusMessage = null;
-          notifyListeners();
-        }
-      });
-    }
+    _lastStatusMessage = message;
+    AppNotifications.show(message, duration: duration);
   }
 
   // ========== 定时刷新 ==========
@@ -744,12 +730,22 @@ class PlotViewModel extends BaseViewModel {
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
-  void startPlotting() {
+  Future<void> startPlotting() async {
     if (_isStopping) {
       showStatusMessage('正在停止绘图，请稍候');
       return;
     }
     if (_isPlotting) return;
+
+    if (serialService.isConnected) {
+      final connected = await serialService.refreshConnectionStatus();
+      if (!connected && !_useRandomSource) {
+        const message = '检测到串口已断开，无法绘图；请重新连接串口';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        return;
+      }
+    }
 
     final canUseRandom =
         _useRandomSource && _parserType == ParserType.fireWater;
@@ -897,8 +893,6 @@ class PlotViewModel extends BaseViewModel {
 
       _notifyTimer?.cancel();
       _notifyTimer = null;
-      _statusMessageTimer?.cancel();
-      _statusMessageTimer = null;
       _pendingNotifyCount = 0;
       _isStopping = false;
       if (!_disposed) {
@@ -916,7 +910,7 @@ class PlotViewModel extends BaseViewModel {
   /// 重启绘图（用于配置变更时）
   void _restartPlotting() {
     stopPlotting().then((_) {
-      if (!_disposed) startPlotting();
+      if (!_disposed) unawaited(startPlotting());
     });
   }
 

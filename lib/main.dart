@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/utils/app_logger.dart';
+import 'services/app_notifications.dart';
 import 'services/app_settings.dart';
 import 'services/serial_service.dart';
 import 'viewmodels/plot_viewmodel.dart';
@@ -59,6 +60,7 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'VScope Serial',
+        scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
         theme: ThemeData(
           useMaterial3: false,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

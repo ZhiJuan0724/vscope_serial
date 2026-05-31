@@ -64,6 +64,9 @@ typedef NsrWriteDart = int Function(Pointer<Uint8> data, int length);
 typedef NsrIsOpenC = Int32 Function();
 typedef NsrIsOpenDart = int Function();
 
+typedef NsrIsConnectionHealthyC = Int32 Function();
+typedef NsrIsConnectionHealthyDart = int Function();
+
 // 获取函数指针
 final _nsrInitDartApi = _dll
     .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
@@ -90,6 +93,10 @@ final _nsrWrite = _dll.lookupFunction<NsrWriteC, NsrWriteDart>('nsr_write');
 final _nsrIsOpen = _dll.lookupFunction<NsrIsOpenC, NsrIsOpenDart>(
   'nsr_is_open',
 );
+final _nsrIsConnectionHealthy = _dll
+    .lookupFunction<NsrIsConnectionHealthyC, NsrIsConnectionHealthyDart>(
+      'nsr_is_connection_healthy',
+    );
 
 /// Windows 原生串口读取器
 class NativeSerialReader {
@@ -131,6 +138,21 @@ class NativeSerialReader {
     } finally {
       calloc.free(namePtr);
     }
+  }
+
+  /// Open the native handle outside the UI isolate.
+  ///
+  /// The Windows CreateFile call can block for an unavailable serial port.
+  /// Native DLL state is process-wide, so the UI isolate can attach to the
+  /// handle after this background operation completes.
+  static Future<bool> openInBackground(String portName, int baudRate) {
+    return Isolate.run(() => _openNativePort(portName, baudRate));
+  }
+
+  /// Attach this reader instance to a handle opened by [openInBackground].
+  bool attachToOpenPort() {
+    _isOpen = _nsrIsOpen() == 1;
+    return _isOpen;
   }
 
   /// 关闭串口
@@ -197,6 +219,9 @@ class NativeSerialReader {
   /// 是否打开
   bool get isOpen => _nsrIsOpen() == 1;
 
+  /// Whether the open handle still responds after an external disconnect.
+  bool get isConnectionHealthy => _nsrIsConnectionHealthy() == 1;
+
   void _onDataReceived(dynamic message) {
     if (message is! Uint8List) {
       AppLogger().debug(
@@ -231,6 +256,15 @@ class NativeSerialReader {
     _nsrClosePort();
     _isOpen = false;
     _dataController.close();
+  }
+}
+
+bool _openNativePort(String portName, int baudRate) {
+  final namePtr = portName.toNativeUtf8();
+  try {
+    return _nsrOpenPort(namePtr, baudRate) == 0;
+  } finally {
+    calloc.free(namePtr);
   }
 }
 

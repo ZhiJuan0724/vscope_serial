@@ -260,7 +260,7 @@ void main() {
 
       expect(vm.viewport.yMin, oldViewport.yMin);
       expect(vm.viewport.yMax, oldViewport.yMax);
-      expect(vm.hintText, contains('Y轴数据范围为0'));
+      expect(vm.lastStatusMessage, contains('Y轴数据范围为0'));
     });
 
     test('JustFloat偏置通道参与Y轴自适应缩放', () {
@@ -377,7 +377,7 @@ void main() {
 
       expect(vm.viewport.xMin, oldViewport.xMin);
       expect(vm.viewport.xMax, oldViewport.xMax);
-      expect(vm.hintText, contains('X轴数据点过少'));
+      expect(vm.lastStatusMessage, contains('X轴数据点过少'));
     });
 
     test('状态文本包含关键信息', () {
@@ -392,7 +392,7 @@ void main() {
       vm.setParserType(ParserType.zobow);
 
       expect(vm.useRandomSource, true);
-      expect(vm.hintText, contains('随机源已保留'));
+      expect(vm.lastStatusMessage, contains('随机源已保留'));
 
       vm.startPlotting();
 
@@ -483,15 +483,16 @@ void main() {
       expect(frame[33], (crc >> 8) & 0xFF);
     });
 
-    test('众邦初始化发送失败时不进入绘图并断开连接', () {
+    test('开始绘图前检测陈旧串口状态并断开连接', () async {
+      vm.setUseRandomSource(false);
       serialService.isConnected = true;
       vm.setParserType(ParserType.zobow);
 
-      vm.startPlotting();
+      await vm.startPlotting();
 
       expect(vm.isPlotting, false);
       expect(serialService.isConnected, false);
-      expect(vm.hintText, contains('协议初始化发送失败'));
+      expect(vm.lastStatusMessage, contains('检测到串口已断开'));
     });
 
     test('stopPlotting先更新UI状态并阻止重复停止', () async {

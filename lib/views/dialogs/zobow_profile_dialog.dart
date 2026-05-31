@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../data/models/zobow_config_profile.dart';
+import '../../services/app_notifications.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
 /// 众邦电控配置文件编辑弹窗
@@ -401,9 +402,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('导入配置失败: $error')));
+      AppNotifications.show(
+        '导入配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
     }
   }
 

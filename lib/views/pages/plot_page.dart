@@ -292,7 +292,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 if (vm.isPlotting) {
                   vm.stopPlotting();
                 } else {
-                  vm.startPlotting();
+                  unawaited(vm.startPlotting());
                 }
               },
       icon: Icon(

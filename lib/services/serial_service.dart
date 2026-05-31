@@ -12,6 +12,7 @@ import '../core/utils/crc.dart';
 import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/serial_config.dart';
+import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'time_window_aggregator.dart';
@@ -31,6 +32,9 @@ class SerialService extends ChangeNotifier {
   // Windows 原生串口读取器（替代 flutter_libserialport 的读取功能）
   NativeSerialReader? _nativeReader;
   StreamSubscription? _nativeSubscription;
+
+  /// Test-only override for simulating a slow or failed native open.
+  Future<bool> Function(String port, int baudRate)? debugPortOpener;
 
   // 时间窗口聚合器
   TimeWindowAggregator? _aggregator;
@@ -113,14 +117,71 @@ class SerialService extends ChangeNotifier {
     settings.save();
   }
 
-  void refreshPorts() {
-    availablePorts = SerialPort.availablePorts;
-    if (config.port != null && !availablePorts.contains(config.port)) {
-      config = config.copyWith(port: null);
+  bool refreshPorts({bool preserveSelectedPort = false}) {
+    try {
+      availablePorts = SerialPort.availablePorts;
+      if (!preserveSelectedPort &&
+          config.port != null &&
+          !availablePorts.contains(config.port)) {
+        config = config.copyWith(port: null);
+      }
+      AppLogger().info('已刷新串口列表', category: 'SERIAL');
+      return true;
+    } catch (e) {
+      AppLogger().warning('刷新串口列表失败: $e', category: 'SERIAL');
+      return false;
+    } finally {
+      // Defer notifyListeners to avoid calling during build phase.
+      Future.microtask(() => notifyListeners());
     }
-    AppLogger().info('已刷新串口列表', category: 'SERIAL');
-    // Defer notifyListeners to avoid calling during build phase
+  }
+
+  /// Refresh the available port list and verify an existing native connection.
+  ///
+  /// When a device was unplugged externally, the Windows handle can remain
+  /// open even though serial API calls fail. If the same port is still listed,
+  /// reconnect once; otherwise clear the stale connection state.
+  Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
+    final selectedPort = config.port;
+    final portsRefreshed = refreshPorts(preserveSelectedPort: isConnected);
+    if (!isConnected) return false;
+
+    if (portsRefreshed &&
+        (selectedPort == null || !availablePorts.contains(selectedPort))) {
+      AppLogger().warning('已连接串口不再存在: $selectedPort', category: 'SERIAL');
+      _cleanupPort();
+      config = config.copyWith(port: null);
+      _saveSettings();
+      AppNotifications.show('串口已断开，请重新连接');
+      Future.microtask(() => notifyListeners());
+      return false;
+    }
+
+    final healthy =
+        _nativeReader?.isOpen == true &&
+        _nativeReader?.isConnectionHealthy == true;
+    if (healthy) return true;
+
+    AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
+    _cleanupPort();
+
+    final reconnectPortsRefreshed = refreshPorts(preserveSelectedPort: true);
+    if (!reconnectPortsRefreshed) return false;
+    if (selectedPort == null || !availablePorts.contains(selectedPort)) {
+      config = config.copyWith(port: null);
+      _saveSettings();
+      AppNotifications.show('串口已断开，请重新连接');
+      Future.microtask(() => notifyListeners());
+      return false;
+    }
+
+    config = config.copyWith(port: selectedPort);
     Future.microtask(() => notifyListeners());
+    if (!reconnectOnce) return false;
+
+    AppLogger().info('尝试自动重连串口: $selectedPort', category: 'SERIAL');
+    await connect();
+    return isConnected;
   }
 
   /// 更新串口配置并通知监听者（供外部调用）
@@ -147,6 +208,8 @@ class SerialService extends ChangeNotifier {
     isConnecting = true;
     Future.microtask(() => notifyListeners());
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
+    // Let Flutter paint the connecting state before starting native work.
+    await Future<void>.delayed(Duration.zero);
 
     // 如果切换了串口，清空之前的数据
     if (_lastConnectedPort != null && _lastConnectedPort != config.port) {
@@ -157,7 +220,7 @@ class SerialService extends ChangeNotifier {
     try {
       // 直接使用 NativeSerialReader 打开串口（跳过 Isolate 探测）
       AppLogger().trace('使用 NativeSerialReader 打开串口...', category: 'SERIAL');
-      await _openPortInMainThread();
+      await _openPort();
 
       _lastConnectedPort = config.port;
       isConnected = true;
@@ -169,6 +232,7 @@ class SerialService extends ChangeNotifier {
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
       _cleanupPort();
+      AppNotifications.show('串口打开失败，请检查端口占用或设备状态');
     } finally {
       isConnecting = false;
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
@@ -176,16 +240,30 @@ class SerialService extends ChangeNotifier {
     }
   }
 
-  /// 在主线程打开串口
-  Future<void> _openPortInMainThread() async {
+  /// Open the native handle in a background isolate, then attach UI-side IO.
+  Future<void> _openPort() async {
+    final port = config.port!;
+    if (debugPortOpener != null) {
+      final opened = await debugPortOpener!(port, config.baudRate);
+      if (!opened) {
+        throw Exception('无法打开串口');
+      }
+    }
+
     // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
     _nativeReader = NativeSerialReader();
     // Initialize Dart API with NativeApi.initializeApiDLData before opening
     final initData = NativeApi.initializeApiDLData;
     _nativeReader!.initDartApi(initData);
-    final opened = _nativeReader!.open(config.port!, config.baudRate);
+    final opened = await NativeSerialReader.openInBackground(
+      port,
+      config.baudRate,
+    );
     if (!opened) {
       throw Exception('无法打开串口');
+    }
+    if (!_nativeReader!.attachToOpenPort()) {
+      throw Exception('无法获取已打开的串口句柄');
     }
 
     // 设置串口参数
