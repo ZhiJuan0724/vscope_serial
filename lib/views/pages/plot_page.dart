@@ -2435,16 +2435,19 @@ class _ChannelItemState extends State<_ChannelItem> {
   bool _isEditingName = false;
   late final TextEditingController _nameController;
   late final TextEditingController _idController;
+  late final FocusNode _nameFocusNode;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _idController = TextEditingController();
+    _nameFocusNode = FocusNode()..addListener(_handleNameFocusChange);
   }
 
   @override
   void dispose() {
+    _nameFocusNode.dispose();
     _nameController.dispose();
     _idController.dispose();
     super.dispose();
@@ -2458,7 +2461,30 @@ class _ChannelItemState extends State<_ChannelItem> {
     final text = _nameController.text.trim();
     // 空输入则恢复默认名称（清空别名）
     widget.vm.setChannelAlias(widget.ch.index, text);
-    setState(() => _isEditingName = false);
+    if (mounted) {
+      setState(() => _isEditingName = false);
+    }
+  }
+
+  void _handleNameFocusChange() {
+    if (!_nameFocusNode.hasFocus && _isEditingName) {
+      _saveAlias();
+    }
+  }
+
+  void _startEditingName() {
+    setState(() {
+      _isEditingName = true;
+      _nameController.text = _displayName;
+      _nameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _nameController.text.length,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isEditingName) return;
+      _nameFocusNode.requestFocus();
+    });
   }
 
   void _saveZobowId() {
@@ -2551,7 +2577,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                           ? SizedBox(
                             height: 24,
                             child: TextField(
-                              controller: _nameController..text = _displayName,
+                              controller: _nameController,
+                              focusNode: _nameFocusNode,
                               autofocus: true,
                               maxLength: 8,
                               style: const TextStyle(fontSize: 14),
@@ -2566,16 +2593,11 @@ class _ChannelItemState extends State<_ChannelItem> {
                               ),
                               onSubmitted: (_) => _saveAlias(),
                               onEditingComplete: _saveAlias,
-                              onTapOutside: (_) => _saveAlias(),
+                              onTapOutside: (_) => _nameFocusNode.unfocus(),
                             ),
                           )
                           : GestureDetector(
-                            onDoubleTap: () {
-                              setState(() {
-                                _isEditingName = true;
-                                _nameController.text = _displayName;
-                              });
-                            },
+                            onDoubleTap: _startEditingName,
                             child: Text(
                               _displayName,
                               style: TextStyle(
