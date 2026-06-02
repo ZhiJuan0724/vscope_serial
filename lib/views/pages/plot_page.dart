@@ -4203,14 +4203,38 @@ enum _PresetViewMode { list, grid }
 
 class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   late _PresetViewMode _viewMode;
+  late final TextEditingController _searchController;
+  String _searchText = '';
+
+  List<ZobowChannelPreset> get _filteredPresets {
+    final query = _searchText.trim().toLowerCase();
+    if (query.isEmpty) return widget.profile.presets;
+    return widget.profile.presets.where((preset) {
+      final hexAddress = _formatZobowAddress(preset.address).toLowerCase();
+      final compactAddress =
+          _formatZobowAddress(preset.address, compact: true).toLowerCase();
+      final decimalAddress = '${preset.address & 0xFFFFFFFF}';
+      return preset.name.toLowerCase().contains(query) ||
+          hexAddress.contains(query) ||
+          compactAddress.contains(query) ||
+          decimalAddress.contains(query);
+    }).toList();
+  }
 
   @override
   void initState() {
     super.initState();
+    _searchController = TextEditingController();
     _viewMode =
         AppSettings().zobowPresetViewMode == 'list'
             ? _PresetViewMode.list
             : _PresetViewMode.grid;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _toggleViewMode() {
@@ -4258,10 +4282,56 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       content: SizedBox(
         width: _viewMode == _PresetViewMode.list ? 320 : 540,
         height: 360,
-        child:
-            _viewMode == _PresetViewMode.list
-                ? _buildListView()
-                : _buildGridView(),
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '搜索名称或地址',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon:
+                    _searchText.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: '清空搜索',
+                          icon: const Icon(Icons.clear, size: 16),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchText = '');
+                          },
+                        ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              onChanged: (value) => setState(() => _searchText = value),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child:
+                  _filteredPresets.isEmpty
+                      ? const Center(
+                        child: Text(
+                          '没有匹配的地址',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF8888AA),
+                          ),
+                        ),
+                      )
+                      : _viewMode == _PresetViewMode.list
+                      ? _buildListView()
+                      : _buildGridView(),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -4274,10 +4344,11 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
 
   /// 单列列表视图（每行较细）
   Widget _buildListView() {
+    final presets = _filteredPresets;
     return ListView.builder(
-      itemCount: widget.profile.presets.length,
+      itemCount: presets.length,
       itemBuilder: (context, index) {
-        final preset = widget.profile.presets[index];
+        final preset = presets[index];
         final hexAddr = _formatZobowAddress(preset.address, compact: true);
         return InkWell(
           onTap: () {
@@ -4324,6 +4395,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
 
   /// 5列平铺视图
   Widget _buildGridView() {
+    final presets = _filteredPresets;
     return GridView.builder(
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 5,
@@ -4331,9 +4403,9 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         crossAxisSpacing: 6,
         mainAxisSpacing: 6,
       ),
-      itemCount: widget.profile.presets.length,
+      itemCount: presets.length,
       itemBuilder: (context, index) {
-        final preset = widget.profile.presets[index];
+        final preset = presets[index];
         final hexAddr = _formatZobowAddress(preset.address, compact: true);
         return InkWell(
           onTap: () {
