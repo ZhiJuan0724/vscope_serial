@@ -324,6 +324,29 @@ void main() {
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
     });
 
+    test('开始绘图保留已开启的光标工具', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setVCursorEnabled(true);
+      vm.toggleXMeasurement();
+      vm.toggleYMeasurement();
+      vm.toggleStats();
+      vm.toggleStatsRange();
+
+      await vm.startPlotting();
+
+      expect(vm.vCursorEnabled, isTrue);
+      expect(vm.xMeasurementEnabled, isTrue);
+      expect(vm.yMeasurementEnabled, isTrue);
+      expect(vm.statsEnabled, isTrue);
+      expect(vm.statsRangeEnabled, isTrue);
+      expect(vm.measurementText, isNotNull);
+      expect(vm.statsX1, isNotNull);
+      expect(vm.statsX2, isNotNull);
+
+      await vm.stopPlotting();
+    });
+
     test('Y轴全零时跳过自适应', () {
       for (int i = 0; i < 4; i++) {
         vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));

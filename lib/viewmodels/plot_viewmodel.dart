@@ -869,7 +869,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 流程：
   /// 1. 检查数据源可用性（串口已连接或随机源已启用）
-  /// 2. 清空旧数据、重置视口和光标
+  /// 2. 清空旧数据，重置视口和光标位置
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
@@ -951,15 +951,7 @@ class PlotViewModel extends BaseViewModel {
     }
     _viewportHistory.clear();
 
-    // 重置光标（垂直光标为临时功能，每次开始绘图时关闭）
-    _vCursorEnabled = false;
-    _cursor = null;
-    _observations.clear();
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
-    _clearSnapHighlights();
+    _resetCursorPositions();
 
     // 创建解析器
     _parser = _createParser();
@@ -1087,11 +1079,7 @@ class PlotViewModel extends BaseViewModel {
     _lastRateLogBytes = 0;
     viewport = viewport.reset();
     _viewportHistory.clear();
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
-    _clearSnapHighlights();
+    _resetCursorPositions();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2486,6 +2474,41 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2SnapHighlights = const [];
     _yCursor1SnapHighlights = const [];
     _yCursor2SnapHighlights = const [];
+  }
+
+  void _resetCursorPositions() {
+    _cursor = null;
+    _observations.clear();
+    _xCursor1 = null;
+    _xCursor2 = null;
+    _yCursor1 = null;
+    _yCursor2 = null;
+    _statsX1 = null;
+    _statsX2 = null;
+    _clearSnapHighlights();
+
+    if (_xMeasurementEnabled) {
+      final range = viewport.xRange;
+      final center = viewport.xMin + range / 2;
+      _xCursor1 = _snapXToNearestVisiblePoint(center - range / 8);
+      _xCursor2 = _snapXToNearestVisiblePoint(center + range / 8);
+    }
+    if (_yMeasurementEnabled) {
+      final range = viewport.yRange;
+      final center = viewport.yMin + range / 2;
+      _yCursor1 = center - range / 8;
+      _yCursor2 = center + range / 8;
+    }
+    if (_statsEnabled) {
+      if (_statsRangeEnabled) {
+        final range = viewport.xRange;
+        _statsX1 = viewport.xMin + range * 0.25;
+        _statsX2 = viewport.xMin + range * 0.75;
+      } else {
+        _statsX1 = viewport.xMin;
+        _statsX2 = viewport.xMax;
+      }
+    }
   }
 
   void setXCursor1(double x) {
