@@ -283,6 +283,17 @@ void main() {
       expect(vm.followEnabled, true);
     });
 
+    test('拖动画布时自动关闭跟随', () {
+      vm.setFollowEnabled(true);
+
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 100, xMax: 1100),
+        fromDrag: true,
+      );
+
+      expect(vm.followEnabled, false);
+    });
+
     test('zoomXIn缩小X范围', () {
       final oldRange = vm.viewport.xRange;
       vm.zoomXIn();

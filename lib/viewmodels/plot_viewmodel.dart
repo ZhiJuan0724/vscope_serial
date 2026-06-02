@@ -1660,6 +1660,9 @@ class PlotViewModel extends BaseViewModel {
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
     // 保存当前的偏移通道数量，避免 copy() 丢失
     final offsetChannelCount = viewport.offsetChannelCount;
+    if (fromDrag && _followEnabled) {
+      _followEnabled = false;
+    }
     if (!fromDrag) {
       _saveViewport();
     }
