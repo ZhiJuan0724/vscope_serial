@@ -32,6 +32,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -133,6 +134,11 @@ def get_version() -> str:
     return "0.0.0"
 
 
+def get_build_time() -> str:
+    """生成 UTC 构建时间，用于注入应用信息界面。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def clean_release_dir():
     """清理旧的发布目录"""
     if RELEASE_DIR.exists():
@@ -223,7 +229,9 @@ def main():
     args = parser.parse_args()
     
     version = args.version or get_version()
+    build_time = get_build_time()
     info(f"项目版本: {version}")
+    info(f"构建时间: {build_time}")
     info(f"项目目录: {PROJECT_ROOT}")
     
     # 检查 Flutter
@@ -261,7 +269,13 @@ def main():
     if not args.skip_build:
         step("步骤 3/3: Release 构建 (flutter build windows --release)")
         try:
-            run_cmd([flutter_cmd, "build", "windows", "--release"])
+            run_cmd([
+                flutter_cmd,
+                "build",
+                "windows",
+                "--release",
+                f"--dart-define=BUILD_TIME={build_time}",
+            ])
             success("Release 构建完成")
         except subprocess.CalledProcessError:
             error("Release 构建失败")

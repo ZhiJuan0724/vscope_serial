@@ -66,7 +66,7 @@ flutter run -d windows
 ### 构建 Release
 
 ```bash
-flutter build windows --release
+python tools/build_release.py
 ```
 
 ## 基本使用
