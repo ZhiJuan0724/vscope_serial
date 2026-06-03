@@ -17,6 +17,8 @@ import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'time_window_aggregator.dart';
 
+enum SendDisplaySource { user, plot }
+
 /// 串口服务 - 全局单例
 class SerialService extends ChangeNotifier {
   static final SerialService _instance = SerialService._internal();
@@ -89,9 +91,14 @@ class SerialService extends ChangeNotifier {
   bool appendLineEnding = false;
   String lineEnding = '\r\n';
   bool enableCrc = false;
-  bool crcReverseBytes = false; // CRC 高低位反转
+  CrcByteOrder crcByteOrder = CrcByteOrder.big;
   CrcType crcType = CrcType.crc16;
   String crcPolyName = 'CRC-16/MODBUS';
+
+  bool get crcReverseBytes => crcByteOrder == CrcByteOrder.little;
+  set crcReverseBytes(bool value) {
+    crcByteOrder = value ? CrcByteOrder.little : CrcByteOrder.big;
+  }
 
   // 绘图选项
   bool useRandomSource = false;
@@ -452,14 +459,30 @@ class SerialService extends ChangeNotifier {
     _addSendDataLine(data);
   }
 
+  @visibleForTesting
+  void debugAddPlotSendDataForTest(
+    Uint8List data, {
+    required bool displayAsHex,
+  }) {
+    _addSendDataLine(
+      data,
+      source: SendDisplaySource.plot,
+      displayAsHex: displayAsHex,
+    );
+  }
+
   /// 添加一行发送数据显示
-  void _addSendDataLine(Uint8List data) {
-    if (sendHex) {
+  void _addSendDataLine(
+    Uint8List data, {
+    SendDisplaySource source = SendDisplaySource.user,
+    bool? displayAsHex,
+  }) {
+    final shouldDisplayAsHex = displayAsHex ?? sendHex;
+    if (shouldDisplayAsHex) {
       final text = data
           .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
           .join(' ');
-      final prefix =
-          showTimestamp ? '→ [${_formatTimestamp(DateTime.now())}] ' : '';
+      final prefix = _sendLinePrefix(DateTime.now(), source: source);
       final hexMark = !receiveHex ? '[HEX] ' : '';
       _addDisplayLine('$prefix$hexMark$text (${data.length} bytes)');
     } else {
@@ -467,6 +490,7 @@ class SerialService extends ChangeNotifier {
         utf8.decode(data, allowMalformed: true),
         timestamp: DateTime.now(),
         isReceive: false,
+        sendSource: source,
       );
     }
   }
@@ -475,18 +499,24 @@ class SerialService extends ChangeNotifier {
     String text, {
     required DateTime timestamp,
     required bool isReceive,
+    SendDisplaySource sendSource = SendDisplaySource.user,
   }) {
     if (text.isEmpty) return;
 
     final prefix =
-        showTimestamp
-            ? '${isReceive ? '←' : '→'} [${_formatTimestamp(timestamp)}] '
-            : '';
+        isReceive
+            ? (showTimestamp ? '← [${_formatTimestamp(timestamp)}] ' : '')
+            : _sendLinePrefix(timestamp, source: sendSource);
     var pendingText = isReceive ? _pendingReceiveText : _pendingSendText;
     var pendingIndex =
         isReceive ? _pendingReceiveLineIndex : _pendingSendLineIndex;
     var pendingPrefix =
         isReceive ? _pendingReceiveLinePrefix : _pendingSendLinePrefix;
+    if (!isReceive && pendingPrefix != prefix) {
+      pendingText = '';
+      pendingIndex = null;
+      pendingPrefix = '';
+    }
 
     void savePending() {
       if (isReceive) {
@@ -503,7 +533,8 @@ class SerialService extends ChangeNotifier {
     void ensureLine() {
       if (pendingIndex != null &&
           pendingIndex! >= 0 &&
-          pendingIndex! < receivedLines.length) {
+          pendingIndex! < receivedLines.length &&
+          pendingPrefix == prefix) {
         return;
       }
       pendingPrefix = prefix;
@@ -536,6 +567,20 @@ class SerialService extends ChangeNotifier {
       updateLine();
     }
     savePending();
+  }
+
+  String _sendLinePrefix(
+    DateTime timestamp, {
+    required SendDisplaySource source,
+  }) {
+    final buffer = StringBuffer();
+    if (showTimestamp) {
+      buffer.write('→ [${_formatTimestamp(timestamp)}] ');
+    }
+    if (source == SendDisplaySource.plot) {
+      buffer.write('[绘图发送] ');
+    }
+    return buffer.toString();
   }
 
   /// 添加一行到显示列表（通用）
@@ -715,6 +760,13 @@ class SerialService extends ChangeNotifier {
       return null;
     }
 
+    return _prepareSendPayload(text);
+  }
+
+  @visibleForTesting
+  Uint8List? prepareSendDataForTest(String text) => _prepareSendPayload(text);
+
+  Uint8List? _prepareSendPayload(String text) {
     if (text.isEmpty) return null;
 
     try {
@@ -745,8 +797,7 @@ class SerialService extends ChangeNotifier {
         if (poly != null) {
           final crc = calculateCrc(data, poly);
           var crcBytes = crcToBytes(crc, poly.width);
-          // 如果勾选高低位反转，反转 CRC 字节顺序
-          if (crcReverseBytes) {
+          if (crcByteOrder == CrcByteOrder.little) {
             crcBytes = crcBytes.reversed.toList();
           }
           final newData = Uint8List(data.length + crcBytes.length);
@@ -769,7 +820,11 @@ class SerialService extends ChangeNotifier {
     return Uint8List.fromList(utf8.encode(content));
   }
 
-  void send(Uint8List data) {
+  void send(
+    Uint8List data, {
+    SendDisplaySource displaySource = SendDisplaySource.user,
+    bool? displayAsHex,
+  }) {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
@@ -788,7 +843,7 @@ class SerialService extends ChangeNotifier {
       throw StateError('串口已断开连接，发送失败');
     }
     // 发送的数据也显示在数据窗口
-    _addSendDataLine(data);
+    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
   }
 
   void _handleIoDisconnected(String message) {

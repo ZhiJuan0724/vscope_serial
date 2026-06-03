@@ -7,6 +7,16 @@ import 'dart:typed_data';
 /// CRC 算法类型
 enum CrcType { none, crc8, crc16, crc32 }
 
+/// CRC 附加到发送数据时的字节序。
+enum CrcByteOrder {
+  big('大端'),
+  little('小端');
+
+  final String label;
+
+  const CrcByteOrder(this.label);
+}
+
 /// CRC 多项式配置
 class CrcPoly {
   final String name;

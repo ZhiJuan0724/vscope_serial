@@ -17,7 +17,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get appendLineEnding => serialService.appendLineEnding;
   String get lineEnding => serialService.lineEnding;
   bool get enableCrc => serialService.enableCrc;
-  bool get crcReverseBytes => serialService.crcReverseBytes;
+  CrcByteOrder get crcByteOrder => serialService.crcByteOrder;
   CrcType get crcType => serialService.crcType;
   String get crcPolyName => serialService.crcPolyName;
   bool get useRandomSource => serialService.useRandomSource;
@@ -76,8 +76,8 @@ class RawDataViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
   }
 
-  void setCrcReverseBytes(bool value) {
-    serialService.crcReverseBytes = value;
+  void setCrcByteOrder(CrcByteOrder value) {
+    serialService.crcByteOrder = value;
     Future.microtask(() => serialService.notifyListeners());
   }
 

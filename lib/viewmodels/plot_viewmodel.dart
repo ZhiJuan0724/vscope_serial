@@ -24,6 +24,7 @@ import '../data/source/data_source_manager.dart';
 import '../data/models/zobow_config_profile.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
+import '../services/serial_service.dart';
 import '../services/zobow_profile_service.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
@@ -1461,7 +1462,11 @@ class PlotViewModel extends BaseViewModel {
         ),
         allowZeroValues: _parserType == ParserType.fixedFrame,
       );
-      serialService.send(bytes);
+      serialService.send(
+        bytes,
+        displaySource: SendDisplaySource.plot,
+        displayAsHex: false,
+      );
       AppLogger().info(
         'r协议初始化数据已发送: ${utf8.decode(bytes).trim()}',
         category: 'PLOT',
@@ -1591,7 +1596,11 @@ class PlotViewModel extends BaseViewModel {
             .take(_parserConfig.zobowChannelCount)
             .toList(),
       );
-      serialService.send(bytes);
+      serialService.send(
+        bytes,
+        displaySource: SendDisplaySource.plot,
+        displayAsHex: true,
+      );
 
       AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
       return true;
