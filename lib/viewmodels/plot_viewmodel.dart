@@ -2482,6 +2482,10 @@ class PlotViewModel extends BaseViewModel {
   void _resetCursorPositions() {
     _cursor = null;
     _observations.clear();
+    _xMeasurementEnabled = false;
+    _yMeasurementEnabled = false;
+    _statsEnabled = false;
+    _statsRangeEnabled = false;
     _xCursor1 = null;
     _xCursor2 = null;
     _yCursor1 = null;
@@ -2489,29 +2493,6 @@ class PlotViewModel extends BaseViewModel {
     _statsX1 = null;
     _statsX2 = null;
     _clearSnapHighlights();
-
-    if (_xMeasurementEnabled) {
-      final range = viewport.xRange;
-      final center = viewport.xMin + range / 2;
-      _xCursor1 = _snapXToNearestVisiblePoint(center - range / 8);
-      _xCursor2 = _snapXToNearestVisiblePoint(center + range / 8);
-    }
-    if (_yMeasurementEnabled) {
-      final range = viewport.yRange;
-      final center = viewport.yMin + range / 2;
-      _yCursor1 = center - range / 8;
-      _yCursor2 = center + range / 8;
-    }
-    if (_statsEnabled) {
-      if (_statsRangeEnabled) {
-        final range = viewport.xRange;
-        _statsX1 = viewport.xMin + range * 0.25;
-        _statsX2 = viewport.xMin + range * 0.75;
-      } else {
-        _statsX1 = viewport.xMin;
-        _statsX2 = viewport.xMax;
-      }
-    }
   }
 
   void setXCursor1(double x) {
@@ -3442,11 +3423,7 @@ class PlotViewModel extends BaseViewModel {
     );
     _viewportHistory.clear();
 
-    _cursor = null;
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
+    _resetCursorPositions();
 
     Future.microtask(() => notifyListeners());
   }
