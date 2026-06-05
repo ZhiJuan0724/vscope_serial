@@ -114,5 +114,19 @@ void main() {
       expect(vp.xMin, 100.0);
       expect(modified.xMin, 999.0);
     });
+
+    test('offset axis column widths adjust margin and survive copy', () {
+      final vp = PlotViewport();
+
+      vp.setOffsetAxisColumnWidths([42, 68, 92]);
+
+      expect(vp.offsetChannelCount, 3);
+      expect(vp.offsetAxisColumnWidths, [42, 68, 92]);
+      expect(vp.marginRight, 20 + 42 + 68 + 92);
+
+      final copy = vp.copy();
+      expect(copy.offsetAxisColumnWidths, [42, 68, 92]);
+      expect(copy.marginRight, vp.marginRight);
+    });
   });
 }

@@ -509,15 +509,28 @@ class _RawDataPageState extends State<RawDataPage> {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Checkbox(
-                        value: vm.crcReverseBytes,
-                        onChanged: (value) => vm.setCrcReverseBytes(value!),
+                  SizedBox(
+                    width: 92,
+                    child: NoAnimDropdown<CrcByteOrder>(
+                      value: vm.crcByteOrder,
+                      hint: '字节序',
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        isDense: true,
                       ),
-                      const Text('高低位反转'),
-                    ],
+                      items:
+                          CrcByteOrder.values.map((order) {
+                            return DropdownMenuItem(
+                              value: order,
+                              child: Text(order.label),
+                            );
+                          }).toList(),
+                      onChanged: (value) => vm.setCrcByteOrder(value!),
+                    ),
                   ),
                 ],
               ],

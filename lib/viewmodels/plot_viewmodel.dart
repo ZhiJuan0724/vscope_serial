@@ -24,6 +24,7 @@ import '../data/source/data_source_manager.dart';
 import '../data/models/zobow_config_profile.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
+import '../services/serial_service.dart';
 import '../services/zobow_profile_service.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
@@ -869,13 +870,13 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 流程：
   /// 1. 检查数据源可用性（串口已连接或随机源已启用）
-  /// 2. 清空旧数据、重置视口和光标
+  /// 2. 清空旧数据，重置视口和光标位置
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
   Future<void> startPlotting() async {
     if (_isStopping) {
-      showStatusMessage('正在停止绘图，请稍候');
+      showStatusMessage('正在停止绘图，请稍候', duration: const Duration(seconds: 1));
       return;
     }
     if (_isPlotting) return;
@@ -951,15 +952,7 @@ class PlotViewModel extends BaseViewModel {
     }
     _viewportHistory.clear();
 
-    // 重置光标（垂直光标为临时功能，每次开始绘图时关闭）
-    _vCursorEnabled = false;
-    _cursor = null;
-    _observations.clear();
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
-    _clearSnapHighlights();
+    _resetCursorPositions();
 
     // 创建解析器
     _parser = _createParser();
@@ -1014,7 +1007,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
     _startRefreshTimer();
     AppLogger().info('开始绘图', category: 'PLOT');
-    showStatusMessage('开始绘图');
+    showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
     Future.microtask(() => notifyListeners());
   }
 
@@ -1033,26 +1026,30 @@ class PlotViewModel extends BaseViewModel {
     serialService.isPlotting = false;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
-    showStatusMessage('正在停止绘图...', duration: Duration.zero);
+    showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
     Future.microtask(() => serialService.notifyListeners());
     Future.microtask(() => notifyListeners());
 
     _stopFuture = Future<void>(() async {
-      await _parseSubscription?.cancel();
-      _parseSubscription = null;
-      _sourceManager.stop();
-      _parser?.dispose();
-      _parser = null;
-
-      _notifyTimer?.cancel();
-      _notifyTimer = null;
-      _pendingNotifyCount = 0;
-      _isStopping = false;
-      if (!_disposed) {
-        showStatusMessage('已停止绘图');
-        Future.microtask(() {
-          if (!_disposed) notifyListeners();
-        });
+      try {
+        await _parseSubscription?.cancel();
+        _parseSubscription = null;
+        _sourceManager.stop();
+        _parser?.dispose();
+        _parser = null;
+      } catch (e) {
+        AppLogger().error('停止绘图清理失败: $e', category: 'PLOT');
+      } finally {
+        _notifyTimer?.cancel();
+        _notifyTimer = null;
+        _pendingNotifyCount = 0;
+        _isStopping = false;
+        if (!_disposed) {
+          showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
+          Future.microtask(() {
+            if (!_disposed) notifyListeners();
+          });
+        }
       }
     }).whenComplete(() {
       _stopFuture = null;
@@ -1087,11 +1084,7 @@ class PlotViewModel extends BaseViewModel {
     _lastRateLogBytes = 0;
     viewport = viewport.reset();
     _viewportHistory.clear();
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
-    _clearSnapHighlights();
+    _resetCursorPositions();
     Future.microtask(() => notifyListeners());
   }
 
@@ -1473,7 +1466,11 @@ class PlotViewModel extends BaseViewModel {
         ),
         allowZeroValues: _parserType == ParserType.fixedFrame,
       );
-      serialService.send(bytes);
+      serialService.send(
+        bytes,
+        displaySource: SendDisplaySource.plot,
+        displayAsHex: false,
+      );
       AppLogger().info(
         'r协议初始化数据已发送: ${utf8.decode(bytes).trim()}',
         category: 'PLOT',
@@ -1603,7 +1600,11 @@ class PlotViewModel extends BaseViewModel {
             .take(_parserConfig.zobowChannelCount)
             .toList(),
       );
-      serialService.send(bytes);
+      serialService.send(
+        bytes,
+        displaySource: SendDisplaySource.plot,
+        displayAsHex: true,
+      );
 
       AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
       return true;
@@ -1670,13 +1671,16 @@ class PlotViewModel extends BaseViewModel {
   /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
   /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
-    // 保存当前的偏移通道数量，避免 copy() 丢失
-    final offsetChannelCount = viewport.offsetChannelCount;
+    // 保存当前的偏移通道列宽，避免 copy() 丢失
+    final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
+    if (fromDrag && _followEnabled) {
+      _followEnabled = false;
+    }
     if (!fromDrag) {
       _saveViewport();
     }
     viewport = _limitXRange(newViewport).copy();
-    viewport.setOffsetChannelCount(offsetChannelCount);
+    viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
     if (!fromDrag) {
       _loadWindowForViewport();
     }
@@ -2486,6 +2490,22 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2SnapHighlights = const [];
     _yCursor1SnapHighlights = const [];
     _yCursor2SnapHighlights = const [];
+  }
+
+  void _resetCursorPositions() {
+    _cursor = null;
+    _observations.clear();
+    _xMeasurementEnabled = false;
+    _yMeasurementEnabled = false;
+    _statsEnabled = false;
+    _statsRangeEnabled = false;
+    _xCursor1 = null;
+    _xCursor2 = null;
+    _yCursor1 = null;
+    _yCursor2 = null;
+    _statsX1 = null;
+    _statsX2 = null;
+    _clearSnapHighlights();
   }
 
   void setXCursor1(double x) {
@@ -3416,11 +3436,7 @@ class PlotViewModel extends BaseViewModel {
     );
     _viewportHistory.clear();
 
-    _cursor = null;
-    _xCursor1 = null;
-    _xCursor2 = null;
-    _yCursor1 = null;
-    _yCursor2 = null;
+    _resetCursorPositions();
 
     Future.microtask(() => notifyListeners());
   }

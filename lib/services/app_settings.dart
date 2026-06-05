@@ -105,6 +105,10 @@ class AppSettings {
   /// 启动时自动检查更新。默认关闭，避免启动时主动访问网络。
   bool autoUpdateCheckEnabled = false;
 
+  // ========== 全局设置 ==========
+  /// 强制关闭应用内临时提示信息。
+  bool disableNotifications = false;
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -187,6 +191,7 @@ class AppSettings {
       zobowPresetViewMode =
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
       autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
+      disableNotifications = json['disableNotifications'] as bool? ?? false;
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -235,6 +240,7 @@ class AppSettings {
       'rProfileId': rProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
       'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
+      'disableNotifications': disableNotifications,
 
       // 视口设置
       'xMin': xMin,

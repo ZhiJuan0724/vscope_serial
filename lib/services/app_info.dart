@@ -6,6 +6,7 @@ class AppInfo {
   AppInfo._();
 
   static const name = 'VScope Serial';
+  static const _buildTimeValue = String.fromEnvironment('BUILD_TIME');
   static String? _cachedVersion;
 
   static Future<String> version() async {
@@ -39,6 +40,11 @@ class AppInfo {
   }
 
   static Future<DateTime?> buildTime() async {
+    if (_buildTimeValue.isNotEmpty) {
+      final parsed = DateTime.tryParse(_buildTimeValue);
+      if (parsed != null) return parsed;
+    }
+
     try {
       return File(Platform.resolvedExecutable).lastModified();
     } catch (_) {

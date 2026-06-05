@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_notifications.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 
 void main() {
@@ -14,6 +15,7 @@ void main() {
       service.disconnect();
       service.config = SerialConfig();
       AppNotifications.lastMessage = null;
+      AppSettings().disableNotifications = false;
     });
 
     test(
@@ -47,5 +49,13 @@ void main() {
         expect(AppNotifications.lastMessage, '串口打开失败，请检查端口占用或设备状态');
       },
     );
+
+    test('disabled notifications suppress transient messages', () {
+      AppSettings().disableNotifications = true;
+
+      AppNotifications.show('不会显示');
+
+      expect(AppNotifications.lastMessage, isNull);
+    });
   });
 }

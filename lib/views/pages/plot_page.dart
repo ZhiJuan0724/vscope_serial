@@ -17,6 +17,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/zobow_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_viewport.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/plot_status_bar.dart';
 
@@ -1164,114 +1165,129 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
     final activeChannelCount =
         vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    final offsetChannelCount =
-        vm.channels
-            .take(activeChannelCount)
-            .where((c) => c.visible && c.offsetEnabled)
-            .length;
-    vm.viewport.setOffsetChannelCount(offsetChannelCount);
-
-    return Stack(
-      children: [
-        PlotGestureHandler(
-          viewport: vm.viewport,
-          vCursorEnabled: vm.vCursorEnabled,
-          boxZoomEnabled: vm.boxZoomEnabled,
-          refreshFps: vm.refreshFps,
-          plotFontSizeDelta: vm.plotFontSizeDelta,
-          channels: vm.channels,
-          activeChannelCount: activeChannelCount,
-          data: vm.dataPoints,
-          observations: vm.observations,
-          onObservationDrag: (index, x) => vm.updateObservation(index, x),
-          onObservationDelete: (index) => vm.removeObservation(index),
-          onViewportChanged:
-              (viewport, {fromDrag = false}) =>
-                  vm.updateViewport(viewport, fromDrag: fromDrag),
-          onDragEnd: vm.saveDragViewport,
-          onCursorChanged: (cursor) {
-            if (cursor != null) {
-              vm.updateFollowCursor(
-                cursor.x,
-                cursor.y ?? 0,
-                cursor.screenPosition ?? Offset.zero,
-              );
-            } else {
-              vm.updateCursor(null);
-            }
-          },
-          // 测量线位置
-          xCursor1: vm.xCursor1,
-          xCursor2: vm.xCursor2,
-          yCursor1: vm.yCursor1,
-          yCursor2: vm.yCursor2,
-          // 测量线拖动回调
-          onXCursor1Drag:
-              vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
-          onXCursor2Drag:
-              vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
-          onYCursor1Drag:
-              vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
-          onYCursor2Drag:
-              vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
-          // 统计范围位置
-          statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
-          statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
-          // 统计范围拖动回调
-          onStatsX1Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
-          onStatsX2Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
-          // 通道偏移拖动回调
-          onChannelOffsetDrag:
-              (index, yOffset) => vm.setChannelYOffset(index, yOffset),
-          // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
-          onChannelYScaleZoom:
-              (index, scaleDelta) => vm.zoomChannelYScale(index, scaleDelta),
-          child: CustomPaint(
-            painter: PlotPainter(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gridDensity = _parseGridDensity(vm.gridDensity);
+        final offsetAxisColumnWidths =
+            PlotPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
-              data: vm.dataPoints,
-              dataRevision: vm.dataRevision,
-              lodIndex: vm.lodIndex,
               channels: vm.channels,
               activeChannelCount: activeChannelCount,
-              showGrid: vm.showGrid,
-              gridDensity: _parseGridDensity(vm.gridDensity),
-              cursor: vm.cursor,
+              canvasHeight: constraints.maxHeight,
+              gridDensity: gridDensity,
+              plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+            );
+        final renderViewport =
+            vm.viewport.copy()
+              ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+
+        return Stack(
+          children: [
+            PlotGestureHandler(
+              viewport: renderViewport,
+              vCursorEnabled: vm.vCursorEnabled,
+              boxZoomEnabled: vm.boxZoomEnabled,
+              refreshFps: vm.refreshFps,
+              plotFontSizeDelta: vm.plotFontSizeDelta,
+              channels: vm.channels,
+              activeChannelCount: activeChannelCount,
+              data: vm.dataPoints,
+              observations: vm.observations,
+              onObservationDrag: (index, x) => vm.updateObservation(index, x),
+              onObservationDelete: (index) => vm.removeObservation(index),
+              onViewportChanged:
+                  (viewport, {fromDrag = false}) =>
+                      vm.updateViewport(viewport, fromDrag: fromDrag),
+              onDragEnd: vm.saveDragViewport,
+              onCursorChanged: (cursor) {
+                if (cursor != null) {
+                  vm.updateFollowCursor(
+                    cursor.x,
+                    cursor.y ?? 0,
+                    cursor.screenPosition ?? Offset.zero,
+                  );
+                } else {
+                  vm.updateCursor(null);
+                }
+              },
+              // 测量线位置
               xCursor1: vm.xCursor1,
               xCursor2: vm.xCursor2,
               yCursor1: vm.yCursor1,
               yCursor2: vm.yCursor2,
-              statsEnabled: vm.statsEnabled,
-              statsRangeEnabled: vm.statsRangeEnabled,
-              statsX1: vm.statsX1,
-              statsX2: vm.statsX2,
-              snapHighlights: vm.snapHighlights,
-              snapHighlightEnabled: vm.snapHighlightEnabled,
-              snapHighlightDiameter: vm.snapHighlightDiameter,
-              antiAliasEnabled: vm.antiAliasEnabled,
-              plotFontSizeDelta: vm.plotFontSizeDelta,
-            ),
-            size: Size.infinite,
-          ),
-        ),
-        Positioned.fill(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Stack(
-                children: _buildObservationWidgets(
-                  context,
-                  vm,
-                  Size(constraints.maxWidth, constraints.maxHeight),
+              // 测量线拖动回调
+              onXCursor1Drag:
+                  vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
+              onXCursor2Drag:
+                  vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
+              onYCursor1Drag:
+                  vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
+              onYCursor2Drag:
+                  vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
+              // 统计范围位置
+              statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
+              statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
+              // 统计范围拖动回调
+              onStatsX1Drag:
+                  vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
+              onStatsX2Drag:
+                  vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+              // 通道偏移拖动回调
+              onChannelOffsetDrag:
+                  (index, yOffset) => vm.setChannelYOffset(index, yOffset),
+              // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
+              onChannelYScaleZoom:
+                  (index, scaleDelta) =>
+                      vm.zoomChannelYScale(index, scaleDelta),
+              child: CustomPaint(
+                painter: PlotPainter(
+                  viewport: renderViewport,
+                  data: vm.dataPoints,
+                  dataRevision: vm.dataRevision,
+                  lodIndex: vm.lodIndex,
+                  channels: vm.channels,
+                  activeChannelCount: activeChannelCount,
+                  showGrid: vm.showGrid,
+                  gridDensity: gridDensity,
+                  cursor: vm.cursor,
+                  xCursor1: vm.xCursor1,
+                  xCursor2: vm.xCursor2,
+                  yCursor1: vm.yCursor1,
+                  yCursor2: vm.yCursor2,
+                  statsEnabled: vm.statsEnabled,
+                  statsRangeEnabled: vm.statsRangeEnabled,
+                  statsX1: vm.statsX1,
+                  statsX2: vm.statsX2,
+                  snapHighlights: vm.snapHighlights,
+                  snapHighlightEnabled: vm.snapHighlightEnabled,
+                  snapHighlightDiameter: vm.snapHighlightDiameter,
+                  antiAliasEnabled: vm.antiAliasEnabled,
+                  plotFontSizeDelta: vm.plotFontSizeDelta,
                 ),
-              );
-            },
-          ),
-        ),
-        // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
-        if (vm.measurementText != null || vm.statsText != null)
-          _buildCombinedInfoBox(context, vm),
-        if (_legendVisible) _buildLegendBox(vm),
-      ],
+                size: Size.infinite,
+              ),
+            ),
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    children: _buildObservationWidgets(
+                      context,
+                      vm,
+                      renderViewport,
+                      Size(constraints.maxWidth, constraints.maxHeight),
+                    ),
+                  );
+                },
+              ),
+            ),
+            // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
+            if (vm.measurementText != null || vm.statsText != null)
+              _buildCombinedInfoBox(context, vm),
+            if (_legendVisible) _buildLegendBox(vm),
+          ],
+        );
+      },
     );
   }
 
@@ -1282,10 +1298,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   List<Widget> _buildObservationWidgets(
     BuildContext context,
     PlotViewModel vm,
+    PlotViewport viewport,
     Size size,
   ) {
     final widgets = <Widget>[];
-    final viewport = vm.viewport;
     final plotTop = viewport.marginTop;
     final plotBottom = size.height - viewport.marginBottom;
     final plotLeft = viewport.marginLeft;
@@ -2435,16 +2451,22 @@ class _ChannelItemState extends State<_ChannelItem> {
   bool _isEditingName = false;
   late final TextEditingController _nameController;
   late final TextEditingController _idController;
+  late final FocusNode _nameFocusNode;
+  late final FocusNode _addressFocusNode;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _idController = TextEditingController();
+    _nameFocusNode = FocusNode()..addListener(_handleNameFocusChange);
+    _addressFocusNode = FocusNode();
   }
 
   @override
   void dispose() {
+    _nameFocusNode.dispose();
+    _addressFocusNode.dispose();
     _nameController.dispose();
     _idController.dispose();
     super.dispose();
@@ -2458,7 +2480,30 @@ class _ChannelItemState extends State<_ChannelItem> {
     final text = _nameController.text.trim();
     // 空输入则恢复默认名称（清空别名）
     widget.vm.setChannelAlias(widget.ch.index, text);
-    setState(() => _isEditingName = false);
+    if (mounted) {
+      setState(() => _isEditingName = false);
+    }
+  }
+
+  void _handleNameFocusChange() {
+    if (!_nameFocusNode.hasFocus && _isEditingName) {
+      _saveAlias();
+    }
+  }
+
+  void _startEditingName() {
+    setState(() {
+      _isEditingName = true;
+      _nameController.text = _displayName;
+      _nameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _nameController.text.length,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isEditingName) return;
+      _nameFocusNode.requestFocus();
+    });
   }
 
   void _saveZobowId() {
@@ -2512,6 +2557,13 @@ class _ChannelItemState extends State<_ChannelItem> {
     final reservesRAddressSpace =
         !showsAddress &&
         widget.vm.effectiveSendProtocolType == SendProtocolType.none;
+    final addressText =
+        isRProtocolMode
+            ? rAddress
+            : _formatZobowAddress(zobowAddress, compact: usesShortZobowAddress);
+    if (!_addressFocusNode.hasFocus && _idController.text != addressText) {
+      _idController.text = addressText;
+    }
 
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
@@ -2551,7 +2603,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                           ? SizedBox(
                             height: 24,
                             child: TextField(
-                              controller: _nameController..text = _displayName,
+                              controller: _nameController,
+                              focusNode: _nameFocusNode,
                               autofocus: true,
                               maxLength: 8,
                               style: const TextStyle(fontSize: 14),
@@ -2566,16 +2619,11 @@ class _ChannelItemState extends State<_ChannelItem> {
                               ),
                               onSubmitted: (_) => _saveAlias(),
                               onEditingComplete: _saveAlias,
-                              onTapOutside: (_) => _saveAlias(),
+                              onTapOutside: (_) => _nameFocusNode.unfocus(),
                             ),
                           )
                           : GestureDetector(
-                            onDoubleTap: () {
-                              setState(() {
-                                _isEditingName = true;
-                                _nameController.text = _displayName;
-                              });
-                            },
+                            onDoubleTap: _startEditingName,
                             child: Text(
                               _displayName,
                               style: TextStyle(
@@ -2604,17 +2652,10 @@ class _ChannelItemState extends State<_ChannelItem> {
                     height: 26,
                     alignment: Alignment.centerLeft,
                     child: Focus(
+                      focusNode: _addressFocusNode,
                       onFocusChange: _onAddressFocusChange,
                       child: TextField(
-                        controller:
-                            _idController
-                              ..text =
-                                  isRProtocolMode
-                                      ? rAddress
-                                      : _formatZobowAddress(
-                                        zobowAddress,
-                                        compact: usesShortZobowAddress,
-                                      ),
+                        controller: _idController,
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,
@@ -4181,14 +4222,38 @@ enum _PresetViewMode { list, grid }
 
 class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   late _PresetViewMode _viewMode;
+  late final TextEditingController _searchController;
+  String _searchText = '';
+
+  List<ZobowChannelPreset> get _filteredPresets {
+    final query = _searchText.trim().toLowerCase();
+    if (query.isEmpty) return widget.profile.presets;
+    return widget.profile.presets.where((preset) {
+      final hexAddress = _formatZobowAddress(preset.address).toLowerCase();
+      final compactAddress =
+          _formatZobowAddress(preset.address, compact: true).toLowerCase();
+      final decimalAddress = '${preset.address & 0xFFFFFFFF}';
+      return preset.name.toLowerCase().contains(query) ||
+          hexAddress.contains(query) ||
+          compactAddress.contains(query) ||
+          decimalAddress.contains(query);
+    }).toList();
+  }
 
   @override
   void initState() {
     super.initState();
+    _searchController = TextEditingController();
     _viewMode =
         AppSettings().zobowPresetViewMode == 'list'
             ? _PresetViewMode.list
             : _PresetViewMode.grid;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   void _toggleViewMode() {
@@ -4236,10 +4301,56 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       content: SizedBox(
         width: _viewMode == _PresetViewMode.list ? 320 : 540,
         height: 360,
-        child:
-            _viewMode == _PresetViewMode.list
-                ? _buildListView()
-                : _buildGridView(),
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '搜索名称或地址',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon:
+                    _searchText.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: '清空搜索',
+                          icon: const Icon(Icons.clear, size: 16),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchText = '');
+                          },
+                        ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              onChanged: (value) => setState(() => _searchText = value),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child:
+                  _filteredPresets.isEmpty
+                      ? const Center(
+                        child: Text(
+                          '没有匹配的地址',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF8888AA),
+                          ),
+                        ),
+                      )
+                      : _viewMode == _PresetViewMode.list
+                      ? _buildListView()
+                      : _buildGridView(),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -4252,10 +4363,11 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
 
   /// 单列列表视图（每行较细）
   Widget _buildListView() {
+    final presets = _filteredPresets;
     return ListView.builder(
-      itemCount: widget.profile.presets.length,
+      itemCount: presets.length,
       itemBuilder: (context, index) {
-        final preset = widget.profile.presets[index];
+        final preset = presets[index];
         final hexAddr = _formatZobowAddress(preset.address, compact: true);
         return InkWell(
           onTap: () {
@@ -4302,6 +4414,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
 
   /// 5列平铺视图
   Widget _buildGridView() {
+    final presets = _filteredPresets;
     return GridView.builder(
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 5,
@@ -4309,9 +4422,9 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         crossAxisSpacing: 6,
         mainAxisSpacing: 6,
       ),
-      itemCount: widget.profile.presets.length,
+      itemCount: presets.length,
       itemBuilder: (context, index) {
-        final preset = widget.profile.presets[index];
+        final preset = presets[index];
         final hexAddr = _formatZobowAddress(preset.address, compact: true);
         return InkWell(
           onTap: () {

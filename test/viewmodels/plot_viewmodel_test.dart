@@ -283,6 +283,17 @@ void main() {
       expect(vm.followEnabled, true);
     });
 
+    test('拖动画布时自动关闭跟随', () {
+      vm.setFollowEnabled(true);
+
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 100, xMax: 1100),
+        fromDrag: true,
+      );
+
+      expect(vm.followEnabled, false);
+    });
+
     test('zoomXIn缩小X范围', () {
       final oldRange = vm.viewport.xRange;
       vm.zoomXIn();
@@ -322,6 +333,63 @@ void main() {
       expect(stats, contains('2345.5'));
       expect(stats, contains('1234.5'));
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
+    });
+
+    test('开始绘图仅保留垂直光标开关', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setVCursorEnabled(true);
+      vm.updateFollowCursor(10, 0, const Offset(1, 1));
+      vm.addObservation();
+      vm.toggleXMeasurement();
+      vm.toggleYMeasurement();
+      vm.toggleStats();
+      vm.toggleStatsRange();
+
+      await vm.startPlotting();
+
+      expect(vm.vCursorEnabled, isTrue);
+      expect(vm.cursor, isNull);
+      expect(vm.observations, isEmpty);
+      expect(vm.xMeasurementEnabled, isFalse);
+      expect(vm.yMeasurementEnabled, isFalse);
+      expect(vm.statsEnabled, isFalse);
+      expect(vm.statsRangeEnabled, isFalse);
+      expect(vm.measurementText, isNull);
+      expect(vm.statsX1, isNull);
+      expect(vm.statsX2, isNull);
+
+      await vm.stopPlotting();
+    });
+
+    test('导入数据后仅保留垂直光标开关', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_cursor_import_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1\n0,1\n1,2\n');
+
+      vm.setVCursorEnabled(true);
+      vm.updateFollowCursor(10, 0, const Offset(1, 1));
+      vm.addObservation();
+      vm.toggleXMeasurement();
+      vm.toggleYMeasurement();
+      vm.toggleStats();
+      vm.toggleStatsRange();
+
+      expect(await vm.importFromCsv(csv.path), isNull);
+
+      expect(vm.vCursorEnabled, isTrue);
+      expect(vm.cursor, isNull);
+      expect(vm.observations, isEmpty);
+      expect(vm.xMeasurementEnabled, isFalse);
+      expect(vm.yMeasurementEnabled, isFalse);
+      expect(vm.statsEnabled, isFalse);
+      expect(vm.statsRangeEnabled, isFalse);
+      expect(vm.measurementText, isNull);
+      expect(vm.statsX1, isNull);
+      expect(vm.statsX2, isNull);
     });
 
     test('Y轴全零时跳过自适应', () {

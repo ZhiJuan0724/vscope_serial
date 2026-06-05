@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/models/zobow_config_profile.dart';
 import '../../services/app_notifications.dart';
+import '../../services/address_profile_csv_importer.dart';
 import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
@@ -305,19 +306,25 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       ),
       actionsAlignment: MainAxisAlignment.spaceBetween,
       actions: [
-        if (widget.profile != null)
-          TextButton.icon(
-            onPressed: _confirmDeleteProfile,
-            icon: const Icon(Icons.delete_outline, size: 16),
-            label: const Text('删除配置'),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-          ),
-        if (widget.profile == null)
-          TextButton.icon(
-            onPressed: _showExternalImportDialog,
-            icon: const Icon(Icons.file_upload_outlined, size: 16),
-            label: const Text('从外部导入'),
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.profile != null) ...[
+              TextButton.icon(
+                onPressed: _confirmDeleteProfile,
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: const Text('删除配置'),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+              ),
+              const SizedBox(width: 8),
+            ],
+            TextButton.icon(
+              onPressed: _showExternalImportDialog,
+              icon: const Icon(Icons.file_upload_outlined, size: 16),
+              label: const Text('从外部导入'),
+            ),
+          ],
+        ),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -419,6 +426,15 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                           ),
                           label: const Text('导入 JSON'),
                         ),
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _importCsvProfile();
+                          },
+                          icon: const Icon(Icons.table_chart, size: 16),
+                          label: const Text('导入 CSV'),
+                        ),
                         if (!_isRProtocol) const SizedBox(height: 8),
                         if (!_isRProtocol)
                           OutlinedButton.icon(
@@ -497,6 +513,31 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       if (!mounted) return;
       AppNotifications.show(
         '导入配置失败: $error',
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  Future<void> _importCsvProfile() async {
+    final result = await FilePicker.pickFiles(
+      dialogTitle: '导入地址配置 CSV',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      allowMultiple: false,
+    );
+    final path = result?.files.single.path;
+    if (path == null || !mounted) return;
+
+    try {
+      final presets = AddressProfileCsvImporter.parse(
+        await File(path).readAsString(),
+        protocolType: widget.protocolType,
+      );
+      _applyImportedPresets(presets, profileName: _fileBaseName(path));
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        '导入 CSV 配置失败: $error',
         messenger: ScaffoldMessenger.of(context),
       );
     }
@@ -619,6 +660,28 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     });
     AppNotifications.show(
       '已导入 ${imported.presets.length} 个地址预设',
+      messenger: ScaffoldMessenger.of(context),
+    );
+  }
+
+  void _applyImportedPresets(
+    List<ZobowChannelPreset> presets, {
+    String? profileName,
+  }) {
+    for (final row in _rows) {
+      row.dispose();
+    }
+    setState(() {
+      if (profileName != null && profileName.trim().isNotEmpty) {
+        _nameController.text = profileName.trim();
+      }
+      _rows
+        ..clear()
+        ..addAll(presets.map(_rowFromPreset));
+      _selectedRowIndex = null;
+    });
+    AppNotifications.show(
+      '已导入 ${presets.length} 个地址预设',
       messenger: ScaffoldMessenger.of(context),
     );
   }

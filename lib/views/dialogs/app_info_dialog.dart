@@ -61,6 +61,7 @@ class AppInfoDialog extends StatefulWidget {
 class _AppInfoDialogState extends State<AppInfoDialog> {
   final _checker = UpdateChecker();
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
+  bool _disableNotifications = AppSettings().disableNotifications;
   bool _checking = false;
   String? _version;
   DateTime? _buildTime;
@@ -122,7 +123,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               },
             ),
             const SizedBox(height: 8),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 ElevatedButton.icon(
                   onPressed: _checking ? null : _checkForUpdate,
@@ -141,6 +144,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   onPressed: null,
                   icon: const Icon(Icons.download, size: 16),
                   label: const Text('自动安装预留'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showAdvancedSettings,
+                  icon: const Icon(Icons.tune, size: 16),
+                  label: const Text('高级设置'),
                 ),
               ],
             ),
@@ -174,6 +182,51 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           child: const Text('关闭'),
         ),
       ],
+    );
+  }
+
+  Future<void> _showAdvancedSettings() async {
+    var disableNotifications = _disableNotifications;
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  title: const Text('高级设置'),
+                  content: SizedBox(
+                    width: 360,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: const Text('关闭提示信息'),
+                          subtitle: const Text('开启后不再显示应用内临时提示，后续全局设置也会放在这里。'),
+                          value: disableNotifications,
+                          onChanged: (value) {
+                            setDialogState(() => disableNotifications = value);
+                            setState(() => _disableNotifications = value);
+                            final settings =
+                                AppSettings()..disableNotifications = value;
+                            settings.save();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                ),
+          ),
     );
   }
 

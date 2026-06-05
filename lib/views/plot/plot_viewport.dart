@@ -31,19 +31,48 @@ class PlotViewport {
   /// 每列偏移 Y 轴宽度
   static const double offsetAxisColumnWidth = 42;
 
+  /// 偏移 Y 轴列最小宽度
+  static const double minOffsetAxisColumnWidth = offsetAxisColumnWidth;
+
   /// 可见的偏移通道数量（用于动态计算右边距）
   int _offsetChannelCount = 0;
+
+  /// 可见偏移通道的实际列宽。
+  List<double> _offsetAxisColumnWidths = const [];
 
   /// 获取当前偏移通道数量（供外部保存/恢复）
   int get offsetChannelCount => _offsetChannelCount;
 
+  List<double> get offsetAxisColumnWidths =>
+      List.unmodifiable(_offsetAxisColumnWidths);
+
   /// 绘图区域右边距（动态：基础边距 + 偏移通道列宽）
   double get marginRight =>
-      _baseMarginRight + _offsetChannelCount * offsetAxisColumnWidth;
+      _baseMarginRight +
+      _offsetAxisColumnWidths.fold<double>(0, (sum, width) => sum + width);
 
   /// 设置偏移通道数量
   void setOffsetChannelCount(int count) {
     _offsetChannelCount = count.clamp(0, 20);
+    _offsetAxisColumnWidths = List<double>.filled(
+      _offsetChannelCount,
+      minOffsetAxisColumnWidth,
+    );
+  }
+
+  /// 设置偏移通道列宽。列宽会根据刻度文本动态变化，但保留最小交互宽度。
+  void setOffsetAxisColumnWidths(List<double> widths) {
+    final normalized = widths
+        .take(20)
+        .map(
+          (width) =>
+              width < minOffsetAxisColumnWidth
+                  ? minOffsetAxisColumnWidth
+                  : width,
+        )
+        .toList(growable: false);
+    _offsetChannelCount = normalized.length;
+    _offsetAxisColumnWidths = normalized;
   }
 
   /// 绘图区域上边距
@@ -248,6 +277,7 @@ class PlotViewport {
       yMax: yMax,
       autoScaleY: autoScaleY,
     );
+    vp.setOffsetAxisColumnWidths(_offsetAxisColumnWidths);
     return vp;
   }
 }
