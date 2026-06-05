@@ -11,7 +11,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 
 - Windows 串口枚举、连接和配置。
 - 底部状态栏快速打开串口连接弹窗。
-- 操作结果和错误通过浮动 SnackBar 临时提示，避免遗漏重要反馈。
+- 操作结果和错误通过浮动 SnackBar 临时提示，避免遗漏重要反馈；可在应用信息页的高级设置中全局关闭临时提示。
 - 原始数据收发页支持文本/HEX 显示、发送内容回显、时间戳和自动行尾。
 - Windows 读取路径使用原生 DLL，降低 Dart 层串口读取不稳定的影响。
 
@@ -24,6 +24,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 - 绘图页分别选择接收协议和发送协议。发送协议默认是“无”；Zobow 接收协议固定使用内置二进制初始化帧。
 - `r协议` 发送 UTF-8 文本命令 `r 地址1 地址2 ...\n`，地址支持十进制和 `0x` 前缀十六进制，并保留输入格式。
 - FireWater 和 JustFloat 使用自动通道识别时，开始绘图前显示全部 16 个通道槽位，便于预先填写多通道 r 地址。
+- Zobow/r 地址配置支持 JSON 和 CSV 导入；CSV 两列分别是通道名称和通道地址，并会按地址格式智能识别表头。
 
 ### 绘图
 
@@ -32,6 +33,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 - 内存级 `PlotLodIndex` 用于大窗口绘制，拖动/缩放时优先绘制 LOD 预览，小窗口使用精确点。
 - 抗锯齿固定开启。
 - 网格支持稀疏、普通、密集三档。
+- 多通道偏置模式下，右侧独立 Y 轴刻度列会按文本宽度动态调整，避免长数值挤占相邻通道。
 
 ### 交互与测量
 
@@ -79,13 +81,19 @@ python tools/build_release.py
 
 ## 高级设置
 
-绘图页工具栏的设置按钮打开高级设置：
+绘图页工具栏的设置按钮打开绘图高级设置：
 
 - 网格显示和网格密度。
 - 绘图刷新率：`30~60 fps`，默认 `60 fps`，使用输入框设置。
 - 绘图字体大小偏移。
 - 吸附点高亮：开关和直径 `6~12 px`。
 - 绘图窗口上限：`1,000,000~40,000,000` 点，默认 `1,000,000` 点。
+
+应用信息页提供应用级高级设置：
+
+- 显示应用名称、版本、构建时间和当前/上一版本说明。
+- 支持手动检查更新，并可开启启动时自动检查更新。
+- 可全局关闭应用内临时提示信息。
 
 ## 测试工具
 
@@ -119,15 +127,33 @@ python test_tools/generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -
 ## 项目结构
 
 ```text
-lib/
-├── core/           # 工具类、日志、CRC
-├── data/           # 数据模型、解析器、数据源
-├── services/       # 串口服务、设置持久化、原生读取
-├── viewmodels/     # MVVM 视图模型
-├── views/          # 页面、弹窗和绘图组件
-│   ├── plot/       # PlotPainter、PlotViewport、手势处理
-│   └── pages/      # 绘图、数据收发、协议页面
-└── main.dart
+lib/                    # Flutter 应用源码
+├── core/               # 通用工具、日志、CRC 等基础能力
+├── data/
+│   ├── models/         # 绘图、协议、通道、设置等数据模型
+│   ├── parser/         # JustFloat、Zobow、固定帧等协议解析
+│   └── source/         # 绘图数据源和导入数据源
+├── services/           # 串口、设置、更新检查、配置导入、原生读取等服务
+├── viewmodels/         # 绘图、协议、原始数据等 MVVM 状态
+├── views/
+│   ├── dialogs/        # 配置、通道、应用信息等弹窗
+│   ├── pages/          # 绘图、数据收发、协议页面
+│   ├── plot/           # PlotPainter、PlotViewport、手势和坐标轴组件
+│   └── widgets/        # 通用 UI 组件
+└── main.dart           # 应用入口
+
+test/                   # 单元测试和组件测试
+├── data/               # 模型、解析器、数据源测试
+├── parser/             # 协议解析兼容测试
+├── services/           # 服务层测试
+├── viewmodels/         # ViewModel 行为测试
+└── views/              # 绘图视图组件测试
+
+test_tools/             # 串口模拟器、绘图 BIN 生成器和测试数据
+tools/                  # 发布构建脚本
+docs/                   # 项目上下文、历史记录和 TODO
+resources/              # 字体等资源文件
+windows/                # Windows 桌面端原生工程和串口读取 DLL
 ```
 
 ## 开发检查
@@ -155,8 +181,8 @@ flutter test test/parser/just_float_parser_test.dart
 - 推送 `v*` tag 会构建发布包并创建 GitHub Release。
 
 ```bash
-git tag v1.0.3
-git push origin v1.0.3
+git tag v1.0.5
+git push origin v1.0.5
 ```
 
 ## 主要依赖
