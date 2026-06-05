@@ -2436,6 +2436,7 @@ class _ChannelItemState extends State<_ChannelItem> {
   late final TextEditingController _nameController;
   late final TextEditingController _idController;
   late final FocusNode _nameFocusNode;
+  late final FocusNode _addressFocusNode;
 
   @override
   void initState() {
@@ -2443,11 +2444,13 @@ class _ChannelItemState extends State<_ChannelItem> {
     _nameController = TextEditingController();
     _idController = TextEditingController();
     _nameFocusNode = FocusNode()..addListener(_handleNameFocusChange);
+    _addressFocusNode = FocusNode();
   }
 
   @override
   void dispose() {
     _nameFocusNode.dispose();
+    _addressFocusNode.dispose();
     _nameController.dispose();
     _idController.dispose();
     super.dispose();
@@ -2538,6 +2541,13 @@ class _ChannelItemState extends State<_ChannelItem> {
     final reservesRAddressSpace =
         !showsAddress &&
         widget.vm.effectiveSendProtocolType == SendProtocolType.none;
+    final addressText =
+        isRProtocolMode
+            ? rAddress
+            : _formatZobowAddress(zobowAddress, compact: usesShortZobowAddress);
+    if (!_addressFocusNode.hasFocus && _idController.text != addressText) {
+      _idController.text = addressText;
+    }
 
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
@@ -2626,17 +2636,10 @@ class _ChannelItemState extends State<_ChannelItem> {
                     height: 26,
                     alignment: Alignment.centerLeft,
                     child: Focus(
+                      focusNode: _addressFocusNode,
                       onFocusChange: _onAddressFocusChange,
                       child: TextField(
-                        controller:
-                            _idController
-                              ..text =
-                                  isRProtocolMode
-                                      ? rAddress
-                                      : _formatZobowAddress(
-                                        zobowAddress,
-                                        compact: usesShortZobowAddress,
-                                      ),
+                        controller: _idController,
                         style: TextStyle(
                           fontSize: 13,
                           color: Theme.of(context).colorScheme.onSurface,

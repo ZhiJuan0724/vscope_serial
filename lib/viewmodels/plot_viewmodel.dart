@@ -876,7 +876,7 @@ class PlotViewModel extends BaseViewModel {
   /// 5. 启动定时刷新
   Future<void> startPlotting() async {
     if (_isStopping) {
-      showStatusMessage('正在停止绘图，请稍候');
+      showStatusMessage('正在停止绘图，请稍候', duration: const Duration(seconds: 1));
       return;
     }
     if (_isPlotting) return;
@@ -1007,7 +1007,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
     _startRefreshTimer();
     AppLogger().info('开始绘图', category: 'PLOT');
-    showStatusMessage('开始绘图');
+    showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
     Future.microtask(() => notifyListeners());
   }
 
@@ -1026,26 +1026,30 @@ class PlotViewModel extends BaseViewModel {
     serialService.isPlotting = false;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
-    showStatusMessage('正在停止绘图...', duration: Duration.zero);
+    showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
     Future.microtask(() => serialService.notifyListeners());
     Future.microtask(() => notifyListeners());
 
     _stopFuture = Future<void>(() async {
-      await _parseSubscription?.cancel();
-      _parseSubscription = null;
-      _sourceManager.stop();
-      _parser?.dispose();
-      _parser = null;
-
-      _notifyTimer?.cancel();
-      _notifyTimer = null;
-      _pendingNotifyCount = 0;
-      _isStopping = false;
-      if (!_disposed) {
-        showStatusMessage('已停止绘图');
-        Future.microtask(() {
-          if (!_disposed) notifyListeners();
-        });
+      try {
+        await _parseSubscription?.cancel();
+        _parseSubscription = null;
+        _sourceManager.stop();
+        _parser?.dispose();
+        _parser = null;
+      } catch (e) {
+        AppLogger().error('停止绘图清理失败: $e', category: 'PLOT');
+      } finally {
+        _notifyTimer?.cancel();
+        _notifyTimer = null;
+        _pendingNotifyCount = 0;
+        _isStopping = false;
+        if (!_disposed) {
+          showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
+          Future.microtask(() {
+            if (!_disposed) notifyListeners();
+          });
+        }
       }
     }).whenComplete(() {
       _stopFuture = null;
