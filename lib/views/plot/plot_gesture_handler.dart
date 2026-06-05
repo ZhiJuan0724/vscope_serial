@@ -647,7 +647,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final plotTop = PlotViewport().marginTop;
     final plotBottom = size.height - PlotViewport().marginBottom;
     final plotLeft = PlotViewport().marginLeft;
-    final plotRight = size.width - PlotViewport().marginRight;
+    final plotRight = size.width - widget.viewport.marginRight;
     if (pos.dx < plotLeft || pos.dx > plotRight) return null;
 
     for (int i = widget.observations.length - 1; i >= 0; i--) {
@@ -736,10 +736,15 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       }
     }
 
+    var axisX = right;
+    final widths = widget.viewport.offsetAxisColumnWidths;
     for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
-      final axisX = right + colIndex * PlotViewport.offsetAxisColumnWidth;
+      final width =
+          colIndex < widths.length
+              ? widths[colIndex]
+              : PlotViewport.minOffsetAxisColumnWidth;
       final colLeft = axisX - 2;
-      final colRight = axisX + PlotViewport.offsetAxisColumnWidth - 2;
+      final colRight = axisX + width - 2;
 
       if (pos.dx >= colLeft &&
           pos.dx <= colRight &&
@@ -747,6 +752,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           pos.dy <= size.height - PlotViewport().marginBottom) {
         return offsetChannels[colIndex].index;
       }
+      axisX += width;
     }
 
     return null;
@@ -803,7 +809,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+              size.width - widget.viewport.marginRight,
             ),
             size.width,
           );
@@ -815,7 +821,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+              size.width - widget.viewport.marginRight,
             ),
             size.width,
           );
@@ -837,7 +843,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+              size.width - widget.viewport.marginRight,
             ),
             size.width,
           );
@@ -849,7 +855,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+              size.width - widget.viewport.marginRight,
             ),
             size.width,
           );
@@ -874,7 +880,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               PlotViewport().marginLeft,
-              size.width - PlotViewport().marginRight,
+              size.width - widget.viewport.marginRight,
             ),
             size.width,
           );
@@ -914,14 +920,14 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final x1 = widget.viewport.screenToDataX(
         _boxStart!.dx.clamp(
           PlotViewport().marginLeft,
-          size.width - PlotViewport().marginRight,
+          size.width - widget.viewport.marginRight,
         ),
         size.width,
       );
       final x2 = widget.viewport.screenToDataX(
         _boxEnd!.dx.clamp(
           PlotViewport().marginLeft,
-          size.width - PlotViewport().marginRight,
+          size.width - widget.viewport.marginRight,
         ),
         size.width,
       );

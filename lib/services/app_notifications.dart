@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'app_settings.dart';
+
 /// Application-wide transient notifications.
 class AppNotifications {
   AppNotifications._();
@@ -15,6 +17,8 @@ class AppNotifications {
     Duration duration = const Duration(seconds: 2),
     ScaffoldMessengerState? messenger,
   }) {
+    if (AppSettings().disableNotifications) return;
+
     lastMessage = message;
     final state = messenger ?? _currentMessenger();
     if (state == null) return;

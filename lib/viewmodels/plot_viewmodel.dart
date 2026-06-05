@@ -1671,8 +1671,8 @@ class PlotViewModel extends BaseViewModel {
   /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
   /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
-    // 保存当前的偏移通道数量，避免 copy() 丢失
-    final offsetChannelCount = viewport.offsetChannelCount;
+    // 保存当前的偏移通道列宽，避免 copy() 丢失
+    final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
     if (fromDrag && _followEnabled) {
       _followEnabled = false;
     }
@@ -1680,7 +1680,7 @@ class PlotViewModel extends BaseViewModel {
       _saveViewport();
     }
     viewport = _limitXRange(newViewport).copy();
-    viewport.setOffsetChannelCount(offsetChannelCount);
+    viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
     if (!fromDrag) {
       _loadWindowForViewport();
     }

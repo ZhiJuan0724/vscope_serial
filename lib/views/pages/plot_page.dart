@@ -17,6 +17,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/zobow_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_viewport.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/plot_status_bar.dart';
 
@@ -1164,114 +1165,129 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
     final activeChannelCount =
         vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    final offsetChannelCount =
-        vm.channels
-            .take(activeChannelCount)
-            .where((c) => c.visible && c.offsetEnabled)
-            .length;
-    vm.viewport.setOffsetChannelCount(offsetChannelCount);
-
-    return Stack(
-      children: [
-        PlotGestureHandler(
-          viewport: vm.viewport,
-          vCursorEnabled: vm.vCursorEnabled,
-          boxZoomEnabled: vm.boxZoomEnabled,
-          refreshFps: vm.refreshFps,
-          plotFontSizeDelta: vm.plotFontSizeDelta,
-          channels: vm.channels,
-          activeChannelCount: activeChannelCount,
-          data: vm.dataPoints,
-          observations: vm.observations,
-          onObservationDrag: (index, x) => vm.updateObservation(index, x),
-          onObservationDelete: (index) => vm.removeObservation(index),
-          onViewportChanged:
-              (viewport, {fromDrag = false}) =>
-                  vm.updateViewport(viewport, fromDrag: fromDrag),
-          onDragEnd: vm.saveDragViewport,
-          onCursorChanged: (cursor) {
-            if (cursor != null) {
-              vm.updateFollowCursor(
-                cursor.x,
-                cursor.y ?? 0,
-                cursor.screenPosition ?? Offset.zero,
-              );
-            } else {
-              vm.updateCursor(null);
-            }
-          },
-          // 测量线位置
-          xCursor1: vm.xCursor1,
-          xCursor2: vm.xCursor2,
-          yCursor1: vm.yCursor1,
-          yCursor2: vm.yCursor2,
-          // 测量线拖动回调
-          onXCursor1Drag:
-              vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
-          onXCursor2Drag:
-              vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
-          onYCursor1Drag:
-              vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
-          onYCursor2Drag:
-              vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
-          // 统计范围位置
-          statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
-          statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
-          // 统计范围拖动回调
-          onStatsX1Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
-          onStatsX2Drag: vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
-          // 通道偏移拖动回调
-          onChannelOffsetDrag:
-              (index, yOffset) => vm.setChannelYOffset(index, yOffset),
-          // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
-          onChannelYScaleZoom:
-              (index, scaleDelta) => vm.zoomChannelYScale(index, scaleDelta),
-          child: CustomPaint(
-            painter: PlotPainter(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gridDensity = _parseGridDensity(vm.gridDensity);
+        final offsetAxisColumnWidths =
+            PlotPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
-              data: vm.dataPoints,
-              dataRevision: vm.dataRevision,
-              lodIndex: vm.lodIndex,
               channels: vm.channels,
               activeChannelCount: activeChannelCount,
-              showGrid: vm.showGrid,
-              gridDensity: _parseGridDensity(vm.gridDensity),
-              cursor: vm.cursor,
+              canvasHeight: constraints.maxHeight,
+              gridDensity: gridDensity,
+              plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+            );
+        final renderViewport =
+            vm.viewport.copy()
+              ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+
+        return Stack(
+          children: [
+            PlotGestureHandler(
+              viewport: renderViewport,
+              vCursorEnabled: vm.vCursorEnabled,
+              boxZoomEnabled: vm.boxZoomEnabled,
+              refreshFps: vm.refreshFps,
+              plotFontSizeDelta: vm.plotFontSizeDelta,
+              channels: vm.channels,
+              activeChannelCount: activeChannelCount,
+              data: vm.dataPoints,
+              observations: vm.observations,
+              onObservationDrag: (index, x) => vm.updateObservation(index, x),
+              onObservationDelete: (index) => vm.removeObservation(index),
+              onViewportChanged:
+                  (viewport, {fromDrag = false}) =>
+                      vm.updateViewport(viewport, fromDrag: fromDrag),
+              onDragEnd: vm.saveDragViewport,
+              onCursorChanged: (cursor) {
+                if (cursor != null) {
+                  vm.updateFollowCursor(
+                    cursor.x,
+                    cursor.y ?? 0,
+                    cursor.screenPosition ?? Offset.zero,
+                  );
+                } else {
+                  vm.updateCursor(null);
+                }
+              },
+              // 测量线位置
               xCursor1: vm.xCursor1,
               xCursor2: vm.xCursor2,
               yCursor1: vm.yCursor1,
               yCursor2: vm.yCursor2,
-              statsEnabled: vm.statsEnabled,
-              statsRangeEnabled: vm.statsRangeEnabled,
-              statsX1: vm.statsX1,
-              statsX2: vm.statsX2,
-              snapHighlights: vm.snapHighlights,
-              snapHighlightEnabled: vm.snapHighlightEnabled,
-              snapHighlightDiameter: vm.snapHighlightDiameter,
-              antiAliasEnabled: vm.antiAliasEnabled,
-              plotFontSizeDelta: vm.plotFontSizeDelta,
-            ),
-            size: Size.infinite,
-          ),
-        ),
-        Positioned.fill(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Stack(
-                children: _buildObservationWidgets(
-                  context,
-                  vm,
-                  Size(constraints.maxWidth, constraints.maxHeight),
+              // 测量线拖动回调
+              onXCursor1Drag:
+                  vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
+              onXCursor2Drag:
+                  vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
+              onYCursor1Drag:
+                  vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
+              onYCursor2Drag:
+                  vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
+              // 统计范围位置
+              statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
+              statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
+              // 统计范围拖动回调
+              onStatsX1Drag:
+                  vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
+              onStatsX2Drag:
+                  vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+              // 通道偏移拖动回调
+              onChannelOffsetDrag:
+                  (index, yOffset) => vm.setChannelYOffset(index, yOffset),
+              // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
+              onChannelYScaleZoom:
+                  (index, scaleDelta) =>
+                      vm.zoomChannelYScale(index, scaleDelta),
+              child: CustomPaint(
+                painter: PlotPainter(
+                  viewport: renderViewport,
+                  data: vm.dataPoints,
+                  dataRevision: vm.dataRevision,
+                  lodIndex: vm.lodIndex,
+                  channels: vm.channels,
+                  activeChannelCount: activeChannelCount,
+                  showGrid: vm.showGrid,
+                  gridDensity: gridDensity,
+                  cursor: vm.cursor,
+                  xCursor1: vm.xCursor1,
+                  xCursor2: vm.xCursor2,
+                  yCursor1: vm.yCursor1,
+                  yCursor2: vm.yCursor2,
+                  statsEnabled: vm.statsEnabled,
+                  statsRangeEnabled: vm.statsRangeEnabled,
+                  statsX1: vm.statsX1,
+                  statsX2: vm.statsX2,
+                  snapHighlights: vm.snapHighlights,
+                  snapHighlightEnabled: vm.snapHighlightEnabled,
+                  snapHighlightDiameter: vm.snapHighlightDiameter,
+                  antiAliasEnabled: vm.antiAliasEnabled,
+                  plotFontSizeDelta: vm.plotFontSizeDelta,
                 ),
-              );
-            },
-          ),
-        ),
-        // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
-        if (vm.measurementText != null || vm.statsText != null)
-          _buildCombinedInfoBox(context, vm),
-        if (_legendVisible) _buildLegendBox(vm),
-      ],
+                size: Size.infinite,
+              ),
+            ),
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    children: _buildObservationWidgets(
+                      context,
+                      vm,
+                      renderViewport,
+                      Size(constraints.maxWidth, constraints.maxHeight),
+                    ),
+                  );
+                },
+              ),
+            ),
+            // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
+            if (vm.measurementText != null || vm.statsText != null)
+              _buildCombinedInfoBox(context, vm),
+            if (_legendVisible) _buildLegendBox(vm),
+          ],
+        );
+      },
     );
   }
 
@@ -1282,10 +1298,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   List<Widget> _buildObservationWidgets(
     BuildContext context,
     PlotViewModel vm,
+    PlotViewport viewport,
     Size size,
   ) {
     final widgets = <Widget>[];
-    final viewport = vm.viewport;
     final plotTop = viewport.marginTop;
     final plotBottom = size.height - viewport.marginBottom;
     final plotLeft = viewport.marginLeft;

@@ -153,6 +153,82 @@ class PlotPainter extends CustomPainter {
     return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
+  static double _fontSizeFor(double base, double delta) {
+    return (base + delta).clamp(6.0, 24.0).toDouble();
+  }
+
+  static List<double> calculateOffsetAxisColumnWidths({
+    required PlotViewport viewport,
+    required List<ChannelConfig> channels,
+    required int activeChannelCount,
+    required double canvasHeight,
+    required GridDensity gridDensity,
+    required double plotFontSizeDelta,
+  }) {
+    final plotH = viewport.plotHeight(canvasHeight);
+    if (plotH <= 0) return const [];
+
+    final yGridCount = _calculateGridCountFor(plotH, 60, gridDensity);
+    final roughStep = viewport.yRange / yGridCount;
+    final step = _niceNumberFor(roughStep, true);
+    if (step <= 0) return const [];
+
+    final textStyle = TextStyle(
+      fontSize: _fontSizeFor(11, plotFontSizeDelta),
+      fontFamily: 'SarasaUiSC',
+    );
+    final zeroTextStyle = textStyle.copyWith(fontWeight: FontWeight.bold);
+    final widths = <double>[];
+
+    for (final ch in channels.take(activeChannelCount)) {
+      if (!ch.visible || !ch.offsetEnabled) continue;
+
+      var maxTextWidth = 0.0;
+      final startValue = (viewport.yMin / step).floor() * step;
+      final drawnValues = <double>{};
+
+      for (
+        double value = startValue;
+        value <= viewport.yMax + step * 0.5;
+        value += step
+      ) {
+        if (value < viewport.yMin || value > viewport.yMax) continue;
+        final y = viewport.dataToScreenY(value, canvasHeight);
+        if (y < viewport.marginTop || y > viewport.marginTop + plotH) {
+          continue;
+        }
+        drawnValues.add(value);
+        final originalValue = (value - ch.yOffset) / ch.yScale;
+        maxTextWidth = math.max(
+          maxTextWidth,
+          _measureRawTextWidth(
+            _formatNumberFor(originalValue, true),
+            textStyle,
+          ),
+        );
+      }
+
+      final zeroScreenY = viewport.dataToScreenY(0, canvasHeight);
+      if (zeroScreenY >= viewport.marginTop &&
+          zeroScreenY <= viewport.marginTop + plotH &&
+          !drawnValues.contains(0.0)) {
+        final originalZeroValue = (0.0 - ch.yOffset) / ch.yScale;
+        maxTextWidth = math.max(
+          maxTextWidth,
+          _measureRawTextWidth(
+            _formatNumberFor(originalZeroValue, true),
+            zeroTextStyle,
+          ),
+        );
+      }
+
+      const tickAndPadding = 14.0;
+      widths.add(maxTextWidth + tickAndPadding);
+    }
+
+    return widths;
+  }
+
   /// 判断两个视口是否相等（用于重绘判断）
   bool _viewportEquals(PlotViewport a, PlotViewport b) {
     return a.xMin == b.xMin &&
@@ -270,6 +346,28 @@ class PlotPainter extends CustomPainter {
     final densitySpacing = _getGridSpacing();
     final effectiveSpacing =
         minSpacing > densitySpacing ? minSpacing : densitySpacing;
+    return _calculateGridCountWithSpacing(length, effectiveSpacing);
+  }
+
+  static int _calculateGridCountFor(
+    double length,
+    double minSpacing,
+    GridDensity gridDensity,
+  ) {
+    final densitySpacing = switch (gridDensity) {
+      GridDensity.sparse => 160.0,
+      GridDensity.normal => 80.0,
+      GridDensity.dense => 40.0,
+    };
+    final effectiveSpacing =
+        minSpacing > densitySpacing ? minSpacing : densitySpacing;
+    return _calculateGridCountWithSpacing(length, effectiveSpacing);
+  }
+
+  static int _calculateGridCountWithSpacing(
+    double length,
+    double effectiveSpacing,
+  ) {
     final count = (length / effectiveSpacing).floor();
     if (count < 2) return 2;
     if (count > 50) return 50; // 密集模式上限更高
@@ -675,7 +773,7 @@ class PlotPainter extends CustomPainter {
     final sx = viewport.dataToScreenX(x, size.width);
     final sy = viewport.dataToScreenY(y, size.height);
     final plotLeft = PlotViewport().marginLeft;
-    final plotRight = size.width - PlotViewport().marginRight;
+    final plotRight = size.width - viewport.marginRight;
     final plotTop = PlotViewport().marginTop;
     final plotBottom = size.height - PlotViewport().marginBottom;
     if (sx < plotLeft || sx > plotRight || sy < plotTop || sy > plotBottom) {
@@ -720,7 +818,7 @@ class PlotPainter extends CustomPainter {
         size.height - PlotViewport().marginBottom,
       ),
       Offset(
-        size.width - PlotViewport().marginRight,
+        size.width - viewport.marginRight,
         size.height - PlotViewport().marginBottom,
       ),
       axisPaint,
@@ -859,6 +957,7 @@ class PlotPainter extends CustomPainter {
       }
     }
 
+    var axisX = right;
     for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
       final ch = offsetChannels[colIndex];
 
@@ -925,9 +1024,17 @@ class PlotPainter extends CustomPainter {
       }
 
       // 绘制右侧独立 Y 轴刻度（多列，每列向右偏移）—— 始终绘制，不依赖标签可见性
-      final axisX = right + colIndex * PlotViewport.offsetAxisColumnWidth;
       _drawChannelYAxis(canvas, size, ch, axisX);
+      axisX += _offsetAxisColumnWidth(colIndex);
     }
+  }
+
+  double _offsetAxisColumnWidth(int colIndex) {
+    final widths = viewport.offsetAxisColumnWidths;
+    if (colIndex >= 0 && colIndex < widths.length) {
+      return widths[colIndex];
+    }
+    return PlotViewport.minOffsetAxisColumnWidth;
   }
 
   /// 绘制单个通道的独立 Y 轴刻度
@@ -986,13 +1093,7 @@ class PlotPainter extends CustomPainter {
       canvas.drawLine(Offset(axisX, y), Offset(axisX + 5, y), tickPaint);
 
       // 刻度值
-      _drawText(
-        canvas,
-        _formatNumber(originalValue, true),
-        Offset(axisX + 7, y),
-        textStyle,
-        alignVerticalCenter: true,
-      );
+      _drawOffsetAxisText(canvas, originalValue, axisX, y, textStyle);
     }
 
     // 常驻 Y=0 刻度（强制绘制，即使 0 不在 nice number 序列中）
@@ -1019,12 +1120,13 @@ class PlotPainter extends CustomPainter {
         fontFamily: 'SarasaUiSC',
         fontWeight: FontWeight.bold,
       );
-      _drawText(
+      _drawOffsetAxisText(
         canvas,
-        _formatNumber(originalZeroValue, true),
-        Offset(axisX + 10, zeroScreenY),
+        originalZeroValue,
+        axisX,
+        zeroScreenY,
         zeroTextStyle,
-        alignVerticalCenter: true,
+        tickLength: 8,
       );
     }
 
@@ -1230,6 +1332,27 @@ class PlotPainter extends CustomPainter {
     textPainter.paint(canvas, Offset(dx, dy));
   }
 
+  void _drawOffsetAxisText(
+    Canvas canvas,
+    double value,
+    double axisX,
+    double y,
+    TextStyle style, {
+    double tickLength = 5,
+  }) {
+    const textGap = 2.0;
+    final text = _formatNumber(value, true);
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(
+      canvas,
+      Offset(axisX + tickLength + textGap, y - textPainter.height / 2),
+    );
+  }
+
   double _measureTextWidth(String text, TextStyle style) {
     final textPainter = TextPainter(
       text: TextSpan(text: text, style: style),
@@ -1238,8 +1361,20 @@ class PlotPainter extends CustomPainter {
     return textPainter.width + 12;
   }
 
+  static double _measureRawTextWidth(String text, TextStyle style) {
+    final textPainter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return textPainter.width;
+  }
+
   /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
   double _niceNumber(double value, bool round) {
+    return _niceNumberFor(value, round);
+  }
+
+  static double _niceNumberFor(double value, bool round) {
     if (value <= 0) return 0;
     final exponent = (math.log(value) / math.ln10).floor();
     final fraction = value / math.pow(10, exponent);
@@ -1274,6 +1409,10 @@ class PlotPainter extends CustomPainter {
   /// - X 轴：始终显示整数
   /// - Y 轴：绝对值>1000或接近整数时显示整数，否则保留合适精度
   String _formatNumber(double value, bool isY) {
+    return _formatNumberFor(value, isY);
+  }
+
+  static String _formatNumberFor(double value, bool isY) {
     // X 轴：全局不显示小数
     if (!isY) {
       return value.toInt().toString();
@@ -1348,7 +1487,7 @@ class PlotPainter extends CustomPainter {
     if (x1 != null) {
       final sx1 = viewport.dataToScreenX(x1, size.width);
       if (sx1 >= PlotViewport().marginLeft &&
-          sx1 <= size.width - PlotViewport().marginRight) {
+          sx1 <= size.width - viewport.marginRight) {
         canvas.drawLine(
           Offset(sx1, PlotViewport().marginTop),
           Offset(sx1, PlotViewport().marginTop + plotH),
@@ -1368,7 +1507,7 @@ class PlotPainter extends CustomPainter {
     if (x2 != null) {
       final sx2 = viewport.dataToScreenX(x2, size.width);
       if (sx2 >= PlotViewport().marginLeft &&
-          sx2 <= size.width - PlotViewport().marginRight) {
+          sx2 <= size.width - viewport.marginRight) {
         canvas.drawLine(
           Offset(sx2, PlotViewport().marginTop),
           Offset(sx2, PlotViewport().marginTop + plotH),
@@ -1537,16 +1676,10 @@ class PlotPainter extends CustomPainter {
   void _drawStatsRange(Canvas canvas, Size size) {
     final sx1 = viewport
         .dataToScreenX(statsX1!, size.width)
-        .clamp(
-          PlotViewport().marginLeft,
-          size.width - PlotViewport().marginRight,
-        );
+        .clamp(PlotViewport().marginLeft, size.width - viewport.marginRight);
     final sx2 = viewport
         .dataToScreenX(statsX2!, size.width)
-        .clamp(
-          PlotViewport().marginLeft,
-          size.width - PlotViewport().marginRight,
-        );
+        .clamp(PlotViewport().marginLeft, size.width - viewport.marginRight);
 
     if ((sx2 - sx1).abs() < 2) return;
 
