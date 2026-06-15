@@ -1,5 +1,14 @@
 import 'package:flutter/services.dart';
 
+enum ChangelogLineType { heading, listItem, text }
+
+class ChangelogLine {
+  final ChangelogLineType type;
+  final String text;
+
+  const ChangelogLine({required this.type, required this.text});
+}
+
 class ChangelogEntry {
   final String version;
   final String date;
@@ -66,6 +75,28 @@ class ChangelogService {
 
   static String normalizeVersion(String value) {
     return value.trim().replaceFirst(RegExp(r'^[vV]'), '');
+  }
+
+  static List<ChangelogLine> parseBody(String body) {
+    return body
+        .split('\n')
+        .map((line) {
+          final trimmed = line.trim();
+          if (trimmed.startsWith('### ')) {
+            return ChangelogLine(
+              type: ChangelogLineType.heading,
+              text: trimmed.substring(4).trim(),
+            );
+          }
+          if (trimmed.startsWith('- ')) {
+            return ChangelogLine(
+              type: ChangelogLineType.listItem,
+              text: trimmed.substring(2).trim(),
+            );
+          }
+          return ChangelogLine(type: ChangelogLineType.text, text: trimmed);
+        })
+        .toList(growable: false);
   }
 
   static String _ensureVPrefix(String value) {

@@ -290,18 +290,62 @@ class _ChangelogPreview extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        entry.body,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
+                      _ChangelogBody(body: entry.body),
                     ],
                   ),
                 );
               }).toList(),
         ),
+      ),
+    );
+  }
+}
+
+class _ChangelogBody extends StatelessWidget {
+  final String body;
+
+  const _ChangelogBody({required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    final lines = ChangelogService.parseBody(body);
+
+    return SelectionArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: lines
+            .map((line) {
+              if (line.text.isEmpty) {
+                return const SizedBox(height: 4);
+              }
+
+              switch (line.type) {
+                case ChangelogLineType.heading:
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 3, bottom: 2),
+                    child: Text(
+                      line.text,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: color,
+                      ),
+                    ),
+                  );
+                case ChangelogLineType.listItem:
+                  return Text(
+                    '• ${line.text}',
+                    style: TextStyle(fontSize: 12, color: color),
+                  );
+                case ChangelogLineType.text:
+                  return Text(
+                    line.text,
+                    style: TextStyle(fontSize: 12, color: color),
+                  );
+              }
+            })
+            .toList(growable: false),
       ),
     );
   }

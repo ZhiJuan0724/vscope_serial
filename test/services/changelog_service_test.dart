@@ -31,5 +31,22 @@ void main() {
       expect(ChangelogService.normalizeVersion('v1.0.4'), '1.0.4');
       expect(ChangelogService.normalizeVersion('1.0.4'), '1.0.4');
     });
+
+    test('parses third-level headings and list items in entry body', () {
+      final lines = ChangelogService.parseBody('''
+### Added
+- New feature
+
+Plain text
+''');
+
+      expect(lines[0].type, ChangelogLineType.heading);
+      expect(lines[0].text, 'Added');
+      expect(lines[1].type, ChangelogLineType.listItem);
+      expect(lines[1].text, 'New feature');
+      expect(lines[2].type, ChangelogLineType.text);
+      expect(lines[2].text, isEmpty);
+      expect(lines[3].text, 'Plain text');
+    });
   });
 }
