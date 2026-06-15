@@ -206,7 +206,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           contentPadding: EdgeInsets.zero,
                           dense: true,
                           title: const Text('关闭提示信息'),
-                          subtitle: const Text('开启后不再显示应用内临时提示，后续全局设置也会放在这里。'),
+                          subtitle: const Text('开启后不再显示应用内临时提示'),
                           value: disableNotifications,
                           onChanged: (value) {
                             setDialogState(() => disableNotifications = value);

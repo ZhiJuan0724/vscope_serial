@@ -23,6 +23,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
   int get timeWindowUs => serialService.timeWindowUs;
+  int get displayLineLimit => serialService.displayLineLimit;
 
   /// 设置随机数据源开关
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在数据收发页面
@@ -97,6 +98,10 @@ class RawDataViewModel extends BaseViewModel {
 
   void setTimeWindowUs(int us) {
     serialService.setTimeWindowUs(us);
+  }
+
+  void setDisplayLineLimit(int value) {
+    serialService.setDisplayLineLimit(value);
   }
 
   void clearData() => serialService.clearReceivedData();

@@ -109,6 +109,10 @@ class AppSettings {
   /// 强制关闭应用内临时提示信息。
   bool disableNotifications = false;
 
+  // ========== 原始数据设置 ==========
+  /// 数据收发页面保留的最大显示行数。
+  int rawDataDisplayLineLimit = 10000;
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -192,6 +196,10 @@ class AppSettings {
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
       autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
       disableNotifications = json['disableNotifications'] as bool? ?? false;
+      rawDataDisplayLineLimit =
+          ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
+              .clamp(100, 100000)
+              .toInt();
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -241,6 +249,7 @@ class AppSettings {
       'zobowPresetViewMode': zobowPresetViewMode,
       'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
       'disableNotifications': disableNotifications,
+      'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
 
       // 视口设置
       'xMin': xMin,

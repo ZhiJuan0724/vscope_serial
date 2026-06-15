@@ -15,6 +15,7 @@ void main() {
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
       service.sendHex = false;
+      service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
     });
 
     tearDown(() {
@@ -22,6 +23,7 @@ void main() {
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
       service.sendHex = false;
+      service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
     });
 
     test(
@@ -111,6 +113,19 @@ void main() {
       );
 
       expect(service.receivedLines.single, '[绘图发送] r 1 2');
+    });
+
+    test('display line limit defaults to 10000 and removes oldest lines', () {
+      expect(SerialService.defaultDisplayLineLimit, 10000);
+      service.setDisplayLineLimit(100);
+
+      for (var i = 0; i < 105; i++) {
+        service.debugAddRawReceiveData(_utf8('line$i\n'));
+      }
+
+      expect(service.receivedLines, hasLength(100));
+      expect(service.receivedLines.first, 'line5');
+      expect(service.receivedLines.last, 'line104');
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/models/parser_config.dart';
 import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/app_info_dialog.dart';
@@ -63,7 +64,8 @@ class StatusBar extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (plotVm.useRandomSource) ...[
+                    if (plotVm.useRandomSource &&
+                        plotVm.parserType == ParserType.fireWater) ...[
                       const SizedBox(width: 8),
                       Icon(
                         Icons.auto_graph,

@@ -77,8 +77,11 @@ class SerialService extends ChangeNotifier {
   int? _pendingSendLineIndex;
   String _pendingSendLinePrefix = '';
   static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
-  // 虚拟滚动窗口：最多保留500行在内存中用于显示，超出时按FIFO丢弃
-  static const int _maxDisplayLines = 500;
+  static const int minDisplayLineLimit = 100;
+  static const int defaultDisplayLineLimit = 10000;
+  static const int maxDisplayLineLimit = 100000;
+  int _displayLineLimit = defaultDisplayLineLimit;
+  int get displayLineLimit => _displayLineLimit;
 
   // 显示选项
   bool receiveHex = false;
@@ -114,6 +117,10 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     config = settings.saveToSerialConfig();
     useRandomSource = settings.useRandomSource;
+    _displayLineLimit = settings.rawDataDisplayLineLimit.clamp(
+      minDisplayLineLimit,
+      maxDisplayLineLimit,
+    );
   }
 
   /// 保存配置到 AppSettings
@@ -610,12 +617,24 @@ class SerialService extends ChangeNotifier {
       _receivedTextBytes -= removed.length * 2;
       _shiftPendingLineIndexesAfterRemove();
     }
-    // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
-    while (receivedLines.length > _maxDisplayLines) {
+    // 显示行数限制，超出时按 FIFO 丢弃最早内容。
+    while (receivedLines.length > _displayLineLimit) {
       final removed = receivedLines.removeAt(0);
       _receivedTextBytes -= removed.length * 2;
       _shiftPendingLineIndexesAfterRemove();
     }
+  }
+
+  void setDisplayLineLimit(int value) {
+    final next = value.clamp(minDisplayLineLimit, maxDisplayLineLimit).toInt();
+    if (next == _displayLineLimit) return;
+
+    _displayLineLimit = next;
+    _trimDisplayLines();
+    final settings = AppSettings();
+    settings.rawDataDisplayLineLimit = next;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
   }
 
   void _shiftPendingLineIndexesAfterRemove() {

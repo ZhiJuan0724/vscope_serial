@@ -19,6 +19,8 @@ class RawDataPage extends StatefulWidget {
 class _RawDataPageState extends State<RawDataPage> {
   final TextEditingController _sendController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  bool _autoScrollScheduled = false;
+  String _receiveText = '';
   double _splitRatio = 0.65;
 
   @override
@@ -28,18 +30,22 @@ class _RawDataPageState extends State<RawDataPage> {
     super.dispose();
   }
 
-  void _scrollToBottom(RawDataViewModel vm) {
-    if (vm.autoScroll && _scrollController.hasClients) {
-      Future.delayed(const Duration(milliseconds: 50), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      });
+  void _syncReceiveText(RawDataViewModel vm) {
+    final text = vm.receivedLines.join('\n');
+    if (_receiveText != text) {
+      _receiveText = text;
     }
+  }
+
+  void _scrollToBottom(RawDataViewModel vm) {
+    if (!vm.autoScroll || _autoScrollScheduled) return;
+
+    _autoScrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoScrollScheduled = false;
+      if (!mounted || !vm.autoScroll || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    });
   }
 
   int _getHexByteCount(String text) {
@@ -55,6 +61,7 @@ class _RawDataPageState extends State<RawDataPage> {
       create: (_) => RawDataViewModel(service),
       child: Consumer<RawDataViewModel>(
         builder: (context, vm, child) {
+          _syncReceiveText(vm);
           _scrollToBottom(vm);
           return Column(
             children: [
@@ -281,38 +288,23 @@ class _RawDataPageState extends State<RawDataPage> {
               borderRadius: BorderRadius.circular(4.0),
             ),
             child: Stack(
+              fit: StackFit.expand,
               children: [
                 // 数据列表或提示文字
                 vm.receivedLines.isNotEmpty
                     ? SingleChildScrollView(
+                      key: const Key('rawDataReceiveTextField'),
                       controller: _scrollController,
                       child: SizedBox(
                         width: double.infinity,
-                        child: SelectableText.rich(
-                          TextSpan(
-                            children:
-                                vm.receivedLines.asMap().entries.map((entry) {
-                                  final index = entry.key;
-                                  final line = entry.value;
-                                  final bgColor =
-                                      index.isEven
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .surface
-                                              .withValues(alpha: 0.5)
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .surfaceContainerHighest
-                                              .withValues(alpha: 0.3);
-                                  return TextSpan(
-                                    text: '$line\n',
-                                    style: TextStyle(
-                                      fontFamily: 'SarasaUiSC',
-                                      fontSize: 13,
-                                      backgroundColor: bgColor,
-                                    ),
-                                  );
-                                }).toList(),
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 28),
+                          child: SelectableText(
+                            _receiveText,
+                            style: const TextStyle(
+                              fontFamily: 'SarasaUiSC',
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ),
@@ -725,7 +717,12 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   void _showAdvancedSettingsDialog(BuildContext context, RawDataViewModel vm) {
-    final controller = TextEditingController(text: vm.timeWindowUs.toString());
+    final timeWindowController = TextEditingController(
+      text: vm.timeWindowUs.toString(),
+    );
+    final displayLineLimitController = TextEditingController(
+      text: vm.displayLineLimit.toString(),
+    );
     showDialog(
       context: context,
       builder:
@@ -741,7 +738,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 const Text('HEX分包时间 (μs):'),
                 const SizedBox(height: 8),
                 TextField(
-                  controller: controller,
+                  controller: timeWindowController,
                   decoration: const InputDecoration(
                     hintText: '10 ~ 10000',
                     border: OutlineInputBorder(),
@@ -757,6 +754,27 @@ class _RawDataPageState extends State<RawDataPage> {
                   '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
+                const SizedBox(height: 20),
+                const Text('接收区最大显示行数:'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: displayLineLimitController,
+                  decoration: const InputDecoration(
+                    hintText: '100 ~ 100000',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '默认 10000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
               ],
             ),
             actions: [
@@ -766,14 +784,25 @@ class _RawDataPageState extends State<RawDataPage> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  final us = int.tryParse(controller.text);
-                  if (us != null && us >= 10 && us <= 10000) {
-                    vm.setTimeWindowUs(us);
-                    Navigator.of(context).pop();
-                    _showSnackBar(context, '分包时间已设置为 $us μs');
-                  } else {
+                  final us = int.tryParse(timeWindowController.text);
+                  final displayLineLimit = int.tryParse(
+                    displayLineLimitController.text,
+                  );
+                  if (us == null || us < 10 || us > 10000) {
                     _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
+                    return;
                   }
+                  if (displayLineLimit == null ||
+                      displayLineLimit < SerialService.minDisplayLineLimit ||
+                      displayLineLimit > SerialService.maxDisplayLineLimit) {
+                    _showSnackBar(context, '显示行数请输入 100 ~ 100000 之间的数值');
+                    return;
+                  }
+
+                  vm.setTimeWindowUs(us);
+                  vm.setDisplayLineLimit(displayLineLimit);
+                  Navigator.of(context).pop();
+                  _showSnackBar(context, '高级设置已保存，接收区最多显示 $displayLineLimit 行');
                 },
                 child: const Text('确定'),
               ),
