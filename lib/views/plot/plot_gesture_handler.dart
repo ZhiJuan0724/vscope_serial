@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -172,6 +174,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 是否正在框选
   bool _isBoxSelecting = false;
 
+  /// 是否正在通过 Shift + 左右拖动缩放 X 轴
+  bool _isShiftZoomingX = false;
+
   /// 上次指针位置（用于计算拖拽 delta）
   Offset? _lastPosition;
 
@@ -188,6 +193,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   ///
   /// 避免在快速拖动时依赖 widget.viewport 的实时更新。
   PlotViewport? _dragViewport;
+
+  /// Shift 拖动开始时鼠标对应的 X 轴数据坐标
+  double? _shiftZoomCenterX;
 
   /// 上次通知 UI 重绘的视口（用于节流）
   PlotViewport? _lastNotifiedViewport;
@@ -528,7 +536,23 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       return;
     }
 
-    if (widget.boxZoomEnabled) {
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      final size = context.size ?? Size.zero;
+      if (size.isEmpty) return;
+
+      final centerScreenX = event.localPosition.dx.clamp(
+        widget.viewport.marginLeft,
+        size.width - widget.viewport.marginRight,
+      );
+      _isDragging = true;
+      _isShiftZoomingX = true;
+      _lastPosition = event.localPosition;
+      _shiftZoomCenterX = widget.viewport.screenToDataX(
+        centerScreenX,
+        size.width,
+      );
+      _initializeDragViewport();
+    } else if (widget.boxZoomEnabled) {
       _isBoxSelecting = true;
       _boxStart = event.localPosition;
       _boxEnd = event.localPosition;
@@ -539,15 +563,19 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     } else {
       _isDragging = true;
       _lastPosition = event.localPosition;
-      _dragViewport = widget.viewport.copy();
-      _lastNotifiedViewport = _dragViewport!.copy();
-      _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-      _targetFps = widget.refreshFps.clamp(30, 60);
+      _initializeDragViewport();
       AppLogger().trace(
         '平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}, targetFps=$_targetFps',
         category: 'GESTURE',
       );
     }
+  }
+
+  void _initializeDragViewport() {
+    _dragViewport = widget.viewport.copy();
+    _lastNotifiedViewport = _dragViewport!.copy();
+    _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
+    _targetFps = widget.refreshFps.clamp(30, 60);
   }
 
   /// 检测点击位置是否在测量标签上
@@ -778,9 +806,16 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final dy = event.localPosition.dy - _lastPosition!.dy;
       _lastPosition = event.localPosition;
 
-      // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
-      _dragViewport = _dragViewport!.panX(dx, size.width);
-      _dragViewport = _dragViewport!.panY(dy, size.height);
+      if (_isShiftZoomingX) {
+        // 右拖时 factor < 1（放大），左拖时 factor > 1（缩小）。
+        const zoomSensitivity = 240.0;
+        final factor = math.exp(-dx / zoomSensitivity);
+        _dragViewport = _dragViewport!.zoomX(factor, _shiftZoomCenterX!);
+      } else {
+        // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
+        _dragViewport = _dragViewport!.panX(dx, size.width);
+        _dragViewport = _dragViewport!.panY(dy, size.height);
+      }
 
       // 节流：根据目标帧率计算间隔，与高级设置同步
       final notifyIntervalMs = (1000 / _targetFps).round();
@@ -966,11 +1001,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     }
     _isDragging = false;
     _isBoxSelecting = false;
+    _isShiftZoomingX = false;
     _lastPosition = null;
     _boxStart = null;
     _boxEnd = null;
     _dragTarget = _DragTarget.none;
     _dragViewport = null;
+    _shiftZoomCenterX = null;
     _lastNotifiedViewport = null;
     if (mounted) setState(() {});
   }
