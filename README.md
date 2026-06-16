@@ -93,6 +93,7 @@ python tools/build_release.py
 
 - 显示应用名称、版本、构建时间和当前/上一版本说明。
 - 支持手动检查更新，并可开启启动时自动检查更新。
+- 发现 Windows 新版本后可下载并校验 Release 更新包，确认重启后由外置更新器覆盖安装；失败时自动回滚。
 - 可全局关闭应用内临时提示信息。
 
 ## 测试工具
@@ -179,6 +180,7 @@ flutter test test/parser/just_float_parser_test.dart
 - PR 到 `main` 会运行静态分析、测试和 Windows Release 构建。
 - 手动构建可通过 GitHub Actions `workflow_dispatch` 触发。
 - 推送 `v*` tag 会构建发布包并创建 GitHub Release。
+- Release 同时包含 Windows ZIP 和 `update-manifest-vX.Y.Z.json`；手动搬运到 Gitee 时需保持两个附件完全一致。
 
 ```bash
 git tag v1.0.5

@@ -44,6 +44,24 @@ void main() {
       expect(result.latestRelease?.source, 'GitHub');
     });
 
+    test('parses release assets used by automatic updates', () {
+      final release = UpdateChecker.parseReleaseJson({
+        'tag_name': 'v1.2.3',
+        'assets': [
+          {
+            'name': 'vscope_serial-windows-v1.2.3.zip',
+            'size': 123,
+            'browser_download_url': 'https://example.com/package.zip',
+            'digest': 'sha256:abc',
+          },
+        ],
+      }, source: 'GitHub');
+
+      expect(release.assets, hasLength(1));
+      expect(release.assets.single.size, 123);
+      expect(release.assets.single.digest, 'sha256:abc');
+    });
+
     test('falls back to Gitee when GitHub request fails', () async {
       final currentVersion = await AppInfo.version();
       var callCount = 0;

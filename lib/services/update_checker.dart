@@ -3,17 +3,33 @@ import 'dart:io';
 
 import 'app_info.dart';
 
+class ReleaseAsset {
+  final String name;
+  final int size;
+  final String downloadUrl;
+  final String? digest;
+
+  const ReleaseAsset({
+    required this.name,
+    required this.size,
+    required this.downloadUrl,
+    this.digest,
+  });
+}
+
 class ReleaseInfo {
   final String tagName;
   final String htmlUrl;
   final String source;
   final String body;
+  final List<ReleaseAsset> assets;
 
   const ReleaseInfo({
     required this.tagName,
     required this.htmlUrl,
     required this.source,
     required this.body,
+    this.assets = const [],
   });
 }
 
@@ -75,7 +91,7 @@ class UpdateChecker {
       return UpdateCheckResult.failed('无法连接 GitHub 或 Gitee 检查更新');
     }
 
-    if (_compareVersions(release.tagName, currentVersion) > 0) {
+    if (compareVersions(release.tagName, currentVersion) > 0) {
       return UpdateCheckResult.available(release);
     }
     return UpdateCheckResult.latest(release);
@@ -84,7 +100,7 @@ class UpdateChecker {
   Future<ReleaseInfo?> _tryFetchLatestRelease() async {
     try {
       final json = await _fetchJson(Uri.parse(_githubLatestReleaseUrl));
-      return _parseRelease(
+      return parseReleaseJson(
         json,
         source: 'GitHub',
         fallbackPage: _githubReleasePage,
@@ -92,7 +108,7 @@ class UpdateChecker {
     } catch (_) {
       try {
         final json = await _fetchJson(Uri.parse(_giteeLatestReleaseUrl));
-        return _parseRelease(
+        return parseReleaseJson(
           json,
           source: 'Gitee',
           fallbackPage: _giteeReleasePage,
@@ -103,22 +119,47 @@ class UpdateChecker {
     }
   }
 
-  static ReleaseInfo _parseRelease(
+  static ReleaseInfo parseReleaseJson(
     Map<String, dynamic> json, {
     required String source,
-    required String fallbackPage,
+    String? fallbackPage,
   }) {
     final tagName = (json['tag_name'] ?? json['tagName'] ?? '').toString();
     final htmlUrl = (json['html_url'] ?? json['htmlUrl'] ?? '').toString();
     final body = (json['body'] ?? '').toString();
-    if (tagName.isEmpty) {
-      throw const FormatException('release tag_name is empty');
+    final assets = (json['assets'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (asset) => ReleaseAsset(
+            name: (asset['name'] ?? '').toString(),
+            size: (asset['size'] as num?)?.toInt() ?? 0,
+            downloadUrl:
+                (asset['browser_download_url'] ??
+                        asset['browserDownloadUrl'] ??
+                        '')
+                    .toString(),
+            digest: asset['digest']?.toString(),
+          ),
+        )
+        .where((asset) => asset.name.isNotEmpty && asset.downloadUrl.isNotEmpty)
+        .toList(growable: false);
+    if (!RegExp(r'^v\d+\.\d+\.\d+$', caseSensitive: false).hasMatch(tagName)) {
+      throw const FormatException('release tag_name is not a stable version');
+    }
+    if (json['draft'] == true || json['prerelease'] == true) {
+      throw const FormatException('draft or prerelease is not supported');
     }
     return ReleaseInfo(
       tagName: tagName,
-      htmlUrl: htmlUrl.isNotEmpty ? htmlUrl : '$fallbackPage/tag/$tagName',
+      htmlUrl:
+          htmlUrl.isNotEmpty
+              ? htmlUrl
+              : fallbackPage == null
+              ? ''
+              : '$fallbackPage/tag/$tagName',
       source: source,
       body: body,
+      assets: assets,
     );
   }
 
@@ -148,7 +189,7 @@ class UpdateChecker {
     }
   }
 
-  static int _compareVersions(String left, String right) {
+  static int compareVersions(String left, String right) {
     final leftParts = _versionParts(left);
     final rightParts = _versionParts(right);
     final length =

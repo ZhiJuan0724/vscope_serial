@@ -75,26 +75,29 @@ jobs:
           if (-not (Test-Path $dll)) {
             throw "Missing native_serial_reader.dll in release bundle"
           }
+          $updater = "build/windows/x64/runner/Release/vscope_updater.exe"
+          if (-not (Test-Path $updater)) {
+            throw "Missing vscope_updater.exe in release bundle"
+          }
 
       - name: Package Windows bundle
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
           if ("${{ github.ref_type }}" -ne "tag") {
-            $version = "${{ github.sha }}"
+            $version = "v0.0.0-${{ github.sha }}"
           }
-          $packageName = "vscope_serial-windows-$version.zip"
-          Compress-Archive `
-            -Path "build/windows/x64/runner/Release/*" `
-            -DestinationPath $packageName `
-            -Force
-          "PACKAGE_NAME=$packageName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          python tools/generate_update_assets.py `
+            --bundle "build/windows/x64/runner/Release" `
+            --tag $version `
+            --output dist
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: vscope_serial-windows
-          path: ${{ env.PACKAGE_NAME }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -146,5 +149,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/update-manifest-*.json
           body_path: release_notes.md

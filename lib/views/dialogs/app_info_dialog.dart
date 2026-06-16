@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../services/app_info.dart';
 import '../../services/app_settings.dart';
 import '../../services/changelog_service.dart';
 import '../../services/update_checker.dart';
+import '../../services/update_service.dart';
 
 Future<void> showAppInfoDialog(BuildContext context) {
   return showDialog(
@@ -22,33 +24,196 @@ Future<void> showUpdateAvailableDialog(
   if (!context.mounted) return;
   return showDialog(
     context: context,
+    barrierDismissible: false,
     builder:
-        (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          title: const Text('发现新版本'),
-          content: Text(
-            '当前版本: $currentVersion\n'
-            '最新版本: ${release.tagName}\n'
-            '来源: ${release.source}\n\n'
-            '${release.body.isEmpty ? '' : '更新内容:\n${release.body}\n\n'}'
-            '当前版本仅提示更新。Windows 程序运行时不能可靠覆盖自身，'
-            '后续如需自动安装，需要外置更新程序在主程序退出后解压并替换文件。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('稍后'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                _openUrl(release.htmlUrl);
-                Navigator.of(context).pop();
-              },
-              child: const Text('打开发布页'),
-            ),
-          ],
+        (context) => _UpdateAvailableDialog(
+          release: release,
+          currentVersion: currentVersion,
         ),
   );
+}
+
+class _UpdateAvailableDialog extends StatefulWidget {
+  final ReleaseInfo release;
+  final String currentVersion;
+
+  const _UpdateAvailableDialog({
+    required this.release,
+    required this.currentVersion,
+  });
+
+  @override
+  State<_UpdateAvailableDialog> createState() => _UpdateAvailableDialogState();
+}
+
+class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
+  static const _canInstall = bool.fromEnvironment('dart.vm.product');
+  final _service = UpdateService();
+  UpdateDownloadProgress? _progress;
+  PreparedUpdate? _prepared;
+  String? _error;
+  bool _downloading = false;
+  bool _installing = false;
+  bool _cancelled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _service.findPreparedUpdate(widget.release).then((value) {
+      if (mounted && value != null) setState(() => _prepared = value);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: const Text('发现新版本'),
+      content: SizedBox(
+        width: 430,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('当前版本: ${widget.currentVersion}'),
+            Text('最新版本: ${widget.release.tagName}'),
+            Text('来源: ${widget.release.source}'),
+            if (widget.release.body.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                '更新内容:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 160),
+                child: SingleChildScrollView(
+                  child: _ChangelogBody(body: widget.release.body),
+                ),
+              ),
+            ],
+            if (_downloading) ...[
+              const SizedBox(height: 16),
+              LinearProgressIndicator(value: _progress?.fraction),
+              const SizedBox(height: 6),
+              Text(
+                _progress == null
+                    ? '正在准备下载...'
+                    : '${_formatBytes(_progress!.received)} / '
+                        '${_formatBytes(_progress!.total)}  '
+                        '${_formatBytes(_progress!.bytesPerSecond.round())}/s',
+              ),
+            ],
+            if (_prepared != null) ...[
+              const SizedBox(height: 12),
+              const Text('更新包已下载并通过校验，可以重启安装。'),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (!_canInstall) ...[
+              const SizedBox(height: 12),
+              const Text('Debug/Profile 构建仅支持检查更新，不支持覆盖安装。'),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed:
+              _downloading || _installing
+                  ? null
+                  : () => Navigator.of(context).pop(),
+          child: const Text('稍后'),
+        ),
+        if (_downloading)
+          TextButton(
+            onPressed: () {
+              _cancelled = true;
+              _service.cancelDownload();
+              setState(() {
+                _error = '正在取消下载...';
+              });
+            },
+            child: const Text('取消下载'),
+          ),
+        TextButton(
+          onPressed:
+              _downloading || _installing || widget.release.htmlUrl.isEmpty
+                  ? null
+                  : () => _openUrl(widget.release.htmlUrl),
+          child: const Text('打开发布页'),
+        ),
+        if (_prepared == null)
+          ElevatedButton(
+            onPressed: _downloading || !_canInstall ? null : _download,
+            child: const Text('下载并安装'),
+          )
+        else
+          ElevatedButton(
+            onPressed: _installing || !_canInstall ? null : _install,
+            child: Text(_installing ? '正在启动更新器...' : '立即重启并安装'),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _cancelled = false;
+      _error = null;
+      _progress = null;
+    });
+    try {
+      final prepared = await _service.downloadAndPrepare(
+        widget.release,
+        onProgress: (progress) {
+          if (mounted) setState(() => _progress = progress);
+        },
+      );
+      if (mounted) setState(() => _prepared = prepared);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = _cancelled ? '下载已取消' : error.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _install() async {
+    final prepared = _prepared;
+    if (prepared == null) return;
+    setState(() {
+      _installing = true;
+      _error = null;
+    });
+    try {
+      await _service.launchInstaller(prepared);
+      if (mounted) Navigator.of(context).pop();
+      await windowManager.close();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _installing = false;
+          _error = error.toString();
+        });
+      }
+    }
+  }
+
+  static String _formatBytes(num bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${bytes.toStringAsFixed(0)} B';
+  }
 }
 
 class AppInfoDialog extends StatefulWidget {
@@ -141,9 +306,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: null,
+                  onPressed:
+                      _lastResult?.hasUpdate == true && release != null
+                          ? () => showUpdateAvailableDialog(context, release)
+                          : null,
                   icon: const Icon(Icons.download, size: 16),
-                  label: const Text('自动安装预留'),
+                  label: const Text('下载并安装'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _showAdvancedSettings,

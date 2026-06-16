@@ -35,6 +35,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from generate_update_assets import generate as generate_update_assets
 
 # ========== 配置 ==========
 
@@ -298,13 +299,17 @@ def main():
     copy_build_output(portable_dir)
     success(f"便携版打包完成: {portable_dir}")
     
-    # 生成 zip
+    # 生成自动更新兼容的 ZIP 和更新清单
     portable_zip = None
     if not args.no_zip:
-        info("生成 zip 压缩包...")
-        portable_zip = RELEASE_DIR / f"{portable_name}.zip"
-        create_zip(portable_dir, portable_zip)
+        info("生成自动更新 ZIP 和清单...")
+        portable_zip, update_manifest = generate_update_assets(
+            portable_dir,
+            f"v{version}",
+            RELEASE_DIR,
+        )
         success(f"便携版 zip: {portable_zip}")
+        success(f"更新清单: {update_manifest}")
     
     # ========== 输出汇总 ==========
     print(f"\n{Colors.BOLD}{Colors.GREEN}{'='*60}{Colors.END}")

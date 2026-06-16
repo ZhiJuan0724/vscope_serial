@@ -6,9 +6,11 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
+import 'services/app_info.dart';
 import 'services/app_settings.dart';
 import 'services/serial_service.dart';
 import 'services/update_checker.dart';
+import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
@@ -98,10 +100,23 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     // Register window close handler: disconnect serial before closing
     _setupWindowCloseHandler();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (AppSettings().autoUpdateCheckEnabled) {
-        unawaited(_checkForUpdatesOnStartup());
-      }
+      unawaited(_handleStartupUpdates());
     });
+  }
+
+  Future<void> _handleStartupUpdates() async {
+    final service = UpdateService();
+    final message = await service.consumeLastResult();
+    if (message != null && mounted) AppNotifications.show(message);
+    final prepared = await service.findLatestPreparedUpdate(
+      newerThanVersion: await AppInfo.version(),
+    );
+    if (prepared != null && mounted) {
+      await showUpdateAvailableDialog(context, prepared.release);
+    } else if (AppSettings().autoUpdateCheckEnabled) {
+      await _checkForUpdatesOnStartup();
+    }
+    await service.cleanupOldUpdates();
   }
 
   void _setupWindowCloseHandler() {
