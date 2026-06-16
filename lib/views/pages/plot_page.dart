@@ -55,6 +55,15 @@ const double kDefaultChannelPanelWidth = 240;
 const double kCollapsedPanelWidth = 26;
 const double kRProtocolAddressWidth = 86;
 const double kFixedFrameConfigLabelWidth = 72;
+const double kDataTypeDropdownWidth = 148;
+
+InputDecoration _compactDropdownDecoration() {
+  return const InputDecoration(
+    isDense: true,
+    border: OutlineInputBorder(),
+    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+  );
+}
 
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
@@ -922,7 +931,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           message: '导入 CSV/BIN/旧版 DAT',
           child: IconButton(
             onPressed: () => _importPlotData(context, vm),
-            icon: const Icon(Icons.file_upload, size: 18),
+            icon: const Icon(Icons.file_open, size: 18),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
@@ -3049,18 +3058,12 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(
+                      SizedBox(
+                        width: kDataTypeDropdownWidth,
                         child: NoAnimDropdown<DataType>(
                           value: _zobowDataType,
                           hint: '类型',
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                          ),
+                          decoration: _compactDropdownDecoration(),
                           items:
                               [DataType.uint16, DataType.int16].map((type) {
                                 return DropdownMenuItem(
@@ -3098,30 +3101,30 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
-                  NoAnimDropdown<DataType>(
-                    value: _zobowDataType,
-                    hint: '类型',
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
+                  SizedBox(
+                    width: kDataTypeDropdownWidth,
+                    child: NoAnimDropdown<DataType>(
+                      value: _zobowDataType,
+                      hint: '类型',
+                      decoration: _compactDropdownDecoration(),
+                      items:
+                          DataType.values
+                              .map(
+                                (type) => DropdownMenuItem(
+                                  value: type,
+                                  child: Text(type.label),
+                                ),
+                              )
+                              .toList(),
+                      onChanged:
+                          widget.vm.isPlotting
+                              ? null
+                              : (value) {
+                                if (value != null) {
+                                  setState(() => _zobowDataType = value);
+                                }
+                              },
                     ),
-                    items:
-                        DataType.values
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type.label),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        widget.vm.isPlotting
-                            ? null
-                            : (value) {
-                              if (value != null) {
-                                setState(() => _zobowDataType = value);
-                              }
-                            },
                   ),
                 ],
               ],
@@ -3454,6 +3457,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   /// 固定帧通道数输入控制器
   late final TextEditingController _fixedFrameController;
 
+  late final TextEditingController _fixedFrameHeaderController;
+  late final TextEditingController _fixedFrameTailController;
+
   late final TextEditingController _justFloatController;
   String? _validationError;
 
@@ -3466,6 +3472,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
     );
     _fixedFrameController = TextEditingController(
       text: _config.channelCount.toString(),
+    );
+    _fixedFrameHeaderController = TextEditingController(
+      text: _formatHexBytes(
+        _config.frameHeader.take(_config.frameHeaderLength).toList(),
+      ),
+    );
+    _fixedFrameTailController = TextEditingController(
+      text: _formatHexBytes(_config.frameTail ?? const []),
     );
     _justFloatController = TextEditingController(
       text: _config.channelCount.toString(),
@@ -3483,6 +3497,8 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   void dispose() {
     _fireWaterController.dispose();
     _fixedFrameController.dispose();
+    _fixedFrameHeaderController.dispose();
+    _fixedFrameTailController.dispose();
     _justFloatController.dispose();
     super.dispose();
   }
@@ -3709,26 +3725,26 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 if (_config.hasFrameHeader && _config.frameHeader.isEmpty) {
                   _config.frameHeader = [0xAA, 0x55];
                   _config.frameHeaderLength = 2;
+                  _fixedFrameHeaderController.text = _formatHexBytes(
+                    _config.frameHeader,
+                  );
                 }
               });
             },
           ),
           if (_config.hasFrameHeader)
             TextField(
-              controller: TextEditingController(
-                text: _formatHexBytes(
-                  _config.frameHeader.take(_config.frameHeaderLength).toList(),
-                ),
-              ),
+              controller: _fixedFrameHeaderController,
               decoration: const InputDecoration(
                 isDense: true,
                 labelText: '帧头字节',
                 hintText: '例如: AA 55',
                 border: OutlineInputBorder(),
               ),
+              inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);
-                if (bytes != null && bytes.isNotEmpty) {
+                if (bytes != null) {
                   setState(() {
                     _config.frameHeader = bytes;
                     _config.frameHeaderLength = bytes.length;
@@ -3746,18 +3762,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 child: Text('通道类型:', softWrap: false),
               ),
               const SizedBox(width: 8),
-              Expanded(
+              SizedBox(
+                width: kDataTypeDropdownWidth,
                 child: NoAnimDropdown<bool>(
                   value: _config.fixedFrameUniformDataType,
                   hint: '通道类型模式',
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                  ),
+                  decoration: _compactDropdownDecoration(),
                   items: const [
                     DropdownMenuItem(value: true, child: Text('统一')),
                     DropdownMenuItem(value: false, child: Text('不一致')),
@@ -3791,18 +3801,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                   child: Text('数据类型:', softWrap: false),
                 ),
                 const SizedBox(width: 8),
-                Expanded(
+                SizedBox(
+                  width: kDataTypeDropdownWidth,
                   child: NoAnimDropdown<DataType>(
                     value: _config.dataType,
                     hint: '类型',
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                    ),
+                    decoration: _compactDropdownDecoration(),
                     items:
                         DataType.values
                             .map(
@@ -3879,24 +3883,26 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 if (_config.hasFrameTail &&
                     (_config.frameTail == null || _config.frameTail!.isEmpty)) {
                   _config.frameTail = [0x0D, 0x0A];
+                  _fixedFrameTailController.text = _formatHexBytes(
+                    _config.frameTail!,
+                  );
                 }
               });
             },
           ),
           if (_config.hasFrameTail)
             TextField(
-              controller: TextEditingController(
-                text: _formatHexBytes(_config.frameTail ?? const []),
-              ),
+              controller: _fixedFrameTailController,
               decoration: const InputDecoration(
                 isDense: true,
                 labelText: '帧尾字节',
                 hintText: '例如: 0D 0A',
                 border: OutlineInputBorder(),
               ),
+              inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);
-                if (bytes != null && bytes.isNotEmpty) {
+                if (bytes != null) {
                   setState(() => _config.frameTail = bytes);
                 }
               },
@@ -4050,18 +4056,38 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   }
 
   List<int>? _parseHexBytes(String value) {
-    final parts = value.trim().split(RegExp(r'\s+'));
-    if (parts.length == 1 && parts.single.isEmpty) return const [];
+    final hex = value.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
+    if (hex.isEmpty) return const [];
+    if (hex.length.isOdd) return null;
     final bytes = <int>[];
-    for (final part in parts) {
-      final byte = int.tryParse(
-        part.replaceFirst(RegExp(r'^0[xX]'), ''),
-        radix: 16,
-      );
+    for (var i = 0; i < hex.length; i += 2) {
+      final byte = int.tryParse(hex.substring(i, i + 2), radix: 16);
       if (byte == null || byte < 0 || byte > 0xFF) return null;
       bytes.add(byte);
     }
     return bytes;
+  }
+}
+
+class _HexByteInputFormatter extends TextInputFormatter {
+  const _HexByteInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final raw = newValue.text.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
+    final formatted = <String>[];
+    for (var i = 0; i < raw.length; i += 2) {
+      final end = math.min(i + 2, raw.length);
+      formatted.add(raw.substring(i, end).toUpperCase());
+    }
+    final text = formatted.join(' ');
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 }
 
