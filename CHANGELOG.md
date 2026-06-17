@@ -4,6 +4,12 @@
 >提交涉及发布内容时，提交前必须让用户核对本文件对应版本段落
 >一个版本tag被推送后再修改，则在新版本日志日志下填写，日期在新版本推送前待定，在确认推送前填上正确的时间
 
+## v1.0.6-beta.4 - 2026-06-17
+
+### Changed
+- 发布 CI 在创建 GitHub Release 后同步创建 Gitee Release，并上传同一批 Windows 更新附件。
+- Beta 更新检查和下载允许在 GitHub 失败后回退到同版本 Gitee Release。
+
 ## v1.0.6-beta.3 - 2026-06-17
 
 ### Changed

@@ -159,10 +159,7 @@ class UpdateService {
     final payloadDir = Directory('${updateDir.path}/payload');
 
     Object? lastError;
-    final sources =
-        channel == UpdateChannel.beta
-            ? const ['GitHub']
-            : const ['GitHub', 'Gitee'];
+    const sources = ['GitHub', 'Gitee'];
     for (final source in sources) {
       try {
         final release =

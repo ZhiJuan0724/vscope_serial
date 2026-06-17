@@ -133,26 +133,29 @@ void main() {
       expect(callCount, 2);
     });
 
-    test(
-      'does not fall back to Gitee when GitHub has no beta release',
-      () async {
-        var callCount = 0;
-        final checker = UpdateChecker(
-          fetchJson: (uri) async {
-            callCount++;
+    test('falls back to Gitee for beta channel', () async {
+      var callCount = 0;
+      final checker = UpdateChecker(
+        fetchJson: (uri) async {
+          callCount++;
+          if (callCount == 1) {
             return [
               {'tag_name': 'v1.2.3', 'prerelease': false},
             ];
-          },
-        );
+          }
+          return [
+            {'tag_name': 'v9.9.9-beta.1', 'html_url': 'https://gitee.com/beta'},
+          ];
+        },
+      );
 
-        final result = await checker.check(channel: UpdateChannel.beta);
+      final result = await checker.check(channel: UpdateChannel.beta);
 
-        expect(result.error, '无法连接 GitHub 检查 Beta 更新');
-        expect(result.hasUpdate, isFalse);
-        expect(result.latestRelease, isNull);
-        expect(callCount, 1);
-      },
-    );
+      expect(result.error, isNull);
+      expect(result.hasUpdate, isTrue);
+      expect(result.latestRelease?.source, 'Gitee');
+      expect(result.latestRelease?.tagName, 'v9.9.9-beta.1');
+      expect(callCount, 2);
+    });
   });
 }

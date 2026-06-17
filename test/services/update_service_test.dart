@@ -120,10 +120,22 @@ void main() {
     );
   });
 
-  test('beta download does not fall back to Gitee when GitHub fails', () async {
+  test('beta download falls back to Gitee when GitHub fails', () async {
     final root = await Directory.systemTemp.createTemp('vscope-update-test-');
     addTearDown(() => root.delete(recursive: true));
     const tag = 'v9.9.9-beta.1';
+    final package = _validPackage();
+    final packageDigest = sha256.convert(package).toString();
+    final manifest = utf8.encode(
+      jsonEncode({
+        'schemaVersion': 1,
+        'version': '9.9.9-beta.1',
+        'packageName': 'vscope_serial-windows-$tag.zip',
+        'packageSize': package.length,
+        'sha256': packageDigest,
+        'executable': 'vscope_serial.exe',
+      }),
+    );
     final github = ReleaseInfo(
       tagName: tag,
       htmlUrl: '',
@@ -143,31 +155,57 @@ void main() {
         ),
       ],
     );
-    var fallbackRequested = false;
+    final gitee = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'Gitee',
+      body: '',
+      assets: [
+        ReleaseAsset(
+          name: 'update-manifest-$tag.json',
+          size: manifest.length,
+          downloadUrl: 'https://example.com/gitee-manifest',
+        ),
+        ReleaseAsset(
+          name: 'vscope_serial-windows-$tag.zip',
+          size: package.length,
+          downloadUrl: 'https://example.com/gitee-package',
+        ),
+      ],
+    );
     final service = UpdateService(
       updatesRoot: root,
       releaseFetcher: (_, source) async {
-        fallbackRequested = true;
-        throw StateError('unexpected $source fallback');
+        expect(source, 'Gitee');
+        return gitee;
       },
-      bytesFetcher: (_) async => utf8.encode('null'),
+      bytesFetcher: (uri) async {
+        if (uri.toString().contains('gitee-manifest')) return manifest;
+        return utf8.encode('null');
+      },
+      fileDownloader: (_, destination, total, onProgress) async {
+        await destination.writeAsBytes(package);
+        onProgress(
+          UpdateDownloadProgress(
+            received: package.length,
+            total: total,
+            bytesPerSecond: package.length.toDouble(),
+          ),
+        );
+      },
     );
 
-    await expectLater(
-      service.downloadAndPrepare(
-        github,
-        channel: UpdateChannel.beta,
-        onProgress: (_) {},
-      ),
-      throwsA(
-        isA<UpdateDownloadException>().having(
-          (error) => error.message,
-          'message',
-          contains('更新清单格式不正确'),
-        ),
-      ),
+    final prepared = await service.downloadAndPrepare(
+      github,
+      channel: UpdateChannel.beta,
+      onProgress: (_) {},
     );
-    expect(fallbackRequested, isFalse);
+
+    expect(prepared.release.source, 'Gitee');
+    expect(
+      File('${prepared.payloadDirectory.path}/vscope_serial.exe').existsSync(),
+      isTrue,
+    );
   });
 
   test('rejects zip path traversal', () async {

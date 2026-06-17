@@ -117,7 +117,7 @@ class UpdateChecker {
     if (release == null) {
       return UpdateCheckResult.failed(
         channel == UpdateChannel.beta
-            ? '无法连接 GitHub 检查 Beta 更新'
+            ? '无法连接 GitHub 或 Gitee 检查 Beta 更新'
             : '无法连接 GitHub 或 Gitee 检查更新',
       );
     }
@@ -141,7 +141,6 @@ class UpdateChecker {
     } catch (_) {
       // Fall through to the mirror source below.
     }
-    if (channel == UpdateChannel.beta) return null;
     try {
       return await _fetchLatestFrom(
         channel: channel,
@@ -264,7 +263,7 @@ class UpdateChecker {
   ) {
     return switch (channel) {
       UpdateChannel.stable => isStableTag(tagName) && !prerelease,
-      UpdateChannel.beta => isBetaTag(tagName) && prerelease,
+      UpdateChannel.beta => isBetaTag(tagName),
     };
   }
 

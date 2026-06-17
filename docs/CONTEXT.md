@@ -55,15 +55,15 @@ VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目�
 
 - 版本号来自 `pubspec.yaml`，应用内显示带 `v` 前缀。
 - 发布构建必须通过 GitHub Actions 或 `tools/build_release.py` 注入 `BUILD_TIME`；应用信息界面的构建时间优先读取该编译期值，不能依赖 exe 文件修改时间。
-- 更新检查与下载优先访问 GitHub Release，失败后尝试同版本 Gitee Release；自动检查只提示，用户确认后才下载和安装。
+- 更新检查与下载优先访问 GitHub Release，失败后按同一更新通道尝试 Gitee Release；自动检查只提示，用户确认后才下载和安装。
 - Windows 自动更新由 `vscope_updater.exe` 在主程序安全退出后执行，按 `app-files.json` 覆盖受管理文件，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败时自动回滚。
 - 自动更新下载缓存、解压 payload 和回退槽保存在 `<exe_dir>/updates/`，不写入用户目录；因此应用所在目录必须可写。
 - Release 必须同时提供 `vscope_serial-windows-vX.Y.Z.zip` 和 `update-manifest-vX.Y.Z.json`，客户端使用清单中的大小和 SHA-256 校验更新包。
-- 自动更新支持稳定版与 Beta 通道：稳定版 tag 使用 `vX.Y.Z`，Beta tag 使用 `vX.Y.Z-beta.N` 且 GitHub Release 必须标记为 prerelease；`pubspec.yaml` 中版本不带 `v` 且必须与 tag 去掉 `v` 后一致；Gitee 只手动搬运稳定版，Beta 通道只检查 GitHub。
+- 自动更新支持稳定版与 Beta 通道：稳定版 tag 使用 `vX.Y.Z`，Beta tag 使用 `vX.Y.Z-beta.N` 且 GitHub Release 必须标记为 prerelease；`pubspec.yaml` 中版本不带 `v` 且必须与 tag 去掉 `v` 后一致；Gitee Release 由 CI 同步创建，客户端按 tag 名识别稳定版或 Beta。
 - 自动更新安装前会按目标通道保存一个本地回退槽，稳定版和 Beta 各保留 1 个可手动回退版本。
 - `.github/workflows/windows-release.yml` 负责 PR 检查、手动构建和 tag 发布。
 - PR 到 `main` 会运行 `flutter analyze`、`flutter test` 和 Windows Release 构建。
-- `v*` tag 会测试、构建、压缩发布包并创建 GitHub Release。
+- `v*` tag 会测试、构建、压缩发布包并创建 GitHub Release，随后同步创建 Gitee Release 并上传同一批附件。
 - `main` 直接 push 不触发 release workflow，避免合并后和 tag 发布重复执行。
 
 ## 开发检查
