@@ -131,6 +131,7 @@ class UpdateService {
   final UpdateFileDownloader? _fileDownloader;
   final Directory? _updatesRootOverride;
   HttpClient? _downloadClient;
+  static const _maxNetworkAttempts = 3;
 
   UpdateService({
     ReleaseFetcher? releaseFetcher,
@@ -158,7 +159,11 @@ class UpdateService {
     final payloadDir = Directory('${updateDir.path}/payload');
 
     Object? lastError;
-    for (final source in <String>['GitHub', 'Gitee']) {
+    final sources =
+        channel == UpdateChannel.beta
+            ? const ['GitHub']
+            : const ['GitHub', 'Gitee'];
+    for (final source in sources) {
       try {
         final release =
             checkedRelease.source == source
@@ -177,7 +182,7 @@ class UpdateService {
           Uri.parse(manifestAsset.downloadUrl),
         );
         final manifest = UpdateManifest.fromJson(
-          jsonDecode(utf8.decode(manifestBytes)) as Map<String, dynamic>,
+          _decodeJsonObject(utf8.decode(manifestBytes), '更新清单'),
         )..validateFor(release);
         await File(
           '${updateDir.path}/update-manifest.json',
@@ -187,7 +192,7 @@ class UpdateService {
           throw const UpdateDownloadException('发布附件大小与更新清单不一致');
         }
 
-        await (_fileDownloader ?? _download)(
+        await _downloadWithRetry(
           Uri.parse(packageAsset.downloadUrl),
           packagePart,
           manifest.packageSize,
@@ -529,9 +534,39 @@ class UpdateService {
         await sink.close();
       }
     } finally {
-      client.close(force: true);
+      _closeClientSilently(client);
       if (identical(_downloadClient, client)) _downloadClient = null;
     }
+  }
+
+  Future<void> _downloadWithRetry(
+    Uri uri,
+    File destination,
+    int total,
+    void Function(UpdateDownloadProgress progress) onProgress,
+  ) async {
+    final fileDownloader = _fileDownloader;
+    if (fileDownloader != null) {
+      await fileDownloader(uri, destination, total, onProgress);
+      return;
+    }
+
+    Object? lastError;
+    for (var attempt = 1; attempt <= _maxNetworkAttempts; attempt++) {
+      try {
+        if (await destination.exists()) await destination.delete();
+        await _download(uri, destination, total, onProgress);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (await destination.exists()) await destination.delete();
+        if (attempt == _maxNetworkAttempts) break;
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+    throw UpdateDownloadException(
+      '更新包下载失败，已重试 $_maxNetworkAttempts 次：$lastError',
+    );
   }
 
   static Future<String> _sha256File(File file) async {
@@ -601,9 +636,8 @@ class UpdateService {
 
   Future<Directory> _updatesRoot() async {
     if (_updatesRootOverride != null) return _updatesRootOverride;
-    final localAppData =
-        Platform.environment['LOCALAPPDATA'] ?? Directory.systemTemp.path;
-    return Directory('$localAppData/VScope Serial/updates');
+    final executable = File(Platform.resolvedExecutable);
+    return Directory('${executable.parent.path}/updates');
   }
 
   Future<Directory> _updateDirectory(String tagName) async {
@@ -653,27 +687,57 @@ class UpdateService {
   }
 
   static Future<List<int>> _defaultFetchBytes(Uri uri) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
-    try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'VScope Serial Updater');
-      final response = await request.close().timeout(
-        const Duration(seconds: 15),
-      );
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('HTTP ${response.statusCode}', uri: uri);
+    Object? lastError;
+    for (var attempt = 1; attempt <= _maxNetworkAttempts; attempt++) {
+      final client =
+          HttpClient()..connectionTimeout = const Duration(seconds: 8);
+      try {
+        final request = await client.getUrl(uri);
+        request.headers.set(
+          HttpHeaders.userAgentHeader,
+          'VScope Serial Updater',
+        );
+        final response = await request.close().timeout(
+          const Duration(seconds: 15),
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw HttpException('HTTP ${response.statusCode}', uri: uri);
+        }
+        return response.fold<List<int>>(
+          <int>[],
+          (all, chunk) => all..addAll(chunk),
+        );
+      } catch (error) {
+        lastError = error;
+        if (attempt == _maxNetworkAttempts) break;
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      } finally {
+        _closeClientSilently(client);
       }
-      return response.fold<List<int>>(
-        <int>[],
-        (all, chunk) => all..addAll(chunk),
-      );
-    } finally {
-      client.close(force: true);
     }
+    throw UpdateDownloadException(
+      '下载数据失败，已重试 $_maxNetworkAttempts 次：$lastError',
+    );
   }
 
   static Future<Map<String, dynamic>> _defaultFetchJson(Uri uri) async {
     final bytes = await _defaultFetchBytes(uri);
-    return jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    return _decodeJsonObject(utf8.decode(bytes), '接口响应');
+  }
+
+  static Map<String, dynamic> _decodeJsonObject(String content, String label) {
+    final json = jsonDecode(content);
+    if (json is Map) return Map<String, dynamic>.from(json);
+    throw FormatException('$label格式不正确');
+  }
+
+  static void _closeClientSilently(HttpClient client) {
+    try {
+      client.close();
+    } catch (_) {
+      // Network streams can surface a late connection-close error while the
+      // client is being disposed. The request body handling above owns the
+      // retry/error path, so disposal must not replace the useful failure.
+    }
   }
 }

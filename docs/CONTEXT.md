@@ -57,6 +57,7 @@ VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目�
 - 发布构建必须通过 GitHub Actions 或 `tools/build_release.py` 注入 `BUILD_TIME`；应用信息界面的构建时间优先读取该编译期值，不能依赖 exe 文件修改时间。
 - 更新检查与下载优先访问 GitHub Release，失败后尝试同版本 Gitee Release；自动检查只提示，用户确认后才下载和安装。
 - Windows 自动更新由 `vscope_updater.exe` 在主程序安全退出后执行，按 `app-files.json` 覆盖受管理文件，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败时自动回滚。
+- 自动更新下载缓存、解压 payload 和回退槽保存在 `<exe_dir>/updates/`，不写入用户目录；因此应用所在目录必须可写。
 - Release 必须同时提供 `vscope_serial-windows-vX.Y.Z.zip` 和 `update-manifest-vX.Y.Z.json`，客户端使用清单中的大小和 SHA-256 校验更新包。
 - 自动更新支持稳定版与 Beta 通道：稳定版 tag 使用 `vX.Y.Z`，Beta tag 使用 `vX.Y.Z-beta.N` 且 GitHub Release 必须标记为 prerelease；`pubspec.yaml` 中版本不带 `v` 且必须与 tag 去掉 `v` 后一致；Gitee 只手动搬运稳定版，Beta 通道只检查 GitHub。
 - 自动更新安装前会按目标通道保存一个本地回退槽，稳定版和 Beta 各保留 1 个可手动回退版本。

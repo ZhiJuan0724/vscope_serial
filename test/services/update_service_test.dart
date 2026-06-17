@@ -120,6 +120,56 @@ void main() {
     );
   });
 
+  test('beta download does not fall back to Gitee when GitHub fails', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-update-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const tag = 'v9.9.9-beta.1';
+    final github = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+      prerelease: true,
+      assets: const [
+        ReleaseAsset(
+          name: 'update-manifest-$tag.json',
+          size: 4,
+          downloadUrl: 'https://example.com/manifest',
+        ),
+        ReleaseAsset(
+          name: 'vscope_serial-windows-$tag.zip',
+          size: 100,
+          downloadUrl: 'https://example.com/package',
+        ),
+      ],
+    );
+    var fallbackRequested = false;
+    final service = UpdateService(
+      updatesRoot: root,
+      releaseFetcher: (_, source) async {
+        fallbackRequested = true;
+        throw StateError('unexpected $source fallback');
+      },
+      bytesFetcher: (_) async => utf8.encode('null'),
+    );
+
+    await expectLater(
+      service.downloadAndPrepare(
+        github,
+        channel: UpdateChannel.beta,
+        onProgress: (_) {},
+      ),
+      throwsA(
+        isA<UpdateDownloadException>().having(
+          (error) => error.message,
+          'message',
+          contains('更新清单格式不正确'),
+        ),
+      ),
+    );
+    expect(fallbackRequested, isFalse);
+  });
+
   test('rejects zip path traversal', () async {
     final root = await Directory.systemTemp.createTemp('vscope-zip-test-');
     addTearDown(() => root.delete(recursive: true));
