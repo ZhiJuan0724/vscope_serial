@@ -85,6 +85,17 @@ flutter test test/viewmodels/plot_viewmodel_stats_test.dart
 flutter test test/parser/just_float_parser_test.dart
 ```
 
+## Windows Shell 编码
+
+- PowerShell 直接读取包含中文的文件时可能因控制台编码导致输出乱码，不要仅凭乱码输出判断源码或文档内容。
+- 需要查看中文内容时，优先使用 `git diff`、`rg`、或 Node.js 按 UTF-8 读取文件；如果必须用 PowerShell 读取，先显式设置 UTF-8 编码。
+
+```powershell
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+```
+
 ## Git 规则
 
 - 不要回滚用户已有改动，除非用户明确要求。

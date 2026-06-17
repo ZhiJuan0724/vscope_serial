@@ -8,6 +8,7 @@ import '../../services/app_settings.dart';
 import '../../services/changelog_service.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
+import '../widgets/common_widgets.dart';
 
 Future<void> showAppInfoDialog(BuildContext context) {
   return showDialog(
@@ -30,6 +31,19 @@ Future<void> showUpdateAvailableDialog(
           release: release,
           currentVersion: currentVersion,
         ),
+  );
+}
+
+double _dialogContentMaxHeight(BuildContext context) {
+  return (MediaQuery.sizeOf(context).height * 0.72)
+      .clamp(320.0, 620.0)
+      .toDouble();
+}
+
+Widget _scrollWithoutScrollbar(BuildContext context, {required Widget child}) {
+  return ScrollConfiguration(
+    behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+    child: child,
   );
 }
 
@@ -72,56 +86,71 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       title: const Text('发现新版本'),
       content: SizedBox(
         width: 430,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('当前版本: ${widget.currentVersion}'),
-            Text('最新版本: ${widget.release.tagName}'),
-            Text('更新通道: ${_channel.label}'),
-            Text('来源: ${widget.release.source}'),
-            if (widget.release.body.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Text(
-                '更新内容:',
-                style: TextStyle(fontWeight: FontWeight.bold),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: _dialogContentMaxHeight(context),
+          ),
+          child: _scrollWithoutScrollbar(
+            context,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('当前版本: ${widget.currentVersion}'),
+                  Text('最新版本: ${widget.release.tagName}'),
+                  Text('更新通道: ${_channel.label}'),
+                  Text('来源: ${widget.release.source}'),
+                  if (widget.release.body.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Text(
+                      '更新内容:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 160),
+                      child: _scrollWithoutScrollbar(
+                        context,
+                        child: SingleChildScrollView(
+                          child: _ChangelogBody(body: widget.release.body),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_downloading) ...[
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(value: _progress?.fraction),
+                    const SizedBox(height: 6),
+                    Text(
+                      _progress == null
+                          ? '正在准备下载...'
+                          : '${_formatBytes(_progress!.received)} / '
+                              '${_formatBytes(_progress!.total)}  '
+                              '${_formatBytes(_progress!.bytesPerSecond.round())}/s',
+                    ),
+                  ],
+                  if (_prepared != null) ...[
+                    const SizedBox(height: 12),
+                    const Text('更新包已下载并通过校验，可以重启安装。'),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  if (!_canInstall) ...[
+                    const SizedBox(height: 12),
+                    const Text('Debug/Profile 构建仅支持检查更新，不支持覆盖安装。'),
+                  ],
+                ],
               ),
-              const SizedBox(height: 4),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 160),
-                child: SingleChildScrollView(
-                  child: _ChangelogBody(body: widget.release.body),
-                ),
-              ),
-            ],
-            if (_downloading) ...[
-              const SizedBox(height: 16),
-              LinearProgressIndicator(value: _progress?.fraction),
-              const SizedBox(height: 6),
-              Text(
-                _progress == null
-                    ? '正在准备下载...'
-                    : '${_formatBytes(_progress!.received)} / '
-                        '${_formatBytes(_progress!.total)}  '
-                        '${_formatBytes(_progress!.bytesPerSecond.round())}/s',
-              ),
-            ],
-            if (_prepared != null) ...[
-              const SizedBox(height: 12),
-              const Text('更新包已下载并通过校验，可以重启安装。'),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            if (!_canInstall) ...[
-              const SizedBox(height: 12),
-              const Text('Debug/Profile 构建仅支持检查更新，不支持覆盖安装。'),
-            ],
-          ],
+            ),
+          ),
         ),
       ),
       actions: [
@@ -268,145 +297,153 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       ),
       content: SizedBox(
         width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _InfoRow(label: '应用名称', value: AppInfo.name),
-            _InfoRow(label: '版本', value: _version ?? '读取中...'),
-            _InfoRow(label: '构建时间', value: _formatBuildTime(_buildTime)),
-            if (_changelogEntries.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Text('版本说明', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              _ChangelogPreview(entries: _changelogEntries),
-            ],
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('启动时自动检查更新'),
-              subtitle: const Text('默认关闭；开启后每次打开应用会访问 GitHub，失败后尝试 Gitee'),
-              value: _autoUpdateCheckEnabled,
-              onChanged: (value) {
-                setState(() => _autoUpdateCheckEnabled = value);
-                final settings = AppSettings()..autoUpdateCheckEnabled = value;
-                settings.save();
-              },
-            ),
-            Row(
-              children: [
-                const SizedBox(width: 72, child: Text('更新通道:')),
-                DropdownButton<UpdateChannel>(
-                  value: _updateChannel,
-                  items: UpdateChannel.values
-                      .map(
-                        (channel) => DropdownMenuItem(
-                          value: channel,
-                          child: Text(channel.label),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: _dialogContentMaxHeight(context),
+          ),
+          child: _scrollWithoutScrollbar(
+            context,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _InfoRow(label: '应用名称', value: AppInfo.name),
+                  _InfoRow(label: '版本', value: _version ?? '读取中...'),
+                  _InfoRow(label: '构建时间', value: _formatBuildTime(_buildTime)),
+                  if (_changelogEntries.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      '版本说明',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    _ChangelogPreview(entries: _changelogEntries),
+                  ],
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('启动时自动检查更新'),
+                    subtitle: const Text(
+                      '默认关闭；开启后每次打开应用会访问 GitHub，失败后尝试 Gitee',
+                    ),
+                    value: _autoUpdateCheckEnabled,
+                    onChanged: (value) {
+                      setState(() => _autoUpdateCheckEnabled = value);
+                      final settings =
+                          AppSettings()..autoUpdateCheckEnabled = value;
+                      settings.save();
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('更新通道'),
+                    subtitle: Text(
+                      _updateChannel == UpdateChannel.beta
+                          ? '只检查 GitHub Beta 预发布版本'
+                          : '只检查稳定版；GitHub 失败后尝试 Gitee',
+                    ),
+                    trailing: SizedBox(
+                      width: 116,
+                      child: NoAnimDropdown<UpdateChannel>(
+                        value: _updateChannel,
+                        hint: '更新通道',
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                         ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _updateChannel = value;
-                      _lastResult = null;
-                    });
-                    final settings = AppSettings()..updateChannel = value.value;
-                    settings.save();
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _checking ? null : _checkForUpdate,
-                  icon:
-                      _checking
-                          ? const SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                          : const Icon(Icons.update, size: 16),
-                  label: Text(_checking ? '检查中...' : '手动检查更新'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed:
-                      _lastResult?.hasUpdate == true && release != null
-                          ? () => showUpdateAvailableDialog(context, release)
-                          : null,
-                  icon: const Icon(Icons.download, size: 16),
-                  label: const Text('下载并安装'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _showAdvancedSettings,
-                  icon: const Icon(Icons.tune, size: 16),
-                  label: const Text('高级设置'),
-                ),
-              ],
-            ),
-            if (_lastResult != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _resultText(_lastResult!, _version ?? '未知'),
-                style: TextStyle(
-                  fontSize: 12,
-                  color:
-                      _lastResult!.error != null
-                          ? Theme.of(context).colorScheme.error
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              if (_lastResult!.hasUpdate && release != null) ...[
-                const SizedBox(height: 8),
-                TextButton.icon(
-                  onPressed: () => _openUrl(release.htmlUrl),
-                  icon: const Icon(Icons.open_in_new, size: 16),
-                  label: Text('打开 ${release.source} 发布页'),
-                ),
-              ],
-            ],
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 8),
-            const Text('版本回退', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 6),
-            if (_loadingRollback)
-              const Text('正在读取回退版本...')
-            else
-              ...UpdateChannel.values.map((channel) {
-                final update = _rollbackUpdateFor(channel);
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${channel.label}: '
-                          '${update == null ? '暂无可回退版本' : update.tagName}',
-                        ),
+                        items: UpdateChannel.values
+                            .map(
+                              (channel) => DropdownMenuItem(
+                                value: channel,
+                                child: Text(channel.label),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _updateChannel = value;
+                            _lastResult = null;
+                          });
+                          final settings =
+                              AppSettings()..updateChannel = value.value;
+                          settings.save();
+                        },
                       ),
-                      OutlinedButton(
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _checking ? null : _checkForUpdate,
+                        icon:
+                            _checking
+                                ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                                : const Icon(Icons.update, size: 16),
+                        label: Text(_checking ? '检查中...' : '手动检查更新'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
                         onPressed:
-                            update == null
-                                ? null
-                                : () => _installRollback(update),
-                        child: const Text('回退'),
+                            _lastResult?.hasUpdate == true && release != null
+                                ? () =>
+                                    showUpdateAvailableDialog(context, release)
+                                : null,
+                        icon: const Icon(Icons.download, size: 16),
+                        label: const Text('下载并安装'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _showAdvancedSettings,
+                        icon: const Icon(Icons.tune, size: 16),
+                        label: const Text('高级设置'),
                       ),
                     ],
                   ),
-                );
-              }),
-          ],
+                  if (_lastResult != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _resultText(_lastResult!, _version ?? '未知'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            _lastResult!.error != null
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (_lastResult!.hasUpdate && release != null) ...[
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () => _openUrl(release.htmlUrl),
+                        icon: const Icon(Icons.open_in_new, size: 16),
+                        label: Text('打开 ${release.source} 发布页'),
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+            ),
+          ),
         ),
       ),
       actions: [
@@ -414,6 +451,57 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('关闭'),
         ),
+      ],
+    );
+  }
+
+  Widget _buildRollbackSection(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600);
+    final subtitleStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 4),
+        Text('版本回退', style: titleStyle),
+        const SizedBox(height: 6),
+        if (_loadingRollback)
+          Text('正在读取回退版本...', style: subtitleStyle)
+        else
+          ...UpdateChannel.values.map((channel) {
+            final update = _rollbackUpdateFor(channel);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${channel.label}: '
+                      '${update == null ? '暂无可回退版本' : update.tagName}',
+                      style: subtitleStyle,
+                    ),
+                  ),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 30),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      textStyle: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    onPressed:
+                        update == null ? null : () => _installRollback(update),
+                    child: const Text('回退'),
+                  ),
+                ],
+              ),
+            );
+          }),
       ],
     );
   }
@@ -432,24 +520,54 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   title: const Text('高级设置'),
                   content: SizedBox(
                     width: 360,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: const Text('关闭提示信息'),
-                          subtitle: const Text('开启后不再显示应用内临时提示'),
-                          value: disableNotifications,
-                          onChanged: (value) {
-                            setDialogState(() => disableNotifications = value);
-                            setState(() => _disableNotifications = value);
-                            final settings =
-                                AppSettings()..disableNotifications = value;
-                            settings.save();
-                          },
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: _dialogContentMaxHeight(context),
+                      ),
+                      child: _scrollWithoutScrollbar(
+                        context,
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                title: Text(
+                                  '关闭提示信息',
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                                subtitle: Text(
+                                  '开启后不再显示应用内临时提示',
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall?.copyWith(
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                value: disableNotifications,
+                                onChanged: (value) {
+                                  setDialogState(
+                                    () => disableNotifications = value,
+                                  );
+                                  setState(() => _disableNotifications = value);
+                                  final settings =
+                                      AppSettings()
+                                        ..disableNotifications = value;
+                                  settings.save();
+                                },
+                              ),
+                              const Divider(height: 16),
+                              _buildRollbackSection(context),
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
                   actions: [
@@ -538,26 +656,29 @@ class _ChangelogPreview extends StatelessWidget {
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxHeight: 180),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children:
-              entries.map((entry) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.title,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 4),
-                      _ChangelogBody(body: entry.body),
-                    ],
-                  ),
-                );
-              }).toList(),
+      child: _scrollWithoutScrollbar(
+        context,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children:
+                entries.map((entry) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.title,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        _ChangelogBody(body: entry.body),
+                      ],
+                    ),
+                  );
+                }).toList(),
+          ),
         ),
       ),
     );

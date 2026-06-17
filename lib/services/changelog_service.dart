@@ -50,7 +50,7 @@ class ChangelogService {
 
   static List<ChangelogEntry> parse(String content) {
     final headingPattern = RegExp(
-      r'^##\s+(v?\d+(?:\.\d+){1,3})(?:\s+-\s+(.+))?\s*$',
+      r'^##\s+(v?\d+(?:\.\d+){1,3}(?:-[0-9A-Za-z.-]+)?)(?:\s+-\s+(.+))?\s*$',
       multiLine: true,
     );
     final matches = headingPattern.allMatches(content).toList(growable: false);
