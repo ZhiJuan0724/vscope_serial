@@ -23,6 +23,9 @@ struct UpdatePlan {
   std::wstring executable;
   fs::path result_file;
   fs::path cleanup_dir;
+  fs::path rollback_dir;
+  std::wstring rollback_channel;
+  std::wstring current_version;
 };
 
 struct ManagedFile {
@@ -46,6 +49,34 @@ std::wstring ReadUtf8File(const fs::path& path) {
       result.data(), length);
   if (!result.empty() && result.front() == 0xFEFF) result.erase(result.begin());
   return result;
+}
+
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int length = WideCharToMultiByte(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+      nullptr, 0, nullptr, nullptr);
+  if (length <= 0) throw std::runtime_error("cannot encode utf-8");
+  std::string result(length, '\0');
+  WideCharToMultiByte(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+      result.data(), length, nullptr, nullptr);
+  return result;
+}
+
+std::string JsonEscape(const std::wstring& value) {
+  std::string utf8 = WideToUtf8(value);
+  std::string escaped;
+  escaped.reserve(utf8.size());
+  for (const char c : utf8) {
+    if (c == '"' || c == '\\') escaped.push_back('\\');
+    if (c == '\n' || c == '\r') {
+      escaped.push_back(' ');
+    } else {
+      escaped.push_back(c);
+    }
+  }
+  return escaped;
 }
 
 std::wstring JsonString(const std::wstring& json, const wchar_t* key) {
@@ -90,6 +121,14 @@ std::wstring JsonString(const std::wstring& json, const wchar_t* key) {
   return decoded;
 }
 
+std::wstring JsonStringOrEmpty(const std::wstring& json, const wchar_t* key) {
+  try {
+    return JsonString(json, key);
+  } catch (...) {
+    return {};
+  }
+}
+
 DWORD JsonDword(const std::wstring& json, const wchar_t* key) {
   const std::wregex pattern(
       std::wstring(L"\"") + key + L"\"\\s*:\\s*(\\d+)");
@@ -112,6 +151,9 @@ UpdatePlan ParsePlan(const fs::path& path) {
       JsonString(json, L"executable"),
       JsonString(json, L"resultFile"),
       JsonString(json, L"cleanupDir"),
+      JsonStringOrEmpty(json, L"rollbackDir"),
+      JsonStringOrEmpty(json, L"rollbackChannel"),
+      JsonStringOrEmpty(json, L"currentVersion"),
   };
 }
 
@@ -120,7 +162,7 @@ std::vector<ManagedFile> ParseManagedFiles(const fs::path& path) {
   std::vector<ManagedFile> files;
   const std::wregex pattern(
       L"\\{\\s*\"path\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*"
-      L"\"sha256\"\\s*:\\s*\"([a-fA-F0-9]{64})\"\\s*\\}");
+      L"\"sha256\"\\s*:\\s*\"([a-fA-F0-9]{64})\"[^}]*\\}");
   for (auto it = std::wsregex_iterator(json.begin(), json.end(), pattern);
        it != std::wsregex_iterator(); ++it) {
     auto relative = fs::path((*it)[1].str()).lexically_normal();
@@ -261,6 +303,67 @@ void CopyFileReplacing(const fs::path& source, const fs::path& destination) {
   }
 }
 
+std::wstring UtcTimestamp() {
+  SYSTEMTIME time = {};
+  GetSystemTime(&time);
+  wchar_t buffer[32] = {};
+  swprintf_s(
+      buffer, L"%04d-%02d-%02dT%02d:%02d:%02dZ",
+      time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute,
+      time.wSecond);
+  return buffer;
+}
+
+void SaveRollbackSlot(
+    const UpdatePlan& plan,
+    const fs::path& old_manifest_path,
+    const std::vector<ManagedFile>& old_files) {
+  if (plan.rollback_dir.empty() || plan.current_version.empty() ||
+      !fs::exists(old_manifest_path) || old_files.empty()) {
+    return;
+  }
+
+  const auto payload = plan.rollback_dir / L"payload";
+  fs::remove_all(plan.rollback_dir);
+  fs::create_directories(payload);
+  fs::copy_file(
+      old_manifest_path, payload / L"app-files.json",
+      fs::copy_options::overwrite_existing);
+
+  for (const auto& file : old_files) {
+    const auto installed = plan.install_dir / file.relative_path;
+    if (!fs::exists(installed)) continue;
+    const auto backup = payload / file.relative_path;
+    fs::create_directories(backup.parent_path());
+    fs::copy_file(installed, backup, fs::copy_options::overwrite_existing);
+  }
+
+  {
+    std::ofstream output(
+        plan.rollback_dir / L"update-manifest.json",
+        std::ios::binary | std::ios::trunc);
+    output << "{\n"
+           << "  \"schemaVersion\": 1,\n"
+           << "  \"version\": \"" << JsonEscape(plan.current_version) << "\",\n"
+           << "  \"packageName\": \"\",\n"
+           << "  \"packageSize\": 0,\n"
+           << "  \"sha256\": \"\",\n"
+           << "  \"executable\": \"" << JsonEscape(plan.executable) << "\"\n"
+           << "}\n";
+  }
+  {
+    std::ofstream output(
+        plan.rollback_dir / L"rollback.json",
+        std::ios::binary | std::ios::trunc);
+    output << "{\n"
+           << "  \"schemaVersion\": 1,\n"
+           << "  \"channel\": \"" << JsonEscape(plan.rollback_channel) << "\",\n"
+           << "  \"version\": \"" << JsonEscape(plan.current_version) << "\",\n"
+           << "  \"createdAt\": \"" << JsonEscape(UtcTimestamp()) << "\"\n"
+           << "}\n";
+  }
+}
+
 bool IsCurrentProcessElevated() {
   HANDLE token = nullptr;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
@@ -352,6 +455,7 @@ void ApplyUpdate(const UpdatePlan& plan) {
   if (fs::exists(old_manifest_path)) {
     old_files = ParseManagedFiles(old_manifest_path);
   }
+  SaveRollbackSlot(plan, old_manifest_path, old_files);
 
   const auto backup_dir = plan.cleanup_dir / L"backup";
   fs::remove_all(backup_dir);

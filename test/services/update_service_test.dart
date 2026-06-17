@@ -109,6 +109,7 @@ void main() {
 
     final prepared = await service.downloadAndPrepare(
       github,
+      channel: UpdateChannel.stable,
       onProgress: (_) {},
     );
 
@@ -202,9 +203,54 @@ void main() {
     );
 
     expect(
-      () => service.downloadAndPrepare(release, onProgress: (_) {}),
+      () => service.downloadAndPrepare(
+        release,
+        channel: UpdateChannel.stable,
+        onProgress: (_) {},
+      ),
       throwsA(isA<UpdateDownloadException>()),
     );
+  });
+
+  test('finds valid rollback slot for each update channel', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-rollback-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = UpdateService(updatesRoot: root);
+    final rollbackDir = Directory('${root.path}/rollback/beta');
+    final payload = Directory('${rollbackDir.path}/payload');
+    await payload.create(recursive: true);
+    for (final entry
+        in {
+          'vscope_serial.exe': 'app',
+          'vscope_updater.exe': 'updater',
+          'app-files.json': '{"schemaVersion":1,"files":[]}',
+        }.entries) {
+      await File('${payload.path}/${entry.key}').writeAsString(entry.value);
+    }
+    await File('${rollbackDir.path}/update-manifest.json').writeAsString(
+      jsonEncode({
+        'schemaVersion': 1,
+        'version': '1.2.3-beta.1',
+        'packageName': '',
+        'packageSize': 0,
+        'sha256': '',
+        'executable': 'vscope_serial.exe',
+      }),
+    );
+    await File('${rollbackDir.path}/rollback.json').writeAsString(
+      jsonEncode({
+        'schemaVersion': 1,
+        'channel': 'beta',
+        'version': '1.2.3-beta.1',
+        'createdAt': '2026-06-17T00:00:00Z',
+      }),
+    );
+
+    final update = await service.findRollbackUpdate(UpdateChannel.beta);
+
+    expect(update, isNotNull);
+    expect(update!.channel, UpdateChannel.beta);
+    expect(update.tagName, 'v1.2.3-beta.1');
   });
 }
 

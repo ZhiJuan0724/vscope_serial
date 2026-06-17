@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 
+import 'app_info.dart';
 import 'update_checker.dart';
 
 class UpdateManifest {
@@ -35,13 +36,16 @@ class UpdateManifest {
     );
   }
 
-  void validateFor(ReleaseInfo release) {
+  void validateFor(ReleaseInfo release, {bool requirePackage = true}) {
     final normalizedTag = release.tagName.replaceFirst(RegExp(r'^[vV]'), '');
+    final packageValid =
+        !requirePackage ||
+        (packageName == 'vscope_serial-windows-${release.tagName}.zip' &&
+            packageSize > 0 &&
+            RegExp(r'^[a-f0-9]{64}$').hasMatch(sha256));
     if (schemaVersion != 1 ||
         version != normalizedTag ||
-        packageName != 'vscope_serial-windows-${release.tagName}.zip' ||
-        packageSize <= 0 ||
-        !RegExp(r'^[a-f0-9]{64}$').hasMatch(sha256) ||
+        !packageValid ||
         executable != 'vscope_serial.exe') {
       throw const FormatException('更新清单无效或与发布版本不匹配');
     }
@@ -60,6 +64,27 @@ class PreparedUpdate {
     required this.updateDirectory,
     required this.payloadDirectory,
   });
+}
+
+class RollbackUpdate {
+  final UpdateChannel channel;
+  final String version;
+  final DateTime? createdAt;
+  final UpdateManifest manifest;
+  final Directory rollbackDirectory;
+  final Directory payloadDirectory;
+
+  const RollbackUpdate({
+    required this.channel,
+    required this.version,
+    required this.createdAt,
+    required this.manifest,
+    required this.rollbackDirectory,
+    required this.payloadDirectory,
+  });
+
+  String get tagName =>
+      version.startsWith(RegExp(r'[vV]')) ? version : 'v$version';
 }
 
 class UpdateDownloadProgress {
@@ -119,6 +144,7 @@ class UpdateService {
 
   Future<PreparedUpdate> downloadAndPrepare(
     ReleaseInfo checkedRelease, {
+    required UpdateChannel channel,
     required void Function(UpdateDownloadProgress progress) onProgress,
   }) async {
     if (!Platform.isWindows) {
@@ -183,6 +209,7 @@ class UpdateService {
             'tagName': release.tagName,
             'version': manifest.version,
             'source': release.source,
+            'channel': channel.value,
             'preparedAt': DateTime.now().toUtc().toIso8601String(),
           }),
         );
@@ -230,6 +257,7 @@ class UpdateService {
 
   Future<PreparedUpdate?> findLatestPreparedUpdate({
     String? newerThanVersion,
+    UpdateChannel? channel,
   }) async {
     final root = await _updatesRoot();
     if (!await root.exists()) return null;
@@ -256,11 +284,16 @@ class UpdateService {
         );
         final tagName =
             (preparedJson['tagName'] ?? 'v${manifest.version}').toString();
+        final preparedChannel = UpdateChannel.fromString(
+          (preparedJson['channel'] ?? '').toString(),
+        );
+        if (channel != null && preparedChannel != channel) continue;
         final release = ReleaseInfo(
           tagName: tagName,
           htmlUrl: '',
           source: (preparedJson['source'] ?? '本地已下载').toString(),
           body: '',
+          prerelease: preparedChannel == UpdateChannel.beta,
         );
         manifest.validateFor(release);
         if (newerThanVersion != null &&
@@ -287,6 +320,7 @@ class UpdateService {
     final cutoff = DateTime.now().subtract(const Duration(days: 7));
     await for (final entity in root.list()) {
       if (entity is! Directory) continue;
+      if (entity.path == (await _rollbackRoot()).path) continue;
       final stat = await entity.stat();
       if (stat.modified.isBefore(cutoff)) {
         await entity.delete(recursive: true);
@@ -321,31 +355,117 @@ class UpdateService {
     }
   }
 
-  Future<void> launchInstaller(PreparedUpdate update) async {
+  Future<void> launchInstaller(
+    PreparedUpdate update, {
+    required UpdateChannel channel,
+  }) async {
+    await _launchInstaller(
+      manifest: update.manifest,
+      updateDirectory: update.updateDirectory,
+      payloadDirectory: update.payloadDirectory,
+      channel: channel,
+    );
+  }
+
+  Future<List<RollbackUpdate>> findRollbackUpdates() async {
+    final updates = <RollbackUpdate>[];
+    for (final channel in UpdateChannel.values) {
+      final update = await findRollbackUpdate(channel);
+      if (update != null) updates.add(update);
+    }
+    return updates;
+  }
+
+  Future<RollbackUpdate?> findRollbackUpdate(UpdateChannel channel) async {
+    final rollbackDir = await _rollbackDirectory(channel);
+    final metadataFile = File('${rollbackDir.path}/rollback.json');
+    final manifestFile = File('${rollbackDir.path}/update-manifest.json');
+    final payload = Directory('${rollbackDir.path}/payload');
+    if (!await metadataFile.exists() ||
+        !await manifestFile.exists() ||
+        !await payload.exists()) {
+      return null;
+    }
+    try {
+      final metadata =
+          jsonDecode(await metadataFile.readAsString()) as Map<String, dynamic>;
+      final version = (metadata['version'] ?? '').toString();
+      final manifest = UpdateManifest.fromJson(
+        jsonDecode(await manifestFile.readAsString()) as Map<String, dynamic>,
+      );
+      final release = ReleaseInfo(
+        tagName: version.startsWith(RegExp(r'[vV]')) ? version : 'v$version',
+        htmlUrl: '',
+        source: '本地回退',
+        body: '',
+        prerelease: channel == UpdateChannel.beta,
+      );
+      manifest.validateFor(release, requirePackage: false);
+      _validatePayload(payload, manifest);
+      return RollbackUpdate(
+        channel: channel,
+        version: version,
+        createdAt: DateTime.tryParse((metadata['createdAt'] ?? '').toString()),
+        manifest: manifest,
+        rollbackDirectory: rollbackDir,
+        payloadDirectory: payload,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> launchRollbackInstaller(RollbackUpdate update) async {
+    final stagingDir = await _rollbackInstallDirectory(update.channel);
+    if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+    await stagingDir.create(recursive: true);
+    final stagedPayload = Directory('${stagingDir.path}/payload');
+    await _copyDirectory(update.payloadDirectory, stagedPayload);
+    await File(
+      '${update.rollbackDirectory.path}/update-manifest.json',
+    ).copy('${stagingDir.path}/update-manifest.json');
+    await _launchInstaller(
+      manifest: update.manifest,
+      updateDirectory: stagingDir,
+      payloadDirectory: stagedPayload,
+      channel: update.channel,
+    );
+  }
+
+  Future<void> _launchInstaller({
+    required UpdateManifest manifest,
+    required Directory updateDirectory,
+    required Directory payloadDirectory,
+    required UpdateChannel channel,
+  }) async {
     if (!const bool.fromEnvironment('dart.vm.product')) {
       throw const UpdateDownloadException('Debug/Profile 构建不允许覆盖安装');
     }
     const updaterName = 'vscope_updater.exe';
-    final sourceUpdater = File('${update.payloadDirectory.path}/$updaterName');
+    final sourceUpdater = File('${payloadDirectory.path}/$updaterName');
     if (!await sourceUpdater.exists()) {
       throw const UpdateDownloadException('更新包缺少外置更新器');
     }
 
-    final updaterDir = Directory('${update.updateDirectory.path}/installer');
+    final updaterDir = Directory('${updateDirectory.path}/installer');
     await updaterDir.create(recursive: true);
     final updater = await sourceUpdater.copy('${updaterDir.path}/$updaterName');
     final installDir = File(Platform.resolvedExecutable).parent;
     final plan = File('${updaterDir.path}/update-plan.json');
-    final resultFile = File('${update.updateDirectory.path}/result.json');
+    final resultFile = File('${updateDirectory.path}/result.json');
+    final rollbackDir = await _rollbackDirectory(channel);
     await plan.writeAsString(
       jsonEncode({
         'schemaVersion': 1,
         'pid': pid,
         'installDir': installDir.path,
-        'payloadDir': update.payloadDirectory.path,
-        'executable': update.manifest.executable,
+        'payloadDir': payloadDirectory.path,
+        'executable': manifest.executable,
         'resultFile': resultFile.path,
-        'cleanupDir': update.updateDirectory.path,
+        'cleanupDir': updateDirectory.path,
+        'rollbackDir': rollbackDir.path,
+        'rollbackChannel': channel.value,
+        'currentVersion': await AppInfo.version(),
       }),
     );
     await Process.start(
@@ -489,6 +609,38 @@ class UpdateService {
   Future<Directory> _updateDirectory(String tagName) async {
     final root = await _updatesRoot();
     return Directory('${root.path}/$tagName');
+  }
+
+  Future<Directory> _rollbackRoot() async {
+    final root = await _updatesRoot();
+    return Directory('${root.path}/rollback');
+  }
+
+  Future<Directory> _rollbackDirectory(UpdateChannel channel) async {
+    final root = await _rollbackRoot();
+    return Directory('${root.path}/${channel.value}');
+  }
+
+  Future<Directory> _rollbackInstallDirectory(UpdateChannel channel) async {
+    final root = await _updatesRoot();
+    return Directory('${root.path}/rollback-install-${channel.value}');
+  }
+
+  static Future<void> _copyDirectory(
+    Directory source,
+    Directory destination,
+  ) async {
+    await destination.create(recursive: true);
+    await for (final entity in source.list(recursive: true)) {
+      final relative = entity.path.substring(source.path.length);
+      final targetPath = '${destination.path}$relative';
+      if (entity is Directory) {
+        await Directory(targetPath).create(recursive: true);
+      } else if (entity is File) {
+        await File(targetPath).parent.create(recursive: true);
+        await entity.copy(targetPath);
+      }
+    }
   }
 
   static Future<ReleaseInfo> _defaultFetchRelease(

@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import zipfile
@@ -49,8 +50,8 @@ def managed_files(bundle: Path) -> list[dict[str, object]]:
 
 
 def generate(bundle: Path, tag: str, output_dir: Path) -> tuple[Path, Path]:
-    if not tag.startswith("v"):
-        raise ValueError("release tag must use the vX.Y.Z format")
+    if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-beta\.\d+)?", tag):
+        raise ValueError("release tag must use vX.Y.Z or vX.Y.Z-beta.N format")
     if not (bundle / "vscope_serial.exe").exists():
         raise FileNotFoundError("bundle is missing vscope_serial.exe")
     if not (bundle / "vscope_updater.exe").exists():

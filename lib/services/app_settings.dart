@@ -106,6 +106,9 @@ class AppSettings {
   /// 启动时自动检查更新。默认关闭，避免启动时主动访问网络。
   bool autoUpdateCheckEnabled = false;
 
+  /// 更新通道：stable / beta。默认稳定版，Beta 需要用户手动选择。
+  String updateChannel = 'stable';
+
   // ========== 全局设置 ==========
   /// 强制关闭应用内临时提示信息。
   bool disableNotifications = false;
@@ -200,6 +203,8 @@ class AppSettings {
       zobowPresetViewMode =
           (json['zobowPresetViewMode'] as String?) == 'list' ? 'list' : 'grid';
       autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
+      updateChannel =
+          (json['updateChannel'] as String?) == 'beta' ? 'beta' : 'stable';
       disableNotifications = json['disableNotifications'] as bool? ?? false;
       rawDataDisplayLineLimit =
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
@@ -254,6 +259,7 @@ class AppSettings {
       'rProfileId': rProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
       'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
+      'updateChannel': updateChannel,
       'disableNotifications': disableNotifications,
       'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
 

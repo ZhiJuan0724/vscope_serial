@@ -3,6 +3,20 @@ import 'dart:io';
 
 import 'app_info.dart';
 
+enum UpdateChannel {
+  stable('stable', '稳定版'),
+  beta('beta', 'Beta');
+
+  final String value;
+  final String label;
+
+  const UpdateChannel(this.value, this.label);
+
+  static UpdateChannel fromString(String value) {
+    return value == beta.value ? beta : stable;
+  }
+}
+
 class ReleaseAsset {
   final String name;
   final int size;
@@ -22,6 +36,7 @@ class ReleaseInfo {
   final String htmlUrl;
   final String source;
   final String body;
+  final bool prerelease;
   final List<ReleaseAsset> assets;
 
   const ReleaseInfo({
@@ -29,8 +44,14 @@ class ReleaseInfo {
     required this.htmlUrl,
     required this.source,
     required this.body,
+    this.prerelease = false,
     this.assets = const [],
   });
+
+  UpdateChannel get channel =>
+      UpdateChecker.isBetaTag(tagName)
+          ? UpdateChannel.beta
+          : UpdateChannel.stable;
 }
 
 class UpdateCheckResult {
@@ -74,21 +95,31 @@ class UpdateChecker {
       'https://api.github.com/repos/ZhiJuan0724/vscope_serial/releases/latest';
   static const _giteeLatestReleaseUrl =
       'https://gitee.com/api/v5/repos/ZhiJuan0724/vscope_serial/releases/latest';
+  static const _githubReleasesUrl =
+      'https://api.github.com/repos/ZhiJuan0724/vscope_serial/releases?per_page=30';
+  static const _giteeReleasesUrl =
+      'https://gitee.com/api/v5/repos/ZhiJuan0724/vscope_serial/releases?per_page=30';
   static const _githubReleasePage =
       'https://github.com/ZhiJuan0724/vscope_serial/releases';
   static const _giteeReleasePage =
       'https://gitee.com/ZhiJuan0724/vscope_serial/releases';
 
-  final Future<Map<String, dynamic>> Function(Uri uri) _fetchJson;
+  final Future<dynamic> Function(Uri uri) _fetchJson;
 
-  UpdateChecker({Future<Map<String, dynamic>> Function(Uri uri)? fetchJson})
+  UpdateChecker({Future<dynamic> Function(Uri uri)? fetchJson})
     : _fetchJson = fetchJson ?? _defaultFetchJson;
 
-  Future<UpdateCheckResult> check() async {
+  Future<UpdateCheckResult> check({
+    UpdateChannel channel = UpdateChannel.stable,
+  }) async {
     final currentVersion = await AppInfo.version();
-    final release = await _tryFetchLatestRelease();
+    final release = await _tryFetchLatestRelease(channel);
     if (release == null) {
-      return UpdateCheckResult.failed('无法连接 GitHub 或 Gitee 检查更新');
+      return UpdateCheckResult.failed(
+        channel == UpdateChannel.beta
+            ? '无法连接 GitHub 检查 Beta 更新'
+            : '无法连接 GitHub 或 Gitee 检查更新',
+      );
     }
 
     if (compareVersions(release.tagName, currentVersion) > 0) {
@@ -97,36 +128,86 @@ class UpdateChecker {
     return UpdateCheckResult.latest(release);
   }
 
-  Future<ReleaseInfo?> _tryFetchLatestRelease() async {
+  Future<ReleaseInfo?> _tryFetchLatestRelease(UpdateChannel channel) async {
     try {
-      final json = await _fetchJson(Uri.parse(_githubLatestReleaseUrl));
-      return parseReleaseJson(
-        json,
+      final release = await _fetchLatestFrom(
+        channel: channel,
         source: 'GitHub',
+        latestUrl: _githubLatestReleaseUrl,
+        releasesUrl: _githubReleasesUrl,
         fallbackPage: _githubReleasePage,
       );
+      if (release != null) return release;
     } catch (_) {
+      // Fall through to the mirror source below.
+    }
+    if (channel == UpdateChannel.beta) return null;
+    try {
+      return await _fetchLatestFrom(
+        channel: channel,
+        source: 'Gitee',
+        latestUrl: _giteeLatestReleaseUrl,
+        releasesUrl: _giteeReleasesUrl,
+        fallbackPage: _giteeReleasePage,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<ReleaseInfo?> _fetchLatestFrom({
+    required UpdateChannel channel,
+    required String source,
+    required String latestUrl,
+    required String releasesUrl,
+    required String fallbackPage,
+  }) async {
+    if (channel == UpdateChannel.stable) {
+      final json = await _fetchJson(Uri.parse(latestUrl));
+      if (json is! Map<String, dynamic>) {
+        throw const FormatException('release response is not an object');
+      }
+      return parseReleaseJson(
+        json,
+        source: source,
+        channel: channel,
+        fallbackPage: fallbackPage,
+      );
+    }
+
+    final json = await _fetchJson(Uri.parse(releasesUrl));
+    if (json is! List) {
+      throw const FormatException('release list response is not an array');
+    }
+    final releases = <ReleaseInfo>[];
+    for (final item in json.whereType<Map>()) {
       try {
-        final json = await _fetchJson(Uri.parse(_giteeLatestReleaseUrl));
-        return parseReleaseJson(
-          json,
-          source: 'Gitee',
-          fallbackPage: _giteeReleasePage,
+        releases.add(
+          parseReleaseJson(
+            Map<String, dynamic>.from(item),
+            source: source,
+            channel: channel,
+            fallbackPage: fallbackPage,
+          ),
         );
       } catch (_) {
-        return null;
+        continue;
       }
     }
+    releases.sort((a, b) => compareVersions(b.tagName, a.tagName));
+    return releases.isEmpty ? null : releases.first;
   }
 
   static ReleaseInfo parseReleaseJson(
     Map<String, dynamic> json, {
     required String source,
+    UpdateChannel channel = UpdateChannel.stable,
     String? fallbackPage,
   }) {
     final tagName = (json['tag_name'] ?? json['tagName'] ?? '').toString();
     final htmlUrl = (json['html_url'] ?? json['htmlUrl'] ?? '').toString();
     final body = (json['body'] ?? '').toString();
+    final prerelease = json['prerelease'] == true;
     final assets = (json['assets'] as List? ?? const [])
         .whereType<Map>()
         .map(
@@ -143,11 +224,12 @@ class UpdateChecker {
         )
         .where((asset) => asset.name.isNotEmpty && asset.downloadUrl.isNotEmpty)
         .toList(growable: false);
-    if (!RegExp(r'^v\d+\.\d+\.\d+$', caseSensitive: false).hasMatch(tagName)) {
-      throw const FormatException('release tag_name is not a stable version');
+
+    if (json['draft'] == true) {
+      throw const FormatException('draft release is not supported');
     }
-    if (json['draft'] == true || json['prerelease'] == true) {
-      throw const FormatException('draft or prerelease is not supported');
+    if (!_tagMatchesChannel(tagName, channel, prerelease)) {
+      throw const FormatException('release tag_name does not match channel');
     }
     return ReleaseInfo(
       tagName: tagName,
@@ -159,11 +241,34 @@ class UpdateChecker {
               : '$fallbackPage/tag/$tagName',
       source: source,
       body: body,
+      prerelease: prerelease,
       assets: assets,
     );
   }
 
-  static Future<Map<String, dynamic>> _defaultFetchJson(Uri uri) async {
+  static bool isStableTag(String value) {
+    return RegExp(r'^v\d+\.\d+\.\d+$', caseSensitive: false).hasMatch(value);
+  }
+
+  static bool isBetaTag(String value) {
+    return RegExp(
+      r'^v\d+\.\d+\.\d+-beta\.\d+$',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
+
+  static bool _tagMatchesChannel(
+    String tagName,
+    UpdateChannel channel,
+    bool prerelease,
+  ) {
+    return switch (channel) {
+      UpdateChannel.stable => isStableTag(tagName) && !prerelease,
+      UpdateChannel.beta => isBetaTag(tagName) && prerelease,
+    };
+  }
+
+  static Future<dynamic> _defaultFetchJson(Uri uri) async {
     final client = HttpClient();
     client.connectionTimeout = const Duration(seconds: 6);
     try {
@@ -179,37 +284,69 @@ class UpdateChecker {
         throw HttpException('HTTP ${response.statusCode}', uri: uri);
       }
       final body = await response.transform(utf8.decoder).join();
-      final decoded = jsonDecode(body);
-      if (decoded is! Map<String, dynamic>) {
-        throw const FormatException('release response is not an object');
-      }
-      return decoded;
+      return jsonDecode(body);
     } finally {
       client.close(force: true);
     }
   }
 
   static int compareVersions(String left, String right) {
-    final leftParts = _versionParts(left);
-    final rightParts = _versionParts(right);
-    final length =
-        leftParts.length > rightParts.length
-            ? leftParts.length
-            : rightParts.length;
-    for (var i = 0; i < length; i++) {
-      final l = i < leftParts.length ? leftParts[i] : 0;
-      final r = i < rightParts.length ? rightParts[i] : 0;
-      if (l != r) return l.compareTo(r);
+    return _ParsedVersion.parse(left).compareTo(_ParsedVersion.parse(right));
+  }
+}
+
+class _ParsedVersion implements Comparable<_ParsedVersion> {
+  final int major;
+  final int minor;
+  final int patch;
+  final int? beta;
+
+  const _ParsedVersion({
+    required this.major,
+    required this.minor,
+    required this.patch,
+    required this.beta,
+  });
+
+  factory _ParsedVersion.parse(String value) {
+    final normalized = value.trim().replaceFirst(RegExp(r'^[vV]'), '');
+    final match = RegExp(
+      r'^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?(?:\+.*)?$',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (match == null) {
+      final parts = normalized
+          .split(RegExp(r'[-+]'))
+          .first
+          .split('.')
+          .map((part) => int.tryParse(part) ?? 0)
+          .toList(growable: false);
+      return _ParsedVersion(
+        major: parts.isNotEmpty ? parts[0] : 0,
+        minor: parts.length > 1 ? parts[1] : 0,
+        patch: parts.length > 2 ? parts[2] : 0,
+        beta: null,
+      );
     }
-    return 0;
+    return _ParsedVersion(
+      major: int.parse(match.group(1)!),
+      minor: int.parse(match.group(2)!),
+      patch: int.parse(match.group(3)!),
+      beta: match.group(4) == null ? null : int.parse(match.group(4)!),
+    );
   }
 
-  static List<int> _versionParts(String value) {
-    final normalized = value.trim().replaceFirst(RegExp(r'^[vV]'), '');
-    final main = normalized.split(RegExp(r'[-+]')).first;
-    return main
-        .split('.')
-        .map((part) => int.tryParse(part) ?? 0)
-        .toList(growable: false);
+  @override
+  int compareTo(_ParsedVersion other) {
+    final main = [
+      major.compareTo(other.major),
+      minor.compareTo(other.minor),
+      patch.compareTo(other.patch),
+    ].firstWhere((value) => value != 0, orElse: () => 0);
+    if (main != 0) return main;
+    if (beta == null && other.beta == null) return 0;
+    if (beta == null) return 1;
+    if (other.beta == null) return -1;
+    return beta!.compareTo(other.beta!);
   }
 }

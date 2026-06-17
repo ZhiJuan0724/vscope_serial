@@ -106,10 +106,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   Future<void> _handleStartupUpdates() async {
     final service = UpdateService();
+    final channel = UpdateChannel.fromString(AppSettings().updateChannel);
     final message = await service.consumeLastResult();
     if (message != null && mounted) AppNotifications.show(message);
     final prepared = await service.findLatestPreparedUpdate(
       newerThanVersion: await AppInfo.version(),
+      channel: channel,
     );
     if (prepared != null && mounted) {
       await showUpdateAvailableDialog(context, prepared.release);
@@ -125,7 +127,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   Future<void> _checkForUpdatesOnStartup() async {
-    final result = await UpdateChecker().check();
+    final result = await UpdateChecker().check(
+      channel: UpdateChannel.fromString(AppSettings().updateChannel),
+    );
     if (!mounted) return;
     if (result.hasUpdate && result.latestRelease != null) {
       await showUpdateAvailableDialog(context, result.latestRelease!);

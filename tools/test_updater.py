@@ -19,7 +19,11 @@ def write_manifest(root: Path, relative_paths: list[str]) -> None:
     manifest = {
         "schemaVersion": 1,
         "files": [
-            {"path": path, "sha256": digest(root / path)}
+            {
+                "path": path,
+                "sha256": digest(root / path),
+                "size": (root / path).stat().st_size,
+            }
             for path in relative_paths
         ],
     }
@@ -29,22 +33,33 @@ def write_manifest(root: Path, relative_paths: list[str]) -> None:
 
 
 def run_updater(
-    updater: Path, install: Path, payload: Path, workspace: Path
+    updater: Path,
+    install: Path,
+    payload: Path,
+    workspace: Path,
+    rollback: Path | None = None,
 ) -> dict:
     result = workspace / "result.json"
     plan = workspace / "plan.json"
-    plan.write_text(
-        json.dumps(
+    plan_data = {
+        "schemaVersion": 1,
+        "pid": 0,
+        "installDir": str(install),
+        "payloadDir": str(payload),
+        "executable": "vscope_serial.exe",
+        "resultFile": str(result),
+        "cleanupDir": str(workspace),
+    }
+    if rollback is not None:
+        plan_data.update(
             {
-                "schemaVersion": 1,
-                "pid": 0,
-                "installDir": str(install),
-                "payloadDir": str(payload),
-                "executable": "vscope_serial.exe",
-                "resultFile": str(result),
-                "cleanupDir": str(workspace),
+                "rollbackDir": str(rollback),
+                "rollbackChannel": "stable",
+                "currentVersion": "1.2.3",
             }
-        ),
+        )
+    plan.write_text(
+        json.dumps(plan_data),
         encoding="utf-8",
     )
     subprocess.run(
@@ -76,11 +91,17 @@ def success_case(updater: Path, root: Path) -> None:
     (payload / "new.dll").write_text("new-dll", encoding="utf-8")
     write_manifest(payload, ["vscope_serial.exe", "new.dll"])
 
-    result = run_updater(updater, install, payload, workspace)
+    rollback = root / "success-rollback"
+    result = run_updater(updater, install, payload, workspace, rollback)
     assert result["success"] is True
     assert digest(install / "vscope_serial.exe") == expected_digest
     assert (install / "new.dll").exists()
     assert not (install / "obsolete.dll").exists()
+    assert (rollback / "payload" / "vscope_serial.exe").exists()
+    assert (rollback / "payload" / "obsolete.dll").exists()
+    assert json.loads((rollback / "rollback.json").read_text(encoding="utf-8"))[
+        "version"
+    ] == "1.2.3"
     assert (
         install / "settings" / "settings.json"
     ).read_text(encoding="utf-8") == "user-data"

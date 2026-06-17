@@ -49,6 +49,7 @@ class _UpdateAvailableDialog extends StatefulWidget {
 class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   static const _canInstall = bool.fromEnvironment('dart.vm.product');
   final _service = UpdateService();
+  late final UpdateChannel _channel = widget.release.channel;
   UpdateDownloadProgress? _progress;
   PreparedUpdate? _prepared;
   String? _error;
@@ -77,6 +78,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
           children: [
             Text('当前版本: ${widget.currentVersion}'),
             Text('最新版本: ${widget.release.tagName}'),
+            Text('更新通道: ${_channel.label}'),
             Text('来源: ${widget.release.source}'),
             if (widget.release.body.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -172,6 +174,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
     try {
       final prepared = await _service.downloadAndPrepare(
         widget.release,
+        channel: _channel,
         onProgress: (progress) {
           if (mounted) setState(() => _progress = progress);
         },
@@ -194,7 +197,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       _error = null;
     });
     try {
-      await _service.launchInstaller(prepared);
+      await _service.launchInstaller(prepared, channel: _channel);
       if (mounted) Navigator.of(context).pop();
       await windowManager.close();
     } catch (error) {
@@ -227,11 +230,16 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   final _checker = UpdateChecker();
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
+  UpdateChannel _updateChannel = UpdateChannel.fromString(
+    AppSettings().updateChannel,
+  );
   bool _checking = false;
+  bool _loadingRollback = false;
   String? _version;
   DateTime? _buildTime;
   List<ChangelogEntry> _changelogEntries = const [];
   UpdateCheckResult? _lastResult;
+  List<RollbackUpdate> _rollbackUpdates = const [];
 
   @override
   void initState() {
@@ -247,6 +255,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     AppInfo.buildTime().then((value) {
       if (mounted) setState(() => _buildTime = value);
     });
+    _loadRollbackUpdates();
   }
 
   @override
@@ -286,6 +295,31 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 final settings = AppSettings()..autoUpdateCheckEnabled = value;
                 settings.save();
               },
+            ),
+            Row(
+              children: [
+                const SizedBox(width: 72, child: Text('更新通道:')),
+                DropdownButton<UpdateChannel>(
+                  value: _updateChannel,
+                  items: UpdateChannel.values
+                      .map(
+                        (channel) => DropdownMenuItem(
+                          value: channel,
+                          child: Text(channel.label),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() {
+                      _updateChannel = value;
+                      _lastResult = null;
+                    });
+                    final settings = AppSettings()..updateChannel = value.value;
+                    settings.save();
+                  },
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             Wrap(
@@ -341,6 +375,37 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 ),
               ],
             ],
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            const Text('版本回退', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            if (_loadingRollback)
+              const Text('正在读取回退版本...')
+            else
+              ...UpdateChannel.values.map((channel) {
+                final update = _rollbackUpdateFor(channel);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${channel.label}: '
+                          '${update == null ? '暂无可回退版本' : update.tagName}',
+                        ),
+                      ),
+                      OutlinedButton(
+                        onPressed:
+                            update == null
+                                ? null
+                                : () => _installRollback(update),
+                        child: const Text('回退'),
+                      ),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -403,12 +468,42 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _checking = true;
       _lastResult = null;
     });
-    final result = await _checker.check();
+    final result = await _checker.check(channel: _updateChannel);
     if (!mounted) return;
     setState(() {
       _checking = false;
       _lastResult = result;
     });
+  }
+
+  Future<void> _loadRollbackUpdates() async {
+    setState(() => _loadingRollback = true);
+    final updates = await UpdateService().findRollbackUpdates();
+    if (!mounted) return;
+    setState(() {
+      _rollbackUpdates = updates;
+      _loadingRollback = false;
+    });
+  }
+
+  RollbackUpdate? _rollbackUpdateFor(UpdateChannel channel) {
+    for (final update in _rollbackUpdates) {
+      if (update.channel == channel) return update;
+    }
+    return null;
+  }
+
+  Future<void> _installRollback(RollbackUpdate update) async {
+    try {
+      await UpdateService().launchRollbackInstaller(update);
+      if (mounted) Navigator.of(context).pop();
+      await windowManager.close();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lastResult = UpdateCheckResult.failed(error.toString());
+      });
+    }
   }
 
   static String _formatBuildTime(DateTime? time) {
@@ -427,10 +522,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final release = result.latestRelease;
     if (release == null) return '未获取到版本信息';
     if (result.hasUpdate) {
-      return '发现新版本 ${release.tagName}（${release.source}）';
+      return '发现${release.channel.label}新版本 ${release.tagName}（${release.source}）';
     }
     return '未发现更新（当前版本: $currentVersion；'
-        '最新发布版本: ${release.tagName}，${release.source}）';
+        '${release.channel.label}最新发布版本: ${release.tagName}，${release.source}）';
   }
 }
 

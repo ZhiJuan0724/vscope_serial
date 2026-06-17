@@ -62,6 +62,20 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate release tag version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch "^v\d+\.\d+\.\d+(-beta\.\d+)?$") {
+            throw "Release tag must use vX.Y.Z or vX.Y.Z-beta.N: $tag"
+          }
+          $pubspecVersion = (Select-String -Path pubspec.yaml -Pattern "^\s*version\s*:\s*(\S+)" | Select-Object -First 1).Matches.Groups[1].Value
+          $tagVersion = $tag -replace "^v", ""
+          if ($pubspecVersion -ne $tagVersion) {
+            throw "pubspec.yaml version ($pubspecVersion) must match tag without v ($tagVersion)"
+          }
+
       - name: Build Windows
         shell: pwsh
         run: |
@@ -135,7 +149,7 @@ jobs:
           }
           $end = $lines.Count
           for ($i = $start; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match "^##\s+v?\d+(\.\d+)+") {
+            if ($lines[$i] -match "^##\s+v?\d+(\.\d+)+(-beta\.\d+)?") {
               $end = $i
               break
             }
@@ -149,6 +163,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-beta.') }}
           files: |
             dist/*.zip
             dist/update-manifest-*.json
