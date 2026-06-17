@@ -64,8 +64,15 @@ class PlotImportProgress {
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
-/// 数据流：DataSourceManager → IDataParser → _dataPoints → PlotPainter
-/// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建
+/// 数据流：DataSourceManager → IDataParser → 历史缓存/当前窗口 → PlotPainter。
+///
+/// 这里同时维护“全量历史”和“当前绘图窗口”两套数据结构：
+/// - 当前窗口 `_dataPoints` 只保存 UI 正在绘制的点，避免 Flutter 持有过多对象。
+/// - 文本/浮点协议的历史值进入 `_parsedHistory`，按视口重建窗口。
+/// - Zobow/FixedFrame 的历史以原始固定帧保存，导出和回看都能复用原始字节。
+/// - `_lodIndex` 始终跟随全量历史更新，用于大范围拖动/缩放时快速预览。
+///
+/// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建。
 class PlotViewModel extends BaseViewModel {
   // ========== 数据源 ==========
   /// 数据源管理器，封装串口和随机数据源的统一接口
@@ -99,6 +106,9 @@ class PlotViewModel extends BaseViewModel {
   int _dataRevision = 0;
 
   /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
+  ///
+  /// 固定帧类协议需要支持基于原始帧导出，并且能在视口变化时按帧序号
+  /// 重新解析窗口数据，因此不只保存解析后的 double 值。
   FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
     packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
   );
@@ -124,7 +134,11 @@ class PlotViewModel extends BaseViewModel {
   static const int _maxRateSamples = 1000;
 
   // ========== 当前数据实际通道数 ==========
-  /// 当前数据中实际出现的最大通道数（用于动态显示通道面板）
+  /// 当前数据中实际出现的通道数（用于动态显示通道面板）。
+  ///
+  /// 大多数协议取运行期内出现过的最大值；JustFloat 自动识别模式例外，
+  /// 以最新有效帧为准，这样设备从 8 通道切到 4 通道后不会继续显示
+  /// 已经没有数据的偏置轴和 r 协议地址槽位。
   int _activeChannelCount = 0;
 
   bool _hasStartedPlottingOnce = false;
@@ -760,13 +774,29 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  /// r 协议地址槽位在通道面板中的显示数量。
+  ///
+  /// 规则和接收协议绑定，而不是单纯按用户已填写的地址数量：
+  /// - 自动识别接收通道且未开始绘图时，显示全部 16 个槽位，方便预先配置。
+  /// - JustFloat 自动识别运行中，按最新有效帧解析出的通道数显示。
+  /// - 固定通道数协议严格按配置通道数显示，多填的 r 地址不撑大面板。
+  /// - 只有 FireWater 自动识别运行中这类无法提前知道通道数的情况，
+  ///   才按连续填写的 r 地址数量预留一个可继续填写的槽位。
   int get rAddressDisplayCount {
     if (!_isPlotting && _usesAutoDetectedReceiveChannels) {
       return SendProtocolConfig.maxChannelCount;
     }
-    final configured = _rContinuousAddressCount(throwOnGap: false);
+    if (_isPlotting &&
+        _parserType == ParserType.justFloat &&
+        _parserConfig.channelCount == 0) {
+      return _activeChannelCount.clamp(0, SendProtocolConfig.maxChannelCount);
+    }
     final fixedCount = _fixedReceiveChannelCount;
-    return math.max(1, math.min(16, math.max(configured + 1, fixedCount ?? 0)));
+    if (fixedCount != null) {
+      return fixedCount.clamp(1, SendProtocolConfig.maxChannelCount);
+    }
+    final configured = _rContinuousAddressCount(throwOnGap: false);
+    return math.max(1, math.min(16, configured + 1));
   }
 
   bool get _usesAutoDetectedReceiveChannels {
@@ -874,6 +904,12 @@ class PlotViewModel extends BaseViewModel {
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
   /// 5. 启动定时刷新
+  ///
+  /// 注意启动顺序不能随意调整：
+  /// - 协议初始化数据必须在数据源启动前发送，失败则不能进入绘图状态。
+  /// - `_isPlotting` 只在数据源配置完成后置 true，避免 UI 显示“运行中”
+  ///   但解析链实际没有启动。
+  /// - 启动前清空所有历史缓存，避免上一轮自动识别通道数影响本轮显示。
   Future<void> startPlotting() async {
     if (_isStopping) {
       showStatusMessage('正在停止绘图，请稍候', duration: const Duration(seconds: 1));
@@ -922,7 +958,8 @@ class PlotViewModel extends BaseViewModel {
     _sourceConfig.useSerial = serialService.isConnected;
     _sourceConfig.useRandom = canUseRandom;
 
-    // 清空旧数据
+    // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
+    // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
     _dataPoints.clear();
     _parsedHistory.clear();
     _lodIndex.clear();
@@ -1094,10 +1131,16 @@ class PlotViewModel extends BaseViewModel {
     _onParseResult(result);
   }
 
+  @visibleForTesting
+  void setPlottingForTest(bool value) {
+    _isPlotting = value;
+  }
+
   /// 处理解析器输出的数据包
   ///
   /// 每包数据都处理（不丢失），但 UI 刷新按 [_notifyBatchSize] 批量触发：
-  /// - 添加数据点到缓冲区，超限时从头部批量移除
+  /// - 追加到协议对应的全量历史缓存
+  /// - 必要时添加到当前窗口，超限时从头部批量移除
   /// - 更新速率统计样本
   /// - 更新实际通道数
   /// - 跟随模式下自动平移视口
@@ -1119,6 +1162,9 @@ class PlotViewModel extends BaseViewModel {
       values: List.from(result.values!),
     );
 
+    // 历史缓存按协议分流：
+    // - Zobow/FixedFrame 保留原始帧，导出和视口重建都从原始帧重新解析。
+    // - 其他协议只保存解析后的紧凑 double 块，降低大数据量下的对象开销。
     if (_parserType == ParserType.zobow && result.rawBytes != null) {
       _zobowRawFrames.appendPacket(result.rawBytes!);
     } else if (_parserType == ParserType.fixedFrame &&
@@ -1147,6 +1193,9 @@ class PlotViewModel extends BaseViewModel {
 
     // 更新实际通道数。JustFloat 自动识别模式下以最新有效帧为准，
     // 避免上一帧较多通道遗留的偏置轴继续显示。
+    //
+    // 其它协议仍取运行期内最大通道数，因为这些协议的通道布局通常不会
+    // 在同一轮绘图中变短；取最大值能避免偶发短帧导致通道面板闪烁。
     final nextActiveChannelCount =
         _parserType == ParserType.justFloat && _parserConfig.channelCount == 0
             ? point.channelCount
@@ -3631,7 +3680,13 @@ class PlotViewModel extends BaseViewModel {
   }
 }
 
-/// 速率统计样本
+/// 文本/浮点协议的全量数值历史缓存。
+///
+/// 直接保存 `List<PlotDataPoint>` 会为每个点和每个通道产生大量 Dart 对象，
+/// 百万级数据下 GC 压力很大。这里改用分块的 typed data：
+/// - `_valueChunks` 连续保存每个点最多 16 个 double 值。
+/// - `_countChunks` 记录每个点真实通道数，支持 JustFloat 自动通道数变化。
+/// - 当前绘图窗口需要回看时，通过 [valuesAt] 临时还原单点 List。
 class _ParsedValueHistory {
   static const int _chunkPointCount = 4096;
   static const int _maxChannels = 16;

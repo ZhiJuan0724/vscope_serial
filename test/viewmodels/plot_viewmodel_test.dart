@@ -685,6 +685,47 @@ void main() {
       expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
     });
 
+    test('JustFloat自动识别运行时r协议按解析通道数显示', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault());
+
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+
+      vm.setPlottingForTest(true);
+      expect(vm.rAddressDisplayCount, 0);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1, 2, 3], bytesConsumed: 12),
+      );
+      expect(vm.activeChannelCount, 3);
+      expect(vm.rAddressDisplayCount, 3);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([4, 5], bytesConsumed: 8));
+      expect(vm.activeChannelCount, 2);
+      expect(vm.rAddressDisplayCount, 2);
+
+      vm.setPlottingForTest(false);
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+    });
+
+    test('固定接收通道数时r协议按配置通道数显示', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      for (var i = 0; i < 8; i++) {
+        vm.setRChannelAddress(i, '${i + 1}');
+      }
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 3);
+      expect(vm.rAddressDisplayCount, 3);
+
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(
+        ParserConfig.fireWaterDefault()..fireWaterChannelCount = 4,
+      );
+      expect(vm.rAddressDisplayCount, 4);
+    });
+
     test('众邦模式强制内置发送协议并在离开后恢复选择', () {
       vm.setSendProtocolType(SendProtocolType.rProtocol);
       expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
