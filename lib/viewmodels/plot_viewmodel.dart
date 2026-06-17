@@ -102,7 +102,11 @@ class PlotViewModel extends BaseViewModel {
   static const int minVisiblePoints = 1000000;
   static const int defaultVisiblePoints = 1000000;
   static const int maxVisiblePointsLimit = 40000000;
+  static const int maxDiscardInitialPacketCount = 1000000;
   int _maxVisiblePoints = defaultVisiblePoints;
+  int _discardInitialPacketCount = 0;
+  int _activeDiscardInitialPacketLimit = 0;
+  int _discardedInitialPacketCount = 0;
   int _dataRevision = 0;
 
   /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
@@ -376,6 +380,10 @@ class PlotViewModel extends BaseViewModel {
       minVisiblePoints,
       maxVisiblePointsLimit,
     );
+    _discardInitialPacketCount = settings.discardInitialPacketCount.clamp(
+      0,
+      maxDiscardInitialPacketCount,
+    );
     _showGrid = settings.showGrid;
     _gridDensity = settings.gridDensity;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
@@ -429,6 +437,7 @@ class PlotViewModel extends BaseViewModel {
     settings.refreshFps = _refreshFps;
     settings.plotFontSizeDelta = _plotFontSizeDelta;
     settings.maxVisiblePoints = _maxVisiblePoints;
+    settings.discardInitialPacketCount = _discardInitialPacketCount;
     settings.snapHighlightEnabled = _snapHighlightEnabled;
     settings.snapHighlightDiameter = _snapHighlightDiameter;
     settings.showGrid = _showGrid;
@@ -517,6 +526,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// 当前窗口点数上限
   int get maxVisiblePoints => _maxVisiblePoints;
+
+  /// 每次开始绘图时丢弃的前置有效数据包数量。
+  int get discardInitialPacketCount => _discardInitialPacketCount;
 
   /// 当前窗口数据版本，用于窗口长度不变但内容滚动时触发重绘。
   int get dataRevision => _dataRevision;
@@ -971,6 +983,8 @@ class PlotViewModel extends BaseViewModel {
     _rateSamples.clear();
     _nextIndex = 0;
     _activeChannelCount = 0;
+    _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
+    _discardedInitialPacketCount = 0;
     _startTime = DateTime.now();
 
     // 重置速率统计
@@ -1114,6 +1128,8 @@ class PlotViewModel extends BaseViewModel {
     _rateSamples.clear();
     _nextIndex = 0;
     _activeChannelCount = 0;
+    _activeDiscardInitialPacketLimit = 0;
+    _discardedInitialPacketCount = 0;
     _startTime = null;
     _lastRateLogTime = null;
     _lastRateLogIndex = 0;
@@ -1133,6 +1149,10 @@ class PlotViewModel extends BaseViewModel {
 
   @visibleForTesting
   void setPlottingForTest(bool value) {
+    if (value && !_isPlotting) {
+      _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
+      _discardedInitialPacketCount = 0;
+    }
     _isPlotting = value;
   }
 
@@ -1147,6 +1167,11 @@ class PlotViewModel extends BaseViewModel {
   /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
   void _onParseResult(ParseResult result) {
     if (!result.success || result.values == null || result.values!.isEmpty) {
+      return;
+    }
+
+    if (_discardedInitialPacketCount < _activeDiscardInitialPacketLimit) {
+      _discardedInitialPacketCount++;
       return;
     }
 
@@ -2253,6 +2278,17 @@ class PlotViewModel extends BaseViewModel {
       _loadWindowForViewport(force: true);
     }
 
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置每次开始绘图时丢弃的前置有效数据包数量。
+  ///
+  /// 该设置只影响下一次 startPlotting 后新进入解析链的数据，不处理导入文件。
+  void setDiscardInitialPacketCount(int count) {
+    final next = count.clamp(0, maxDiscardInitialPacketCount).toInt();
+    if (next == _discardInitialPacketCount) return;
+    _discardInitialPacketCount = next;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

@@ -58,6 +58,7 @@ class AppSettings {
 
   /// 绘图窗口点数上限，范围 1000000~40000000
   int maxVisiblePoints = 1000000;
+  int discardInitialPacketCount = 0;
   bool snapHighlightEnabled = true;
   double snapHighlightDiameter = 8.0;
 
@@ -169,6 +170,10 @@ class AppSettings {
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
               1000000)
           .clamp(1000000, 40000000);
+      discardInitialPacketCount =
+          ((json['discardInitialPacketCount'] as num?)?.toInt() ?? 0)
+              .clamp(0, 1000000)
+              .toInt();
       snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
       snapHighlightDiameter =
           ((json['snapHighlightDiameter'] as num?)?.toDouble() ?? 8.0).clamp(
@@ -231,6 +236,7 @@ class AppSettings {
       'refreshFps': refreshFps,
       'plotFontSizeDelta': plotFontSizeDelta,
       'maxVisiblePoints': maxVisiblePoints,
+      'discardInitialPacketCount': discardInitialPacketCount,
       'snapHighlightEnabled': snapHighlightEnabled,
       'snapHighlightDiameter': snapHighlightDiameter,
       'showGrid': showGrid,

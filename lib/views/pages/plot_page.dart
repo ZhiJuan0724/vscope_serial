@@ -2023,6 +2023,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final maxVisibleController = TextEditingController(
       text: vm.maxVisiblePoints.toString(),
     );
+    final discardInitialPacketController = TextEditingController(
+      text: vm.discardInitialPacketCount.toString(),
+    );
     showDialog(
       context: context,
       builder:
@@ -2305,6 +2308,64 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             color: Colors.grey,
                           ),
                         ),
+                        const Divider(),
+                        const Text('丢弃包数', style: TextStyle(fontSize: 14)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 140,
+                              child: TextField(
+                                controller: discardInitialPacketController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                  suffixText: '包',
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                onSubmitted: (value) {
+                                  final count = int.tryParse(value);
+                                  if (count != null) {
+                                    vm.setDiscardInitialPacketCount(count);
+                                    discardInitialPacketController.text =
+                                        vm.discardInitialPacketCount.toString();
+                                    setState(() {});
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                final count = int.tryParse(
+                                  discardInitialPacketController.text,
+                                );
+                                if (count != null) {
+                                  vm.setDiscardInitialPacketCount(count);
+                                  discardInitialPacketController.text =
+                                      vm.discardInitialPacketCount.toString();
+                                  setState(() {});
+                                }
+                              },
+                              child: const Text('应用'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '范围: 0~${PlotViewModel.maxDiscardInitialPacketCount} 包，默认 0 包。每次开始绘图时丢弃前 N 个成功解析的数据包，不影响文件导入。',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                          ),
+                        ),
                       ],
                     ),
                   );
@@ -2322,6 +2383,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       refreshFpsController.dispose();
       snapDiameterController.dispose();
       maxVisibleController.dispose();
+      discardInitialPacketController.dispose();
     });
   }
 

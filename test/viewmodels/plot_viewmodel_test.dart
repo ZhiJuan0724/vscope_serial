@@ -51,6 +51,7 @@ void main() {
       settings.useRandomSource = false;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
+      settings.discardInitialPacketCount = 0;
       settings.rProfileId = '';
       serialService = SerialService();
       vm = PlotViewModel(serialService);
@@ -140,6 +141,28 @@ void main() {
 
       expect(vm.dataPoints.isEmpty, true);
       expect(vm.pointCount, 0);
+    });
+
+    test('丢弃包数会跳过开始后的前N个有效数据包', () {
+      vm.setDiscardInitialPacketCount(2);
+      vm.setPlottingForTest(true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      expect(vm.pointCount, 0);
+      expect(vm.dataPoints, isEmpty);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3], bytesConsumed: 1));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.values, [3]);
+
+      vm.clearData();
+      vm.ingestParsedResultForTest(ParseResult.ok([4], bytesConsumed: 1));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.values, [4]);
     });
 
     test('BIN 导入导出保留通道数据', () async {
