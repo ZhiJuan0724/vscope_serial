@@ -17,6 +17,23 @@ enum UpdateChannel {
   }
 }
 
+enum UpdateReleaseSource {
+  github('GitHub'),
+  gitee('Gitee');
+
+  final String label;
+
+  const UpdateReleaseSource(this.label);
+
+  static UpdateReleaseSource fromString(String value) {
+    return switch (value.trim().toLowerCase()) {
+      'github' => github,
+      'gitee' => gitee,
+      _ => throw ArgumentError('Unknown update source: $value'),
+    };
+  }
+}
+
 class ReleaseAsset {
   final String name;
   final int size;
@@ -111,14 +128,16 @@ class UpdateChecker {
 
   Future<UpdateCheckResult> check({
     UpdateChannel channel = UpdateChannel.stable,
+    UpdateReleaseSource? source,
   }) async {
     final currentVersion = await AppInfo.version();
-    final release = await _tryFetchLatestRelease(channel);
+    final release =
+        source == null
+            ? await _tryFetchLatestRelease(channel)
+            : await _tryFetchLatestReleaseFromSource(channel, source);
     if (release == null) {
       return UpdateCheckResult.failed(
-        channel == UpdateChannel.beta
-            ? '无法连接 GitHub 或 Gitee 检查 Beta 更新'
-            : '无法连接 GitHub 或 Gitee 检查更新',
+        _checkFailedMessage(channel: channel, source: source),
       );
     }
 
@@ -149,6 +168,32 @@ class UpdateChecker {
         releasesUrl: _giteeReleasesUrl,
         fallbackPage: _giteeReleasePage,
       );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<ReleaseInfo?> _tryFetchLatestReleaseFromSource(
+    UpdateChannel channel,
+    UpdateReleaseSource source,
+  ) async {
+    try {
+      return await switch (source) {
+        UpdateReleaseSource.github => _fetchLatestFrom(
+          channel: channel,
+          source: source.label,
+          latestUrl: _githubLatestReleaseUrl,
+          releasesUrl: _githubReleasesUrl,
+          fallbackPage: _githubReleasePage,
+        ),
+        UpdateReleaseSource.gitee => _fetchLatestFrom(
+          channel: channel,
+          source: source.label,
+          latestUrl: _giteeLatestReleaseUrl,
+          releasesUrl: _giteeReleasesUrl,
+          fallbackPage: _giteeReleasePage,
+        ),
+      };
     } catch (_) {
       return null;
     }
@@ -265,6 +310,16 @@ class UpdateChecker {
       UpdateChannel.stable => isStableTag(tagName) && !prerelease,
       UpdateChannel.beta => isBetaTag(tagName),
     };
+  }
+
+  static String _checkFailedMessage({
+    required UpdateChannel channel,
+    required UpdateReleaseSource? source,
+  }) {
+    final sourceLabel = source?.label ?? 'GitHub 或 Gitee';
+    return channel == UpdateChannel.beta
+        ? '无法连接 $sourceLabel 检查 Beta 更新'
+        : '无法连接 $sourceLabel 检查更新';
   }
 
   static Future<dynamic> _defaultFetchJson(Uri uri) async {

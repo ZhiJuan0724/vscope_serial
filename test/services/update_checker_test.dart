@@ -157,5 +157,27 @@ void main() {
       expect(result.latestRelease?.tagName, 'v9.9.9-beta.1');
       expect(callCount, 2);
     });
+
+    test('checks only selected source when source is specified', () async {
+      final requestedUris = <Uri>[];
+      final checker = UpdateChecker(
+        fetchJson: (uri) async {
+          requestedUris.add(uri);
+          return [
+            {'tag_name': 'v9.9.9-beta.1', 'html_url': 'https://gitee.com/beta'},
+          ];
+        },
+      );
+
+      final result = await checker.check(
+        channel: UpdateChannel.beta,
+        source: UpdateReleaseSource.gitee,
+      );
+
+      expect(result.error, isNull);
+      expect(result.latestRelease?.source, 'Gitee');
+      expect(requestedUris, hasLength(1));
+      expect(requestedUris.single.host, 'gitee.com');
+    });
   });
 }

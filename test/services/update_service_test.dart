@@ -208,6 +208,101 @@ void main() {
     );
   });
 
+  test('download starts from checked release source', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-update-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const tag = 'v9.9.9-beta.1';
+    final package = _validPackage();
+    final packageDigest = sha256.convert(package).toString();
+    final manifest = utf8.encode(
+      jsonEncode({
+        'schemaVersion': 1,
+        'version': '9.9.9-beta.1',
+        'packageName': 'vscope_serial-windows-$tag.zip',
+        'packageSize': package.length,
+        'sha256': packageDigest,
+        'executable': 'vscope_serial.exe',
+      }),
+    );
+    final release = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'Gitee',
+      body: '',
+      prerelease: true,
+      assets: [
+        ReleaseAsset(
+          name: 'update-manifest-$tag.json',
+          size: manifest.length,
+          downloadUrl: 'https://example.com/gitee-manifest',
+        ),
+        ReleaseAsset(
+          name: 'vscope_serial-windows-$tag.zip',
+          size: package.length,
+          downloadUrl: 'https://example.com/gitee-package',
+        ),
+      ],
+    );
+    final service = UpdateService(
+      updatesRoot: root,
+      releaseFetcher: (_, source) async {
+        throw StateError('unexpected $source fallback');
+      },
+      bytesFetcher: (_) async => manifest,
+      fileDownloader: (_, destination, total, onProgress) async {
+        await destination.writeAsBytes(package);
+      },
+    );
+
+    final prepared = await service.downloadAndPrepare(
+      release,
+      channel: UpdateChannel.beta,
+      onProgress: (_) {},
+    );
+
+    expect(prepared.release.source, 'Gitee');
+  });
+
+  test('rejects release without update assets', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-update-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const tag = 'v1.0.5';
+    final release = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+      assets: const [
+        ReleaseAsset(
+          name: 'v1.0.5.zip',
+          size: 100,
+          downloadUrl: 'https://example.com/source.zip',
+        ),
+      ],
+    );
+    final service = UpdateService(
+      updatesRoot: root,
+      releaseFetcher:
+          (_, source) async =>
+              ReleaseInfo(tagName: tag, htmlUrl: '', source: source, body: ''),
+    );
+
+    expect(
+      () => service.downloadAndPrepare(
+        release,
+        channel: UpdateChannel.stable,
+        onProgress: (_) {},
+      ),
+      throwsA(
+        isA<UpdateDownloadException>().having(
+          (error) => error.message,
+          'message',
+          contains('尚未提供完整更新附件'),
+        ),
+      ),
+    );
+  });
+
   test('rejects zip path traversal', () async {
     final root = await Directory.systemTemp.createTemp('vscope-zip-test-');
     addTearDown(() => root.delete(recursive: true));

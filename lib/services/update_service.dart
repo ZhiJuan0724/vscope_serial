@@ -159,7 +159,11 @@ class UpdateService {
     final payloadDir = Directory('${updateDir.path}/payload');
 
     Object? lastError;
-    const sources = ['GitHub', 'Gitee'];
+    final sources = [
+      checkedRelease.source,
+      for (final source in const ['GitHub', 'Gitee'])
+        if (source != checkedRelease.source) source,
+    ];
     for (final source in sources) {
       try {
         final release =
