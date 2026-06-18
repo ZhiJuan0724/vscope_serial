@@ -339,7 +339,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     child: Text(
                       vm.receiveHex
                           ? '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}'
-                          : '行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                          : '解码: ${vm.receiveEncoding} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -723,90 +723,129 @@ class _RawDataPageState extends State<RawDataPage> {
     final displayLineLimitController = TextEditingController(
       text: vm.displayLineLimit.toString(),
     );
+    var selectedEncoding = vm.receiveEncoding;
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-            title: const Text('高级设置'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('HEX分包时间 (μs):'),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: timeWindowController,
-                  decoration: const InputDecoration(
-                    hintText: '10 ~ 10000',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+          (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: const Text('高级设置'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('文本解码方式:'),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: 220,
+                    child: NoAnimDropdown<String>(
+                      value: selectedEncoding,
+                      hint: '解码',
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        isDense: true,
+                      ),
+                      items:
+                          RawDataViewModel.availableEncodings.map((e) {
+                            return DropdownMenuItem(
+                              value: e['id'],
+                              child: Text(e['name']!),
+                            );
+                          }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => selectedEncoding = value);
+                        }
+                      },
                     ),
                   ),
-                  keyboardType: TextInputType.number,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const SizedBox(height: 20),
-                const Text('接收区最大显示行数:'),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: displayLineLimitController,
-                  decoration: const InputDecoration(
-                    hintText: '100 ~ 100000',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '非 HEX 模式下，使用选定的编码将原始字节解码为文本。',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  const SizedBox(height: 20),
+                  const Text('HEX分包时间 (μs):'),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: timeWindowController,
+                    decoration: const InputDecoration(
+                      hintText: '10 ~ 10000',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('接收区最大显示行数:'),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: displayLineLimitController,
+                    decoration: const InputDecoration(
+                      hintText: '100 ~ 100000',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '默认 10000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '默认 10000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ElevatedButton(
+                  onPressed: () {
+                    final us = int.tryParse(timeWindowController.text);
+                    final displayLineLimit = int.tryParse(
+                      displayLineLimitController.text,
+                    );
+                    if (us == null || us < 10 || us > 10000) {
+                      _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
+                      return;
+                    }
+                    if (displayLineLimit == null ||
+                        displayLineLimit < SerialService.minDisplayLineLimit ||
+                        displayLineLimit > SerialService.maxDisplayLineLimit) {
+                      _showSnackBar(context, '显示行数请输入 100 ~ 100000 之间的数值');
+                      return;
+                    }
+
+                    vm.setReceiveEncoding(selectedEncoding);
+                    vm.setTimeWindowUs(us);
+                    vm.setDisplayLineLimit(displayLineLimit);
+                    Navigator.of(context).pop();
+                    _showSnackBar(context, '高级设置已保存，接收区最多显示 $displayLineLimit 行');
+                  },
+                  child: const Text('确定'),
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final us = int.tryParse(timeWindowController.text);
-                  final displayLineLimit = int.tryParse(
-                    displayLineLimitController.text,
-                  );
-                  if (us == null || us < 10 || us > 10000) {
-                    _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
-                    return;
-                  }
-                  if (displayLineLimit == null ||
-                      displayLineLimit < SerialService.minDisplayLineLimit ||
-                      displayLineLimit > SerialService.maxDisplayLineLimit) {
-                    _showSnackBar(context, '显示行数请输入 100 ~ 100000 之间的数值');
-                    return;
-                  }
-
-                  vm.setTimeWindowUs(us);
-                  vm.setDisplayLineLimit(displayLineLimit);
-                  Navigator.of(context).pop();
-                  _showSnackBar(context, '高级设置已保存，接收区最多显示 $displayLineLimit 行');
-                },
-                child: const Text('确定'),
-              ),
-            ],
           ),
     );
   }

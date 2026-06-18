@@ -117,6 +117,9 @@ class AppSettings {
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 10000;
 
+  /// 文本解码方式，默认 UTF-8。
+  String rawDataEncoding = 'UTF-8';
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -210,6 +213,7 @@ class AppSettings {
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
               .clamp(100, 100000)
               .toInt();
+      rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -262,6 +266,7 @@ class AppSettings {
       'updateChannel': updateChannel,
       'disableNotifications': disableNotifications,
       'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
+      'rawDataEncoding': rawDataEncoding,
 
       // 视口设置
       'xMin': xMin,

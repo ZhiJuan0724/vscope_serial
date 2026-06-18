@@ -4,6 +4,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:charset/charset.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
@@ -88,6 +89,15 @@ class SerialService extends ChangeNotifier {
   bool showTimestamp = false;
   bool autoScroll = true;
 
+  // 文本解码选项（非 HEX 模式下生效）
+  String _receiveEncoding = 'UTF-8';
+
+  /// 当前接收文本解码方式
+  String get receiveEncoding => _receiveEncoding;
+
+  /// 文本模式单行最大长度（超过此长度即使没有换行符也强制换行）
+  static const int _maxTextLineLength = 4096;
+
   // 发送选项
   bool sendHex = false;
   bool keepSendText = false;
@@ -121,6 +131,7 @@ class SerialService extends ChangeNotifier {
       minDisplayLineLimit,
       maxDisplayLineLimit,
     );
+    _receiveEncoding = settings.rawDataEncoding;
   }
 
   /// 保存配置到 AppSettings
@@ -439,6 +450,37 @@ class SerialService extends ChangeNotifier {
     _receiveLogFirstPacketBytes = 0;
   }
 
+  /// 使用当前选择的编码解码字节数据
+  String _decodeBytes(Uint8List data) {
+    switch (_receiveEncoding) {
+      case 'UTF-8':
+        return utf8.decode(data, allowMalformed: true);
+      case 'GBK':
+        return gbk.decode(data, allowMalformed: true);
+      case 'BIG5':
+        return _tryDecodeCharset(data, CodePage('cp950', 'BIG5').decode);
+      case 'Shift_JIS':
+        return _tryDecodeCharset(data, shiftJis.decode);
+      case 'EUC-KR':
+        return _tryDecodeCharset(data, eucKr.decode);
+      case 'Latin-1':
+        return _tryDecodeCharset(data, latin1.decode);
+      case 'ASCII':
+        return _tryDecodeCharset(data, ascii.decode);
+      default:
+        return utf8.decode(data, allowMalformed: true);
+    }
+  }
+
+  /// 尝试用指定解码器解码，失败时回退为逐字节显示
+  String _tryDecodeCharset(Uint8List data, String Function(Uint8List) decode) {
+    try {
+      return decode(data);
+    } on FormatException {
+      return String.fromCharCodes(data);
+    }
+  }
+
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
     if (receiveHex) {
@@ -449,7 +491,7 @@ class SerialService extends ChangeNotifier {
       _addDisplayLine('$prefix$text (${data.length} bytes)');
     } else {
       _addTextDataLines(
-        utf8.decode(data, allowMalformed: true),
+        _decodeBytes(data),
         timestamp: timestamp,
         isReceive: true,
       );
@@ -494,7 +536,7 @@ class SerialService extends ChangeNotifier {
       _addDisplayLine('$prefix$hexMark$text (${data.length} bytes)');
     } else {
       _addTextDataLines(
-        utf8.decode(data, allowMalformed: true),
+        _decodeBytes(data),
         timestamp: DateTime.now(),
         isReceive: false,
         sendSource: source,
@@ -567,6 +609,13 @@ class SerialService extends ChangeNotifier {
         }
       } else {
         pendingText += text[i];
+        // 单行超过上限时强制换行，避免长时间等不到换行符导致卡死
+        if (pendingText.length >= _maxTextLineLength) {
+          updateLine();
+          pendingText = '';
+          pendingIndex = null;
+          pendingPrefix = '';
+        }
       }
     }
 
@@ -654,6 +703,22 @@ class SerialService extends ChangeNotifier {
     _aggregator = null;
     _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置接收文本解码方式（仅非 HEX 模式生效）
+  void setReceiveEncoding(String encoding) {
+    if (_receiveEncoding == encoding) return;
+    _receiveEncoding = encoding;
+    unawaited(_persistEncoding());
+    _resetTextLineBuffers();
+    AppLogger().info('接收文本解码切换为: $encoding', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  Future<void> _persistEncoding() async {
+    final settings = AppSettings();
+    settings.rawDataEncoding = _receiveEncoding;
+    await settings.save();
   }
 
   void setShowTimestamp(bool value) {

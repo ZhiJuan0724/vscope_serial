@@ -24,6 +24,18 @@ class RawDataViewModel extends BaseViewModel {
   bool get isRawReceiving => serialService.isRawReceiving;
   int get timeWindowUs => serialService.timeWindowUs;
   int get displayLineLimit => serialService.displayLineLimit;
+  String get receiveEncoding => serialService.receiveEncoding;
+
+  /// 可选的文本解码方式（用于非 HEX 显示模式）
+  static const List<Map<String, String>> availableEncodings = [
+    {'id': 'UTF-8', 'name': 'UTF-8'},
+    {'id': 'GBK', 'name': 'GBK (简体中文)'},
+    {'id': 'BIG5', 'name': 'BIG5 (繁体中文)'},
+    {'id': 'Shift_JIS', 'name': 'Shift_JIS (日文)'},
+    {'id': 'EUC-KR', 'name': 'EUC-KR (韩文)'},
+    {'id': 'Latin-1', 'name': 'Latin-1 (西欧)'},
+    {'id': 'ASCII', 'name': 'ASCII'},
+  ];
 
   /// 设置随机数据源开关
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在数据收发页面
@@ -40,6 +52,10 @@ class RawDataViewModel extends BaseViewModel {
 
   void setReceiveHex(bool value) {
     serialService.setReceiveHex(value);
+  }
+
+  void setReceiveEncoding(String encoding) {
+    serialService.setReceiveEncoding(encoding);
   }
 
   void setShowTimestamp(bool value) {
