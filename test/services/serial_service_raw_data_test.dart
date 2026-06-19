@@ -71,6 +71,13 @@ void main() {
       expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\r\n');
     });
 
+    test('shell line send always appends configured line ending', () {
+      service.appendLineEnding = false;
+      service.lineEnding = '\n';
+
+      expect(utf8.decode(service.prepareShellTextData('help')), 'help\n');
+    });
+
     test('hex send appends CRC using selected byte order', () {
       service.sendHex = true;
       service.enableCrc = true;

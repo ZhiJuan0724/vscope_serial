@@ -12,7 +12,7 @@ VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串
 - Windows 串口枚举、连接和配置。
 - 底部状态栏快速打开串口连接弹窗。
 - 操作结果和错误通过浮动 SnackBar 临时提示，避免遗漏重要反馈；可在应用信息页的高级设置中全局关闭临时提示。
-- 原始数据收发页支持文本/HEX 显示、发送内容回显、时间戳和自动行尾。
+- 原始数据收发页支持文本/HEX 显示、发送内容回显、时间戳、自动行尾、Shell 终端模式和 YMODEM 文件传输。
 - Windows 读取路径使用原生 DLL，降低 Dart 层串口读取不稳定的影响。
 
 ### 协议解析
@@ -114,6 +114,14 @@ JustFloat 设备模拟：
 
 ```bash
 python test_tools/justfloat_device.py --port COM14 --mode sine --interval 1
+```
+
+Shell/YMODEM 虚拟设备：
+
+```bash
+python test_tools/shell_device.py --port COM14 --mode terminal
+python test_tools/shell_device.py --port COM14 --mode ymodem-send --file E:\temp\tx.bin
+python test_tools/shell_device.py --port COM14 --mode ymodem-receive --output E:\temp\ymodem_rx
 ```
 
 模拟脚本运行时支持单键控制：`p` 暂停/恢复发送，`r` 复位到等待命令状态，`c` 关闭脚本。

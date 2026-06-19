@@ -506,6 +506,44 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
+  Widget _buildResetSettingsSection(
+    BuildContext context, {
+    required Future<void> Function() onReset,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600);
+    final subtitleStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('恢复默认设置', style: titleStyle),
+        const SizedBox(height: 6),
+        Text(
+          '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。',
+          style: subtitleStyle,
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colorScheme.error,
+              side: BorderSide(color: colorScheme.error),
+            ),
+            onPressed: onReset,
+            icon: const Icon(Icons.restore, size: 16),
+            label: const Text('恢复默认设置'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _showAdvancedSettings() async {
     var disableNotifications = _disableNotifications;
     await showDialog<void>(
@@ -564,6 +602,20 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               ),
                               const Divider(height: 16),
                               _buildRollbackSection(context),
+                              const Divider(height: 16),
+                              _buildResetSettingsSection(
+                                context,
+                                onReset: () async {
+                                  final didReset =
+                                      await _confirmResetSettings();
+                                  if (didReset) {
+                                    setDialogState(() {
+                                      disableNotifications =
+                                          AppSettings().disableNotifications;
+                                    });
+                                  }
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -579,6 +631,90 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 ),
           ),
     );
+  }
+
+  Future<bool> _confirmResetSettings() async {
+    const confirmText = '恢复默认设置';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        var input = '';
+        return StatefulBuilder(
+          builder:
+              (context, setDialogState) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                title: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text('确认恢复默认设置'),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('此操作会重置串口、绘图、数据收发、Shell、更新等应用设置，操作不可撤销。'),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '绘图配置功能保存的 JSON 配置文件不会被删除。',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('请输入“$confirmText”以继续：'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) => setDialogState(() => input = value),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.onError,
+                    ),
+                    onPressed:
+                        input == confirmText
+                            ? () => Navigator.of(dialogContext).pop(true)
+                            : null,
+                    child: const Text('确认恢复'),
+                  ),
+                ],
+              ),
+        );
+      },
+    );
+    if (confirmed != true) return false;
+
+    await AppSettings().resetToDefaults();
+    if (!mounted) return true;
+    final settings = AppSettings();
+    setState(() {
+      _autoUpdateCheckEnabled = settings.autoUpdateCheckEnabled;
+      _disableNotifications = settings.disableNotifications;
+      _updateChannel = UpdateChannel.fromString(settings.updateChannel);
+      _lastResult = null;
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('已恢复默认设置，建议重启应用以确保所有界面完全生效。')),
+    );
+    return true;
   }
 
   Future<void> _checkForUpdate() async {

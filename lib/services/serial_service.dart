@@ -16,8 +16,53 @@ import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'time_window_aggregator.dart';
+import 'ymodem_service.dart';
 
 enum SendDisplaySource { user, plot }
+
+enum RawShellInputMode {
+  line('line', '命令行'),
+  key('key', '逐键');
+
+  final String value;
+  final String label;
+  const RawShellInputMode(this.value, this.label);
+
+  static RawShellInputMode fromString(String value) {
+    return value == key.value ? key : line;
+  }
+}
+
+enum RawShellThemeMode {
+  light('light', '浅色'),
+  dark('dark', '深色');
+
+  final String value;
+  final String label;
+  const RawShellThemeMode(this.value, this.label);
+
+  static RawShellThemeMode fromString(String value) {
+    return value == dark.value ? dark : light;
+  }
+}
+
+enum RawShellCursorMode {
+  verticalBar('verticalBar', '竖线'),
+  underline('underline', '下划线'),
+  block('block', '方块');
+
+  final String value;
+  final String label;
+  const RawShellCursorMode(this.value, this.label);
+
+  static RawShellCursorMode fromString(String value) {
+    return switch (value) {
+      'block' => block,
+      'underline' => underline,
+      _ => verticalBar,
+    };
+  }
+}
 
 /// 串口服务 - 全局单例
 class SerialService extends ChangeNotifier {
@@ -63,6 +108,9 @@ class SerialService extends ChangeNotifier {
   final _dataController = StreamController<DataPacket>.broadcast();
   Stream<DataPacket> get dataStream => _dataController.stream;
 
+  final _shellDataController = StreamController<Uint8List>.broadcast();
+  Stream<Uint8List> get shellDataStream => _shellDataController.stream;
+
   // 原始字节数据（内部保留）
   final ChunkedByteBuffer _rawBytes = ChunkedByteBuffer();
   int get _rawBytesSize => _rawBytes.length;
@@ -87,6 +135,13 @@ class SerialService extends ChangeNotifier {
   bool receiveHex = false;
   bool showTimestamp = false;
   bool autoScroll = true;
+  bool rawDataShellMode = false;
+  bool rawDataShellEnabled = false;
+  RawShellInputMode rawShellInputMode = RawShellInputMode.line;
+  double rawDataTerminalFontSize = 13.0;
+  String rawDataTerminalFontFamily = 'Consolas';
+  RawShellThemeMode rawShellThemeMode = RawShellThemeMode.light;
+  RawShellCursorMode rawShellCursorMode = RawShellCursorMode.verticalBar;
 
   // 发送选项
   bool sendHex = false;
@@ -111,6 +166,9 @@ class SerialService extends ChangeNotifier {
 
   // 原始数据接收开关（独立于串口连接和绘图状态）
   bool isRawReceiving = false;
+  late final YmodemService ymodemService = YmodemService(
+    sendBytes: sendRawBytes,
+  );
 
   /// 从 AppSettings 加载配置
   void loadSettings() {
@@ -121,6 +179,23 @@ class SerialService extends ChangeNotifier {
       minDisplayLineLimit,
       maxDisplayLineLimit,
     );
+    rawDataShellEnabled = settings.rawDataShellEnabled;
+    rawDataShellMode = rawDataShellEnabled && settings.rawDataShellMode;
+    rawShellInputMode = RawShellInputMode.fromString(
+      settings.rawDataShellInputMode,
+    );
+    rawDataTerminalFontSize = settings.rawDataTerminalFontSize.clamp(
+      10.0,
+      24.0,
+    );
+    rawDataTerminalFontFamily = settings.rawDataTerminalFontFamily;
+    rawShellThemeMode = RawShellThemeMode.fromString(
+      settings.rawDataShellTheme,
+    );
+    rawShellCursorMode = RawShellCursorMode.fromString(
+      settings.rawDataShellCursor,
+    );
+    ymodemService.attach(shellDataStream);
   }
 
   /// 保存配置到 AppSettings
@@ -332,8 +407,13 @@ class SerialService extends ChangeNotifier {
   /// 原生串口数据接收回调
   void _onNativeDataReceived(NativeSerialData nativeData) {
     final data = nativeData.data;
+    final shouldReceiveYmodem =
+        isConnected &&
+        rawDataShellMode &&
+        ymodemService.isActive &&
+        !isPlotting;
     final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    if (!isPlotting && !shouldReceiveRaw) {
+    if (!isPlotting && !shouldReceiveRaw && !shouldReceiveYmodem) {
       return;
     }
 
@@ -341,9 +421,21 @@ class SerialService extends ChangeNotifier {
       _dataController.add(DataPacket(data: data));
     }
 
+    if (shouldReceiveYmodem) {
+      _recordReceiveLog(data.length);
+      _rawBytes.append(data);
+      ymodemService.addIncomingBytes(data);
+      return;
+    }
+
     if (shouldReceiveRaw) {
       _recordReceiveLog(data.length);
       _rawBytes.append(data);
+
+      if (rawDataShellMode) {
+        _shellDataController.add(data);
+        return;
+      }
 
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
@@ -637,6 +729,78 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
+  void setRawDataShellMode(bool value) {
+    if (value && !rawDataShellEnabled) return;
+    if (rawDataShellMode == value) return;
+    rawDataShellMode = value;
+    _resetTextLineBuffers();
+    final settings = AppSettings();
+    settings.rawDataShellMode = value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataShellEnabled(bool value) {
+    if (rawDataShellEnabled == value) return;
+    rawDataShellEnabled = value;
+    if (!value) {
+      rawDataShellMode = false;
+      _resetTextLineBuffers();
+    }
+    final settings = AppSettings();
+    settings.rawDataShellEnabled = value;
+    settings.rawDataShellMode = rawDataShellMode;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellInputMode(RawShellInputMode value) {
+    if (rawShellInputMode == value) return;
+    rawShellInputMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellInputMode = value.value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataTerminalFontSize(double value) {
+    final next = value.clamp(10.0, 24.0);
+    if (rawDataTerminalFontSize == next) return;
+    rawDataTerminalFontSize = next;
+    final settings = AppSettings();
+    settings.rawDataTerminalFontSize = next;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataTerminalFontFamily(String value) {
+    final next = value.trim().isEmpty ? 'Consolas' : value.trim();
+    if (rawDataTerminalFontFamily == next) return;
+    rawDataTerminalFontFamily = next;
+    final settings = AppSettings();
+    settings.rawDataTerminalFontFamily = next;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellThemeMode(RawShellThemeMode value) {
+    if (rawShellThemeMode == value) return;
+    rawShellThemeMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellTheme = value.value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellCursorMode(RawShellCursorMode value) {
+    if (rawShellCursorMode == value) return;
+    rawShellCursorMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellCursor = value.value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
   void _shiftPendingLineIndexesAfterRemove() {
     _pendingReceiveLineIndex = _shiftPendingLineIndex(_pendingReceiveLineIndex);
     _pendingSendLineIndex = _shiftPendingLineIndex(_pendingSendLineIndex);
@@ -839,11 +1003,26 @@ class SerialService extends ChangeNotifier {
     return Uint8List.fromList(utf8.encode(content));
   }
 
+  Uint8List prepareShellTextData(String text) {
+    final content = '$text$lineEnding';
+    return Uint8List.fromList(utf8.encode(content));
+  }
+
   void send(
     Uint8List data, {
     SendDisplaySource displaySource = SendDisplaySource.user,
     bool? displayAsHex,
   }) {
+    _writeBytes(data);
+    // 发送的数据也显示在数据窗口
+    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
+  }
+
+  Future<void> sendRawBytes(Uint8List data) async {
+    _writeBytes(data);
+  }
+
+  void _writeBytes(Uint8List data) {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
@@ -861,8 +1040,12 @@ class SerialService extends ChangeNotifier {
       _handleIoDisconnected('发送失败，串口读取器不可用');
       throw StateError('串口已断开连接，发送失败');
     }
-    // 发送的数据也显示在数据窗口
-    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
+  }
+
+  Future<File?> receiveYmodemFile() async {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final dir = Directory('${exeDir.path}/exports/ymodem');
+    return ymodemService.receiveFile(dir);
   }
 
   void _handleIoDisconnected(String message) {
@@ -942,7 +1125,9 @@ class SerialService extends ChangeNotifier {
     _nativeReader?.dispose();
     _nativeReader = null;
     isConnected = false;
+    unawaited(ymodemService.dispose());
     _dataController.close();
+    _shellDataController.close();
     super.dispose();
   }
 }

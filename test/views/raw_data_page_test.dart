@@ -64,4 +64,93 @@ void main() {
     service.autoScroll = true;
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('Shell模式隐藏普通发送区并显示终端操作', (tester) async {
+    final service = SerialService();
+    service.clearReceivedData();
+    service.setRawDataShellEnabled(true);
+    service.setRawDataShellMode(true);
+    service.setRawShellInputMode(RawShellInputMode.line);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+
+    expect(find.text('Shell'), findsOneWidget);
+    expect(find.text('发送文件'), findsNothing);
+    expect(find.text('接收文件'), findsNothing);
+    expect(find.text('发送数据'), findsNothing);
+    expect(find.text('输入命令后按 Enter 发送'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('更多选项'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('更多功能'), findsOneWidget);
+    expect(find.text('文件发送/接收'), findsOneWidget);
+    expect(find.text('发送文件'), findsNothing);
+    expect(find.text('接收文件'), findsNothing);
+    expect(find.text('取消传输'), findsNothing);
+
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('普通收发默认隐藏Shell入口', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    final service = SerialService();
+    service.clearReceivedData();
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+
+    expect(find.widgetWithText(FilterChip, 'Shell'), findsNothing);
+
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('启用 Shell 模式入口'));
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(FilterChip, 'Shell'), findsOneWidget);
+
+    service.setRawDataShellEnabled(false);
+    await tester.binding.setSurfaceSize(null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('普通收发高级设置未变化时不显示保存提示', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    final service = SerialService();
+    service.clearReceivedData();
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+    service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+
+    await tester.tap(find.text('高级设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('高级设置已保存'), findsNothing);
+
+    await tester.binding.setSurfaceSize(null);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

@@ -117,6 +117,30 @@ class AppSettings {
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 10000;
 
+  /// 数据收发页面 Shell 模式开关。
+  bool rawDataShellMode = false;
+
+  /// 是否在普通收发页面显示 Shell 模式入口。
+  bool rawDataShellEnabled = false;
+
+  /// Shell 输入模式：line / key。
+  String rawDataShellInputMode = 'line';
+
+  /// Shell 终端字体大小。
+  double rawDataTerminalFontSize = 13.0;
+
+  /// Shell 终端字体族。默认使用 Windows 常见等宽字体 Consolas。
+  String rawDataTerminalFontFamily = 'Consolas';
+
+  /// Shell 终端主题：light / dark。
+  String rawDataShellTheme = 'light';
+
+  /// Shell 光标样式：verticalBar / underline / block。
+  String rawDataShellCursor = 'verticalBar';
+
+  /// YMODEM 接收文件保存策略，当前固定为 exports。
+  String ymodemSaveDirectoryPolicy = 'exports';
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -145,6 +169,65 @@ class AppSettings {
 
     await _load();
     _initialized = true;
+  }
+
+  /// 恢复所有应用设置为默认值并写回配置文件。
+  ///
+  /// 只重置集中保存在 `settings/settings.json` 中的应用设置，不删除
+  /// Zobow/r 协议地址配置等独立 JSON 配置文件。
+  Future<void> resetToDefaults() async {
+    _applyDefaults();
+    await save();
+  }
+
+  void _applyDefaults() {
+    lastPort = null;
+    baudRate = 115200;
+    dataBits = 8;
+    stopBits = 1;
+    parity = 0;
+    rts = false;
+    dtr = false;
+
+    refreshFps = 60;
+    plotFontSizeDelta = 0;
+    maxVisiblePoints = 1000000;
+    discardInitialPacketCount = 0;
+    snapHighlightEnabled = true;
+    snapHighlightDiameter = 8.0;
+    showGrid = true;
+    gridDensity = 'normal';
+    useRandomSource = false;
+    randomFrequency = 1000.0;
+    followEnabled = false;
+    parserType = 'fireWater';
+    sendProtocolType = 'none';
+    receiveCustomProtocolId = '';
+    sendCustomProtocolId = '';
+    rChannelAddresses = List.filled(16, '');
+    justFloatChannelCount = 0;
+    zobowProfileId = '';
+    rProfileId = '';
+    zobowPresetViewMode = 'grid';
+
+    autoUpdateCheckEnabled = false;
+    updateChannel = 'stable';
+    disableNotifications = false;
+
+    rawDataDisplayLineLimit = 10000;
+    rawDataShellMode = false;
+    rawDataShellEnabled = false;
+    rawDataShellInputMode = 'line';
+    rawDataTerminalFontSize = 13.0;
+    rawDataTerminalFontFamily = 'Consolas';
+    rawDataShellTheme = 'light';
+    rawDataShellCursor = 'verticalBar';
+    ymodemSaveDirectoryPolicy = 'exports';
+
+    xMin = 0;
+    xMax = 1000;
+    yMin = 0;
+    yMax = 32768;
   }
 
   /// 从配置文件加载所有设置
@@ -210,6 +293,25 @@ class AppSettings {
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
               .clamp(100, 100000)
               .toInt();
+      rawDataShellMode = json['rawDataShellMode'] as bool? ?? false;
+      rawDataShellEnabled = json['rawDataShellEnabled'] as bool? ?? false;
+      if (!rawDataShellEnabled) rawDataShellMode = false;
+      rawDataShellInputMode =
+          (json['rawDataShellInputMode'] as String?) == 'key' ? 'key' : 'line';
+      rawDataTerminalFontSize =
+          ((json['rawDataTerminalFontSize'] as num?)?.toDouble() ?? 13.0).clamp(
+            10.0,
+            24.0,
+          );
+      rawDataTerminalFontFamily = _normalizeTerminalFontFamily(
+        json['rawDataTerminalFontFamily'],
+      );
+      rawDataShellTheme =
+          (json['rawDataShellTheme'] as String?) == 'dark' ? 'dark' : 'light';
+      final cursor = json['rawDataShellCursor'] as String?;
+      rawDataShellCursor =
+          cursor == 'block' || cursor == 'underline' ? cursor! : 'verticalBar';
+      ymodemSaveDirectoryPolicy = 'exports';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -262,6 +364,14 @@ class AppSettings {
       'updateChannel': updateChannel,
       'disableNotifications': disableNotifications,
       'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
+      'rawDataShellMode': rawDataShellMode,
+      'rawDataShellEnabled': rawDataShellEnabled,
+      'rawDataShellInputMode': rawDataShellInputMode,
+      'rawDataTerminalFontSize': rawDataTerminalFontSize,
+      'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
+      'rawDataShellTheme': rawDataShellTheme,
+      'rawDataShellCursor': rawDataShellCursor,
+      'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
 
       // 视口设置
       'xMin': xMin,
@@ -283,6 +393,11 @@ class AppSettings {
       values.add('');
     }
     return values.take(16).toList();
+  }
+
+  static String _normalizeTerminalFontFamily(Object? value) {
+    final text = value is String ? value.trim() : '';
+    return text.isEmpty ? 'Consolas' : text;
   }
 
   /// 从 [SerialConfig] 加载串口设置

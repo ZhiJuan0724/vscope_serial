@@ -55,6 +55,47 @@ python justfloat_device.py --port COM14 --mode ramp --interval 1
 python justfloat_device.py --help
 ```
 
+## Shell/YMODEM 模拟
+
+`shell_device.py` 模拟 Shell 终端设备和 YMODEM 对端。适合配合虚拟串口对验证数据收发页 Shell 模式。
+
+虚拟串口示例：VScope Serial 连接 `COM13`，脚本连接 `COM14`。
+
+终端 ANSI 回显测试：
+
+```bash
+python shell_device.py --port COM14 --mode terminal
+```
+
+终端模式中也可以直接输入 YMODEM 测试命令：
+
+- `ysend`：脚本通过 YMODEM 发送文件给应用。启动脚本时传入 `--file E:\temp\tx.bin` 会发送该文件；未传 `--file` 时发送内置示例文本。输入命令后，在 VScope Serial 的 Shell 更多功能中点击“接收”。
+- `yrecv`：脚本通过 YMODEM 接收应用发送的文件，保存到 `--output` 指定目录。输入命令后，在 VScope Serial 的 Shell 更多功能中点击“发送”。
+
+在 VScope Serial 的 Shell 中输入普通文本会收到彩色 `echo` 响应。常用测试命令：
+
+- `help`：显示命令列表。
+- `ping`：返回 `pong`。
+- `status`：返回模拟设备状态。
+- `time`：返回脚本主机时间。
+- `color`：测试 ANSI 前景色和反色。
+- `ansi`：测试粗体、下划线、反色和组合颜色。
+- `long`：输出多行内容，测试滚动。
+- `clear`：测试 ANSI 清屏。
+- `exit`：结束脚本。
+
+测试“应用接收 YMODEM 文件”：先运行脚本，再在 VScope Serial 中点击 Shell 的“接收文件”。
+
+```bash
+python shell_device.py --port COM14 --mode ymodem-send --file E:\temp\tx.bin
+```
+
+测试“应用发送 YMODEM 文件”：先运行脚本，再在 VScope Serial 中点击 Shell 的“发送文件”并选择文件。
+
+```bash
+python shell_device.py --port COM14 --mode ymodem-receive --output E:\temp\ymodem_rx
+```
+
 ## 绘图 BIN 生成
 
 `generate_plot_bin.py` 生成可直接在绘图页面导入的 `.bin` 文件，用于测试大数据导入、LOD 绘图和测量交互。
