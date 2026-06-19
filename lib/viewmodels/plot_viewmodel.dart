@@ -955,12 +955,15 @@ class PlotViewModel extends BaseViewModel {
       showStatusMessage('随机源未连接串口，发送协议已自动切换为无');
     }
 
-    // 检查是否有数据源
+    // 检查是否有数据源，尝试自动连接串口
     if (!serialService.isConnected && !_useRandomSource) {
-      const message = '串口未连接，无法绘图；请连接串口或启用随机源';
-      showStatusMessage(message);
-      AppLogger().warning(message, category: 'PLOT');
-      return;
+      await _autoConnectSerial();
+      if (!serialService.isConnected) {
+        const message = '串口未连接，无法绘图；请连接串口或启用随机源';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        return;
+      }
     }
 
     if (!serialService.isConnected && _useRandomSource && !canUseRandom) {
@@ -1110,6 +1113,54 @@ class PlotViewModel extends BaseViewModel {
       _stopFuture = null;
     });
     return _stopFuture!;
+  }
+
+  /// 开始绘图时自动尝试连接串口。
+  ///
+  /// 优先级：
+  /// 1. 历史连接过的串口（settings.json 中的 lastPort）
+  /// 2. 串口列表中唯一的串口
+  Future<void> _autoConnectSerial() async {
+    final settings = AppSettings();
+    showStatusMessage('正在自动连接串口...', duration: const Duration(seconds: 2));
+
+    // 刷新串口列表
+    serialService.refreshPorts();
+
+    // 尝试历史串口
+    final lastPort = settings.lastPort;
+    if (lastPort != null &&
+        lastPort.isNotEmpty &&
+        serialService.availablePorts.contains(lastPort)) {
+      AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
+      serialService.config = serialService.config.copyWith(port: lastPort);
+      await serialService.connect();
+      if (serialService.isConnected) {
+        showStatusMessage(
+          '已自动连接 $lastPort',
+          duration: const Duration(seconds: 2),
+        );
+        return;
+      }
+    }
+
+    // 尝试唯一串口
+    serialService.refreshPorts();
+    if (serialService.availablePorts.length == 1) {
+      final solePort = serialService.availablePorts.first;
+      AppLogger().info('尝试连接唯一串口: $solePort', category: 'PLOT');
+      serialService.config = serialService.config.copyWith(port: solePort);
+      await serialService.connect();
+      if (serialService.isConnected) {
+        showStatusMessage(
+          '已自动连接 $solePort',
+          duration: const Duration(seconds: 2),
+        );
+        return;
+      }
+    }
+
+    AppLogger().warning('自动连接串口失败', category: 'PLOT');
   }
 
   /// 重启绘图（用于配置变更时）
