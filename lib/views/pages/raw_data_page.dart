@@ -1279,7 +1279,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     child: Text(
                       vm.receiveHex
                           ? '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}'
-                          : '行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
+                          : '解码: ${vm.receiveEncoding} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1680,6 +1680,7 @@ class _RawDataPageState extends State<RawDataPage> {
       text: vm.displayLineLimit.toString(),
     );
     var shellEnabled = vm.shellEnabled;
+    var selectedEncoding = vm.receiveEncoding;
     showDialog(
       context: context,
       builder:
@@ -1694,6 +1695,44 @@ class _RawDataPageState extends State<RawDataPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const Text('文本解码方式:'),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: 220,
+                        child: NoAnimDropdown<String>(
+                          value: selectedEncoding,
+                          hint: '解码',
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            isDense: true,
+                          ),
+                          items:
+                              RawDataViewModel.availableEncodings.map((e) {
+                                return DropdownMenuItem(
+                                  value: e['id'],
+                                  child: Text(e['name']!),
+                                );
+                              }).toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setDialogState(() => selectedEncoding = value);
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '非 HEX 模式下，使用选定的编码将原始字节解码为文本。',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
                       const Text('HEX分包时间 (μs):'),
                       const SizedBox(height: 8),
                       TextField(
@@ -1782,8 +1821,10 @@ class _RawDataPageState extends State<RawDataPage> {
                         final changed =
                             us != vm.timeWindowUs ||
                             displayLineLimit != vm.displayLineLimit ||
-                            shellEnabled != vm.shellEnabled;
+                            shellEnabled != vm.shellEnabled ||
+                            selectedEncoding != vm.receiveEncoding;
                         if (changed) {
+                          vm.setReceiveEncoding(selectedEncoding);
                           vm.setTimeWindowUs(us);
                           vm.setDisplayLineLimit(displayLineLimit);
                           vm.setShellEnabled(shellEnabled);

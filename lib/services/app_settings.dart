@@ -141,6 +141,9 @@ class AppSettings {
   /// YMODEM 接收文件保存策略，当前固定为 exports。
   String ymodemSaveDirectoryPolicy = 'exports';
 
+  /// 文本解码方式，默认 UTF-8。
+  String rawDataEncoding = 'UTF-8';
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -312,6 +315,7 @@ class AppSettings {
       rawDataShellCursor =
           cursor == 'block' || cursor == 'underline' ? cursor! : 'verticalBar';
       ymodemSaveDirectoryPolicy = 'exports';
+      rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -372,6 +376,7 @@ class AppSettings {
       'rawDataShellTheme': rawDataShellTheme,
       'rawDataShellCursor': rawDataShellCursor,
       'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
+      'rawDataEncoding': rawDataEncoding,
 
       // 视口设置
       'xMin': xMin,
