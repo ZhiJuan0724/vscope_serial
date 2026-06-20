@@ -94,10 +94,17 @@ class SerialService extends ChangeNotifier {
   int _receiveLogBytes = 0;
   int _receiveLogFirstPacketBytes = 0;
 
-  static const int _receiveLogDetectPacketCount = 10;
-  static const int _receiveLogBatchPacketCount = 50;
-  static const Duration _receiveLogDetectWindow = Duration(milliseconds: 200);
-  static const Duration _receiveLogMaxBatchWindow = Duration(seconds: 1);
+  Timer? _sendLogFlushTimer;
+  DateTime? _sendLogWindowStart;
+  bool _sendLogHighFrequency = false;
+  int _sendLogPacketCount = 0;
+  int _sendLogBytes = 0;
+  int _sendLogFirstPacketBytes = 0;
+
+  static const int _ioLogDetectPacketCount = 10;
+  static const int _ioLogBatchPacketCount = 50;
+  static const Duration _ioLogDetectWindow = Duration(milliseconds: 200);
+  static const Duration _ioLogMaxBatchWindow = Duration(seconds: 1);
 
   // 时间窗口粒度（微秒），默认 1000us = 1ms
   int timeWindowUs = 1000;
@@ -403,6 +410,7 @@ class SerialService extends ChangeNotifier {
 
   void _cleanupPort() {
     _flushReceiveLog();
+    _flushSendLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.close();
@@ -480,25 +488,25 @@ class SerialService extends ChangeNotifier {
 
     final elapsed = now.difference(_receiveLogWindowStart!);
     if (!_receiveLogHighFrequency &&
-        _receiveLogPacketCount >= _receiveLogDetectPacketCount &&
-        elapsed <= _receiveLogDetectWindow) {
+        _receiveLogPacketCount >= _ioLogDetectPacketCount &&
+        elapsed <= _ioLogDetectWindow) {
       _receiveLogHighFrequency = true;
     }
 
     if (_receiveLogHighFrequency) {
-      if (_receiveLogPacketCount >= _receiveLogBatchPacketCount ||
-          elapsed >= _receiveLogMaxBatchWindow) {
+      if (_receiveLogPacketCount >= _ioLogBatchPacketCount ||
+          elapsed >= _ioLogMaxBatchWindow) {
         _flushReceiveLog(now);
       } else {
-        _scheduleReceiveLogFlush(_receiveLogMaxBatchWindow - elapsed);
+        _scheduleReceiveLogFlush(_ioLogMaxBatchWindow - elapsed);
       }
       return;
     }
 
-    if (elapsed >= _receiveLogDetectWindow) {
+    if (elapsed >= _ioLogDetectWindow) {
       _flushReceiveLog(now);
     } else {
-      _scheduleReceiveLogFlush(_receiveLogDetectWindow - elapsed);
+      _scheduleReceiveLogFlush(_ioLogDetectWindow - elapsed);
     }
   }
 
@@ -540,6 +548,86 @@ class SerialService extends ChangeNotifier {
     _receiveLogBytes = 0;
     _receiveLogFirstPacketBytes = 0;
   }
+
+  void _recordSendLog(int bytes) {
+    final now = DateTime.now();
+    _sendLogWindowStart ??= now;
+    if (_sendLogPacketCount == 0) {
+      _sendLogFirstPacketBytes = bytes;
+    }
+
+    _sendLogPacketCount++;
+    _sendLogBytes += bytes;
+
+    final elapsed = now.difference(_sendLogWindowStart!);
+    if (!_sendLogHighFrequency &&
+        _sendLogPacketCount >= _ioLogDetectPacketCount &&
+        elapsed <= _ioLogDetectWindow) {
+      _sendLogHighFrequency = true;
+    }
+
+    if (_sendLogHighFrequency) {
+      if (_sendLogPacketCount >= _ioLogBatchPacketCount ||
+          elapsed >= _ioLogMaxBatchWindow) {
+        _flushSendLog(now);
+      } else {
+        _scheduleSendLogFlush(_ioLogMaxBatchWindow - elapsed);
+      }
+      return;
+    }
+
+    if (elapsed >= _ioLogDetectWindow) {
+      _flushSendLog(now);
+    } else {
+      _scheduleSendLogFlush(_ioLogDetectWindow - elapsed);
+    }
+  }
+
+  void _scheduleSendLogFlush(Duration delay) {
+    _sendLogFlushTimer?.cancel();
+    _sendLogFlushTimer = Timer(delay, () => _flushSendLog(DateTime.now()));
+  }
+
+  void _flushSendLog([DateTime? now]) {
+    _sendLogFlushTimer?.cancel();
+    _sendLogFlushTimer = null;
+
+    if (_sendLogPacketCount == 0 || _sendLogWindowStart == null) return;
+
+    final elapsedMs = (now ?? DateTime.now())
+        .difference(_sendLogWindowStart!)
+        .inMilliseconds
+        .clamp(1, 1 << 31);
+    if (!_sendLogHighFrequency && _sendLogPacketCount == 1) {
+      AppLogger().info('发送 $_sendLogFirstPacketBytes bytes', category: 'DATA');
+    } else {
+      final packetRate = _sendLogPacketCount * 1000.0 / elapsedMs;
+      AppLogger().info(
+        '发送 $_sendLogPacketCount 包，共 $_sendLogBytes bytes，'
+        '约 ${packetRate.toStringAsFixed(1)} 包/s',
+        category: 'DATA',
+      );
+    }
+
+    _sendLogWindowStart = null;
+    _sendLogHighFrequency = false;
+    _sendLogPacketCount = 0;
+    _sendLogBytes = 0;
+    _sendLogFirstPacketBytes = 0;
+  }
+
+  @visibleForTesting
+  ({int packetCount, int bytes, bool highFrequency}) get debugSendLogState => (
+    packetCount: _sendLogPacketCount,
+    bytes: _sendLogBytes,
+    highFrequency: _sendLogHighFrequency,
+  );
+
+  @visibleForTesting
+  void debugRecordSendLogForTest(int bytes) => _recordSendLog(bytes);
+
+  @visibleForTesting
+  void debugFlushSendLogForTest() => _flushSendLog();
 
   /// 使用当前选择的编码解码字节数据
   String _decodeBytes(Uint8List data) {
@@ -1099,7 +1187,7 @@ class SerialService extends ChangeNotifier {
         );
         throw StateError('串口已断开连接，发送失败');
       }
-      AppLogger().info('发送 $sent bytes', category: 'DATA');
+      _recordSendLog(sent);
     } else {
       _handleIoDisconnected('发送失败，串口读取器不可用');
       throw StateError('串口已断开连接，发送失败');
@@ -1183,6 +1271,7 @@ class SerialService extends ChangeNotifier {
     // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
     // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
     _flushReceiveLog();
+    _flushSendLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();

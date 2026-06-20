@@ -19,6 +19,7 @@ void main() {
     });
 
     tearDown(() {
+      service.debugFlushSendLogForTest();
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
@@ -120,6 +121,20 @@ void main() {
       );
 
       expect(service.receivedLines.single, '[绘图发送] r 1 2');
+    });
+
+    test('high frequency send logs are batched', () {
+      for (var i = 0; i < 10; i++) {
+        service.debugRecordSendLogForTest(1029);
+      }
+
+      final state = service.debugSendLogState;
+      expect(state.highFrequency, isTrue);
+      expect(state.packetCount, 10);
+      expect(state.bytes, 10290);
+
+      service.debugFlushSendLogForTest();
+      expect(service.debugSendLogState.packetCount, 0);
     });
 
     test('display line limit defaults to 10000 and removes oldest lines', () {
