@@ -59,9 +59,8 @@ class ZobowCProfileImporter {
         parseSource(systemEncoding.decode(bytes), useComments: useComments),
       );
     } on FormatException {
-      // Some platforms cannot decode arbitrary legacy byte streams with the
-      // system codec. The malformed UTF-8 candidate above still provides a
-      // variable-name fallback when comments are unreadable.
+      // 部分平台无法用系统编码解码任意旧版字节流。
+      // 即使注释不可读，上面的异常 UTF-8 候选仍能提供变量名兜底。
     }
     candidates.sort((a, b) {
       final comments = b.commentNameCount.compareTo(a.commentNameCount);

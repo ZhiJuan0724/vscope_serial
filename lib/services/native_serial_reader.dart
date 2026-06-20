@@ -31,7 +31,7 @@ DynamicLibrary _loadDll() {
   return DynamicLibrary.open('native_serial_reader.dll');
 }
 
-// Dart API DL initialization
+// Dart API DL 初始化
 typedef NsrInitDartApiC = Int32 Function(Pointer<Void> data);
 typedef NsrInitDartApiDart = int Function(Pointer<Void> data);
 
@@ -107,10 +107,10 @@ class NativeSerialReader {
   bool _isOpen = false;
   bool _dartApiInitialized = false;
 
-  /// Initialize Dart API (must be called before any other operation)
+  /// 初始化 Dart API（必须在其它操作前调用）。
   ///
-  /// This must be called with [NativeApi.initializeApiDLData] from dart:ffi.
-  /// Example: initDartApi(NativeApi.initializeApiDLData);
+  /// 调用方需要传入 dart:ffi 的 [NativeApi.initializeApiDLData]。
+  /// 示例：initDartApi(NativeApi.initializeApiDLData)。
   bool initDartApi(Pointer<Void> initData) {
     if (_dartApiInitialized) return true;
     if (initData == nullptr) return false;
@@ -123,9 +123,9 @@ class NativeSerialReader {
   /// 打开串口
   ///
   /// [initData] should be [NativeApi.initializeApiDLData] from dart:ffi.
-  /// If not provided, the caller must call [initDartApi] before [startReading].
+  /// 如果没有提供，调用方必须在 [startReading] 前先调用 [initDartApi]。
   bool open(String portName, int baudRate, {Pointer<Void>? initData}) {
-    // Ensure Dart API is initialized if initData is provided
+    // 如果提供了 initData，则确保 Dart API 已初始化。
     if (initData != null && !_dartApiInitialized) {
       initDartApi(initData);
     }
@@ -140,16 +140,15 @@ class NativeSerialReader {
     }
   }
 
-  /// Open the native handle outside the UI isolate.
+  /// 在 UI isolate 之外打开原生句柄。
   ///
-  /// The Windows CreateFile call can block for an unavailable serial port.
-  /// Native DLL state is process-wide, so the UI isolate can attach to the
-  /// handle after this background operation completes.
+  /// Windows CreateFile 在端口不可用时可能阻塞。
+  /// 原生 DLL 状态是进程级的，后台操作完成后 UI isolate 可以挂接该句柄。
   static Future<bool> openInBackground(String portName, int baudRate) {
     return Isolate.run(() => _openNativePort(portName, baudRate));
   }
 
-  /// Attach this reader instance to a handle opened by [openInBackground].
+  /// 将当前读取器实例挂接到 [openInBackground] 打开的句柄。
   bool attachToOpenPort() {
     _isOpen = _nsrIsOpen() == 1;
     return _isOpen;
@@ -200,7 +199,7 @@ class NativeSerialReader {
   /// 停止读取
   void stopReading() {
     _nsrStopReading();
-    // Native thread is stopped first so no more messages are posted.
+    // 先停止原生线程，确保不会再投递消息。
     _receivePort?.close();
     _receivePort = null;
   }
@@ -219,7 +218,7 @@ class NativeSerialReader {
   /// 是否打开
   bool get isOpen => _nsrIsOpen() == 1;
 
-  /// Whether the open handle still responds after an external disconnect.
+  /// 外部断开后，已打开句柄是否仍有响应。
   bool get isConnectionHealthy => _nsrIsConnectionHealthy() == 1;
 
   void _onDataReceived(dynamic message) {
@@ -231,7 +230,7 @@ class NativeSerialReader {
       return;
     }
 
-    // C++ 发送的数据格式: [8 bytes timestamp_us][N bytes data]
+    // C++ 发送的数据格式：[8 字节 timestamp_us][N 字节 data]。
     if (message.length < 8) {
       AppLogger().debug(
         '[NativeSerialReader] Message too short: ${message.length} bytes',
@@ -249,7 +248,7 @@ class NativeSerialReader {
   }
 
   void dispose() {
-    // Stop native thread first, then close ReceivePort and stream controller.
+    // 先停止原生线程，再关闭 ReceivePort 和 stream controller。
     _nsrStopReading();
     _receivePort?.close();
     _receivePort = null;

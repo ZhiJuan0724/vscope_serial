@@ -1,10 +1,9 @@
 import 'dart:typed_data';
 
-/// Append-only byte buffer backed by fixed-size chunks.
+/// 基于固定大小分块的追加式字节缓冲。
 ///
-/// This keeps long captures out of one huge growable `List<int>` and avoids
-/// head-removal costs. It is intentionally simple: captures are cleared as a
-/// whole between sessions, not trimmed from the front.
+/// 长时间采集时避免维护一个巨大的可增长 `List<int>`，也避免从头部删除的成本。
+/// 该结构刻意保持简单：不同会话之间整体清空采集数据，不从前端裁剪。
 class ChunkedByteBuffer {
   final int chunkSize;
   final List<Uint8List> _chunks = [];
@@ -75,7 +74,7 @@ class ChunkedByteBuffer {
   Uint8List toBytes() => readRange(0, _length);
 }
 
-/// Packet-oriented view over [ChunkedByteBuffer].
+/// [ChunkedByteBuffer] 的按包访问视图。
 class FixedPacketByteBuffer {
   final int packetSize;
   final ChunkedByteBuffer _bytes;
@@ -128,8 +127,8 @@ class FixedPacketByteBuffer {
     if (count < 0 || startPacket + count > packetCount) {
       throw RangeError.range(count, 0, packetCount - startPacket, 'count');
     }
-    // Fixed-size frames allow direct index -> byte offset lookup, which keeps
-    // historical window loading independent of total capture length.
+    // 固定帧可以直接通过 index -> byte offset 定位，
+    // 使历史窗口加载成本不依赖总采集长度。
     return _bytes.readRange(startPacket * packetSize, count * packetSize);
   }
 

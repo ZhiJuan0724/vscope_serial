@@ -139,6 +139,7 @@ class YmodemService {
   }
 
   void addIncomingBytes(Uint8List data) {
+    // 空闲时忽略 Shell 文本流，避免命令提示符被后续误读为文件头。
     if (!isActive && _pendingByte == null) return;
     for (final byte in data) {
       final pending = _pendingByte;

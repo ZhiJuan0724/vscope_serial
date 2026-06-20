@@ -1207,7 +1207,7 @@ class PlotPainter extends CustomPainter {
     final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
     final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
-    // tooltip位置（在鼠标右侧，如果超出边界则在左侧）
+    // 提示框位置（默认在鼠标右侧，超出边界时放到左侧）。
     var tooltipX = screenPos.dx + 18;
     var tooltipY = screenPos.dy + 18;
 

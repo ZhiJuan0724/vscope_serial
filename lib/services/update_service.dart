@@ -736,9 +736,8 @@ class UpdateService {
     try {
       client.close();
     } catch (_) {
-      // Network streams can surface a late connection-close error while the
-      // client is being disposed. The request body handling above owns the
-      // retry/error path, so disposal must not replace the useful failure.
+      // 释放 client 时网络流可能迟到抛出连接关闭错误。
+      // 上面的请求体处理负责重试和错误路径，因此释放阶段不能覆盖更有用的失败原因。
     }
   }
 }

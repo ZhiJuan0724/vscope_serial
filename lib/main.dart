@@ -97,7 +97,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Register window close handler: disconnect serial before closing
+    // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_handleStartupUpdates());
@@ -265,7 +265,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 }
 
-/// Window close listener: disconnect serial before allowing window to close
+/// 窗口关闭监听器：允许窗口关闭前先断开串口。
 class _WindowCloseListener extends WindowListener {
   final BuildContext context;
 
@@ -276,7 +276,7 @@ class _WindowCloseListener extends WindowListener {
     final serialService = Provider.of<SerialService>(context, listen: false);
     if (serialService.isConnected) {
       serialService.disconnect();
-      // Wait for disconnect to complete (C++ thread join + cleanup)
+      // 等待断开完成（C++ 线程 join 和资源清理）。
       await Future.delayed(const Duration(milliseconds: 50));
     }
     await windowManager.setPreventClose(false);

@@ -4,19 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/services/update_checker.dart';
 import 'package:vscope_serial/services/update_service.dart';
 
-// Manual usage examples:
+// 手动使用示例：
 //
-// Run from the project root when using the relative test path below. If the
-// current shell is in another directory, pass this test file as an absolute path.
-// Download cache is written to <current-directory>/updates.
+// 使用下面的相对测试路径时，请从项目根目录运行。
+// 如果当前 shell 位于其它目录，请传入该测试文件的绝对路径。
+// 下载缓存会写入 <current-directory>/updates。
 //
-// Test latest beta from Gitee:
+// 测试 Gitee 最新 beta：
 // flutter test test\manual\latest_update_download_test.dart --dart-define=RUN_LATEST_UPDATE_DOWNLOAD=true --dart-define=UPDATE_CHANNEL=beta --dart-define=UPDATE_SOURCE=gitee
 //
-// Test latest stable from GitHub:
+// 测试 GitHub 最新稳定版：
 // flutter test test\manual\latest_update_download_test.dart --dart-define=RUN_LATEST_UPDATE_DOWNLOAD=true --dart-define=UPDATE_CHANNEL=stable --dart-define=UPDATE_SOURCE=github
 //
-// Omit UPDATE_SOURCE to use the normal app behavior: GitHub first, then Gitee.
+// 省略 UPDATE_SOURCE 时使用应用正常行为：先 GitHub，后 Gitee。
 const _enabled = bool.fromEnvironment('RUN_LATEST_UPDATE_DOWNLOAD');
 const _channelValue = String.fromEnvironment(
   'UPDATE_CHANNEL',
@@ -35,8 +35,8 @@ void main() {
         updatesRoot: Directory('${Directory.current.path}/updates'),
       );
 
-      // This intentionally ignores hasUpdate so a current build can validate
-      // the latest release download path without installing an older version.
+      // 这里故意忽略 hasUpdate，方便当前构建验证最新 Release 下载链路，
+      // 而不需要安装旧版本。
       final result = await checker.check(channel: channel, source: source);
       final release = result.latestRelease;
       expect(result.error, isNull);

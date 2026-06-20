@@ -13,7 +13,7 @@ class SerialConfig {
     this.baudRate = 115200,
     this.dataBits = 8,
     this.stopBits = 1,
-    this.parity = 0, // SerialPortParity.none
+    this.parity = 0, // SerialPortParity.none：无校验
     this.rts = false,
     this.dtr = false,
   });

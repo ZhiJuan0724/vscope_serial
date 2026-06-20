@@ -6,10 +6,9 @@ import '../models/parse_result.dart';
 import '../models/parser_config.dart';
 import 'data_parser.dart';
 
-/// VOFA JustFloat parser.
+/// VOFA JustFloat 解析器。
 ///
-/// Frames are little-endian float32 values followed by the VOFA tail:
-/// 00 00 80 7F.
+/// 帧内容为小端 float32 数组，末尾跟随 VOFA 帧尾：00 00 80 7F。
 class JustFloatParser extends IDataParser {
   static const List<int> tail = [0x00, 0x00, 0x80, 0x7F];
 

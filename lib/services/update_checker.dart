@@ -158,7 +158,7 @@ class UpdateChecker {
       );
       if (release != null) return release;
     } catch (_) {
-      // Fall through to the mirror source below.
+      // 继续尝试下面的镜像源。
     }
     try {
       return await _fetchLatestFrom(

@@ -1731,9 +1731,9 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   void _formatHexInput(String value) {
-    // Remove all spaces first
+    // 先移除所有空格。
     final hexOnly = value.replaceAll(' ', '');
-    // Re-insert spaces every 2 chars
+    // 再按每两个 HEX 字符补回一个空格。
     final formatted = <String>[];
     for (var i = 0; i < hexOnly.length; i += 2) {
       if (i + 2 <= hexOnly.length) {
@@ -2208,14 +2208,14 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 }
 
-/// HEX input formatter: only allows 0-9, A-F, a-f, and spaces
+/// HEX 输入格式化器：只允许 0-9、A-F、a-f 和空格。
 class _HexInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // Allow only hex chars and spaces
+    // 只允许 HEX 字符和空格。
     final filtered = newValue.text.replaceAll(RegExp(r'[^0-9A-Fa-f ]'), '');
     if (filtered != newValue.text) {
       return TextEditingValue(

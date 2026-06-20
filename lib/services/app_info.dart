@@ -25,8 +25,7 @@ class AppInfo {
         return version;
       }
     } catch (_) {
-      // Fall through to a stable placeholder when assets are unavailable in
-      // unusual test or tooling contexts.
+      // 在异常测试或工具上下文中资源不可用时，回退到稳定占位值。
     }
 
     const fallback = '0.0.0';

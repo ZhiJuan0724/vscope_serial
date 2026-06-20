@@ -563,11 +563,10 @@ extension PlotViewModelImportExport on PlotViewModel {
     }
   }
 
-  /// Import data exported by the legacy VisualScope application.
+  /// 导入旧版 VisualScope 应用导出的数据。
   ///
-  /// The legacy format stores four independent little-endian int16 channel
-  /// blocks. Its first 50,000 samples are a reserved history area and are not
-  /// part of the user-visible capture.
+  /// 旧格式存储四个独立的小端 int16 通道块。
+  /// 每个通道前 50,000 个样本是保留历史区，不属于用户可见采集数据。
   Future<String?> importFromLegacyDat(
     String filePath, {
     PlotImportProgressCallback? onProgress,
@@ -618,8 +617,8 @@ extension PlotViewModelImportExport on PlotViewModel {
         final blockOffset = channel * storedPointCount * 2;
         final dataOffset =
             0x04 + channelNumber * 32 + blockOffset + reservedPointCount * 2;
-        // Each channel block has a 32-byte header. Its address field is the
-        // uint32 value 12 bytes before the raw sample data.
+        // 每个通道块都有 32 字节头部。
+        // 地址字段位于原始样本数据前 12 字节，类型为 uint32。
         final addressOffset = dataOffset - reservedPointCount * 2 - 12;
         final dataEnd =
             0x04 + channelNumber * 32 + blockOffset + storedPointCount * 2;

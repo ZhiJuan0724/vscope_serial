@@ -302,7 +302,7 @@ class PlotViewModel extends BaseViewModel {
   /// 定时刷新器，用于光标跟随和停止后的交互响应
   Timer? _refreshTimer;
 
-  /// Last transient notification, retained for diagnostics and tests.
+  /// 最近一次临时提示，保留给诊断和测试使用。
   String? _lastStatusMessage;
   bool _disposed = false;
 
@@ -332,7 +332,7 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  /// Fallback 定时器：确保数据流中断时 UI 仍能刷新
+  /// 兜底定时器：确保数据流中断时 UI 仍能刷新。
   Timer? _notifyTimer;
 
   // ========== 接收速率调试统计 ==========
@@ -649,7 +649,7 @@ class PlotViewModel extends BaseViewModel {
     return recentCount * 2.0; // 500ms * 2 = 1s
   }
 
-  /// Show a floating transient notification.
+  /// 显示浮动临时提示。
   String? get lastStatusMessage => _lastStatusMessage;
 
   void showStatusMessage(
@@ -1329,7 +1329,7 @@ class PlotViewModel extends BaseViewModel {
       _notifyTimer = null;
       Future.microtask(() => notifyListeners());
     } else if (_notifyTimer == null) {
-      // fallback timer：确保即使数据流中断也能刷新UI
+      // 兜底定时器：确保即使数据流中断也能刷新 UI。
       final delayMs = (1000 / _refreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;

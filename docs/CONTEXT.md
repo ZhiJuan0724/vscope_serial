@@ -97,14 +97,9 @@ flutter test test/parser/just_float_parser_test.dart
 
 ## Windows Shell 编码
 
-- PowerShell 直接读取包含中文的文件时可能因控制台编码导致输出乱码，不要仅凭乱码输出判断源码或文档内容。
-- 需要查看中文内容时，优先使用 `git diff`、`rg`、或 Node.js 按 UTF-8 读取文件；如果必须用 PowerShell 读取，先显式设置 UTF-8 编码。
-
-```powershell
-[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-```
+- 本机已安装 PowerShell 7 (`pwsh`)，默认 UTF-8 读取中文正常。读取或输出包含中文的源码、文档时优先使用 `pwsh -NoLogo -NoProfile -Command "..."`。
+- Windows PowerShell 5.1 直接读取包含中文的文件时可能因控制台编码导致输出乱码，不要仅凭乱码输出判断源码或文档内容。
+- 如果必须使用 Windows PowerShell 5.1，先显式设置 UTF-8 编码；否则优先切换到 `pwsh`。
 
 ## Git 规则
 

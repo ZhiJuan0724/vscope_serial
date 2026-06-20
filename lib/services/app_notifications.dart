@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_settings.dart';
 
-/// Application-wide transient notifications.
+/// 应用级临时提示。
 class AppNotifications {
   AppNotifications._();
 

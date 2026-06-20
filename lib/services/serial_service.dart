@@ -81,7 +81,7 @@ class SerialService extends ChangeNotifier {
   NativeSerialReader? _nativeReader;
   StreamSubscription? _nativeSubscription;
 
-  /// Test-only override for simulating a slow or failed native open.
+  /// 仅测试使用：模拟原生串口打开缓慢或失败。
   Future<bool> Function(String port, int baudRate)? debugPortOpener;
 
   // 时间窗口聚合器
@@ -231,16 +231,15 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('刷新串口列表失败: $e', category: 'SERIAL');
       return false;
     } finally {
-      // Defer notifyListeners to avoid calling during build phase.
+      // 延后通知，避免在 build 阶段触发 notifyListeners。
       Future.microtask(() => notifyListeners());
     }
   }
 
-  /// Refresh the available port list and verify an existing native connection.
+  /// 刷新可用端口列表，并校验已有原生连接是否仍然有效。
   ///
-  /// When a device was unplugged externally, the Windows handle can remain
-  /// open even though serial API calls fail. If the same port is still listed,
-  /// reconnect once; otherwise clear the stale connection state.
+  /// 设备被外部拔出时，Windows 句柄可能仍保持打开，但串口 API 调用会失败。
+  /// 如果同一端口仍在列表中，则尝试重连一次；否则清理过期连接状态。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
     final selectedPort = config.port;
     final portsRefreshed = refreshPorts(preserveSelectedPort: isConnected);
@@ -308,7 +307,7 @@ class SerialService extends ChangeNotifier {
     isConnecting = true;
     Future.microtask(() => notifyListeners());
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
-    // Let Flutter paint the connecting state before starting native work.
+    // 先让 Flutter 绘制连接中状态，再开始原生耗时操作。
     await Future<void>.delayed(Duration.zero);
 
     // 如果切换了串口，清空之前的数据
@@ -340,7 +339,7 @@ class SerialService extends ChangeNotifier {
     }
   }
 
-  /// Open the native handle in a background isolate, then attach UI-side IO.
+  /// 在后台 isolate 打开原生句柄，然后挂接 UI 侧 IO。
   Future<void> _openPort() async {
     final port = config.port!;
     if (debugPortOpener != null) {
@@ -352,7 +351,7 @@ class SerialService extends ChangeNotifier {
 
     // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
     _nativeReader = NativeSerialReader();
-    // Initialize Dart API with NativeApi.initializeApiDLData before opening
+    // 打开前使用 NativeApi.initializeApiDLData 初始化 Dart API。
     final initData = NativeApi.initializeApiDLData;
     _nativeReader!.initDartApi(initData);
     final opened = await NativeSerialReader.openInBackground(
@@ -1181,9 +1180,8 @@ class SerialService extends ChangeNotifier {
 
   @override
   void dispose() {
-    // Do NOT call disconnect() here - it triggers notifyListeners()
-    // which will throw if called after super.dispose().
-    // Just clean up resources directly.
+    // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
+    // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
     _flushReceiveLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
