@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../services/app_info.dart';
+import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/changelog_service.dart';
 import '../../services/update_checker.dart';
@@ -711,8 +712,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _updateChannel = UpdateChannel.fromString(settings.updateChannel);
       _lastResult = null;
     });
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(content: Text('已恢复默认设置，建议重启应用以确保所有界面完全生效。')),
+    AppNotifications.show(
+      '已恢复默认设置，建议重启应用以确保所有界面完全生效。',
+      messenger: ScaffoldMessenger.maybeOf(context),
     );
     return true;
   }

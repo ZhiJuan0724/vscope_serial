@@ -623,6 +623,9 @@ class _RawDataPageState extends State<RawDataPage> {
     String? resultText;
     String? errorText;
     var running = false;
+    var hasStartedTransfer = false;
+    DateTime? transferStartedAt;
+    YmodemDirection? transferDirection;
 
     showDialog(
       context: context,
@@ -638,6 +641,36 @@ class _RawDataPageState extends State<RawDataPage> {
                   builder: (context, snapshot) {
                     final status = snapshot.data ?? vm.ymodemStatus;
                     final isActive = status.isActive || running;
+                    final visibleResultText =
+                        resultText ??
+                        (hasStartedTransfer
+                            ? _fileTransferCompletedText(status)
+                            : null);
+                    if (status.isActive && transferStartedAt == null) {
+                      transferStartedAt = DateTime.now();
+                      transferDirection = status.direction;
+                    }
+                    if (!status.isActive &&
+                        status.phase != YmodemPhase.completed &&
+                        status.phase != YmodemPhase.failed &&
+                        status.phase != YmodemPhase.cancelled) {
+                      transferStartedAt = null;
+                      transferDirection = null;
+                    }
+                    if (transferDirection != status.direction &&
+                        status.direction != null &&
+                        status.isActive) {
+                      transferStartedAt = DateTime.now();
+                      transferDirection = status.direction;
+                    }
+                    final speedText = _formatTransferSpeed(
+                      status,
+                      transferStartedAt,
+                    );
+                    final dialogWidth =
+                        (MediaQuery.sizeOf(context).width - 96)
+                            .clamp(280.0, 430.0)
+                            .toDouble();
                     final canStart =
                         vm.isConnected &&
                         !isActive &&
@@ -649,7 +682,7 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                       title: const Text('文件发送/接收'),
                       content: SizedBox(
-                        width: 430,
+                        width: dialogWidth,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,6 +705,9 @@ class _RawDataPageState extends State<RawDataPage> {
                                         direction = values.single;
                                         resultText = null;
                                         errorText = null;
+                                        hasStartedTransfer = false;
+                                        transferStartedAt = null;
+                                        transferDirection = null;
                                       }),
                             ),
                             const SizedBox(height: 16),
@@ -778,10 +814,14 @@ class _RawDataPageState extends State<RawDataPage> {
                                 ),
                               ),
                             const SizedBox(height: 16),
-                            _buildFileTransferProgress(context, status),
-                            if (resultText != null) ...[
+                            _buildFileTransferProgress(
+                              context,
+                              status,
+                              speedText: speedText,
+                            ),
+                            if (visibleResultText != null) ...[
                               const SizedBox(height: 8),
-                              Text(resultText!),
+                              SelectableText(visibleResultText),
                             ],
                             if (errorText != null) ...[
                               const SizedBox(height: 8),
@@ -795,6 +835,8 @@ class _RawDataPageState extends State<RawDataPage> {
                           ],
                         ),
                       ),
+                      actionsOverflowAlignment: OverflowBarAlignment.end,
+                      actionsOverflowButtonSpacing: 8,
                       actions: [
                         TextButton(
                           onPressed:
@@ -819,6 +861,13 @@ class _RawDataPageState extends State<RawDataPage> {
                                   ? () async {
                                     setDialogState(() {
                                       running = true;
+                                      hasStartedTransfer = true;
+                                      transferStartedAt = DateTime.now();
+                                      transferDirection =
+                                          direction ==
+                                                  _FileTransferDirection.send
+                                              ? YmodemDirection.send
+                                              : YmodemDirection.receive;
                                       resultText = null;
                                       errorText = null;
                                     });
@@ -867,8 +916,9 @@ class _RawDataPageState extends State<RawDataPage> {
 
   Widget _buildFileTransferProgress(
     BuildContext context,
-    YmodemTransferStatus status,
-  ) {
+    YmodemTransferStatus status, {
+    String? speedText,
+  }) {
     final percent = status.totalBytes <= 0 ? 0.0 : status.progress * 100;
     final direction = switch (status.direction) {
       YmodemDirection.send => '发送',
@@ -887,14 +937,21 @@ class _RawDataPageState extends State<RawDataPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          hasStatus
-              ? '$direction ${status.fileName ?? ''}  '
-                  '${_formatBytes(status.transferredBytes)} / '
-                  '${_formatBytes(status.totalBytes)}  '
-                  '${percent.toStringAsFixed(1)}%'
-              : '等待开始传输',
+          hasStatus ? '$direction ${status.fileName ?? ''}' : '等待开始传输',
           overflow: TextOverflow.ellipsis,
         ),
+        if (hasStatus) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${_formatBytes(status.transferredBytes)} / '
+            '${_formatBytes(status.totalBytes)}  '
+            '${percent.toStringAsFixed(1)}%'
+            '${speedText == null ? '' : '  $speedText'}',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
         if (hasStatus && status.message.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(
@@ -906,6 +963,31 @@ class _RawDataPageState extends State<RawDataPage> {
         ],
       ],
     );
+  }
+
+  String? _fileTransferCompletedText(YmodemTransferStatus status) {
+    if (status.phase != YmodemPhase.completed) return null;
+    return switch (status.direction) {
+      YmodemDirection.send => '发送完成',
+      YmodemDirection.receive =>
+        status.savedPath == null ? '未接收文件' : '接收完成: ${status.savedPath}',
+      null => null,
+    };
+  }
+
+  String? _formatTransferSpeed(
+    YmodemTransferStatus status,
+    DateTime? transferStartedAt,
+  ) {
+    if (transferStartedAt == null || status.transferredBytes <= 0) {
+      return null;
+    }
+    final elapsedMs =
+        DateTime.now().difference(transferStartedAt).inMilliseconds;
+    if (elapsedMs <= 0) return null;
+    final bytesPerSecond = status.transferredBytes * 1000 / elapsedMs;
+    if (bytesPerSecond <= 0) return null;
+    return '${_formatBytes(bytesPerSecond)}/s';
   }
 
   String _formatBytes(num bytes) {
