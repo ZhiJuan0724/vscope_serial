@@ -58,6 +58,8 @@ class AppSettings {
 
   /// 绘图窗口点数上限，范围 1000000~40000000
   int maxVisiblePoints = 1000000;
+
+  /// 每次开始绘图时丢弃的前置有效数据包数量，范围 0~10000。
   int discardInitialPacketCount = 0;
   bool snapHighlightEnabled = true;
   double snapHighlightDiameter = 8.0;
@@ -76,6 +78,12 @@ class AppSettings {
 
   /// 最新点跟随模式开关
   bool followEnabled = false;
+
+  /// 最新点跟随位置比例，范围 0.50~0.95。
+  double followPositionRatio = 0.9;
+
+  /// Y 轴自适应数据显示占比，范围 0.50~0.95。
+  double yFitDisplayRatio = 0.9;
 
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
@@ -203,6 +211,8 @@ class AppSettings {
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
+    followPositionRatio = 0.9;
+    yFitDisplayRatio = 0.9;
     parserType = 'fireWater';
     sendProtocolType = 'none';
     receiveCustomProtocolId = '';
@@ -261,7 +271,7 @@ class AppSettings {
           .clamp(1000000, 40000000);
       discardInitialPacketCount =
           ((json['discardInitialPacketCount'] as num?)?.toInt() ?? 0)
-              .clamp(0, 1000000)
+              .clamp(0, 10000)
               .toInt();
       snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
       snapHighlightDiameter =
@@ -274,6 +284,13 @@ class AppSettings {
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
       followEnabled = json['followEnabled'] as bool? ?? false;
+      followPositionRatio =
+          ((json['followPositionRatio'] as num?)?.toDouble() ?? 0.9).clamp(
+            0.5,
+            0.95,
+          );
+      yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.9)
+          .clamp(0.5, 0.95);
       parserType = json['parserType'] as String? ?? 'fireWater';
       sendProtocolType = json['sendProtocolType'] as String? ?? 'none';
       receiveCustomProtocolId =
@@ -355,6 +372,8 @@ class AppSettings {
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
+      'followPositionRatio': followPositionRatio,
+      'yFitDisplayRatio': yFitDisplayRatio,
       'parserType': parserType,
       'sendProtocolType': sendProtocolType,
       'receiveCustomProtocolId': receiveCustomProtocolId,

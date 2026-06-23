@@ -1,9 +1,8 @@
-/// Centralized UI strings.
+/// 集中管理固定 UI 文本。
 ///
-/// This is intentionally a plain Dart registry instead of XML so strings remain
-/// type-safe and easy to refactor. Keep user-facing fixed UI text here; runtime
-/// data, protocol names, log messages, and file format constants can stay close
-/// to their owning logic until full localization is introduced.
+/// 这里使用普通 Dart 注册表而不是 XML，便于保持类型安全和重构便利。
+/// 用户可见的固定界面文本应尽量放在这里；运行时数据、协议名称、
+/// 日志消息和文件格式常量在完整多语言支持前可以继续靠近各自逻辑。
 abstract final class AppStrings {
   static const appName = 'VScope Serial';
 
@@ -88,7 +87,7 @@ final class _PlotStrings {
   String get editRProtocolConfig => '编辑 r 协议配置';
   String get noConfig => '不使用配置';
   String get verticalCursor => '垂直光标';
-  String get addObservation => '添加观察';
+  String get addObservation => '添加观察，右键标签删除';
   String get observation => '观察';
   String get measureXx => 'X测量';
   String get measureXxTooltip => 'Delta X 测量';
@@ -99,7 +98,11 @@ final class _PlotStrings {
   String get statsRange => '范围';
   String get statsRangeTooltip => '统计范围';
   String get follow => '跟随';
-  String get followTooltip => '最新点跟随在 3/4 宽度处';
+  String get followTooltip => '最新点跟随在设定位置';
+  String get followPosition => '跟随位置';
+  String get followPositionHelp => '最新点在 X 轴可视宽度中的位置';
+  String get yFitDisplayRatio => 'Y自适应占比';
+  String get yFitDisplayRatioHelp => 'Y 自适应后数据占绘图区高度的比例';
   String get legend => '图例';
   String get undoZoom => '撤回缩放';
   String get boxZoom => '框选放大';
@@ -171,16 +174,16 @@ final class _PlotStrings {
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
 
   String plotWindowLimitHelp({
-    required int min,
-    required int max,
-    required int defaultValue,
-    required int current,
+    required String min,
+    required String max,
+    required String defaultValue,
+    required String current,
   }) {
-    return '范围: $min~$max 包，默认 $defaultValue 包。当前窗口: $current 包';
+    return '范围: $min~$max 包，默认 $defaultValue 包。当前窗口: $current 包。可输入 1M、1.5M、40M';
   }
 
-  String droppedPacketsHelp({required int max}) {
-    return '范围: 0~$max 包，默认 0 包。每次开始绘图时丢弃前 N 个成功解析的数据包，不影响文件导入。';
+  String droppedPacketsHelp({required String max}) {
+    return '范围: 0~$max 包，默认 0 包。可输入 500、1K、10K。每次开始绘图时丢弃前 N 个成功解析的数据包，不影响文件导入。';
   }
 
   String get closeOffset => '关闭偏置';

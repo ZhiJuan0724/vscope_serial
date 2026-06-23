@@ -106,7 +106,7 @@ class PlotViewModel extends BaseViewModel {
   static const int minVisiblePoints = 1000000;
   static const int defaultVisiblePoints = 1000000;
   static const int maxVisiblePointsLimit = 40000000;
-  static const int maxDiscardInitialPacketCount = 1000000;
+  static const int maxDiscardInitialPacketCount = 10000;
   int _maxVisiblePoints = defaultVisiblePoints;
   int _discardInitialPacketCount = 0;
   int _activeDiscardInitialPacketLimit = 0;
@@ -208,8 +208,10 @@ class PlotViewModel extends BaseViewModel {
   bool _snapHighlightEnabled = true;
   double _snapHighlightDiameter = 8.0;
 
-  /// 最新点跟随模式：最新数据点保持在视口 3/4 宽度处
+  /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
   bool _followEnabled = false;
+  double _followPositionRatio = 0.9;
+  double _yFitDisplayRatio = 0.9;
 
   /// 单垂直光标开关（鼠标悬停显示垂直线+tooltip）
   bool _vCursorEnabled = false;
@@ -394,6 +396,8 @@ class PlotViewModel extends BaseViewModel {
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
+    _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
+    _yFitDisplayRatio = settings.yFitDisplayRatio.clamp(0.5, 0.95);
     _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency)
         .round()
         .clamp(1, 1000);
@@ -449,6 +453,8 @@ class PlotViewModel extends BaseViewModel {
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
+    settings.followPositionRatio = _followPositionRatio;
+    settings.yFitDisplayRatio = _yFitDisplayRatio;
     settings.parserType = _parserType.name;
     settings.receiveCustomProtocolId = _parserConfig.customProtocolId ?? '';
     settings.sendProtocolType = _sendProtocolType.name;
@@ -484,6 +490,8 @@ class PlotViewModel extends BaseViewModel {
   String get gridDensity => _gridDensity;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
+  double get followPositionRatio => _followPositionRatio;
+  double get yFitDisplayRatio => _yFitDisplayRatio;
   bool get vCursorEnabled => _vCursorEnabled;
   bool get xMeasurementEnabled => _xMeasurementEnabled;
   bool get yMeasurementEnabled => _yMeasurementEnabled;
@@ -1289,12 +1297,7 @@ class PlotViewModel extends BaseViewModel {
     // 自动跟随最新数据（仅跟随模式开启时）
     if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
       final lastIndex = _dataPoints.last.index;
-      // 最新点在 3/4 宽度处
-      final range = viewport.xRange;
-      viewport = viewport.copyWith(
-        xMin: (lastIndex - range * 0.75).toDouble(),
-        xMax: (lastIndex + range * 0.25).toDouble(),
-      );
+      viewport = _followViewportForLatestIndex(lastIndex.toDouble());
     }
 
     // 数据接收：每包数据都处理，不丢失
@@ -1866,6 +1869,29 @@ class PlotViewModel extends BaseViewModel {
     return candidate.copyWith(xMax: candidate.xMin + _maxVisiblePoints);
   }
 
+  PlotViewport _followViewportForLatestIndex(double latestIndex) {
+    final range = viewport.xRange;
+    final ratio = _followPositionRatio.clamp(0.5, 0.95);
+    return viewport.copyWith(
+      xMin: latestIndex - range * ratio,
+      xMax: latestIndex + range * (1 - ratio),
+    );
+  }
+
+  double _latestFollowIndex() {
+    if (_dataPoints.isNotEmpty) return _dataPoints.last.index.toDouble();
+    if (_nextIndex > 0) return (_nextIndex - 1).toDouble();
+    return _nextIndex.toDouble();
+  }
+
+  (double, double) _fitYRange(double minY, double maxY) {
+    final dataRange = maxY - minY;
+    final displayRatio = _yFitDisplayRatio.clamp(0.5, 0.95);
+    final targetRange = dataRange / displayRatio;
+    final padding = (targetRange - dataRange) / 2;
+    return (minY - padding, maxY + padding);
+  }
+
   /// X 轴放大
   void zoomXIn() {
     _saveViewport();
@@ -1940,11 +1966,8 @@ class PlotViewModel extends BaseViewModel {
       if (minY == maxY) {
         showStatusMessage('Y轴数据范围为0，跳过默认Y轴自适应');
       } else {
-        final padding = (maxY - minY) * 0.1;
-        viewport = viewport.copyWith(
-          yMin: minY - padding,
-          yMax: maxY + padding,
-        );
+        final (yMin, yMax) = _fitYRange(minY, maxY);
+        viewport = viewport.copyWith(yMin: yMin, yMax: yMax);
         changed = true;
       }
     }
@@ -2030,12 +2053,12 @@ class PlotViewModel extends BaseViewModel {
         showStatusMessage('默认Y轴数据范围为0，仅自适应X轴');
       }
       if (minY != maxY) {
-        final padding = (maxY - minY) * 0.1;
+        final (yMin, yMax) = _fitYRange(minY, maxY);
         viewport = viewport.copyWith(
           xMin: minX,
           xMax: maxX,
-          yMin: minY - padding,
-          yMax: maxY + padding,
+          yMin: yMin,
+          yMax: yMax,
         );
       }
     } else {
@@ -2072,8 +2095,9 @@ class PlotViewModel extends BaseViewModel {
     }
 
     var changed = false;
-    final targetMin = viewport.yMin + viewport.yRange * 0.1;
-    final targetMax = viewport.yMax - viewport.yRange * 0.1;
+    final marginRatio = (1 - _yFitDisplayRatio.clamp(0.5, 0.95)) / 2;
+    final targetMin = viewport.yMin + viewport.yRange * marginRatio;
+    final targetMax = viewport.yMax - viewport.yRange * marginRatio;
     final targetRange = targetMax - targetMin;
     if (targetRange <= 0) return false;
 
@@ -2099,9 +2123,7 @@ class PlotViewModel extends BaseViewModel {
   void setFollowEnabled(bool value) {
     _followEnabled = value;
     if (value && _historyPointCount > 0) {
-      final maxX = _nextIndex.toDouble();
-      final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
-      viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+      viewport = _followViewportForLatestIndex(_latestFollowIndex());
       _loadTailWindow();
     }
     _saveSettings();
@@ -2311,6 +2333,26 @@ class PlotViewModel extends BaseViewModel {
     final next = value.clamp(6.0, 12.0).toDouble();
     if ((_snapHighlightDiameter - next).abs() < 1e-9) return;
     _snapHighlightDiameter = next;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setFollowPositionRatio(double value) {
+    final next = value.clamp(0.5, 0.95).toDouble();
+    if ((_followPositionRatio - next).abs() < 1e-9) return;
+    _followPositionRatio = next;
+    if (_followEnabled && _historyPointCount > 0) {
+      viewport = _followViewportForLatestIndex(_latestFollowIndex());
+      _loadWindowForViewport(force: true);
+    }
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setYFitDisplayRatio(double value) {
+    final next = value.clamp(0.5, 0.95).toDouble();
+    if ((_yFitDisplayRatio - next).abs() < 1e-9) return;
+    _yFitDisplayRatio = next;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

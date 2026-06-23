@@ -65,6 +65,35 @@ const double kRProtocolAddressWidth = 108;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
 
+int? _parseCompactCount(String input) {
+  final text = input.trim();
+  if (text.isEmpty) return null;
+  final match = RegExp(r'^(\d+(?:\.\d+)?)([kKmM]?)$').firstMatch(text);
+  if (match == null) return null;
+
+  final value = double.tryParse(match.group(1)!);
+  if (value == null) return null;
+  final multiplier = switch (match.group(2)!.toUpperCase()) {
+    'K' => 1000,
+    'M' => 1000000,
+    _ => 1,
+  };
+  return (value * multiplier).round();
+}
+
+String _formatCompactCount(int value) {
+  if (value == 0) return '0';
+  if (value % 1000000 == 0) return '${value ~/ 1000000}M';
+  if (value >= 1000000) {
+    return '${(value / 1000000).toStringAsFixed(1)}M';
+  }
+  if (value % 1000 == 0) return '${value ~/ 1000}K';
+  if (value >= 1000) {
+    return '${(value / 1000).toStringAsFixed(1)}K';
+  }
+  return value.toString();
+}
+
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
   bool _isPanelCollapsed = false;
@@ -1979,10 +2008,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       text: vm.snapHighlightDiameter.toStringAsFixed(0),
     );
     final maxVisibleController = TextEditingController(
-      text: vm.maxVisiblePoints.toString(),
+      text: _formatCompactCount(vm.maxVisiblePoints),
     );
     final discardInitialPacketController = TextEditingController(
-      text: vm.discardInitialPacketCount.toString(),
+      text: _formatCompactCount(vm.discardInitialPacketCount),
     );
     showDialog(
       context: context,
@@ -1993,83 +2022,100 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
             title: Text(AppStrings.plot.advancedSettings),
             content: SizedBox(
-              width: 300,
+              width: 420,
               child: StatefulBuilder(
                 builder: (context, setState) {
-                  return SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 网格开关
-                        Row(
-                          children: [
-                            Text(
-                              AppStrings.plot.showGrid,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            const Spacer(),
-                            Switch(
-                              value: vm.showGrid,
-                              onChanged: (value) {
-                                vm.setShowGrid(value);
-                                setState(() {}); // 刷新对话框内部状态
-                              },
-                            ),
-                          ],
-                        ),
-                        // 网格密度
-                        if (vm.showGrid) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            AppStrings.plot.gridDensity,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 4),
+                  return Scrollbar(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 网格开关
                           Row(
                             children: [
-                              _buildDensityButton(
-                                AppStrings.plot.densitySparse,
-                                'sparse',
-                                vm,
-                                setState,
+                              Text(
+                                AppStrings.plot.showGrid,
+                                style: const TextStyle(fontSize: 14),
                               ),
-                              const SizedBox(width: 8),
-                              _buildDensityButton(
-                                AppStrings.plot.densityNormal,
-                                'normal',
-                                vm,
-                                setState,
-                              ),
-                              const SizedBox(width: 8),
-                              _buildDensityButton(
-                                AppStrings.plot.densityDense,
-                                'dense',
-                                vm,
-                                setState,
+                              const Spacer(),
+                              Switch(
+                                value: vm.showGrid,
+                                onChanged: (value) {
+                                  vm.setShowGrid(value);
+                                  setState(() {}); // 刷新对话框内部状态
+                                },
                               ),
                             ],
                           ),
-                        ],
-                        const Divider(),
-                        // 刷新帧率
-                        Text(
-                          AppStrings.plot.refreshFps,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: kSecondaryDialogFieldWidth,
-                              child: TextField(
-                                controller: refreshFpsController,
-                                keyboardType: TextInputType.number,
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: AppStrings.plot.unitFps,
+                          // 网格密度
+                          if (vm.showGrid) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              AppStrings.plot.gridDensity,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                _buildDensityButton(
+                                  AppStrings.plot.densitySparse,
+                                  'sparse',
+                                  vm,
+                                  setState,
                                 ),
-                                onSubmitted: (value) {
-                                  final fps = int.tryParse(value);
+                                const SizedBox(width: 8),
+                                _buildDensityButton(
+                                  AppStrings.plot.densityNormal,
+                                  'normal',
+                                  vm,
+                                  setState,
+                                ),
+                                const SizedBox(width: 8),
+                                _buildDensityButton(
+                                  AppStrings.plot.densityDense,
+                                  'dense',
+                                  vm,
+                                  setState,
+                                ),
+                              ],
+                            ),
+                          ],
+                          const Divider(),
+                          // 刷新帧率
+                          Text(
+                            AppStrings.plot.refreshFps,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: refreshFpsController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitFps,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final fps = int.tryParse(value);
+                                    if (fps != null) {
+                                      vm.setRefreshFps(fps);
+                                      refreshFpsController.text =
+                                          vm.refreshFps.toString();
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final fps = int.tryParse(
+                                    refreshFpsController.text,
+                                  );
                                   if (fps != null) {
                                     vm.setRefreshFps(fps);
                                     refreshFpsController.text =
@@ -2077,297 +2123,381 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                     setState(() {});
                                   }
                                 },
+                                child: Text(AppStrings.common.apply),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () {
-                                final fps = int.tryParse(
-                                  refreshFpsController.text,
-                                );
-                                if (fps != null) {
-                                  vm.setRefreshFps(fps);
-                                  refreshFpsController.text =
-                                      vm.refreshFps.toString();
-                                  setState(() {});
-                                }
-                              },
-                              child: Text(AppStrings.common.apply),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${(1000 / vm.refreshFps).round()}ms',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
+                              const SizedBox(width: 8),
+                              Text(
+                                '${(1000 / vm.refreshFps).round()}ms',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          AppStrings.plot.refreshFpsHelp,
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        Text(
-                          AppStrings.plot.plotFontSize,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Text(
-                              vm.plotFontSizeDelta == 0
-                                  ? AppStrings.plot.defaultValue
-                                  : vm.plotFontSizeDelta > 0
-                                  ? '+${vm.plotFontSizeDelta}'
-                                  : '${vm.plotFontSizeDelta}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.refreshFpsHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.plotFontSize,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                vm.plotFontSizeDelta == 0
+                                    ? AppStrings.plot.defaultValue
+                                    : vm.plotFontSizeDelta > 0
+                                    ? '+${vm.plotFontSizeDelta}'
+                                    : '${vm.plotFontSizeDelta}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              AppStrings.plot.basedOnDefaultFontSize,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
+                              const Spacer(),
+                              Text(
+                                AppStrings.plot.basedOnDefaultFontSize,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: vm.plotFontSizeDelta.toDouble(),
-                          min: -3,
-                          max: 6,
-                          divisions: 9,
-                          label:
-                              vm.plotFontSizeDelta == 0
-                                  ? AppStrings.plot.defaultValue
-                                  : vm.plotFontSizeDelta > 0
-                                  ? '+${vm.plotFontSizeDelta}'
-                                  : '${vm.plotFontSizeDelta}',
-                          onChanged: (value) {
-                            vm.setPlotFontSizeDelta(value.round());
-                            setState(() {});
-                          },
-                        ),
-                        Text(
-                          AppStrings.plot.plotFontSizeHelp,
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                AppStrings.plot.statsTooltip,
-                                style: const TextStyle(fontSize: 14),
+                            ],
+                          ),
+                          Slider(
+                            value: vm.plotFontSizeDelta.toDouble(),
+                            min: -3,
+                            max: 6,
+                            divisions: 9,
+                            label:
+                                vm.plotFontSizeDelta == 0
+                                    ? AppStrings.plot.defaultValue
+                                    : vm.plotFontSizeDelta > 0
+                                    ? '+${vm.plotFontSizeDelta}'
+                                    : '${vm.plotFontSizeDelta}',
+                            onChanged: (value) {
+                              vm.setPlotFontSizeDelta(value.round());
+                              setState(() {});
+                            },
+                          ),
+                          Text(
+                            AppStrings.plot.plotFontSizeHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.followPosition,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                '${(vm.followPositionRatio * 100).round()}%',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                            Switch(
-                              value: vm.statsEnabled && vm.statsRangeEnabled,
-                              onChanged: (value) {
-                                if (value) {
-                                  if (!vm.statsEnabled) {
+                              const Spacer(),
+                              Flexible(
+                                child: Text(
+                                  AppStrings.plot.followPositionHelp,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: vm.followPositionRatio * 100,
+                            min: 50,
+                            max: 95,
+                            divisions: 45,
+                            label: '${(vm.followPositionRatio * 100).round()}%',
+                            onChanged: (value) {
+                              vm.setFollowPositionRatio(value / 100);
+                              setState(() {});
+                            },
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.yFitDisplayRatio,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                '${(vm.yFitDisplayRatio * 100).round()}%',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const Spacer(),
+                              Flexible(
+                                child: Text(
+                                  AppStrings.plot.yFitDisplayRatioHelp,
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: vm.yFitDisplayRatio * 100,
+                            min: 50,
+                            max: 95,
+                            divisions: 45,
+                            label: '${(vm.yFitDisplayRatio * 100).round()}%',
+                            onChanged: (value) {
+                              vm.setYFitDisplayRatio(value / 100);
+                              setState(() {});
+                            },
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  AppStrings.plot.statsTooltip,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                              Switch(
+                                value: vm.statsEnabled && vm.statsRangeEnabled,
+                                onChanged: (value) {
+                                  if (value) {
+                                    if (!vm.statsEnabled) {
+                                      vm.toggleStats();
+                                    }
+                                    if (!vm.statsRangeEnabled) {
+                                      vm.toggleStatsRange();
+                                    }
+                                  } else if (vm.statsEnabled) {
                                     vm.toggleStats();
                                   }
-                                  if (!vm.statsRangeEnabled) {
-                                    vm.toggleStatsRange();
-                                  }
-                                } else if (vm.statsEnabled) {
-                                  vm.toggleStats();
-                                }
-                                setState(() {});
-                              },
-                            ),
-                          ],
-                        ),
-                        const Divider(),
-                        // 窗口点数上限
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                AppStrings.plot.snapHighlight,
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                            ),
-                            Switch(
-                              value: vm.snapHighlightEnabled,
-                              onChanged: (value) {
-                                vm.setSnapHighlightEnabled(value);
-                                setState(() {});
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: kSecondaryDialogFieldWidth,
-                              child: TextField(
-                                controller: snapDiameterController,
-                                keyboardType: TextInputType.number,
-                                enabled: vm.snapHighlightEnabled,
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: AppStrings.plot.unitPixel,
-                                ),
-                                onSubmitted: (value) {
-                                  final diameter = double.tryParse(value);
-                                  if (diameter != null) {
-                                    vm.setSnapHighlightDiameter(diameter);
-                                    snapDiameterController.text = vm
-                                        .snapHighlightDiameter
-                                        .toStringAsFixed(0);
-                                    setState(() {});
-                                  }
+                                  setState(() {});
                                 },
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed:
-                                  vm.snapHighlightEnabled
-                                      ? () {
-                                        final diameter = double.tryParse(
-                                          snapDiameterController.text,
-                                        );
-                                        if (diameter != null) {
-                                          vm.setSnapHighlightDiameter(diameter);
-                                          snapDiameterController.text = vm
-                                              .snapHighlightDiameter
-                                              .toStringAsFixed(0);
-                                          setState(() {});
-                                        }
-                                      }
-                                      : null,
-                              child: Text(AppStrings.common.apply),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          AppStrings.plot.snapHighlightHelp,
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        Text(
-                          AppStrings.plot.plotWindowLimit,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: kSecondaryDialogFieldWidth,
-                              child: TextField(
-                                controller: maxVisibleController,
-                                keyboardType: TextInputType.number,
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: AppStrings.plot.unitPacket,
+                            ],
+                          ),
+                          const Divider(),
+                          // 吸附点高亮
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  AppStrings.plot.snapHighlight,
+                                  style: const TextStyle(fontSize: 14),
                                 ),
-                                onSubmitted: (value) {
-                                  final points = int.tryParse(value);
+                              ),
+                              Switch(
+                                value: vm.snapHighlightEnabled,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onChanged: (value) {
+                                  vm.setSnapHighlightEnabled(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: snapDiameterController,
+                                  keyboardType: TextInputType.number,
+                                  enabled: vm.snapHighlightEnabled,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPixel,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final diameter = double.tryParse(value);
+                                    if (diameter != null) {
+                                      vm.setSnapHighlightDiameter(diameter);
+                                      snapDiameterController.text = vm
+                                          .snapHighlightDiameter
+                                          .toStringAsFixed(0);
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed:
+                                    vm.snapHighlightEnabled
+                                        ? () {
+                                          final diameter = double.tryParse(
+                                            snapDiameterController.text,
+                                          );
+                                          if (diameter != null) {
+                                            vm.setSnapHighlightDiameter(
+                                              diameter,
+                                            );
+                                            snapDiameterController.text = vm
+                                                .snapHighlightDiameter
+                                                .toStringAsFixed(0);
+                                            setState(() {});
+                                          }
+                                        }
+                                        : null,
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.snapHighlightHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.plotWindowLimit,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: maxVisibleController,
+                                  keyboardType: TextInputType.text,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPacket,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final points = _parseCompactCount(value);
+                                    if (points != null) {
+                                      vm.setMaxVisiblePoints(points);
+                                      maxVisibleController
+                                          .text = _formatCompactCount(
+                                        vm.maxVisiblePoints,
+                                      );
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final points = _parseCompactCount(
+                                    maxVisibleController.text,
+                                  );
                                   if (points != null) {
                                     vm.setMaxVisiblePoints(points);
-                                    maxVisibleController.text =
-                                        vm.maxVisiblePoints.toString();
+                                    maxVisibleController
+                                        .text = _formatCompactCount(
+                                      vm.maxVisiblePoints,
+                                    );
                                     setState(() {});
                                   }
                                 },
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.plotWindowLimitHelp(
+                              min: _formatCompactCount(
+                                PlotViewModel.minVisiblePoints,
+                              ),
+                              max: _formatCompactCount(
+                                PlotViewModel.maxVisiblePointsLimit,
+                              ),
+                              defaultValue: _formatCompactCount(
+                                PlotViewModel.defaultVisiblePoints,
+                              ),
+                              current: _formatCompactCount(
+                                vm.visiblePointCount,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () {
-                                final points = int.tryParse(
-                                  maxVisibleController.text,
-                                );
-                                if (points != null) {
-                                  vm.setMaxVisiblePoints(points);
-                                  maxVisibleController.text =
-                                      vm.maxVisiblePoints.toString();
-                                  setState(() {});
-                                }
-                              },
-                              child: Text(AppStrings.common.apply),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          AppStrings.plot.plotWindowLimitHelp(
-                            min: PlotViewModel.minVisiblePoints,
-                            max: PlotViewModel.maxVisiblePointsLimit,
-                            defaultValue: PlotViewModel.defaultVisiblePoints,
-                            current: vm.visiblePointCount,
                           ),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey,
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.droppedPackets,
+                            style: const TextStyle(fontSize: 14),
                           ),
-                        ),
-                        const Divider(),
-                        Text(
-                          AppStrings.plot.droppedPackets,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: kSecondaryDialogFieldWidth,
-                              child: TextField(
-                                controller: discardInitialPacketController,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: AppStrings.plot.unitPacket,
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: discardInitialPacketController,
+                                  keyboardType: TextInputType.text,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPacket,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final count = _parseCompactCount(value);
+                                    if (count != null) {
+                                      vm.setDiscardInitialPacketCount(count);
+                                      discardInitialPacketController
+                                          .text = _formatCompactCount(
+                                        vm.discardInitialPacketCount,
+                                      );
+                                      setState(() {});
+                                    }
+                                  },
                                 ),
-                                onSubmitted: (value) {
-                                  final count = int.tryParse(value);
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final count = _parseCompactCount(
+                                    discardInitialPacketController.text,
+                                  );
                                   if (count != null) {
                                     vm.setDiscardInitialPacketCount(count);
-                                    discardInitialPacketController.text =
-                                        vm.discardInitialPacketCount.toString();
+                                    discardInitialPacketController
+                                        .text = _formatCompactCount(
+                                      vm.discardInitialPacketCount,
+                                    );
                                     setState(() {});
                                   }
                                 },
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.droppedPacketsHelp(
+                              max: _formatCompactCount(
+                                PlotViewModel.maxDiscardInitialPacketCount,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () {
-                                final count = int.tryParse(
-                                  discardInitialPacketController.text,
-                                );
-                                if (count != null) {
-                                  vm.setDiscardInitialPacketCount(count);
-                                  discardInitialPacketController.text =
-                                      vm.discardInitialPacketCount.toString();
-                                  setState(() {});
-                                }
-                              },
-                              child: Text(AppStrings.common.apply),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          AppStrings.plot.droppedPacketsHelp(
-                            max: PlotViewModel.maxDiscardInitialPacketCount,
                           ),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   );
                 },
