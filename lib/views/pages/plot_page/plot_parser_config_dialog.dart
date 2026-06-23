@@ -116,18 +116,11 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             Text('${AppStrings.plot.channelCount}:'),
             const SizedBox(width: 8),
             SizedBox(
-              width: 80,
+              width: kSecondaryDialogFieldWidth,
               child: TextField(
                 controller: _fireWaterController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
+                decoration: secondaryDialogFieldDecoration(),
                 onChanged: (value) {
                   final count = int.tryParse(value);
                   if (count != null && count >= 0 && count <= 16) {
@@ -179,19 +172,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             Text('${AppStrings.plot.channelCount}:'),
             const SizedBox(width: 8),
             SizedBox(
-              width: 80,
+              width: kSecondaryDialogFieldWidth,
               child: TextField(
                 controller: _justFloatController,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
+                decoration: secondaryDialogFieldDecoration(),
                 onChanged: (value) {
                   final count = int.tryParse(value);
                   if (count != null && count >= 0 && count <= 16) {
@@ -232,18 +218,11 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             ),
             const SizedBox(width: 8),
             SizedBox(
-              width: 90,
+              width: kSecondaryDialogFieldWidth,
               child: NoAnimDropdown<int>(
                 value: _config.zobowChannelCount,
                 hint: AppStrings.plot.channelCountHint,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
+                decoration: secondaryDialogFieldDecoration(),
                 items:
                     const [4, 8].map((count) {
                       return DropdownMenuItem(
@@ -308,11 +287,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           if (_config.hasFrameHeader)
             TextField(
               controller: _fixedFrameHeaderController,
-              decoration: InputDecoration(
-                isDense: true,
+              decoration: secondaryDialogFieldDecoration(
                 labelText: AppStrings.plot.frameHeaderBytes,
                 hintText: AppStrings.plot.frameHeaderExample,
-                border: const OutlineInputBorder(),
               ),
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
@@ -343,7 +320,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                 child: NoAnimDropdown<bool>(
                   value: _config.fixedFrameUniformDataType,
                   hint: AppStrings.plot.channelTypeModeHint,
-                  decoration: _compactDropdownDecoration(),
+                  decoration: secondaryDialogFieldDecoration(),
                   items: [
                     DropdownMenuItem(
                       value: true,
@@ -388,7 +365,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                   child: NoAnimDropdown<DataType>(
                     value: _config.dataType,
                     hint: AppStrings.plot.typeHint,
-                    decoration: _compactDropdownDecoration(),
+                    decoration: secondaryDialogFieldDecoration(),
                     items:
                         DataType.values
                             .map(
@@ -420,18 +397,11 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               Text('${AppStrings.plot.channelCount}:'),
               const SizedBox(width: 8),
               SizedBox(
-                width: 80,
+                width: kSecondaryDialogFieldWidth,
                 child: TextField(
                   controller: _fixedFrameController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                  ),
+                  decoration: secondaryDialogFieldDecoration(),
                   onChanged: (value) {
                     final count = int.tryParse(value);
                     if (count != null && count >= 1 && count <= 16) {
@@ -478,11 +448,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           if (_config.hasFrameTail)
             TextField(
               controller: _fixedFrameTailController,
-              decoration: InputDecoration(
-                isDense: true,
+              decoration: secondaryDialogFieldDecoration(
                 labelText: AppStrings.plot.frameTailBytes,
                 hintText: AppStrings.plot.frameTailExample,
-                border: const OutlineInputBorder(),
               ),
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
@@ -516,10 +484,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             NoAnimDropdown<ChecksumType>(
               value: _config.checksumType,
               hint: AppStrings.plot.crcType,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
+              decoration: secondaryDialogFieldDecoration(),
               items:
                   const [
                     ChecksumType.crc8,
@@ -539,10 +504,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             NoAnimDropdown<String>(
               value: _config.crcPolynomialName,
               hint: AppStrings.plot.crcPolynomial,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
+              decoration: secondaryDialogFieldDecoration(),
               items:
                   _crcPolynomialNames
                       .map(
@@ -565,10 +527,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             NoAnimDropdown<ChecksumPosition>(
               value: _config.checksumPosition,
               hint: AppStrings.plot.crcPosition,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
+              decoration: secondaryDialogFieldDecoration(),
               items:
                   ChecksumPosition.values
                       .map(
@@ -590,10 +549,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             NoAnimDropdown<ChecksumEndian>(
               value: _config.checksumEndian,
               hint: AppStrings.plot.crcEndian,
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
+              decoration: secondaryDialogFieldDecoration(),
               items:
                   ChecksumEndian.values
                       .map(

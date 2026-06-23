@@ -723,13 +723,8 @@ class _RawDataPageState extends State<RawDataPage> {
                             const SizedBox(height: 16),
                             DropdownButtonFormField<_ShellFileTransferProtocol>(
                               initialValue: protocol,
-                              decoration: InputDecoration(
+                              decoration: secondaryDialogFieldDecoration(
                                 labelText: AppStrings.raw.transferProtocol,
-                                border: const OutlineInputBorder(),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
                               ),
                               items:
                                   _ShellFileTransferProtocol.values
@@ -750,13 +745,8 @@ class _RawDataPageState extends State<RawDataPage> {
                             const SizedBox(height: 12),
                             DropdownButtonFormField<YmodemPacketSizeMode>(
                               initialValue: packetSizeMode,
-                              decoration: InputDecoration(
+                              decoration: secondaryDialogFieldDecoration(
                                 labelText: AppStrings.raw.packetSize,
-                                border: const OutlineInputBorder(),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
                               ),
                               items:
                                   YmodemPacketSizeMode.values
@@ -1815,18 +1805,11 @@ class _RawDataPageState extends State<RawDataPage> {
                       Text(AppStrings.raw.textDecoding),
                       const SizedBox(height: 8),
                       SizedBox(
-                        width: 220,
+                        width: kSecondaryDialogWideFieldWidth,
                         child: NoAnimDropdown<String>(
                           value: selectedEncoding,
                           hint: AppStrings.raw.decodingHint,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            isDense: true,
-                          ),
+                          decoration: secondaryDialogFieldDecoration(),
                           items:
                               RawDataViewModel.availableEncodings.map((e) {
                                 return DropdownMenuItem(
@@ -1852,17 +1835,15 @@ class _RawDataPageState extends State<RawDataPage> {
                       const SizedBox(height: 20),
                       Text(AppStrings.raw.hexPacketTime),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: timeWindowController,
-                        decoration: const InputDecoration(
-                          hintText: '10 ~ 10000',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: timeWindowController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '10 ~ 10000',
                           ),
+                          keyboardType: TextInputType.number,
                         ),
-                        keyboardType: TextInputType.number,
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -1880,20 +1861,18 @@ class _RawDataPageState extends State<RawDataPage> {
                       const SizedBox(height: 20),
                       Text(AppStrings.raw.displayLineLimit),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: displayLineLimitController,
-                        decoration: const InputDecoration(
-                          hintText: '100 ~ 100000',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: displayLineLimitController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '100 ~ 100000',
                           ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
                         ),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -2007,101 +1986,91 @@ class _RawDataPageState extends State<RawDataPage> {
                     children: [
                       Text(AppStrings.raw.terminalFontSize),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: terminalFontSizeController,
-                        decoration: const InputDecoration(
-                          hintText: '10 ~ 24',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: terminalFontSizeController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '10 ~ 24',
                           ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
                         ),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
                       ),
                       const SizedBox(height: 20),
                       Text(AppStrings.raw.terminalFontFamily),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        initialValue: terminalFontFamily,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                        ),
-                        items:
-                            _terminalFontFamilies
-                                .map(
-                                  (font) => DropdownMenuItem(
-                                    value: font,
-                                    child: Text(
-                                      font,
-                                      style: TextStyle(fontFamily: font),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: terminalFontFamily,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              _terminalFontFamilies
+                                  .map(
+                                    (font) => DropdownMenuItem(
+                                      value: font,
+                                      child: Text(
+                                        font,
+                                        style: TextStyle(fontFamily: font),
+                                      ),
                                     ),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => terminalFontFamily = value ?? 'Consolas',
-                            ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () => terminalFontFamily = value ?? 'Consolas',
+                              ),
+                        ),
                       ),
                       const SizedBox(height: 20),
                       Text(AppStrings.raw.terminalTheme),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<RawShellThemeMode>(
-                        initialValue: shellThemeMode,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<RawShellThemeMode>(
+                          initialValue: shellThemeMode,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              RawShellThemeMode.values
+                                  .map(
+                                    (mode) => DropdownMenuItem(
+                                      value: mode,
+                                      child: Text(mode.label),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () => shellThemeMode = value ?? shellThemeMode,
+                              ),
                         ),
-                        items:
-                            RawShellThemeMode.values
-                                .map(
-                                  (mode) => DropdownMenuItem(
-                                    value: mode,
-                                    child: Text(mode.label),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => shellThemeMode = value ?? shellThemeMode,
-                            ),
                       ),
                       const SizedBox(height: 20),
                       Text(AppStrings.raw.cursorStyle),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<RawShellCursorMode>(
-                        initialValue: shellCursorMode,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<RawShellCursorMode>(
+                          initialValue: shellCursorMode,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              RawShellCursorMode.values
+                                  .map(
+                                    (mode) => DropdownMenuItem(
+                                      value: mode,
+                                      child: Text(mode.label),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () =>
+                                    shellCursorMode = value ?? shellCursorMode,
+                              ),
                         ),
-                        items:
-                            RawShellCursorMode.values
-                                .map(
-                                  (mode) => DropdownMenuItem(
-                                    value: mode,
-                                    child: Text(mode.label),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => shellCursorMode = value ?? shellCursorMode,
-                            ),
                       ),
                     ],
                   ),

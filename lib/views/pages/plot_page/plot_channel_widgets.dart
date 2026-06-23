@@ -533,14 +533,8 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 TextField(
                   controller: _aliasController,
                   maxLength: 16,
-                  decoration: InputDecoration(
+                  decoration: secondaryDialogFieldDecoration(
                     hintText: AppStrings.plot.aliasHint,
-                    isDense: true,
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
                     counterText: '',
                   ),
                   style: const TextStyle(fontSize: 13),
@@ -673,7 +667,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                         child: NoAnimDropdown<DataType>(
                           value: _zobowDataType,
                           hint: AppStrings.plot.typeHint,
-                          decoration: _compactDropdownDecoration(),
+                          decoration: secondaryDialogFieldDecoration(),
                           items:
                               [DataType.uint16, DataType.int16].map((type) {
                                 return DropdownMenuItem(
@@ -719,7 +713,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     child: NoAnimDropdown<DataType>(
                       value: _zobowDataType,
                       hint: AppStrings.plot.typeHint,
-                      decoration: _compactDropdownDecoration(),
+                      decoration: secondaryDialogFieldDecoration(),
                       items:
                           DataType.values
                               .map(

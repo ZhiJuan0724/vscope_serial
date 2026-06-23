@@ -65,14 +65,6 @@ const double kRProtocolAddressWidth = 108;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
 
-InputDecoration _compactDropdownDecoration() {
-  return const InputDecoration(
-    isDense: true,
-    border: OutlineInputBorder(),
-    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-  );
-}
-
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
   bool _isPanelCollapsed = false;
@@ -2069,18 +2061,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         Row(
                           children: [
                             SizedBox(
-                              width: 110,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: refreshFpsController,
                                 keyboardType: TextInputType.number,
-                                decoration: InputDecoration(
-                                  isDense: true,
-                                  border: const OutlineInputBorder(),
+                                decoration: secondaryDialogFieldDecoration(
                                   suffixText: AppStrings.plot.unitFps,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
                                 ),
                                 onSubmitted: (value) {
                                   final fps = int.tryParse(value);
@@ -2222,19 +2208,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         Row(
                           children: [
                             SizedBox(
-                              width: 110,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: snapDiameterController,
                                 keyboardType: TextInputType.number,
                                 enabled: vm.snapHighlightEnabled,
-                                decoration: InputDecoration(
-                                  isDense: true,
-                                  border: const OutlineInputBorder(),
+                                decoration: secondaryDialogFieldDecoration(
                                   suffixText: AppStrings.plot.unitPixel,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
                                 ),
                                 onSubmitted: (value) {
                                   final diameter = double.tryParse(value);
@@ -2282,18 +2262,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         Row(
                           children: [
                             SizedBox(
-                              width: 140,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: maxVisibleController,
                                 keyboardType: TextInputType.number,
-                                decoration: InputDecoration(
-                                  isDense: true,
-                                  border: const OutlineInputBorder(),
+                                decoration: secondaryDialogFieldDecoration(
                                   suffixText: AppStrings.plot.unitPacket,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
                                 ),
                                 onSubmitted: (value) {
                                   final points = int.tryParse(value);
@@ -2345,21 +2319,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         Row(
                           children: [
                             SizedBox(
-                              width: 140,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: discardInitialPacketController,
                                 keyboardType: TextInputType.number,
                                 inputFormatters: [
                                   FilteringTextInputFormatter.digitsOnly,
                                 ],
-                                decoration: InputDecoration(
-                                  isDense: true,
-                                  border: const OutlineInputBorder(),
+                                decoration: secondaryDialogFieldDecoration(
                                   suffixText: AppStrings.plot.unitPacket,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
                                 ),
                                 onSubmitted: (value) {
                                   final count = int.tryParse(value);
