@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../services/app_notifications.dart';
 import '../../services/address_profile_csv_importer.dart';
@@ -47,7 +48,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(
-      text: widget.profile?.name ?? '新配置',
+      text: widget.profile?.name ?? AppStrings.profile.defaultConfigName,
     );
     _rows =
         widget.profile?.presets
@@ -77,7 +78,11 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: Text(widget.profile == null ? '新建配置文件' : '编辑配置文件'),
+      title: Text(
+        widget.profile == null
+            ? AppStrings.profile.createProfile
+            : AppStrings.profile.editProfile,
+      ),
       content: SizedBox(
         width: 400,
         height: 400,
@@ -87,7 +92,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
             // 配置文件名称
             Row(
               children: [
-                const Text('名称:', style: TextStyle(fontSize: 13)),
+                Text(
+                  AppStrings.profile.nameLabel,
+                  style: const TextStyle(fontSize: 13),
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
@@ -115,9 +123,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   bottom: BorderSide(color: Theme.of(context).dividerColor),
                 ),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 32,
                     child: Text(
                       '#',
@@ -127,12 +135,12 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                       ),
                     ),
                   ),
-                  SizedBox(width: 32),
+                  const SizedBox(width: 32),
                   Expanded(
                     flex: 2,
                     child: Text(
-                      '名称',
-                      style: TextStyle(
+                      AppStrings.profile.nameColumn,
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -141,8 +149,8 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   Expanded(
                     flex: 2,
                     child: Text(
-                      '地址',
-                      style: TextStyle(
+                      AppStrings.profile.addressColumn,
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -275,7 +283,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                 ElevatedButton.icon(
                   onPressed: _addRow,
                   icon: const Icon(Icons.add, size: 14),
-                  label: const Text('添加', style: TextStyle(fontSize: 12)),
+                  label: Text(
+                    AppStrings.profile.add,
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(0, 32),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -286,7 +297,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   onPressed:
                       _selectedRowIndex != null ? _deleteSelectedRow : null,
                   icon: const Icon(Icons.delete, size: 14),
-                  label: const Text('删除', style: TextStyle(fontSize: 12)),
+                  label: Text(
+                    AppStrings.common.delete,
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   style: ElevatedButton.styleFrom(
                     minimumSize: const Size(0, 32),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -296,7 +310,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                 ),
                 const Spacer(),
                 Text(
-                  '${_rows.length} 个预设',
+                  AppStrings.profile.presetCount(_rows.length),
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
               ],
@@ -313,7 +327,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               TextButton.icon(
                 onPressed: _confirmDeleteProfile,
                 icon: const Icon(Icons.delete_outline, size: 16),
-                label: const Text('删除配置'),
+                label: Text(AppStrings.profile.deleteProfile),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
               ),
               const SizedBox(width: 8),
@@ -321,7 +335,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
             TextButton.icon(
               onPressed: _showExternalImportDialog,
               icon: const Icon(Icons.file_upload_outlined, size: 16),
-              label: const Text('从外部导入'),
+              label: Text(AppStrings.profile.importExternal),
             ),
           ],
         ),
@@ -330,10 +344,13 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           children: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
+              child: Text(AppStrings.common.cancel),
             ),
             const SizedBox(width: 8),
-            ElevatedButton(onPressed: _saveProfile, child: const Text('保存')),
+            ElevatedButton(
+              onPressed: _saveProfile,
+              child: Text(AppStrings.common.save),
+            ),
           ],
         ),
       ],
@@ -351,12 +368,14 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('删除配置文件'),
-            content: Text('确定删除“${profile.name}”吗？此操作无法撤销。'),
+            title: Text(AppStrings.profile.deleteProfileTitle(profile.name)),
+            content: Text(
+              AppStrings.profile.deleteProfileMessage(profile.name),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
@@ -364,7 +383,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
                 ),
-                child: const Text('删除'),
+                child: Text(AppStrings.common.delete),
               ),
             ],
           ),
@@ -391,7 +410,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  title: const Text('从外部导入'),
+                  title: Text(AppStrings.profile.importExternal),
                   content: SizedBox(
                     width: 340,
                     child: Column(
@@ -408,8 +427,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               );
                               setState(() => _ignoreCImportComments = checked);
                             },
-                            title: const Text('忽略注释'),
-                            subtitle: const Text('C 导入时全部使用变量名'),
+                            title: Text(AppStrings.profile.ignoreComments),
+                            subtitle: Text(
+                              AppStrings.profile.ignoreCommentsHelp,
+                            ),
                             dense: true,
                             contentPadding: EdgeInsets.zero,
                             controlAffinity: ListTileControlAffinity.leading,
@@ -424,7 +445,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                             Icons.file_upload_outlined,
                             size: 16,
                           ),
-                          label: const Text('导入 JSON'),
+                          label: Text(AppStrings.profile.importJson),
                         ),
                         const SizedBox(height: 8),
                         OutlinedButton.icon(
@@ -433,7 +454,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                             _importCsvProfile();
                           },
                           icon: const Icon(Icons.table_chart, size: 16),
-                          label: const Text('导入 CSV'),
+                          label: Text(AppStrings.profile.importCsv),
                         ),
                         if (!_isRProtocol) const SizedBox(height: 8),
                         if (!_isRProtocol)
@@ -443,7 +464,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               _importCProfileFile();
                             },
                             icon: const Icon(Icons.code, size: 16),
-                            label: const Text('导入 C 文件'),
+                            label: Text(AppStrings.profile.importCFile),
                           ),
                         if (!_isRProtocol) const SizedBox(height: 8),
                         if (!_isRProtocol)
@@ -453,7 +474,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                               _pasteCProfileCode();
                             },
                             icon: const Icon(Icons.content_paste, size: 16),
-                            label: const Text('粘贴 C 代码'),
+                            label: Text(AppStrings.profile.pasteCCode),
                           ),
                       ],
                     ),
@@ -461,7 +482,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dialogContext),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                   ],
                 ),
@@ -471,7 +492,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
   Future<void> _importJsonProfile() async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '导入众邦配置文件',
+      dialogTitle: AppStrings.profile.importZobowProfileDialogTitle,
       type: FileType.custom,
       allowedExtensions: ['json'],
       allowMultiple: false,
@@ -482,11 +503,11 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     try {
       final json = jsonDecode(await File(path).readAsString());
       if (json is! Map<String, dynamic>) {
-        throw const FormatException('配置文件格式不正确');
+        throw FormatException(AppStrings.profile.invalidProfileFormat);
       }
       final profile = ZobowConfigProfile.fromJson(json);
       if (profile.presets.isEmpty) {
-        throw const FormatException('配置文件没有可导入的地址预设');
+        throw FormatException(AppStrings.profile.emptyProfilePresets);
       }
 
       for (final row in _rows) {
@@ -512,7 +533,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     } catch (error) {
       if (!mounted) return;
       AppNotifications.show(
-        '导入配置失败: $error',
+        AppStrings.profile.importProfileFailed(error.toString()),
         messenger: ScaffoldMessenger.of(context),
       );
     }
@@ -520,7 +541,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
   Future<void> _importCsvProfile() async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '导入地址配置 CSV',
+      dialogTitle: AppStrings.profile.importAddressCsvDialogTitle,
       type: FileType.custom,
       allowedExtensions: ['csv'],
       allowMultiple: false,
@@ -537,7 +558,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     } catch (error) {
       if (!mounted) return;
       AppNotifications.show(
-        '导入 CSV 配置失败: $error',
+        AppStrings.profile.importCsvFailed(error.toString()),
         messenger: ScaffoldMessenger.of(context),
       );
     }
@@ -545,7 +566,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
   Future<void> _importCProfileFile() async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '导入 Zobow C 配置',
+      dialogTitle: AppStrings.profile.importZobowCDialogTitle,
       type: FileType.custom,
       allowedExtensions: ['c', 'h', 'txt'],
       allowMultiple: false,
@@ -562,7 +583,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     } catch (error) {
       if (!mounted) return;
       AppNotifications.show(
-        '导入 C 配置失败: $error',
+        AppStrings.profile.importCFailed(error.toString()),
         messenger: ScaffoldMessenger.of(context),
       );
     }
@@ -581,7 +602,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     } catch (error) {
       if (!mounted) return;
       AppNotifications.show(
-        '导入 C 配置失败: $error',
+        AppStrings.profile.importCFailed(error.toString()),
         messenger: ScaffoldMessenger.of(context),
       );
     }
@@ -597,7 +618,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(4),
               ),
-              title: const Text('粘贴 C 代码'),
+              title: Text(AppStrings.profile.pasteCCode),
               content: SizedBox(
                 width: 560,
                 height: 360,
@@ -611,20 +632,20 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                     fontFamily: 'SarasaUiSC',
                     fontSize: 12,
                   ),
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    hintText: '粘贴包含 ChxValueTable 的 C 代码',
+                  decoration: InputDecoration(
+                    border: const OutlineInputBorder(),
+                    hintText: AppStrings.profile.pasteCCodeHint,
                   ),
                 ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
+                  child: Text(AppStrings.common.cancel),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(context, controller.text),
-                  child: const Text('导入'),
+                  child: Text(AppStrings.profile.importAction),
                 ),
               ],
             ),
@@ -640,7 +661,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   }) {
     if (imported.presets.isEmpty) {
       AppNotifications.show(
-        '未找到 ChxValueTable 内可导入的 switch 配置',
+        AppStrings.profile.noCProfileSwitchFound,
         messenger: ScaffoldMessenger.of(context),
       );
       return;
@@ -659,7 +680,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       _selectedRowIndex = null;
     });
     AppNotifications.show(
-      '已导入 ${imported.presets.length} 个地址预设',
+      AppStrings.profile.importedPresetCount(imported.presets.length),
       messenger: ScaffoldMessenger.of(context),
     );
   }
@@ -681,7 +702,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       _selectedRowIndex = null;
     });
     AppNotifications.show(
-      '已导入 ${presets.length} 个地址预设',
+      AppStrings.profile.importedPresetCount(presets.length),
       messenger: ScaffoldMessenger.of(context),
     );
   }
@@ -690,7 +711,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     setState(() {
       _rows.add(
         _PresetRow(
-          nameController: TextEditingController(text: '预设${_rows.length + 1}'),
+          nameController: TextEditingController(
+            text: AppStrings.profile.presetName(_rows.length + 1),
+          ),
           addressController: TextEditingController(text: '0x00000001'),
         ),
       );

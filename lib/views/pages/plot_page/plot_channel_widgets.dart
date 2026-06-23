@@ -1,5 +1,31 @@
 part of '../plot_page.dart';
 
+class _ZobowChannelIdInputFormatter extends TextInputFormatter {
+  const _ZobowChannelIdInputFormatter();
+
+  static final RegExp _partialHexPattern = RegExp(r'^(?:0[xX]?)?[0-9a-fA-F]*$');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+    if (!_partialHexPattern.hasMatch(text)) return oldValue;
+
+    final hex =
+        text.startsWith('0x') || text.startsWith('0X')
+            ? text.substring(2)
+            : text;
+    if (hex.isEmpty) return newValue;
+
+    final value = int.tryParse(hex, radix: 16);
+    if (value == null || value > 0xFFFFFFFF) return oldValue;
+    return newValue;
+  }
+}
+
 /// 绘图页面左侧通道列表、通道编辑弹窗和通道预设入口。
 class _ChannelItem extends StatefulWidget {
   final PlotViewModel vm;
@@ -88,6 +114,9 @@ class _ChannelItemState extends State<_ChannelItem> {
   }
 
   void _onAddressFocusChange(bool hasFocus) {
+    if (mounted) {
+      setState(() {});
+    }
     if (!hasFocus) {
       // 失去焦点时取消文本选择
       _idController.selection = TextSelection.collapsed(
@@ -210,7 +239,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                     width:
                         isRProtocolMode
                             ? kRProtocolAddressWidth
-                            : usesShortZobowAddress
+                            : usesShortZobowAddress &&
+                                !_addressFocusNode.hasFocus
                             ? 58
                             : kRProtocolAddressWidth,
                     height: 26,
@@ -221,7 +251,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                       child: TextField(
                         controller: _idController,
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 14,
+                          fontFamily: 'SarasaUiSC',
                           color: Theme.of(context).colorScheme.onSurface,
                           height: 1.15,
                         ),
@@ -255,9 +286,12 @@ class _ChannelItemState extends State<_ChannelItem> {
                           ),
                         ),
                         inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9a-fA-FxX]'),
-                          ),
+                          if (isRProtocolMode)
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'[0-9a-fA-FxX]'),
+                            )
+                          else
+                            const _ZobowChannelIdInputFormatter(),
                         ],
                         onSubmitted:
                             (_) =>
@@ -279,7 +313,10 @@ class _ChannelItemState extends State<_ChannelItem> {
             ),
           ),
           Tooltip(
-            message: widget.ch.offsetEnabled ? '关闭偏置' : '开启偏置',
+            message:
+                widget.ch.offsetEnabled
+                    ? AppStrings.plot.closeOffset
+                    : AppStrings.plot.openOffset,
             child: SizedBox(
               width: 20,
               height: 24,
@@ -298,7 +335,10 @@ class _ChannelItemState extends State<_ChannelItem> {
           const SizedBox(width: 5),
           // 绘图开关
           Tooltip(
-            message: widget.ch.visible ? '点击隐藏通道' : '点击显示通道',
+            message:
+                widget.ch.visible
+                    ? AppStrings.plot.hideChannel
+                    : AppStrings.plot.showChannel,
             child: SizedBox(
               width: 20,
               height: 24,
@@ -314,7 +354,7 @@ class _ChannelItemState extends State<_ChannelItem> {
           ),
           // 编辑按钮
           Tooltip(
-            message: '编辑通道',
+            message: AppStrings.plot.editChannel,
             child: InkWell(
               onTap: () => _showChannelEditDialog(context),
               child: const SizedBox(
@@ -350,7 +390,7 @@ class _ChannelItemState extends State<_ChannelItem> {
     }
 
     return Tooltip(
-      message: '选择地址',
+      message: AppStrings.plot.selectAddress,
       child: InkWell(
         onTap: () => _showPresetSelectorDialog(context, profile),
         child: Container(
@@ -460,7 +500,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
 
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: Text('编辑 Ch${widget.ch.index}'),
+      title: Text(AppStrings.plot.editChannelTitle(widget.ch.index)),
       content: SizedBox(
         width: 280,
         child: ConstrainedBox(
@@ -471,27 +511,33 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 颜色选择
-                const Text(
-                  '颜色',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                Text(
+                  AppStrings.plot.color,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 _buildColorPicker(),
                 const SizedBox(height: 14),
                 // 别名输入
-                const Text(
-                  '别名',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                Text(
+                  AppStrings.plot.alias,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _aliasController,
                   maxLength: 16,
-                  decoration: const InputDecoration(
-                    hintText: '输入通道别名',
+                  decoration: InputDecoration(
+                    hintText: AppStrings.plot.aliasHint,
                     isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 8,
                     ),
@@ -503,9 +549,9 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 // 连线开关
                 Row(
                   children: [
-                    const Text(
-                      '连线显示',
-                      style: TextStyle(
+                    Text(
+                      AppStrings.plot.showLine,
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                       ),
@@ -521,7 +567,10 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   const SizedBox(height: 2),
                   Row(
                     children: [
-                      const Text('线宽', style: TextStyle(fontSize: 13)),
+                      Text(
+                        AppStrings.plot.lineWidth,
+                        style: const TextStyle(fontSize: 13),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Slider(
@@ -548,7 +597,10 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Text('点半径', style: TextStyle(fontSize: 13)),
+                    Text(
+                      AppStrings.plot.pointRadius,
+                      style: const TextStyle(fontSize: 13),
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Slider(
@@ -574,9 +626,9 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 // 偏移开关
                 Row(
                   children: [
-                    const Text(
-                      '偏移显示',
-                      style: TextStyle(
+                    Text(
+                      AppStrings.plot.showOffset,
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,
                       ),
@@ -592,7 +644,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 if (_offsetEnabled) ...[
                   const SizedBox(height: 2),
                   Text(
-                    '提示：开启后可在绘图区拖动通道标签调整偏移位置',
+                    AppStrings.plot.offsetHint,
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                   ),
                 ],
@@ -601,13 +653,16 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     widget.ch.index <
                         widget.vm.parserConfig.zobowChannelCount) ...[
                   const SizedBox(height: 12),
-                  const Text(
-                    '数据类型',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  Text(
+                    AppStrings.plot.dataType,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    '仅在众邦电控协议停止绘图后可修改',
+                  Text(
+                    AppStrings.plot.zobowDataTypeHelp,
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
@@ -617,7 +672,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                         width: kDataTypeDropdownWidth,
                         child: NoAnimDropdown<DataType>(
                           value: _zobowDataType,
-                          hint: '类型',
+                          hint: AppStrings.plot.typeHint,
                           decoration: _compactDropdownDecoration(),
                           items:
                               [DataType.uint16, DataType.int16].map((type) {
@@ -646,13 +701,16 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     !widget.vm.parserConfig.fixedFrameUniformDataType &&
                     widget.ch.index < widget.vm.parserConfig.channelCount) ...[
                   const SizedBox(height: 12),
-                  const Text(
-                    '数据类型',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  Text(
+                    AppStrings.plot.dataType,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
-                  const Text(
-                    '固定帧类型不一致时，按当前通道类型解析',
+                  Text(
+                    AppStrings.plot.fixedFrameDataTypeHelp,
                     style: TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
@@ -660,7 +718,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     width: kDataTypeDropdownWidth,
                     child: NoAnimDropdown<DataType>(
                       value: _zobowDataType,
-                      hint: '类型',
+                      hint: AppStrings.plot.typeHint,
                       decoration: _compactDropdownDecoration(),
                       items:
                           DataType.values
@@ -690,12 +748,15 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       actions: [
         TextButton(
           onPressed: _isClosing ? null : _closeDialog,
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
-        TextButton(onPressed: _resetLocalChannel, child: const Text('重置')),
+        TextButton(
+          onPressed: _resetLocalChannel,
+          child: Text(AppStrings.common.reset),
+        ),
         ElevatedButton(
           onPressed: _isClosing ? null : _saveChannel,
-          child: const Text('确定'),
+          child: Text(AppStrings.common.confirm),
         ),
       ],
     );
@@ -838,7 +899,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
           );
         }),
         Tooltip(
-          message: '自定义颜色',
+          message: AppStrings.plot.customColor,
           child: InkWell(
             onTap: _showCustomColorPicker,
             child: Container(
@@ -882,7 +943,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(4),
               ),
-              title: const Text('自定义颜色'),
+              title: Text(AppStrings.plot.customColor),
               content: SizedBox(
                 width: 300,
                 child: Column(
@@ -898,7 +959,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     ),
                     const SizedBox(height: 14),
                     _buildColorSlider(
-                      label: '色相',
+                      label: AppStrings.plot.hue,
                       value: selectedHsv.hue,
                       max: 360,
                       displayValue: '${selectedHsv.hue.round()}°',
@@ -909,7 +970,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                       },
                     ),
                     _buildColorSlider(
-                      label: '饱和',
+                      label: AppStrings.plot.saturation,
                       value: selectedHsv.saturation * 100,
                       max: 100,
                       displayValue:
@@ -921,7 +982,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                       },
                     ),
                     _buildColorSlider(
-                      label: '亮度',
+                      label: AppStrings.plot.brightness,
                       value: selectedHsv.value * 100,
                       max: 100,
                       displayValue: '${(selectedHsv.value * 100).round()}%',
@@ -937,11 +998,11 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
+                  child: Text(AppStrings.common.cancel),
                 ),
                 ElevatedButton(
                   onPressed: () => Navigator.pop(context, color),
-                  child: const Text('确定'),
+                  child: Text(AppStrings.common.confirm),
                 ),
               ],
             );

@@ -71,12 +71,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: const Text('解析器配置'),
+      title: Text(AppStrings.plot.parserConfigTitle),
       content: SizedBox(width: 300, child: _buildConfigContent()),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
         ElevatedButton(
           onPressed: () {
@@ -90,7 +90,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             widget.vm.updateParserConfig(_config);
             Navigator.of(context).pop();
           },
-          child: const Text('确定'),
+          child: Text(AppStrings.common.confirm),
         ),
       ],
     );
@@ -113,7 +113,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         const SizedBox(height: 16),
         Row(
           children: [
-            const Text('通道数:'),
+            Text('${AppStrings.plot.channelCount}:'),
             const SizedBox(width: 8),
             SizedBox(
               width: 80,
@@ -137,8 +137,8 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
-              '(0=自动识别)',
+            Text(
+              AppStrings.plot.autoDetectHint,
               style: TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
@@ -176,7 +176,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         const SizedBox(height: 16),
         Row(
           children: [
-            const Text('通道数:'),
+            Text('${AppStrings.plot.channelCount}:'),
             const SizedBox(width: 8),
             SizedBox(
               width: 80,
@@ -201,8 +201,8 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
-              '(0=自动识别)',
+            Text(
+              AppStrings.plot.autoDetectHint,
               style: TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
@@ -219,17 +219,23 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('众邦电控配置', style: TextStyle(fontWeight: FontWeight.bold)),
+        Text(
+          AppStrings.plot.zobowConfig,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 12),
         Row(
           children: [
-            const Text('通道数:', style: TextStyle(fontSize: 12)),
+            Text(
+              '${AppStrings.plot.channelCount}:',
+              style: const TextStyle(fontSize: 12),
+            ),
             const SizedBox(width: 8),
             SizedBox(
               width: 90,
               child: NoAnimDropdown<int>(
                 value: _config.zobowChannelCount,
-                hint: '通道数',
+                hint: AppStrings.plot.channelCountHint,
                 decoration: const InputDecoration(
                   isDense: true,
                   border: OutlineInputBorder(),
@@ -256,12 +262,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         ),
         const SizedBox(height: 8),
         Text(
-          '${_config.zobowChannelCount * 2}字节数据 + 2字节CRC16(MODBUS)',
+          AppStrings.plot.zobowFrameDescription(_config.zobowChannelCount * 2),
           style: const TextStyle(fontSize: 11, color: Colors.grey),
         ),
         const SizedBox(height: 8),
-        const Text(
-          '通道号和数据类型请在通道面板中设置',
+        Text(
+          AppStrings.plot.zobowChannelPanelHelp,
           style: TextStyle(fontSize: 11, color: Colors.grey),
         ),
       ],
@@ -277,11 +283,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('帧头设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            AppStrings.plot.frameHeaderSettings,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('启用帧头'),
+            title: Text(AppStrings.plot.enableFrameHeader),
             value: _config.hasFrameHeader,
             onChanged: (value) {
               setState(() {
@@ -299,11 +308,11 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           if (_config.hasFrameHeader)
             TextField(
               controller: _fixedFrameHeaderController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                labelText: '帧头字节',
-                hintText: '例如: AA 55',
-                border: OutlineInputBorder(),
+                labelText: AppStrings.plot.frameHeaderBytes,
+                hintText: AppStrings.plot.frameHeaderExample,
+                border: const OutlineInputBorder(),
               ),
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
@@ -317,24 +326,33 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               },
             ),
           const SizedBox(height: 16),
-          const Text('数据设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            AppStrings.plot.dataSettings,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
-              const SizedBox(
+              SizedBox(
                 width: kFixedFrameConfigLabelWidth,
-                child: Text('通道类型:', softWrap: false),
+                child: Text(AppStrings.plot.channelType, softWrap: false),
               ),
               const SizedBox(width: 8),
               SizedBox(
                 width: kDataTypeDropdownWidth,
                 child: NoAnimDropdown<bool>(
                   value: _config.fixedFrameUniformDataType,
-                  hint: '通道类型模式',
+                  hint: AppStrings.plot.channelTypeModeHint,
                   decoration: _compactDropdownDecoration(),
-                  items: const [
-                    DropdownMenuItem(value: true, child: Text('统一')),
-                    DropdownMenuItem(value: false, child: Text('不一致')),
+                  items: [
+                    DropdownMenuItem(
+                      value: true,
+                      child: Text(AppStrings.plot.uniform),
+                    ),
+                    DropdownMenuItem(
+                      value: false,
+                      child: Text(AppStrings.plot.nonUniform),
+                    ),
                   ],
                   onChanged: (value) {
                     if (value != null) {
@@ -360,16 +378,16 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             Row(
               children: [
-                const SizedBox(
+                SizedBox(
                   width: kFixedFrameConfigLabelWidth,
-                  child: Text('数据类型:', softWrap: false),
+                  child: Text('${AppStrings.plot.dataType}:', softWrap: false),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
                   width: kDataTypeDropdownWidth,
                   child: NoAnimDropdown<DataType>(
                     value: _config.dataType,
-                    hint: '类型',
+                    hint: AppStrings.plot.typeHint,
                     decoration: _compactDropdownDecoration(),
                     items:
                         DataType.values
@@ -391,15 +409,15 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             ),
           ] else ...[
             const SizedBox(height: 8),
-            const Text(
-              '请在通道列表的通道设置中分别选择数据类型',
+            Text(
+              AppStrings.plot.selectDataTypeInChannelList,
               style: TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
           const SizedBox(height: 8),
           Row(
             children: [
-              const Text('通道数:'),
+              Text('${AppStrings.plot.channelCount}:'),
               const SizedBox(width: 8),
               SizedBox(
                 width: 80,
@@ -435,11 +453,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             ),
           ],
           const SizedBox(height: 16),
-          const Text('帧尾设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            AppStrings.plot.frameTailSettings,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('启用帧尾'),
+            title: Text(AppStrings.plot.enableFrameTail),
             value: _config.hasFrameTail,
             onChanged: (value) {
               setState(() {
@@ -457,11 +478,11 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           if (_config.hasFrameTail)
             TextField(
               controller: _fixedFrameTailController,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
-                labelText: '帧尾字节',
-                hintText: '例如: 0D 0A',
-                border: OutlineInputBorder(),
+                labelText: AppStrings.plot.frameTailBytes,
+                hintText: AppStrings.plot.frameTailExample,
+                border: const OutlineInputBorder(),
               ),
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
@@ -472,11 +493,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
               },
             ),
           const SizedBox(height: 16),
-          const Text('CRC 设置', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            AppStrings.plot.crcSettings,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             dense: true,
-            title: const Text('启用 CRC'),
+            title: Text(AppStrings.plot.enableCrc),
             value: _config.hasChecksum,
             onChanged: (value) {
               setState(() {
@@ -491,7 +515,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           if (_config.hasChecksum) ...[
             NoAnimDropdown<ChecksumType>(
               value: _config.checksumType,
-              hint: 'CRC 类型',
+              hint: AppStrings.plot.crcType,
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),
@@ -514,7 +538,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             NoAnimDropdown<String>(
               value: _config.crcPolynomialName,
-              hint: 'CRC 多项式',
+              hint: AppStrings.plot.crcPolynomial,
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),
@@ -540,7 +564,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             NoAnimDropdown<ChecksumPosition>(
               value: _config.checksumPosition,
-              hint: 'CRC 位置',
+              hint: AppStrings.plot.crcPosition,
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),
@@ -550,7 +574,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                       .map(
                         (position) => DropdownMenuItem(
                           value: position,
-                          child: Text('CRC 位于${position.label}'),
+                          child: Text(
+                            AppStrings.plot.crcPositionLabel(position.label),
+                          ),
                         ),
                       )
                       .toList(),
@@ -563,7 +589,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             NoAnimDropdown<ChecksumEndian>(
               value: _config.checksumEndian,
-              hint: 'CRC 字节序',
+              hint: AppStrings.plot.crcEndian,
               decoration: const InputDecoration(
                 isDense: true,
                 border: OutlineInputBorder(),
@@ -573,7 +599,9 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                       .map(
                         (endian) => DropdownMenuItem(
                           value: endian,
-                          child: Text('CRC ${endian.label}'),
+                          child: Text(
+                            AppStrings.plot.crcEndianLabel(endian.label),
+                          ),
                         ),
                       )
                       .toList(),
