@@ -3,6 +3,7 @@
 > 本文件只记录长期有效的项目事实和开发约束，避免把每次小改动都堆进来。
 > 提交信息使用中文，说明本次修改的具体任务；涉及 force push 必须先让用户确认。
 > `CHANGELOG.md` 是 Release Notes 和应用内版本说明来源；涉及发布内容的提交，提交前必须让用户核对对应版本段落，且只记录用户可感知变化。
+> 仓库根目录的 `AGENTS.md` 记录 Codex 必须优先遵守的短规则；`.codex/hooks.json` 在会话开始、恢复和上下文压缩后注入短规则，并拦截未使用 `pwsh` 的代码/文档读写命令。上下文压缩后不要求重读本文件，新对话或涉及架构、发布、工作流等大范围决策时再读取。
 
 ## 项目定位
 
@@ -30,6 +31,7 @@ VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目�
 ## 模块边界
 
 - `lib/core/`：日志、CRC 等底层工具。底层模块优先使用 `AppLogger`，不要直接 `print()`。
+- `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
 - `lib/data/`：数据模型、协议解析器、数据源和 LOD 索引。解析器统一通过 `IDataParser.feed()` 和 `outputStream` 工作。
 - `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。
 - `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态。
@@ -95,10 +97,10 @@ flutter test test/viewmodels/plot_viewmodel_stats_test.dart
 flutter test test/parser/just_float_parser_test.dart
 ```
 
-## Windows Shell 编码
+## Windows Shell 与编码
 
-- 本机已安装 PowerShell 7 (`pwsh`)，默认 UTF-8 读取中文正常。读取或输出包含中文的源码、文档时优先使用 `pwsh -NoLogo -NoProfile -Command "..."`。
-- Windows PowerShell 5.1 直接读取包含中文的文件时可能因控制台编码导致输出乱码，不要仅凭乱码输出判断源码或文档内容。
+- 本机已安装 PowerShell 7 (`pwsh`)，默认 UTF-8 读取中文正常。涉及代码或文档读写时使用 `pwsh -NoLogo -NoProfile -Command "..."`。
+- Windows PowerShell 5.1 直接读写代码或文档可能因控制台编码导致中文输出乱码或写入风险，不要仅凭其输出判断源码或文档内容。
 - 如果必须使用 Windows PowerShell 5.1，先显式设置 UTF-8 编码；否则优先切换到 `pwsh`。
 
 ## Git 规则

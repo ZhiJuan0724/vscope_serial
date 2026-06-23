@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../core/utils/crc.dart';
 import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
@@ -425,7 +426,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   ),
                   const SizedBox(width: 8),
                   FilterChip(
-                    label: const Text('普通收发'),
+                    label: Text(AppStrings.raw.normalIo),
                     selected: false,
                     onSelected: (_) => vm.setShellMode(false),
                     avatar: const Icon(Icons.swap_horiz, size: 16),
@@ -442,7 +443,11 @@ class _RawDataPageState extends State<RawDataPage> {
                       vm.isRawReceiving ? Icons.stop : Icons.play_arrow,
                       size: 16,
                     ),
-                    label: Text(vm.isRawReceiving ? '停止接收' : '开始接收'),
+                    label: Text(
+                      vm.isRawReceiving
+                          ? AppStrings.raw.stopReceive
+                          : AppStrings.raw.startReceive,
+                    ),
                     style: _toolbarElevatedStyle(
                       vm.isRawReceiving ? Colors.red : Colors.green,
                     ),
@@ -453,7 +458,9 @@ class _RawDataPageState extends State<RawDataPage> {
                   ],
                   const Spacer(),
                   Text(
-                    vm.isConnected ? '已连接' : '未连接',
+                    vm.isConnected
+                        ? AppStrings.status.connected
+                        : AppStrings.status.disconnected,
                     style: TextStyle(
                       fontSize: 12,
                       color:
@@ -464,7 +471,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   ),
                   const SizedBox(width: 8),
                   _buildToolbarIconAction(
-                    tooltip: '清屏',
+                    tooltip: AppStrings.raw.clearScreen,
                     icon: Icons.clear,
                     onPressed: () {
                       _terminal.write('\x1b[2J\x1b[H\x1b[?25l');
@@ -472,12 +479,12 @@ class _RawDataPageState extends State<RawDataPage> {
                     },
                   ),
                   _buildToolbarIconAction(
-                    tooltip: '保存',
+                    tooltip: AppStrings.common.save,
                     icon: Icons.save,
                     onPressed: () => _showExportDialog(context, vm),
                   ),
                   _buildToolbarIconAction(
-                    tooltip: 'Shell 设置',
+                    tooltip: AppStrings.raw.shellSettings,
                     icon: Icons.settings,
                     onPressed:
                         () => _showShellAdvancedSettingsDialog(context, vm),
@@ -494,16 +501,16 @@ class _RawDataPageState extends State<RawDataPage> {
 
   Widget _buildShellInputModeSelector(RawDataViewModel vm) {
     return SegmentedButton<RawShellInputMode>(
-      segments: const [
+      segments: [
         ButtonSegment(
           value: RawShellInputMode.line,
-          label: Text('命令行'),
-          icon: Icon(Icons.keyboard_return, size: 16),
+          label: Text(AppStrings.raw.commandLine),
+          icon: const Icon(Icons.keyboard_return, size: 16),
         ),
         ButtonSegment(
           value: RawShellInputMode.key,
-          label: Text('逐键'),
-          icon: Icon(Icons.keyboard, size: 16),
+          label: Text(AppStrings.raw.keyByKey),
+          icon: const Icon(Icons.keyboard, size: 16),
         ),
       ],
       selected: {vm.shellInputMode},
@@ -522,7 +529,7 @@ class _RawDataPageState extends State<RawDataPage> {
     required bool showInputMode,
   }) {
     return PopupMenuButton<String>(
-      tooltip: '更多选项',
+      tooltip: AppStrings.raw.moreOptions,
       icon: const Icon(Icons.more_vert, size: 20),
       splashRadius: 16,
       padding: EdgeInsets.zero,
@@ -530,7 +537,7 @@ class _RawDataPageState extends State<RawDataPage> {
       itemBuilder: (context) {
         final items = <PopupMenuEntry<String>>[];
         if (!showInputMode) {
-          items.add(_buildMenuHeader('输入模式'));
+          items.add(_buildMenuHeader(AppStrings.raw.inputMode));
           items.add(
             PopupMenuItem(
               value: 'shell_line_input',
@@ -541,7 +548,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     vm.shellInputMode == RawShellInputMode.line
                         ? Icons.radio_button_checked
                         : Icons.keyboard_return,
-                label: '命令行',
+                label: AppStrings.raw.commandLine,
               ),
             ),
           );
@@ -555,14 +562,14 @@ class _RawDataPageState extends State<RawDataPage> {
                     vm.shellInputMode == RawShellInputMode.key
                         ? Icons.radio_button_checked
                         : Icons.keyboard,
-                label: '逐键',
+                label: AppStrings.raw.keyByKey,
               ),
             ),
           );
         }
 
         if (items.isNotEmpty) items.add(const PopupMenuDivider());
-        items.add(_buildMenuHeader('更多功能'));
+        items.add(_buildMenuHeader(AppStrings.raw.moreFeatures));
         items.add(
           PopupMenuItem(
             value: 'file_transfer',
@@ -571,7 +578,10 @@ class _RawDataPageState extends State<RawDataPage> {
                 () => WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (mounted) _showFileTransferDialog(context, vm);
                 }),
-            child: _buildMenuItem(icon: Icons.folder_open, label: '文件发送/接收'),
+            child: _buildMenuItem(
+              icon: Icons.folder_open,
+              label: AppStrings.raw.fileTransfer,
+            ),
           ),
         );
         return items;
@@ -589,11 +599,11 @@ class _RawDataPageState extends State<RawDataPage> {
               controller: _shellLineController,
               focusNode: _shellLineFocusNode,
               enabled: vm.isConnected && !vm.isYmodemActive,
-              decoration: const InputDecoration(
-                hintText: '输入命令后按 Enter 发送',
+              decoration: InputDecoration(
+                hintText: AppStrings.raw.commandInputHint,
                 border: OutlineInputBorder(),
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(
+                contentPadding: const EdgeInsets.symmetric(
                   horizontal: 10,
                   vertical: 10,
                 ),
@@ -608,7 +618,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     ? () => _sendShellLine(vm)
                     : null,
             icon: const Icon(Icons.send),
-            label: const Text('发送'),
+            label: Text(AppStrings.raw.send),
           ),
         ],
       ),
@@ -680,7 +690,7 @@ class _RawDataPageState extends State<RawDataPage> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      title: const Text('文件发送/接收'),
+                      title: Text(AppStrings.raw.fileTransfer),
                       content: SizedBox(
                         width: dialogWidth,
                         child: Column(
@@ -713,13 +723,8 @@ class _RawDataPageState extends State<RawDataPage> {
                             const SizedBox(height: 16),
                             DropdownButtonFormField<_ShellFileTransferProtocol>(
                               initialValue: protocol,
-                              decoration: const InputDecoration(
-                                labelText: '传输协议',
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
+                              decoration: secondaryDialogFieldDecoration(
+                                labelText: AppStrings.raw.transferProtocol,
                               ),
                               items:
                                   _ShellFileTransferProtocol.values
@@ -740,13 +745,8 @@ class _RawDataPageState extends State<RawDataPage> {
                             const SizedBox(height: 12),
                             DropdownButtonFormField<YmodemPacketSizeMode>(
                               initialValue: packetSizeMode,
-                              decoration: const InputDecoration(
-                                labelText: '发送长度',
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
+                              decoration: secondaryDialogFieldDecoration(
+                                labelText: AppStrings.raw.packetSize,
                               ),
                               items:
                                   YmodemPacketSizeMode.values
@@ -775,7 +775,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                   Expanded(
                                     child: Text(
                                       selectedFile == null
-                                          ? '未选择文件'
+                                          ? AppStrings.raw.noFileSelected
                                           : selectedFile!.path,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -799,13 +799,13 @@ class _RawDataPageState extends State<RawDataPage> {
                                               });
                                             },
                                     icon: const Icon(Icons.attach_file),
-                                    label: const Text('选择'),
+                                    label: Text(AppStrings.raw.choose),
                                   ),
                                 ],
                               )
                             else
                               Text(
-                                '接收文件将保存到应用目录 exports/ymodem。',
+                                AppStrings.raw.receiveFileSaveHint,
                                 style: TextStyle(
                                   color:
                                       Theme.of(
@@ -846,14 +846,14 @@ class _RawDataPageState extends State<RawDataPage> {
                                     setDialogState(() => running = false);
                                   }
                                   : null,
-                          child: const Text('取消传输'),
+                          child: Text(AppStrings.raw.cancelTransfer),
                         ),
                         TextButton(
                           onPressed:
                               isActive
                                   ? null
                                   : () => Navigator.of(context).pop(),
-                          child: const Text('关闭'),
+                          child: Text(AppStrings.common.close),
                         ),
                         ElevatedButton.icon(
                           onPressed:
@@ -880,14 +880,20 @@ class _RawDataPageState extends State<RawDataPage> {
                                             selectedFile!,
                                             packetSizeMode: packetSizeMode,
                                           );
-                                          resultText = '发送完成';
+                                          resultText =
+                                              AppStrings.raw.sendCompleted;
                                         } else {
                                           final file =
                                               await vm.receiveYmodemFile();
                                           resultText =
                                               file == null
-                                                  ? '未接收文件'
-                                                  : '接收完成: ${file.path}';
+                                                  ? AppStrings
+                                                      .raw
+                                                      .noFileReceived
+                                                  : AppStrings.raw
+                                                      .receiveCompleted(
+                                                        file.path,
+                                                      );
                                         }
                                       }
                                     } catch (error) {
@@ -921,9 +927,9 @@ class _RawDataPageState extends State<RawDataPage> {
   }) {
     final percent = status.totalBytes <= 0 ? 0.0 : status.progress * 100;
     final direction = switch (status.direction) {
-      YmodemDirection.send => '发送',
-      YmodemDirection.receive => '接收',
-      null => '等待',
+      YmodemDirection.send => AppStrings.raw.send,
+      YmodemDirection.receive => AppStrings.raw.receive,
+      null => AppStrings.raw.wait,
     };
     final hasStatus = status.phase != YmodemPhase.idle;
     return Column(
@@ -937,7 +943,9 @@ class _RawDataPageState extends State<RawDataPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          hasStatus ? '$direction ${status.fileName ?? ''}' : '等待开始传输',
+          hasStatus
+              ? '$direction ${status.fileName ?? ''}'
+              : AppStrings.raw.waitingForTransfer,
           overflow: TextOverflow.ellipsis,
         ),
         if (hasStatus) ...[
@@ -968,9 +976,11 @@ class _RawDataPageState extends State<RawDataPage> {
   String? _fileTransferCompletedText(YmodemTransferStatus status) {
     if (status.phase != YmodemPhase.completed) return null;
     return switch (status.direction) {
-      YmodemDirection.send => '发送完成',
+      YmodemDirection.send => AppStrings.raw.sendCompleted,
       YmodemDirection.receive =>
-        status.savedPath == null ? '未接收文件' : '接收完成: ${status.savedPath}',
+        status.savedPath == null
+            ? AppStrings.raw.noFileReceived
+            : AppStrings.raw.receiveCompleted(status.savedPath!),
       null => null,
     };
   }
@@ -1177,8 +1187,8 @@ class _RawDataPageState extends State<RawDataPage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const Text(
-                        '数据收发',
+                      Text(
+                        AppStrings.nav.rawData,
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(width: 8),
@@ -1202,7 +1212,11 @@ class _RawDataPageState extends State<RawDataPage> {
                           vm.isRawReceiving ? Icons.stop : Icons.play_arrow,
                           size: 16,
                         ),
-                        label: Text(vm.isRawReceiving ? '停止接收' : '开始接收'),
+                        label: Text(
+                          vm.isRawReceiving
+                              ? AppStrings.raw.stopReceive
+                              : AppStrings.raw.startReceive,
+                        ),
                         style: _toolbarElevatedStyle(
                           vm.isRawReceiving ? Colors.red : Colors.green,
                         ),
@@ -1225,7 +1239,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                     MaterialTapTargetSize.shrinkWrap,
                               ),
                             ),
-                            const Text('时间戳'),
+                            Text(AppStrings.raw.timestamp),
                           ],
                         ),
                         Row(
@@ -1242,7 +1256,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                     MaterialTapTargetSize.shrinkWrap,
                               ),
                             ),
-                            const Text('HEX显示'),
+                            Text(AppStrings.raw.hexDisplay),
                           ],
                         ),
                         Row(
@@ -1259,7 +1273,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                     MaterialTapTargetSize.shrinkWrap,
                               ),
                             ),
-                            const Text('自动滚动'),
+                            Text(AppStrings.raw.autoScroll),
                           ],
                         ),
                       ],
@@ -1269,20 +1283,20 @@ class _RawDataPageState extends State<RawDataPage> {
                         TextButton.icon(
                           onPressed: () => vm.clearData(),
                           icon: const Icon(Icons.clear, size: 18),
-                          label: const Text('清空'),
+                          label: Text(AppStrings.raw.clear),
                           style: _toolbarFlatButtonStyle(),
                         ),
                         TextButton.icon(
                           onPressed: () => _showExportDialog(context, vm),
                           icon: const Icon(Icons.save, size: 18),
-                          label: const Text('保存'),
+                          label: Text(AppStrings.common.save),
                           style: _toolbarFlatButtonStyle(),
                         ),
                         TextButton.icon(
                           onPressed:
                               () => _showRawAdvancedSettingsDialog(context, vm),
                           icon: const Icon(Icons.settings, size: 18),
-                          label: const Text('高级设置'),
+                          label: Text(AppStrings.common.advancedSettings),
                           style: _toolbarFlatButtonStyle(),
                         ),
                       ],
@@ -1385,7 +1399,10 @@ class _RawDataPageState extends State<RawDataPage> {
           // 工具栏：发送HEX + CRC 放同一行
           Row(
             children: [
-              const Text('发送数据', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                AppStrings.raw.sendData,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               const Spacer(),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1394,7 +1411,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     value: vm.keepSendText,
                     onChanged: (value) => vm.setKeepSendText(value!),
                   ),
-                  const Text('发送后保留'),
+                  Text(AppStrings.raw.keepAfterSend),
                 ],
               ),
               const SizedBox(width: 8),
@@ -1406,7 +1423,7 @@ class _RawDataPageState extends State<RawDataPage> {
                       value: vm.appendLineEnding,
                       onChanged: (value) => vm.setAppendLineEnding(value!),
                     ),
-                    const Text('末尾回车'),
+                    Text(AppStrings.raw.appendLineEnding),
                   ],
                 ),
                 const SizedBox(width: 8),
@@ -1414,7 +1431,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   width: 90,
                   child: NoAnimDropdown<String>(
                     value: vm.lineEnding,
-                    hint: '回车',
+                    hint: AppStrings.raw.lineEndingHint,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(
@@ -1445,7 +1462,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     value: vm.sendHex,
                     onChanged: (value) => vm.setSendHex(value!),
                   ),
-                  const Text('HEX发送'),
+                  Text(AppStrings.raw.sendHex),
                 ],
               ),
               if (vm.sendHex) ...[
@@ -1466,7 +1483,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     width: 90,
                     child: NoAnimDropdown<CrcType>(
                       value: vm.crcType,
-                      hint: '类型',
+                      hint: AppStrings.raw.crcTypeHint,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(
@@ -1497,7 +1514,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     width: 140,
                     child: NoAnimDropdown<String>(
                       value: vm.crcPolyName,
-                      hint: '多项式',
+                      hint: AppStrings.raw.crcPolynomialHint,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(
@@ -1527,7 +1544,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     width: 92,
                     child: NoAnimDropdown<CrcByteOrder>(
                       value: vm.crcByteOrder,
-                      hint: '字节序',
+                      hint: AppStrings.raw.byteOrderHint,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(
@@ -1563,7 +1580,9 @@ class _RawDataPageState extends State<RawDataPage> {
                         controller: _sendController,
                         decoration: InputDecoration(
                           hintText:
-                              vm.sendHex ? '输入十六进制 (如: 01 02 03)' : '输入要发送的数据',
+                              vm.sendHex
+                                  ? AppStrings.raw.sendHexHint
+                                  : AppStrings.raw.sendTextHint,
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
@@ -1640,7 +1659,7 @@ class _RawDataPageState extends State<RawDataPage> {
                           }
                           : null,
                   icon: const Icon(Icons.send),
-                  label: const Text('发送'),
+                  label: Text(AppStrings.raw.send),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
@@ -1664,12 +1683,12 @@ class _RawDataPageState extends State<RawDataPage> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('保存数据'),
+            title: Text(AppStrings.raw.saveDataTitle),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('选择保存格式：'),
+                Text(AppStrings.raw.chooseSaveFormat),
                 const SizedBox(height: 8),
                 ...vm.dataStats.entries.map(
                   (e) => Text(
@@ -1682,7 +1701,7 @@ class _RawDataPageState extends State<RawDataPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton.icon(
                 onPressed: () async {
@@ -1690,11 +1709,14 @@ class _RawDataPageState extends State<RawDataPage> {
                   if (!context.mounted) return;
                   Navigator.of(context).pop();
                   if (path != null) {
-                    _showSnackBar(context, '已保存为文本: $path');
+                    _showSnackBar(
+                      context,
+                      '${AppStrings.raw.savedTextPrefix}: $path',
+                    );
                   }
                 },
                 icon: const Icon(Icons.text_snippet),
-                label: const Text('文本 (.txt)'),
+                label: Text(AppStrings.raw.textFileFormat),
               ),
               ElevatedButton.icon(
                 onPressed: () async {
@@ -1702,11 +1724,14 @@ class _RawDataPageState extends State<RawDataPage> {
                   if (!context.mounted) return;
                   Navigator.of(context).pop();
                   if (path != null) {
-                    _showSnackBar(context, '已保存为原始字节: $path');
+                    _showSnackBar(
+                      context,
+                      '${AppStrings.raw.savedRawPrefix}: $path',
+                    );
                   }
                 },
                 icon: const Icon(Icons.memory),
-                label: const Text('原始字节 (.bin)'),
+                label: Text(AppStrings.raw.rawBytesFormat),
               ),
             ],
           ),
@@ -1772,26 +1797,19 @@ class _RawDataPageState extends State<RawDataPage> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  title: const Text('普通收发设置'),
+                  title: Text(AppStrings.raw.rawSettingsTitle),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('文本解码方式:'),
+                      Text(AppStrings.raw.textDecoding),
                       const SizedBox(height: 8),
                       SizedBox(
-                        width: 220,
+                        width: kSecondaryDialogWideFieldWidth,
                         child: NoAnimDropdown<String>(
                           value: selectedEncoding,
-                          hint: '解码',
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            isDense: true,
-                          ),
+                          hint: AppStrings.raw.decodingHint,
+                          decoration: secondaryDialogFieldDecoration(),
                           items:
                               RawDataViewModel.availableEncodings.map((e) {
                                 return DropdownMenuItem(
@@ -1808,65 +1826,69 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '非 HEX 模式下，使用选定的编码将原始字节解码为文本。',
+                        AppStrings.raw.textDecodingHelp,
                         style: const TextStyle(
                           fontSize: 12,
                           color: Colors.grey,
                         ),
                       ),
                       const SizedBox(height: 20),
-                      const Text('HEX分包时间 (μs):'),
+                      Text(AppStrings.raw.hexPacketTime),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: timeWindowController,
-                        decoration: const InputDecoration(
-                          hintText: '10 ~ 10000',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: timeWindowController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '10 ~ 10000',
                           ),
+                          keyboardType: TextInputType.number,
                         ),
-                        keyboardType: TextInputType.number,
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '仅在 HEX显示 + 时间戳 开启时生效。当前: ${vm.timeWindowUs}μs (${vm.timeWindowUs < 1000 ? "显示微秒级时间戳" : "显示毫秒级时间戳"})',
+                        AppStrings.raw.hexPacketTimeHelp(
+                          vm.timeWindowUs,
+                          vm.timeWindowUs < 1000
+                              ? AppStrings.raw.microsecondTimestamp
+                              : AppStrings.raw.millisecondTimestamp,
+                        ),
                         style: const TextStyle(
                           fontSize: 12,
                           color: Colors.grey,
                         ),
                       ),
                       const SizedBox(height: 20),
-                      const Text('接收区最大显示行数:'),
+                      Text(AppStrings.raw.displayLineLimit),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: displayLineLimitController,
-                        decoration: const InputDecoration(
-                          hintText: '100 ~ 100000',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: displayLineLimitController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '100 ~ 100000',
                           ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
                         ),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        '默认 10000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      Text(
+                        AppStrings.raw.displayLineLimitHelp,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
                       ),
                       const SizedBox(height: 20),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: const Text('启用 Shell 模式入口'),
-                        subtitle: const Text(
-                          '开启后普通收发工具栏显示 Shell 切换按钮。',
+                        title: Text(AppStrings.raw.enableShellEntry),
+                        subtitle: Text(
+                          AppStrings.raw.enableShellEntryHelp,
                           style: TextStyle(fontSize: 12),
                         ),
                         value: shellEnabled,
@@ -1879,7 +1901,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     ElevatedButton(
                       onPressed: () {
@@ -1888,7 +1910,10 @@ class _RawDataPageState extends State<RawDataPage> {
                           displayLineLimitController.text,
                         );
                         if (us == null || us < 10 || us > 10000) {
-                          _showSnackBar(context, '请输入 10 ~ 10000 之间的数值');
+                          _showSnackBar(
+                            context,
+                            AppStrings.raw.timeWindowInvalid,
+                          );
                           return;
                         }
                         if (displayLineLimit == null ||
@@ -1896,7 +1921,10 @@ class _RawDataPageState extends State<RawDataPage> {
                                 SerialService.minDisplayLineLimit ||
                             displayLineLimit >
                                 SerialService.maxDisplayLineLimit) {
-                          _showSnackBar(context, '显示行数请输入 100 ~ 100000 之间的数值');
+                          _showSnackBar(
+                            context,
+                            AppStrings.raw.displayLineLimitInvalid,
+                          );
                           return;
                         }
 
@@ -1915,11 +1943,13 @@ class _RawDataPageState extends State<RawDataPage> {
                         if (changed) {
                           _showSnackBar(
                             context,
-                            '高级设置已保存，接收区最多显示 $displayLineLimit 行',
+                            AppStrings.raw.advancedSettingsSaved(
+                              displayLineLimit,
+                            ),
                           );
                         }
                       },
-                      child: const Text('确定'),
+                      child: Text(AppStrings.common.confirm),
                     ),
                   ],
                 ),
@@ -1949,115 +1979,105 @@ class _RawDataPageState extends State<RawDataPage> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  title: const Text('Shell 设置'),
+                  title: Text(AppStrings.raw.shellSettings),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('终端字号:'),
+                      Text(AppStrings.raw.terminalFontSize),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: terminalFontSizeController,
-                        decoration: const InputDecoration(
-                          hintText: '10 ~ 24',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: TextField(
+                          controller: terminalFontSizeController,
+                          decoration: secondaryDialogFieldDecoration(
+                            hintText: '10 ~ 24',
                           ),
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
                         ),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
                       ),
                       const SizedBox(height: 20),
-                      const Text('终端字体:'),
+                      Text(AppStrings.raw.terminalFontFamily),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        initialValue: terminalFontFamily,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                        ),
-                        items:
-                            _terminalFontFamilies
-                                .map(
-                                  (font) => DropdownMenuItem(
-                                    value: font,
-                                    child: Text(
-                                      font,
-                                      style: TextStyle(fontFamily: font),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: terminalFontFamily,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              _terminalFontFamilies
+                                  .map(
+                                    (font) => DropdownMenuItem(
+                                      value: font,
+                                      child: Text(
+                                        font,
+                                        style: TextStyle(fontFamily: font),
+                                      ),
                                     ),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => terminalFontFamily = value ?? 'Consolas',
-                            ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () => terminalFontFamily = value ?? 'Consolas',
+                              ),
+                        ),
                       ),
                       const SizedBox(height: 20),
-                      const Text('终端主题:'),
+                      Text(AppStrings.raw.terminalTheme),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<RawShellThemeMode>(
-                        initialValue: shellThemeMode,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<RawShellThemeMode>(
+                          initialValue: shellThemeMode,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              RawShellThemeMode.values
+                                  .map(
+                                    (mode) => DropdownMenuItem(
+                                      value: mode,
+                                      child: Text(mode.label),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () => shellThemeMode = value ?? shellThemeMode,
+                              ),
                         ),
-                        items:
-                            RawShellThemeMode.values
-                                .map(
-                                  (mode) => DropdownMenuItem(
-                                    value: mode,
-                                    child: Text(mode.label),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => shellThemeMode = value ?? shellThemeMode,
-                            ),
                       ),
                       const SizedBox(height: 20),
-                      const Text('光标样式:'),
+                      Text(AppStrings.raw.cursorStyle),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<RawShellCursorMode>(
-                        initialValue: shellCursorMode,
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
+                      SizedBox(
+                        width: kSecondaryDialogWideFieldWidth,
+                        child: DropdownButtonFormField<RawShellCursorMode>(
+                          initialValue: shellCursorMode,
+                          decoration: secondaryDialogFieldDecoration(),
+                          items:
+                              RawShellCursorMode.values
+                                  .map(
+                                    (mode) => DropdownMenuItem(
+                                      value: mode,
+                                      child: Text(mode.label),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              (value) => setDialogState(
+                                () =>
+                                    shellCursorMode = value ?? shellCursorMode,
+                              ),
                         ),
-                        items:
-                            RawShellCursorMode.values
-                                .map(
-                                  (mode) => DropdownMenuItem(
-                                    value: mode,
-                                    child: Text(mode.label),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            (value) => setDialogState(
-                              () => shellCursorMode = value ?? shellCursorMode,
-                            ),
                       ),
                     ],
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     ElevatedButton(
                       onPressed: () {
@@ -2067,7 +2087,10 @@ class _RawDataPageState extends State<RawDataPage> {
                         if (terminalFontSize == null ||
                             terminalFontSize < 10 ||
                             terminalFontSize > 24) {
-                          _showSnackBar(context, '终端字号请输入 10 ~ 24 之间的数值');
+                          _showSnackBar(
+                            context,
+                            AppStrings.raw.terminalFontSizeInvalid,
+                          );
                           return;
                         }
 
@@ -2076,9 +2099,12 @@ class _RawDataPageState extends State<RawDataPage> {
                         vm.setShellThemeMode(shellThemeMode);
                         vm.setShellCursorMode(shellCursorMode);
                         Navigator.of(context).pop();
-                        _showSnackBar(context, 'Shell 设置已保存');
+                        _showSnackBar(
+                          context,
+                          AppStrings.raw.shellSettingsSaved,
+                        );
                       },
-                      child: const Text('确定'),
+                      child: Text(AppStrings.common.confirm),
                     ),
                   ],
                 ),
@@ -2094,7 +2120,7 @@ class _RawDataPageState extends State<RawDataPage> {
     required bool showActions,
   }) {
     return PopupMenuButton<String>(
-      tooltip: '更多选项',
+      tooltip: AppStrings.raw.moreOptions,
       icon: const Icon(Icons.more_vert, size: 20),
       splashRadius: 16,
       padding: EdgeInsets.zero,
@@ -2104,7 +2130,7 @@ class _RawDataPageState extends State<RawDataPage> {
 
         // 选项组（如果未平铺）
         if (!showOptions) {
-          items.add(_buildMenuHeader('显示选项'));
+          items.add(_buildMenuHeader(AppStrings.raw.displayOptions));
           items.add(
             PopupMenuItem(
               value: 'timestamp',
@@ -2113,7 +2139,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     vm.showTimestamp
                         ? Icons.check_box
                         : Icons.check_box_outline_blank,
-                label: '时间戳',
+                label: AppStrings.raw.timestamp,
               ),
               onTap: () => vm.setShowTimestamp(!vm.showTimestamp),
             ),
@@ -2126,7 +2152,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     vm.receiveHex
                         ? Icons.check_box
                         : Icons.check_box_outline_blank,
-                label: 'HEX显示',
+                label: AppStrings.raw.hexDisplay,
               ),
               onTap: () => vm.setReceiveHex(!vm.receiveHex),
             ),
@@ -2139,7 +2165,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     vm.autoScroll
                         ? Icons.check_box
                         : Icons.check_box_outline_blank,
-                label: '自动滚动',
+                label: AppStrings.raw.autoScroll,
               ),
               onTap: () => vm.setAutoScroll(!vm.autoScroll),
             ),
@@ -2149,25 +2175,34 @@ class _RawDataPageState extends State<RawDataPage> {
         // 操作组（如果未平铺）
         if (!showActions) {
           if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader('操作'));
+          items.add(_buildMenuHeader(AppStrings.raw.actions));
           items.add(
             PopupMenuItem(
               value: 'clear',
-              child: _buildMenuItem(icon: Icons.clear, label: '清空'),
+              child: _buildMenuItem(
+                icon: Icons.clear,
+                label: AppStrings.raw.clear,
+              ),
               onTap: () => vm.clearData(),
             ),
           );
           items.add(
             PopupMenuItem(
               value: 'export',
-              child: _buildMenuItem(icon: Icons.save, label: '保存'),
+              child: _buildMenuItem(
+                icon: Icons.save,
+                label: AppStrings.common.save,
+              ),
               onTap: () => _showExportDialog(context, vm),
             ),
           );
           items.add(
             PopupMenuItem(
               value: 'advanced',
-              child: _buildMenuItem(icon: Icons.settings, label: '高级设置'),
+              child: _buildMenuItem(
+                icon: Icons.settings,
+                label: AppStrings.common.advancedSettings,
+              ),
               onTap: () => _showRawAdvancedSettingsDialog(context, vm),
             ),
           );

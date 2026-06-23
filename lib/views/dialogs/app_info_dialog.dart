@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
@@ -84,7 +85,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: const Text('发现新版本'),
+      title: Text(AppStrings.appInfo.updateFound),
       content: SizedBox(
         width: 430,
         child: ConstrainedBox(
@@ -98,14 +99,18 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('当前版本: ${widget.currentVersion}'),
-                  Text('最新版本: ${widget.release.tagName}'),
-                  Text('更新通道: ${_channel.label}'),
-                  Text('来源: ${widget.release.source}'),
+                  Text(
+                    AppStrings.appInfo.currentVersion(widget.currentVersion),
+                  ),
+                  Text(
+                    AppStrings.appInfo.latestVersion(widget.release.tagName),
+                  ),
+                  Text(AppStrings.appInfo.updateChannel(_channel.label)),
+                  Text(AppStrings.appInfo.source(widget.release.source)),
                   if (widget.release.body.isNotEmpty) ...[
                     const SizedBox(height: 12),
-                    const Text(
-                      '更新内容:',
+                    Text(
+                      AppStrings.appInfo.changelog,
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
@@ -125,7 +130,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                     const SizedBox(height: 6),
                     Text(
                       _progress == null
-                          ? '正在准备下载...'
+                          ? AppStrings.appInfo.preparingDownload
                           : '${_formatBytes(_progress!.received)} / '
                               '${_formatBytes(_progress!.total)}  '
                               '${_formatBytes(_progress!.bytesPerSecond.round())}/s',
@@ -133,7 +138,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                   ],
                   if (_prepared != null) ...[
                     const SizedBox(height: 12),
-                    const Text('更新包已下载并通过校验，可以重启安装。'),
+                    Text(AppStrings.appInfo.updateReady),
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 12),
@@ -146,7 +151,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                   ],
                   if (!_canInstall) ...[
                     const SizedBox(height: 12),
-                    const Text('Debug/Profile 构建仅支持检查更新，不支持覆盖安装。'),
+                    Text(AppStrings.appInfo.debugInstallUnsupported),
                   ],
                 ],
               ),
@@ -160,7 +165,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
               _downloading || _installing
                   ? null
                   : () => Navigator.of(context).pop(),
-          child: const Text('稍后'),
+          child: Text(AppStrings.update.later),
         ),
         if (_downloading)
           TextButton(
@@ -168,27 +173,31 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
               _cancelled = true;
               _service.cancelDownload();
               setState(() {
-                _error = '正在取消下载...';
+                _error = AppStrings.appInfo.cancelingDownload;
               });
             },
-            child: const Text('取消下载'),
+            child: Text(AppStrings.update.cancelDownload),
           ),
         TextButton(
           onPressed:
               _downloading || _installing || widget.release.htmlUrl.isEmpty
                   ? null
                   : () => _openUrl(widget.release.htmlUrl),
-          child: const Text('打开发布页'),
+          child: Text(AppStrings.update.openReleasePage),
         ),
         if (_prepared == null)
           ElevatedButton(
             onPressed: _downloading || !_canInstall ? null : _download,
-            child: const Text('下载并安装'),
+            child: Text(AppStrings.update.downloadAndInstall),
           )
         else
           ElevatedButton(
             onPressed: _installing || !_canInstall ? null : _install,
-            child: Text(_installing ? '正在启动更新器...' : '立即重启并安装'),
+            child: Text(
+              _installing
+                  ? AppStrings.update.startingUpdater
+                  : AppStrings.update.restartAndInstall,
+            ),
           ),
       ],
     );
@@ -212,7 +221,13 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       if (mounted) setState(() => _prepared = prepared);
     } catch (error) {
       if (mounted) {
-        setState(() => _error = _cancelled ? '下载已取消' : error.toString());
+        setState(
+          () =>
+              _error =
+                  _cancelled
+                      ? AppStrings.appInfo.downloadCanceled
+                      : error.toString(),
+        );
       }
     } finally {
       if (mounted) setState(() => _downloading = false);
@@ -293,8 +308,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final release = _lastResult?.latestRelease;
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: const Row(
-        children: [Icon(Icons.info_outline), SizedBox(width: 8), Text('应用信息')],
+      title: Row(
+        children: [
+          const Icon(Icons.info_outline),
+          const SizedBox(width: 8),
+          Text(AppStrings.appInfo.title),
+        ],
       ),
       content: SizedBox(
         width: 360,
@@ -309,13 +328,22 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _InfoRow(label: '应用名称', value: AppInfo.name),
-                  _InfoRow(label: '版本', value: _version ?? '读取中...'),
-                  _InfoRow(label: '构建时间', value: _formatBuildTime(_buildTime)),
+                  _InfoRow(
+                    label: AppStrings.appInfo.appName,
+                    value: AppInfo.name,
+                  ),
+                  _InfoRow(
+                    label: AppStrings.appInfo.version,
+                    value: _version ?? AppStrings.appInfo.loading,
+                  ),
+                  _InfoRow(
+                    label: AppStrings.appInfo.buildTime,
+                    value: _formatBuildTime(_buildTime),
+                  ),
                   if (_changelogEntries.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    const Text(
-                      '版本说明',
+                    Text(
+                      AppStrings.appInfo.releaseNotes,
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 6),
@@ -327,10 +355,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
-                    title: const Text('启动时自动检查更新'),
-                    subtitle: const Text(
-                      '默认关闭；开启后每次打开应用会访问 GitHub，失败后尝试 Gitee',
-                    ),
+                    title: Text(AppStrings.appInfo.autoCheckUpdates),
+                    subtitle: Text(AppStrings.appInfo.autoCheckUpdatesHelp),
                     value: _autoUpdateCheckEnabled,
                     onChanged: (value) {
                       setState(() => _autoUpdateCheckEnabled = value);
@@ -342,17 +368,17 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
-                    title: const Text('更新通道'),
+                    title: Text(AppStrings.appInfo.updateChannelTitle),
                     subtitle: Text(
                       _updateChannel == UpdateChannel.beta
-                          ? '只检查 GitHub Beta 预发布版本'
-                          : '只检查稳定版；GitHub 失败后尝试 Gitee',
+                          ? AppStrings.appInfo.betaChannelHelp
+                          : AppStrings.appInfo.stableChannelHelp,
                     ),
                     trailing: SizedBox(
                       width: 116,
                       child: NoAnimDropdown<UpdateChannel>(
                         value: _updateChannel,
-                        hint: '更新通道',
+                        hint: AppStrings.appInfo.updateChannelTitle,
                         decoration: const InputDecoration(
                           isDense: true,
                           border: OutlineInputBorder(),
@@ -399,7 +425,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                   ),
                                 )
                                 : const Icon(Icons.update, size: 16),
-                        label: Text(_checking ? '检查中...' : '手动检查更新'),
+                        label: Text(
+                          _checking
+                              ? AppStrings.appInfo.checking
+                              : AppStrings.appInfo.manualCheckUpdates,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       OutlinedButton.icon(
@@ -409,19 +439,22 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                     showUpdateAvailableDialog(context, release)
                                 : null,
                         icon: const Icon(Icons.download, size: 16),
-                        label: const Text('下载并安装'),
+                        label: Text(AppStrings.update.downloadAndInstall),
                       ),
                       OutlinedButton.icon(
                         onPressed: _showAdvancedSettings,
                         icon: const Icon(Icons.tune, size: 16),
-                        label: const Text('高级设置'),
+                        label: Text(AppStrings.common.advancedSettings),
                       ),
                     ],
                   ),
                   if (_lastResult != null) ...[
                     const SizedBox(height: 12),
                     Text(
-                      _resultText(_lastResult!, _version ?? '未知'),
+                      _resultText(
+                        _lastResult!,
+                        _version ?? AppStrings.appInfo.unknown,
+                      ),
                       style: TextStyle(
                         fontSize: 12,
                         color:
@@ -437,7 +470,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       TextButton.icon(
                         onPressed: () => _openUrl(release.htmlUrl),
                         icon: const Icon(Icons.open_in_new, size: 16),
-                        label: Text('打开 ${release.source} 发布页'),
+                        label: Text(
+                          AppStrings.appInfo.openReleasePage(release.source),
+                        ),
                       ),
                     ],
                   ],
@@ -450,7 +485,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(AppStrings.common.close),
         ),
       ],
     );
@@ -469,10 +504,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 4),
-        Text('版本回退', style: titleStyle),
+        Text(AppStrings.appInfo.rollback, style: titleStyle),
         const SizedBox(height: 6),
         if (_loadingRollback)
-          Text('正在读取回退版本...', style: subtitleStyle)
+          Text(AppStrings.appInfo.loadingRollback, style: subtitleStyle)
         else
           ...UpdateChannel.values.map((channel) {
             final update = _rollbackUpdateFor(channel);
@@ -482,8 +517,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 children: [
                   Expanded(
                     child: Text(
-                      '${channel.label}: '
-                      '${update == null ? '暂无可回退版本' : update.tagName}',
+                      AppStrings.appInfo.rollbackVersion(
+                        channel.label,
+                        update?.tagName,
+                      ),
                       style: subtitleStyle,
                     ),
                   ),
@@ -497,7 +534,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     onPressed:
                         update == null ? null : () => _installRollback(update),
-                    child: const Text('回退'),
+                    child: Text(AppStrings.appInfo.rollbackAction),
                   ),
                 ],
               ),
@@ -522,12 +559,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('恢复默认设置', style: titleStyle),
+        Text(AppStrings.appInfo.resetSettings, style: titleStyle),
         const SizedBox(height: 6),
-        Text(
-          '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。',
-          style: subtitleStyle,
-        ),
+        Text(AppStrings.appInfo.resetSettingsHelp, style: subtitleStyle),
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
@@ -538,7 +572,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
             ),
             onPressed: onReset,
             icon: const Icon(Icons.restore, size: 16),
-            label: const Text('恢复默认设置'),
+            label: Text(AppStrings.appInfo.resetSettings),
           ),
         ),
       ],
@@ -556,7 +590,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  title: const Text('高级设置'),
+                  title: Text(AppStrings.common.advancedSettings),
                   content: SizedBox(
                     width: 360,
                     child: ConstrainedBox(
@@ -574,12 +608,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 contentPadding: EdgeInsets.zero,
                                 dense: true,
                                 title: Text(
-                                  '关闭提示信息',
+                                  AppStrings.appInfo.disableNotifications,
                                   style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(fontWeight: FontWeight.w600),
                                 ),
                                 subtitle: Text(
-                                  '开启后不再显示应用内临时提示',
+                                  AppStrings.appInfo.disableNotificationsHelp,
                                   style: Theme.of(
                                     context,
                                   ).textTheme.bodySmall?.copyWith(
@@ -626,7 +660,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: const Text('关闭'),
+                      child: Text(AppStrings.common.close),
                     ),
                   ],
                 ),
@@ -635,7 +669,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   }
 
   Future<bool> _confirmResetSettings() async {
-    const confirmText = '恢复默认设置';
+    final confirmText = AppStrings.appInfo.resetSettings;
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -654,21 +688,21 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       color: Theme.of(context).colorScheme.error,
                     ),
                     const SizedBox(width: 8),
-                    const Text('确认恢复默认设置'),
+                    Text(AppStrings.appInfo.confirmResetSettingsTitle),
                   ],
                 ),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('此操作会重置串口、绘图、数据收发、Shell、更新等应用设置，操作不可撤销。'),
+                    Text(AppStrings.appInfo.resetSettingsWarning),
                     const SizedBox(height: 8),
-                    const Text(
-                      '绘图配置功能保存的 JSON 配置文件不会被删除。',
+                    Text(
+                      AppStrings.appInfo.resetSettingsKeepsProfiles,
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 12),
-                    Text('请输入“$confirmText”以继续：'),
+                    Text(AppStrings.appInfo.enterConfirmText(confirmText)),
                     const SizedBox(height: 8),
                     TextField(
                       autofocus: true,
@@ -683,7 +717,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(false),
-                    child: const Text('取消'),
+                    child: Text(AppStrings.common.cancel),
                   ),
                   FilledButton(
                     style: FilledButton.styleFrom(
@@ -694,7 +728,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         input == confirmText
                             ? () => Navigator.of(dialogContext).pop(true)
                             : null,
-                    child: const Text('确认恢复'),
+                    child: Text(AppStrings.appInfo.confirmReset),
                   ),
                 ],
               ),
@@ -713,7 +747,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _lastResult = null;
     });
     AppNotifications.show(
-      '已恢复默认设置，建议重启应用以确保所有界面完全生效。',
+      AppStrings.appInfo.resetSettingsDone,
       messenger: ScaffoldMessenger.maybeOf(context),
     );
     return true;
@@ -763,7 +797,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   }
 
   static String _formatBuildTime(DateTime? time) {
-    if (time == null) return '未知';
+    if (time == null) return AppStrings.appInfo.unknown;
     final local = time.toLocal();
     return '${local.year.toString().padLeft(4, '0')}-'
         '${local.month.toString().padLeft(2, '0')}-'
@@ -776,12 +810,20 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   static String _resultText(UpdateCheckResult result, String currentVersion) {
     if (result.error != null) return result.error!;
     final release = result.latestRelease;
-    if (release == null) return '未获取到版本信息';
+    if (release == null) return AppStrings.appInfo.noVersionInfo;
     if (result.hasUpdate) {
-      return '发现${release.channel.label}新版本 ${release.tagName}（${release.source}）';
+      return AppStrings.appInfo.updateAvailable(
+        release.channel.label,
+        release.tagName,
+        release.source,
+      );
     }
-    return '未发现更新（当前版本: $currentVersion；'
-        '${release.channel.label}最新发布版本: ${release.tagName}，${release.source}）';
+    return AppStrings.appInfo.noUpdate(
+      currentVersion: currentVersion,
+      channel: release.channel.label,
+      tagName: release.tagName,
+      source: release.source,
+    );
   }
 }
 

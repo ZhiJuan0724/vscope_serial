@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
+import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
@@ -18,6 +19,7 @@ import '../dialogs/zobow_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
+import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/plot_status_bar.dart';
 
@@ -54,22 +56,14 @@ class _PlotPageContent extends StatefulWidget {
 }
 
 /// 通道面板尺寸常量
-const double kMinChannelPanelWidth = 240;
+const double kMinChannelPanelWidth = 260;
 const double kCompactChannelPanelWidth = 212;
 const double kMaxChannelPanelWidth = 400;
-const double kDefaultChannelPanelWidth = 240;
+const double kDefaultChannelPanelWidth = 260;
 const double kCollapsedPanelWidth = 26;
-const double kRProtocolAddressWidth = 86;
+const double kRProtocolAddressWidth = 108;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
-
-InputDecoration _compactDropdownDecoration() {
-  return const InputDecoration(
-    isDense: true,
-    border: OutlineInputBorder(),
-    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-  );
-}
 
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
@@ -134,7 +128,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: [
           // 展开按钮（使用 InkWell 替代 IconButton，避免大圆阴影）
           Tooltip(
-            message: '展开通道面板',
+            message: AppStrings.plot.expandChannelPanel,
             child: InkWell(
               onTap: () => setState(() => _isPanelCollapsed = false),
               child: const SizedBox(
@@ -150,7 +144,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: RotatedBox(
                 quarterTurns: 1,
                 child: Text(
-                  '通道',
+                  AppStrings.plot.channel,
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -245,9 +239,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 显示顺序：光标 | 缩放 | 自适应 | 文件 | 清空+设置
   /// 折叠顺序：清空+设置 → 文件 → 自适应 → 缩放 → 光标
   // ========== 工具栏 ==========
+  List<Widget> _withToolbarSpacing(List<Widget> children) {
+    return [
+      for (var i = 0; i < children.length; i++) ...[
+        if (i > 0) const SizedBox(width: 8),
+        children[i],
+      ],
+    ];
+  }
+
   /// 构建第一栏工具栏
   ///
-  /// 包含：开始/停止、数据源设置、解析器、自适应、文件、清空+设置
+  /// 包含：开始/停止、数据源设置、解析器、文件、清空+设置
   Widget _buildPrimaryToolbar(BuildContext context, PlotViewModel vm) {
     return Container(
       height: 40,
@@ -280,16 +283,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     constraints: BoxConstraints(minWidth: constraints.maxWidth),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        // 自适应工具组
-                        _buildFitTools(context, vm),
-                        const SizedBox(width: 8),
+                      children: _withToolbarSpacing([
                         // 文件工具组
                         _buildFileTools(context, vm),
-                        const SizedBox(width: 8),
                         // 清空 + 高级设置
                         _buildClearAndSettings(context, vm),
-                      ],
+                      ]),
                     ),
                   ),
                 );
@@ -324,8 +323,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   // 光标和测量工具组
                   _buildCursorTools(context, vm),
                   const SizedBox(width: 12),
-                  // 缩放和框选工具组
-                  _buildZoomTools(context, vm),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: _withToolbarSpacing([
+                      // 缩放和框选工具组
+                      _buildZoomTools(context, vm),
+                      // 自适应工具组
+                      _buildFitTools(context, vm),
+                    ]),
+                  ),
                 ],
               ),
             ),
@@ -357,10 +363,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
       label: Text(
         vm.isStopping
-            ? '停止中'
+            ? AppStrings.plot.stopping
             : vm.isPlotting
-            ? '停止'
-            : '开始',
+            ? AppStrings.plot.stop
+            : AppStrings.plot.start,
         style: const TextStyle(fontFamily: 'SarasaUiSC'),
       ),
       style: ElevatedButton.styleFrom(
@@ -386,12 +392,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           value: vm.useRandomSource,
           onChanged: (value) => vm.setUseRandomSource(value!),
         ),
-        const Text(
-          '随机源',
-          style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+        Text(
+          AppStrings.plot.randomSource,
+          style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
         ),
         Tooltip(
-          message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+          message: AppStrings.plot.randomSourceFrequencyTooltip(
+            vm.randomFrequency,
+          ),
           child: InkWell(
             onTap: () => _showRandomFreqDialog(context, vm),
             child: Padding(
@@ -420,7 +428,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: 120,
           child: NoAnimDropdown<ParserType>(
             value: vm.parserType,
-            hint: '接收协议',
+            hint: AppStrings.plot.receiveProtocolHint,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -448,7 +456,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         IconButton(
           onPressed: () => _showParserConfigDialog(context, vm),
           icon: const Icon(Icons.settings, size: 18),
-          tooltip: '解析器配置',
+          tooltip: AppStrings.plot.parserConfig,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
@@ -457,7 +465,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: 112,
           child: NoAnimDropdown<SendProtocolType>(
             value: vm.effectiveSendProtocolType,
-            hint: '发送协议',
+            hint: AppStrings.plot.sendProtocolHint,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -497,7 +505,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           _buildZobowProfileSelector(context, vm),
           // 新建配置按钮
           Tooltip(
-            message: '新建配置',
+            message: AppStrings.plot.createConfig,
             child: InkWell(
               onTap: () => _showCreateZobowProfileDialog(context, vm),
               child: const SizedBox(
@@ -509,7 +517,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ),
           // 编辑配置按钮
           Tooltip(
-            message: '编辑配置',
+            message: AppStrings.plot.editConfig,
             child: InkWell(
               onTap: () => _showEditZobowProfileDialog(context, vm),
               child: const SizedBox(
@@ -523,7 +531,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           const SizedBox(width: 8),
           _buildRProfileSelector(context, vm),
           Tooltip(
-            message: '新建 r 协议配置',
+            message: AppStrings.plot.createRProtocolConfig,
             child: InkWell(
               onTap: () => _showCreateRProfileDialog(context, vm),
               child: const SizedBox(
@@ -534,7 +542,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
           Tooltip(
-            message: '编辑 r 协议配置',
+            message: AppStrings.plot.editRProtocolConfig,
             child: InkWell(
               onTap: () => _showEditRProfileDialog(context, vm),
               child: const SizedBox(
@@ -554,18 +562,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       width: 140,
       child: NoAnimDropdown<String?>(
         value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
-        hint: '不使用配置',
+        hint: AppStrings.plot.noConfig,
         decoration: const InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           border: OutlineInputBorder(),
         ),
         items: [
-          const DropdownMenuItem<String?>(
+          DropdownMenuItem<String?>(
             value: null,
             child: Text(
-              '不使用配置',
-              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              AppStrings.plot.noConfig,
+              style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
           ),
           ...vm.rProfiles.map(
@@ -592,7 +600,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             vm.selectedZobowProfileId.isEmpty
                 ? null
                 : vm.selectedZobowProfileId,
-        hint: '不使用配置',
+        hint: AppStrings.plot.noConfig,
         decoration: const InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -600,11 +608,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
         items: [
           // "不使用"选项
-          const DropdownMenuItem<String?>(
+          DropdownMenuItem<String?>(
             value: null,
             child: Text(
-              '不使用配置',
-              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              AppStrings.plot.noConfig,
+              style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
           ),
           // 所有配置文件
@@ -631,23 +639,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 光标和测量工具组
   ///
-  /// 顺序：垂直光标 | X-X | Y-Y | 统计 | 范围 | 跟随
+  /// 顺序：垂直光标 | X-X | Y-Y | 跟随
   Widget _buildCursorTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         // 垂直光标开关
         Tooltip(
-          message: '垂直光标',
+          message: AppStrings.plot.verticalCursor,
           child: TextButton.icon(
             onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-            icon: Icon(
-              Icons.vertical_align_center,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotCursor,
               color: vm.vCursorEnabled ? Colors.orange : null,
             ),
             label: Text(
-              '光标',
+              AppStrings.plot.cursor,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -664,14 +671,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
         Tooltip(
-          message: '添加观察',
+          message: AppStrings.plot.addObservation,
           child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.addObservation(),
-            icon: const Icon(Icons.add_location_alt, size: 16),
-            label: const Text(
-              '观察',
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.addObservation();
+            },
+            icon: const Icon(Icons.add_location_alt, size: 18),
+            label: Text(
+              AppStrings.plot.observation,
               style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
             ),
             style: TextButton.styleFrom(
@@ -680,19 +689,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 8),
         // X-X 测量
         Tooltip(
-          message: 'X-X 测量',
+          message: AppStrings.plot.measureXxTooltip,
           child: TextButton.icon(
             onPressed: () => vm.toggleXMeasurement(),
-            icon: Icon(
-              Icons.vertical_align_center,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotMeasureXx,
               color: vm.xMeasurementEnabled ? Colors.blue : null,
             ),
             label: Text(
-              'X-X',
+              AppStrings.plot.measureXx,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -711,16 +718,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
         // Y-Y 测量
         Tooltip(
-          message: 'Y-Y 测量',
+          message: AppStrings.plot.measureYyTooltip,
           child: TextButton.icon(
             onPressed: () => vm.toggleYMeasurement(),
-            icon: Icon(
-              Icons.horizontal_rule,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotMeasureYy,
               color: vm.yMeasurementEnabled ? Colors.blue : null,
             ),
             label: Text(
-              'Y-Y',
+              AppStrings.plot.measureYy,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -737,74 +743,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
-        // 统计测量
-        Tooltip(
-          message: '统计测量（Max/Min/Avg）',
-          child: TextButton.icon(
-            onPressed: () => vm.toggleStats(),
-            icon: Icon(
-              Icons.analytics,
-              size: 16,
-              color: vm.statsEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              '统计',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.statsEnabled ? Colors.blue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.statsEnabled ? Colors.blue.withValues(alpha: 0.15) : null,
-            ),
-          ),
-        ),
-        // 统计范围
-        Tooltip(
-          message: '统计范围',
-          child: TextButton.icon(
-            onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
-            icon: Icon(
-              Icons.straighten,
-              size: 16,
-              color: vm.statsRangeEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              '范围',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.statsRangeEnabled ? Colors.blue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.statsRangeEnabled
-                      ? Colors.blue.withValues(alpha: 0.15)
-                      : null,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
         // 最新点跟随
         Tooltip(
-          message: '最新点跟随在 3/4 宽度处',
+          message: AppStrings.plot.followTooltip,
           child: TextButton.icon(
             onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
-            icon: Icon(
-              Icons.trending_flat,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotFollow,
               color: vm.followEnabled ? Colors.blue : null,
             ),
             label: Text(
-              '跟随',
+              AppStrings.plot.follow,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -819,18 +768,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
         Tooltip(
-          message: '图例',
+          message: AppStrings.plot.legend,
           child: TextButton.icon(
             onPressed: () => setState(() => _legendVisible = !_legendVisible),
             icon: Icon(
               Icons.list_alt,
-              size: 16,
+              size: 18,
               color: _legendVisible ? Colors.teal : null,
             ),
             label: Text(
-              '图例',
+              AppStrings.plot.legend,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -845,20 +793,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-      ],
+      ]),
     );
   }
 
   /// 缩放和框选工具组
   ///
-  /// 顺序：撤回缩放 | 框选 | X缩 | X放 | Y缩 | Y放
+  /// 顺序：撤回缩放 | 框选 | X放 | X缩 | Y放 | Y缩
   Widget _buildZoomTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         // 撤回缩放
         Tooltip(
-          message: '撤回缩放',
+          message: AppStrings.plot.undoZoom,
           child: IconButton(
             onPressed: vm.canUndoZoom ? () => vm.undoZoom() : null,
             icon: const Icon(Icons.undo, size: 18),
@@ -866,10 +814,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        const SizedBox(width: 4),
         // 框选放大
         Tooltip(
-          message: '框选放大',
+          message: AppStrings.plot.boxZoom,
           child: IconButton(
             onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
             icon: Icon(
@@ -881,48 +828,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        const SizedBox(width: 4),
-        // X 轴缩小
-        Tooltip(
-          message: 'X 轴缩小',
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
-            icon: const Icon(Icons.zoom_out, size: 18),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
         // X 轴放大
         Tooltip(
-          message: 'X 轴放大',
+          message: AppStrings.plot.zoomXIn,
           child: IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXIn(),
-            icon: const Icon(Icons.zoom_in, size: 18),
+            icon: const AppIcon(AppIcons.plotZoomXIn),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        // Y 轴缩小
+        // X 轴缩小
         Tooltip(
-          message: 'Y 轴缩小',
+          message: AppStrings.plot.zoomXOut,
           child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
-            icon: const Icon(Icons.vertical_align_bottom, size: 18),
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
+            icon: const AppIcon(AppIcons.plotZoomXOut),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         // Y 轴放大
         Tooltip(
-          message: 'Y 轴放大',
+          message: AppStrings.plot.zoomYIn,
           child: IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYIn(),
-            icon: const Icon(Icons.vertical_align_top, size: 18),
+            icon: const AppIcon(AppIcons.plotZoomYIn),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+        // Y 轴缩小
+        Tooltip(
+          message: AppStrings.plot.zoomYOut,
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
+            icon: const AppIcon(AppIcons.plotZoomYOut),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -932,18 +878,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         Tooltip(
-          message: '导入 CSV/BIN/旧版 DAT',
+          message: AppStrings.plot.importDataTooltip,
           child: IconButton(
             onPressed: () => _importPlotData(context, vm),
-            icon: const Icon(Icons.file_open, size: 18),
+            icon: const AppIcon(AppIcons.plotImport),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: '导出 CSV/BIN',
+          message: AppStrings.plot.exportDataTooltip,
           child: IconButton(
             onPressed:
                 vm.dataPoints.isEmpty
@@ -954,7 +900,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -964,53 +910,44 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildFitTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         Tooltip(
-          message: 'Y轴自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
-            icon: const Icon(Icons.vertical_align_center, size: 16),
-            label: const Text(
-              'Y自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitYTooltip,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitYAxis();
+            },
+            icon: const AppIcon(AppIcons.plotFitY),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: 'X轴自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
-            icon: const Icon(Icons.horizontal_rule, size: 16),
-            label: const Text(
-              'X自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitXTooltip,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitXAxis();
+            },
+            icon: const AppIcon(AppIcons.plotFitX),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: '全自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
-            icon: const Icon(Icons.fit_screen, size: 16),
-            label: const Text(
-              '全自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitAll,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitAll();
+            },
+            icon: const AppIcon(AppIcons.plotFitAll),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -1018,26 +955,25 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         IconButton(
           onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
           icon: const Icon(Icons.clear, size: 18),
-          tooltip: '清空数据',
+          tooltip: AppStrings.plot.clearData,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
-        const SizedBox(width: 8),
         Tooltip(
-          message: '高级设置',
+          message: AppStrings.common.advancedSettings,
           child: IconButton(
             onPressed: () => _showAdvancedSettingsDialog(context, vm),
             icon: const Icon(Icons.tune, size: 18),
-            tooltip: '高级设置',
+            tooltip: AppStrings.common.advancedSettings,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -1075,7 +1011,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             child: Row(
               children: [
                 Tooltip(
-                  message: '收起通道面板',
+                  message: AppStrings.plot.collapseChannelPanel,
                   child: InkWell(
                     onTap: () => setState(() => _isPanelCollapsed = true),
                     child: const SizedBox(
@@ -1086,18 +1022,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '通道',
+                Text(
+                  AppStrings.plot.channel,
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                 ),
                 const Spacer(),
                 Tooltip(
-                  message: '偏置功能开关',
+                  message: AppStrings.plot.offsetToggle,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      SizedBox(width: 20),
-                      Text('偏置', style: TextStyle(fontSize: 10)),
+                    children: [
+                      const SizedBox(width: 20),
+                      Text(
+                        AppStrings.plot.offset,
+                        style: const TextStyle(fontSize: 10),
+                      ),
                     ],
                   ),
                 ),
@@ -1106,8 +1045,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 Tooltip(
                   message:
                       vm.channels.every((ch) => ch.visible)
-                          ? '点击隐藏全部'
-                          : '点击显示全部',
+                          ? AppStrings.plot.hideAllChannels
+                          : AppStrings.plot.showAllChannels,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1127,7 +1066,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               MaterialTapTargetSize.shrinkWrap,
                         ),
                       ),
-                      const Text('绘图', style: TextStyle(fontSize: 10)),
+                      Text(
+                        AppStrings.plot.plotVisible,
+                        style: const TextStyle(fontSize: 10),
+                      ),
                     ],
                   ),
                 ),
@@ -1161,16 +1103,19 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
     if (vm.dataPoints.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.show_chart, size: 48, color: Colors.grey),
-            SizedBox(height: 8),
-            Text('暂无数据', style: TextStyle(color: Colors.grey)),
+            const Icon(Icons.show_chart, size: 48, color: Colors.grey),
+            const SizedBox(height: 8),
             Text(
-              '点击"开始"按钮开始绘图',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+              AppStrings.plot.noData,
+              style: const TextStyle(color: Colors.grey),
+            ),
+            Text(
+              AppStrings.plot.startPlotHint,
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
           ],
         ),
@@ -1581,15 +1526,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('随机源频率'),
+            title: Text(AppStrings.plot.randomSourceFrequency),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '频率 (Hz)',
+                  decoration: InputDecoration(
+                    labelText: AppStrings.plot.frequencyHz,
                     hintText: '1 ~ 10000',
                     suffixText: 'Hz',
                   ),
@@ -1597,7 +1542,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '当前: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+                  AppStrings.plot.currentFrequency(vm.randomFrequency),
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
@@ -1605,7 +1550,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               TextButton(
                 onPressed: () {
@@ -1615,7 +1560,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   }
                   Navigator.pop(context);
                 },
-                child: const Text('确定'),
+                child: Text(AppStrings.common.confirm),
               ),
             ],
           ),
@@ -1635,17 +1580,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             children: [
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, _PlotFileFormat.csv),
-                child: const Text('CSV 文本'),
+                child: Text(AppStrings.plot.csvText),
               ),
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, _PlotFileFormat.bin),
-                child: const Text('BIN 二进制'),
+                child: Text(AppStrings.plot.binBinary),
               ),
               if (includeLegacyDat)
                 SimpleDialogOption(
                   onPressed:
                       () => Navigator.pop(context, _PlotFileFormat.legacyDat),
-                  child: const Text('旧版虚拟示波器 DAT'),
+                  child: Text(AppStrings.plot.legacyDat),
                 ),
             ],
           ),
@@ -1653,7 +1598,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportPlotData(BuildContext context, PlotViewModel vm) async {
-    final format = await _choosePlotFileFormat(context, '选择导出格式');
+    final format = await _choosePlotFileFormat(
+      context,
+      AppStrings.plot.chooseExportFormat,
+    );
     if (format == null || !context.mounted) return;
     switch (format) {
       case _PlotFileFormat.csv:
@@ -1669,7 +1617,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.saveFile(
-      dialogTitle: '保存 CSV 文件',
+      dialogTitle: AppStrings.plot.saveCsvFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.csv',
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -1678,13 +1626,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final path = await vm.exportToCsv(result);
     if (path != null && context.mounted) {
-      vm.showStatusMessage('已导出: $path');
+      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
     }
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.saveFile(
-      dialogTitle: '保存 BIN 文件',
+      dialogTitle: AppStrings.plot.saveBinFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.bin',
       type: FileType.custom,
       allowedExtensions: ['bin'],
@@ -1693,14 +1641,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final path = await vm.exportToBin(result);
     if (path != null && context.mounted) {
-      vm.showStatusMessage('已导出: $path');
+      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
     }
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
     final format = await _choosePlotFileFormat(
       context,
-      '选择导入格式',
+      AppStrings.plot.chooseImportFormat,
       includeLegacyDat: true,
     );
     if (format == null || !context.mounted) return;
@@ -1719,7 +1667,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   void _importCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择 CSV 文件',
+      dialogTitle: AppStrings.plot.chooseCsvFile,
       type: FileType.custom,
       allowedExtensions: ['csv'],
       allowMultiple: false,
@@ -1734,15 +1682,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入 CSV',
+      title: AppStrings.plot.importCsvTitle,
       importFile: vm.importFromCsv,
-      successMessage: 'CSV 导入成功',
+      successMessage: AppStrings.plot.importCsvSuccess,
     );
   }
 
   void _importBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择 BIN 文件',
+      dialogTitle: AppStrings.plot.chooseBinFile,
       type: FileType.custom,
       allowedExtensions: ['bin'],
       allowMultiple: false,
@@ -1757,15 +1705,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入 BIN',
+      title: AppStrings.plot.importBinTitle,
       importFile: vm.importFromBin,
-      successMessage: 'BIN 导入成功',
+      successMessage: AppStrings.plot.importBinSuccess,
     );
   }
 
   void _importLegacyDat(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择旧版虚拟示波器 DAT 文件',
+      dialogTitle: AppStrings.plot.chooseLegacyDatFile,
       type: FileType.custom,
       allowedExtensions: ['dat'],
       allowMultiple: false,
@@ -1779,9 +1727,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入旧版 DAT',
+      title: AppStrings.plot.importLegacyDatTitle,
       importFile: vm.importFromLegacyDat,
-      successMessage: '旧版 DAT 导入成功',
+      successMessage: AppStrings.plot.importLegacyDatSuccess,
     );
   }
 
@@ -1798,7 +1746,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     required String successMessage,
   }) async {
     final progressNotifier = ValueNotifier<PlotImportProgress>(
-      const PlotImportProgress(stage: '准备导入', current: 0, total: 0),
+      PlotImportProgress(
+        stage: AppStrings.plot.importPreparing,
+        current: 0,
+        total: 0,
+      ),
     );
     var dialogClosed = false;
 
@@ -1829,7 +1781,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (error == null) {
       vm.showStatusMessage(successMessage);
     } else {
-      vm.showStatusMessage('导入失败: $error');
+      vm.showStatusMessage(AppStrings.plot.importFailed(error));
     }
   }
 
@@ -2039,7 +1991,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('高级设置'),
+            title: Text(AppStrings.plot.advancedSettings),
             content: SizedBox(
               width: 300,
               child: StatefulBuilder(
@@ -2052,7 +2004,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         // 网格开关
                         Row(
                           children: [
-                            const Text('显示网格', style: TextStyle(fontSize: 14)),
+                            Text(
+                              AppStrings.plot.showGrid,
+                              style: const TextStyle(fontSize: 14),
+                            ),
                             const Spacer(),
                             Switch(
                               value: vm.showGrid,
@@ -2066,37 +2021,52 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         // 网格密度
                         if (vm.showGrid) ...[
                           const SizedBox(height: 8),
-                          const Text('网格密度', style: TextStyle(fontSize: 14)),
+                          Text(
+                            AppStrings.plot.gridDensity,
+                            style: const TextStyle(fontSize: 14),
+                          ),
                           const SizedBox(height: 4),
                           Row(
                             children: [
-                              _buildDensityButton('稀疏', 'sparse', vm, setState),
+                              _buildDensityButton(
+                                AppStrings.plot.densitySparse,
+                                'sparse',
+                                vm,
+                                setState,
+                              ),
                               const SizedBox(width: 8),
-                              _buildDensityButton('普通', 'normal', vm, setState),
+                              _buildDensityButton(
+                                AppStrings.plot.densityNormal,
+                                'normal',
+                                vm,
+                                setState,
+                              ),
                               const SizedBox(width: 8),
-                              _buildDensityButton('密集', 'dense', vm, setState),
+                              _buildDensityButton(
+                                AppStrings.plot.densityDense,
+                                'dense',
+                                vm,
+                                setState,
+                              ),
                             ],
                           ),
                         ],
                         const Divider(),
                         // 刷新帧率
-                        const Text('绘图刷新帧率', style: TextStyle(fontSize: 14)),
+                        Text(
+                          AppStrings.plot.refreshFps,
+                          style: const TextStyle(fontSize: 14),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             SizedBox(
-                              width: 110,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: refreshFpsController,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: 'fps',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: AppStrings.plot.unitFps,
                                 ),
                                 onSubmitted: (value) {
                                   final fps = int.tryParse(value);
@@ -2122,7 +2092,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   setState(() {});
                                 }
                               },
-                              child: const Text('应用'),
+                              child: Text(AppStrings.common.apply),
                             ),
                             const SizedBox(width: 8),
                             Text(
@@ -2135,18 +2105,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ],
                         ),
                         const SizedBox(height: 4),
-                        const Text(
-                          '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率',
+                        Text(
+                          AppStrings.plot.refreshFpsHelp,
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                         const Divider(),
-                        const Text('绘图字体大小', style: TextStyle(fontSize: 14)),
+                        Text(
+                          AppStrings.plot.plotFontSize,
+                          style: const TextStyle(fontSize: 14),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             Text(
                               vm.plotFontSizeDelta == 0
-                                  ? '默认'
+                                  ? AppStrings.plot.defaultValue
                                   : vm.plotFontSizeDelta > 0
                                   ? '+${vm.plotFontSizeDelta}'
                                   : '${vm.plotFontSizeDelta}',
@@ -2157,7 +2130,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                             const Spacer(),
                             Text(
-                              '基于默认字号',
+                              AppStrings.plot.basedOnDefaultFontSize,
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey,
@@ -2172,7 +2145,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           divisions: 9,
                           label:
                               vm.plotFontSizeDelta == 0
-                                  ? '默认'
+                                  ? AppStrings.plot.defaultValue
                                   : vm.plotFontSizeDelta > 0
                                   ? '+${vm.plotFontSizeDelta}'
                                   : '${vm.plotFontSizeDelta}',
@@ -2181,18 +2154,45 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             setState(() {});
                           },
                         ),
-                        const Text(
-                          '范围: -3~+6，影响绘图区坐标轴、光标、观察、测量和统计文本',
+                        Text(
+                          AppStrings.plot.plotFontSizeHelp,
                           style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                        const Divider(),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                AppStrings.plot.statsTooltip,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                            Switch(
+                              value: vm.statsEnabled && vm.statsRangeEnabled,
+                              onChanged: (value) {
+                                if (value) {
+                                  if (!vm.statsEnabled) {
+                                    vm.toggleStats();
+                                  }
+                                  if (!vm.statsRangeEnabled) {
+                                    vm.toggleStatsRange();
+                                  }
+                                } else if (vm.statsEnabled) {
+                                  vm.toggleStats();
+                                }
+                                setState(() {});
+                              },
+                            ),
+                          ],
                         ),
                         const Divider(),
                         // 窗口点数上限
                         Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Text(
-                                '吸附点高亮',
-                                style: TextStyle(fontSize: 14),
+                                AppStrings.plot.snapHighlight,
+                                style: const TextStyle(fontSize: 14),
                               ),
                             ),
                             Switch(
@@ -2208,19 +2208,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         Row(
                           children: [
                             SizedBox(
-                              width: 110,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: snapDiameterController,
                                 keyboardType: TextInputType.number,
                                 enabled: vm.snapHighlightEnabled,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: 'px',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: AppStrings.plot.unitPixel,
                                 ),
                                 onSubmitted: (value) {
                                   final diameter = double.tryParse(value);
@@ -2251,32 +2245,29 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                         }
                                       }
                                       : null,
-                              child: const Text('应用'),
+                              child: Text(AppStrings.common.apply),
                             ),
                           ],
                         ),
-                        const Text(
-                          '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点',
+                        Text(
+                          AppStrings.plot.snapHighlightHelp,
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                         const Divider(),
-                        const Text('绘图窗口上限', style: TextStyle(fontSize: 14)),
+                        Text(
+                          AppStrings.plot.plotWindowLimit,
+                          style: const TextStyle(fontSize: 14),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             SizedBox(
-                              width: 140,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: maxVisibleController,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: '包',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: AppStrings.plot.unitPacket,
                                 ),
                                 onSubmitted: (value) {
                                   final points = int.tryParse(value);
@@ -2302,39 +2293,41 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   setState(() {});
                                 }
                               },
-                              child: const Text('应用'),
+                              child: Text(AppStrings.common.apply),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '范围: ${PlotViewModel.minVisiblePoints}~${PlotViewModel.maxVisiblePointsLimit} 包，默认 ${PlotViewModel.defaultVisiblePoints} 包。当前窗口: ${vm.visiblePointCount} 包',
+                          AppStrings.plot.plotWindowLimitHelp(
+                            min: PlotViewModel.minVisiblePoints,
+                            max: PlotViewModel.maxVisiblePointsLimit,
+                            defaultValue: PlotViewModel.defaultVisiblePoints,
+                            current: vm.visiblePointCount,
+                          ),
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.grey,
                           ),
                         ),
                         const Divider(),
-                        const Text('丢弃包数', style: TextStyle(fontSize: 14)),
+                        Text(
+                          AppStrings.plot.droppedPackets,
+                          style: const TextStyle(fontSize: 14),
+                        ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             SizedBox(
-                              width: 140,
+                              width: kSecondaryDialogFieldWidth,
                               child: TextField(
                                 controller: discardInitialPacketController,
                                 keyboardType: TextInputType.number,
                                 inputFormatters: [
                                   FilteringTextInputFormatter.digitsOnly,
                                 ],
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: '包',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: AppStrings.plot.unitPacket,
                                 ),
                                 onSubmitted: (value) {
                                   final count = int.tryParse(value);
@@ -2360,13 +2353,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   setState(() {});
                                 }
                               },
-                              child: const Text('应用'),
+                              child: Text(AppStrings.common.apply),
                             ),
                           ],
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '范围: 0~${PlotViewModel.maxDiscardInitialPacketCount} 包，默认 0 包。每次开始绘图时丢弃前 N 个成功解析的数据包，不影响文件导入。',
+                          AppStrings.plot.droppedPacketsHelp(
+                            max: PlotViewModel.maxDiscardInitialPacketCount,
+                          ),
                           style: const TextStyle(
                             fontSize: 11,
                             color: Colors.grey,
@@ -2381,7 +2376,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('关闭'),
+                child: Text(AppStrings.common.close),
               ),
             ],
           ),
@@ -2405,7 +2400,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _showEditZobowProfileDialog(BuildContext context, PlotViewModel vm) {
     final profile = vm.selectedZobowProfile;
     if (profile == null) {
-      vm.showStatusMessage('请先选择一个配置文件');
+      vm.showStatusMessage(AppStrings.plot.selectConfigFirst);
       return;
     }
     showDialog(
@@ -2428,7 +2423,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _showEditRProfileDialog(BuildContext context, PlotViewModel vm) {
     final profile = vm.selectedRProfile;
     if (profile == null) {
-      vm.showStatusMessage('请先选择一个 r 协议配置文件');
+      vm.showStatusMessage(AppStrings.plot.selectRProtocolConfigFirst);
       return;
     }
     showDialog(

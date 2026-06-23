@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/localization/app_strings.dart';
 import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
@@ -16,6 +17,7 @@ import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/protocol_page.dart';
 import 'views/pages/raw_data_page.dart';
+import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
 
 /// 主窗口最小宽度：保证左侧控件 + 一个下拉菜单按钮能放下
@@ -32,6 +34,7 @@ void main() async {
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
   await AppSettings().init();
+  await AppIcon.precacheAll();
 
   // 初始化窗口管理
   await windowManager.ensureInitialized();
@@ -39,7 +42,7 @@ void main() async {
     size: const Size(kDefaultWindowWidth, kDefaultWindowHeight),
     minimumSize: const Size(kMinWindowWidth, 600),
     center: true,
-    title: 'VScope Serial',
+    title: AppStrings.appName,
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
@@ -69,7 +72,7 @@ class MyApp extends StatelessWidget {
         ),
       ],
       child: MaterialApp(
-        title: 'VScope Serial',
+        title: AppStrings.appName,
         scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
         theme: baseTheme.copyWith(
           textTheme: baseTheme.textTheme.apply(fontFamily: 'SarasaUiSC'),
@@ -152,9 +155,21 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   final List<({String label, IconData icon, Widget page})> _tabs = [
-    (label: '数据收发', icon: Icons.terminal, page: const RawDataPage()),
-    (label: '绘图', icon: Icons.show_chart, page: const PlotPage()),
-    (label: '协议', icon: Icons.settings_ethernet, page: const ProtocolPage()),
+    (
+      label: AppStrings.nav.rawData,
+      icon: Icons.terminal,
+      page: const RawDataPage(),
+    ),
+    (
+      label: AppStrings.nav.plot,
+      icon: Icons.show_chart,
+      page: const PlotPage(),
+    ),
+    (
+      label: AppStrings.nav.protocol,
+      icon: Icons.settings_ethernet,
+      page: const ProtocolPage(),
+    ),
   ];
 
   @override
@@ -181,7 +196,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                     final tab = entry.value;
                     final isSelected = index == _currentIndex;
                     // 绘图开启时禁止切换页面：非绘图页 Tab 置灰且不可点击
-                    final isPlotTab = tab.label == '绘图';
+                    final isPlotTab = tab.label == AppStrings.nav.plot;
                     final canSwitch = !isPlotting || isPlotTab;
                     return Expanded(
                       child: InkWell(

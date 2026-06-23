@@ -71,13 +71,16 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         children: [
           Expanded(
             child: Text(
-              '选择地址 - ${widget.profile.name}',
+              AppStrings.plot.selectAddressTitle(widget.profile.name),
               style: const TextStyle(color: Color(0xFF333344), fontSize: 15),
             ),
           ),
           // 视图切换按钮
           Tooltip(
-            message: _viewMode == _PresetViewMode.list ? '切换为平铺' : '切换为列表',
+            message:
+                _viewMode == _PresetViewMode.list
+                    ? AppStrings.plot.switchToGrid
+                    : AppStrings.plot.switchToList,
             child: InkWell(
               onTap: _toggleViewMode,
               child: Icon(
@@ -102,13 +105,13 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
               style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
               decoration: InputDecoration(
                 isDense: true,
-                hintText: '搜索名称或地址',
+                hintText: AppStrings.plot.searchNameOrAddress,
                 prefixIcon: const Icon(Icons.search, size: 18),
                 suffixIcon:
                     _searchText.isEmpty
                         ? null
                         : IconButton(
-                          tooltip: '清空搜索',
+                          tooltip: AppStrings.plot.selectAddressSearchClear,
                           icon: const Icon(Icons.clear, size: 16),
                           onPressed: () {
                             _searchController.clear();
@@ -129,10 +132,10 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
             Expanded(
               child:
                   _filteredPresets.isEmpty
-                      ? const Center(
+                      ? Center(
                         child: Text(
-                          '没有匹配的地址',
-                          style: TextStyle(
+                          AppStrings.plot.noMatchingAddress,
+                          style: const TextStyle(
                             fontSize: 13,
                             color: Color(0xFF8888AA),
                           ),
@@ -148,7 +151,10 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消', style: TextStyle(color: Color(0xFF666688))),
+          child: Text(
+            AppStrings.common.cancel,
+            style: const TextStyle(color: Color(0xFF666688)),
+          ),
         ),
       ],
     );

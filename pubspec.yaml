@@ -45,6 +45,7 @@ dependencies:
   archive: ^4.0.9
   crypto: ^3.0.7
   xterm: ^4.0.0
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -80,6 +81,7 @@ flutter:
   assets:
     - pubspec.yaml
     - CHANGELOG.md
+    - assets/icons/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

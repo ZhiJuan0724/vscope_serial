@@ -57,3 +57,5 @@ docs/icons.md
 *.bin
 __pychache__
 updates/
+
+assets/cc_icons

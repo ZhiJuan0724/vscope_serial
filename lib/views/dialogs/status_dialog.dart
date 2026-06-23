@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../services/serial_service.dart';
 import '../widgets/common_widgets.dart';
 
@@ -31,7 +32,7 @@ class _StatusDialogState extends State<StatusDialog> {
       builder: (context, service, child) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          title: const Text('串口连接'),
+          title: Text(AppStrings.serial.connectionTitle),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(
             width: 400,
@@ -44,11 +45,11 @@ class _StatusDialogState extends State<StatusDialog> {
                     Expanded(
                       child: NoAnimDropdown<String>(
                         value: service.config.port,
-                        hint: '选择串口',
-                        decoration: const InputDecoration(
-                          labelText: '串口',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
+                        hint: AppStrings.serial.selectPortHint,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.serial.port,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 8,
                           ),
@@ -75,7 +76,7 @@ class _StatusDialogState extends State<StatusDialog> {
                       onPressed:
                           () => unawaited(service.refreshConnectionStatus()),
                       icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('刷新'),
+                      label: Text(AppStrings.common.refresh),
                     ),
                   ],
                 ),
@@ -83,7 +84,7 @@ class _StatusDialogState extends State<StatusDialog> {
                 // 波特率
                 ComboInput(
                   value: service.config.baudRate.toString(),
-                  hint: '波特率',
+                  hint: AppStrings.serial.baudRate,
                   items: const [
                     '9600',
                     '19200',
@@ -97,10 +98,10 @@ class _StatusDialogState extends State<StatusDialog> {
                     '1152000',
                   ],
                   enabled: !service.isConnected,
-                  decoration: const InputDecoration(
-                    labelText: '波特率',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
+                  decoration: InputDecoration(
+                    labelText: AppStrings.serial.baudRate,
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
@@ -121,11 +122,11 @@ class _StatusDialogState extends State<StatusDialog> {
                     Expanded(
                       child: NoAnimDropdown<int>(
                         value: service.config.dataBits,
-                        hint: '数据位',
-                        decoration: const InputDecoration(
-                          labelText: '数据位',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
+                        hint: AppStrings.serial.dataBits,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.serial.dataBits,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 8,
                           ),
@@ -151,11 +152,11 @@ class _StatusDialogState extends State<StatusDialog> {
                     Expanded(
                       child: NoAnimDropdown<int>(
                         value: service.config.stopBits,
-                        hint: '停止位',
-                        decoration: const InputDecoration(
-                          labelText: '停止位',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
+                        hint: AppStrings.serial.stopBits,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.serial.stopBits,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 8,
                           ),
@@ -181,11 +182,11 @@ class _StatusDialogState extends State<StatusDialog> {
                     Expanded(
                       child: NoAnimDropdown<int>(
                         value: service.config.parity,
-                        hint: '校验位',
-                        decoration: const InputDecoration(
-                          labelText: '校验位',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
+                        hint: AppStrings.serial.parity,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.serial.parity,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
                             horizontal: 12,
                             vertical: 8,
                           ),
@@ -193,15 +194,15 @@ class _StatusDialogState extends State<StatusDialog> {
                         items: [
                           DropdownMenuItem(
                             value: SerialPortParity.none,
-                            child: const Text('无校验'),
+                            child: Text(AppStrings.serial.noParity),
                           ),
                           DropdownMenuItem(
                             value: SerialPortParity.odd,
-                            child: const Text('奇校验'),
+                            child: Text(AppStrings.serial.oddParity),
                           ),
                           DropdownMenuItem(
                             value: SerialPortParity.even,
-                            child: const Text('偶校验'),
+                            child: Text(AppStrings.serial.evenParity),
                           ),
                         ],
                         onChanged:
@@ -249,7 +250,7 @@ class _StatusDialogState extends State<StatusDialog> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
+              child: Text(AppStrings.common.close),
             ),
             if (service.isConnecting)
               ElevatedButton.icon(
@@ -259,7 +260,7 @@ class _StatusDialogState extends State<StatusDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
-                label: const Text('连接中...'),
+                label: Text(AppStrings.status.connecting),
               )
             else if (service.isConnected)
               ElevatedButton.icon(
@@ -268,7 +269,7 @@ class _StatusDialogState extends State<StatusDialog> {
                   Navigator.of(context).pop();
                 },
                 icon: const Icon(Icons.stop),
-                label: const Text('断开'),
+                label: Text(AppStrings.serial.disconnect),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
@@ -281,7 +282,7 @@ class _StatusDialogState extends State<StatusDialog> {
                   Navigator.of(context).pop();
                 },
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('连接'),
+                label: Text(AppStrings.serial.connect),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
