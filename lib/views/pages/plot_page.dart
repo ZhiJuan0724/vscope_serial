@@ -657,9 +657,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           message: AppStrings.plot.verticalCursor,
           child: TextButton.icon(
             onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-            icon: Icon(
-              Icons.vertical_align_center,
-              size: 18,
+            icon: AppIcon(
+              AppIcons.plotCursor,
               color: vm.vCursorEnabled ? Colors.orange : null,
             ),
             label: Text(
@@ -757,9 +756,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           message: AppStrings.plot.followTooltip,
           child: TextButton.icon(
             onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
-            icon: Icon(
-              Icons.trending_flat,
-              size: 18,
+            icon: AppIcon(
+              AppIcons.plotFollow,
               color: vm.followEnabled ? Colors.blue : null,
             ),
             label: Text(

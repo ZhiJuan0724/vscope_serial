@@ -16,6 +16,23 @@ abstract final class AppIcons {
   static const plotFitY = 'ic_plot_fit_y';
   static const plotFitAll = 'ic_plot_fit_all';
   static const plotImport = 'ic_plot_import';
+  static const plotCursor = 'ic_plot_cursor_vertical';
+  static const plotFollow = 'ic_plot_follow_latest';
+
+  static const all = [
+    plotMeasureXx,
+    plotMeasureYy,
+    plotZoomXIn,
+    plotZoomXOut,
+    plotZoomYIn,
+    plotZoomYOut,
+    plotFitX,
+    plotFitY,
+    plotFitAll,
+    plotImport,
+    plotCursor,
+    plotFollow,
+  ];
 }
 
 class AppIcon extends StatelessWidget {
@@ -25,11 +42,21 @@ class AppIcon extends StatelessWidget {
 
   const AppIcon(this.name, {super.key, this.size = 24, this.color});
 
+  static String assetPath(String name) => 'assets/icons/$name.svg';
+
+  static Future<void> precacheAll() async {
+    await Future.wait(
+      AppIcons.all.map(
+        (name) => SvgAssetLoader(assetPath(name)).loadBytes(null),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final iconColor = color ?? IconTheme.of(context).color;
     return SvgPicture.asset(
-      'assets/icons/$name.svg',
+      assetPath(name),
       width: size,
       height: size,
       colorFilter:

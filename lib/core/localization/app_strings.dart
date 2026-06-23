@@ -90,10 +90,10 @@ final class _PlotStrings {
   String get verticalCursor => '垂直光标';
   String get addObservation => '添加观察';
   String get observation => '观察';
-  String get measureXx => 'X-X';
-  String get measureXxTooltip => 'X-X 测量';
-  String get measureYy => 'Y-Y';
-  String get measureYyTooltip => 'Y-Y 测量';
+  String get measureXx => 'X测量';
+  String get measureXxTooltip => 'Delta X 测量';
+  String get measureYy => 'Y测量';
+  String get measureYyTooltip => 'Delta Y 测量';
   String get stats => '统计';
   String get statsTooltip => '统计测量（Max/Min/Avg）';
   String get statsRange => '范围';

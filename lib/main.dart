@@ -17,6 +17,7 @@ import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/protocol_page.dart';
 import 'views/pages/raw_data_page.dart';
+import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
 
 /// 主窗口最小宽度：保证左侧控件 + 一个下拉菜单按钮能放下
@@ -33,6 +34,7 @@ void main() async {
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
   await AppSettings().init();
+  await AppIcon.precacheAll();
 
   // 初始化窗口管理
   await windowManager.ensureInitialized();
