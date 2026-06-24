@@ -1,5 +1,16 @@
 part of '../plot_page.dart';
 
+void _showMathChannelDialog(
+  BuildContext context,
+  PlotViewModel vm,
+  MathChannelConfig channel,
+) {
+  showDialog(
+    context: context,
+    builder: (context) => _MathChannelEditDialog(vm: vm, channel: channel),
+  );
+}
+
 class _ZobowChannelIdInputFormatter extends TextInputFormatter {
   const _ZobowChannelIdInputFormatter();
 
@@ -432,6 +443,353 @@ class _ChannelItemState extends State<_ChannelItem> {
         );
       },
     );
+  }
+}
+
+class _MathChannelItem extends StatelessWidget {
+  final PlotViewModel vm;
+  final MathChannelConfig channel;
+
+  const _MathChannelItem({super.key, required this.vm, required this.channel});
+
+  @override
+  Widget build(BuildContext context) {
+    final display = channel.display;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => _showMathChannelDialog(context, vm, channel),
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: display.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Tooltip(
+              message: channel.expression,
+              child: Text(
+                channel.name,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: display.visible ? null : Colors.grey,
+                  decoration:
+                      display.visible ? null : TextDecoration.lineThrough,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          Tooltip(
+            message:
+                display.offsetEnabled
+                    ? AppStrings.plot.closeOffset
+                    : AppStrings.plot.openOffset,
+            child: SizedBox(
+              width: 20,
+              height: 24,
+              child: Checkbox(
+                value: display.offsetEnabled,
+                onChanged: (value) {
+                  final next = display.copyWith(
+                    offsetEnabled: value ?? false,
+                    yOffset: value == true ? display.yOffset : 0,
+                    yScale: value == true ? display.yScale : 1,
+                  );
+                  vm.updateMathChannelDisplay(channel.index, next);
+                },
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Tooltip(
+            message:
+                display.visible
+                    ? AppStrings.plot.hideChannel
+                    : AppStrings.plot.showChannel,
+            child: SizedBox(
+              width: 20,
+              height: 24,
+              child: Checkbox(
+                value: display.visible,
+                onChanged:
+                    (value) => vm.updateMathChannelDisplay(
+                      channel.index,
+                      display.copyWith(visible: value ?? true),
+                    ),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: AppStrings.plot.editMathChannel,
+            child: InkWell(
+              onTap: () => _showMathChannelDialog(context, vm, channel),
+              child: const SizedBox(
+                width: 20,
+                height: 24,
+                child: Icon(Icons.functions, size: 14),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MathChannelEditDialog extends StatefulWidget {
+  final PlotViewModel vm;
+  final MathChannelConfig channel;
+
+  const _MathChannelEditDialog({required this.vm, required this.channel});
+
+  @override
+  State<_MathChannelEditDialog> createState() => _MathChannelEditDialogState();
+}
+
+class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
+  late final TextEditingController _expressionController;
+  late Color _selectedColor;
+  late bool _showLine;
+  late double _pointSize;
+  late double _lineWidth;
+  late bool _offsetEnabled;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final display = widget.channel.display;
+    _expressionController = TextEditingController(
+      text: widget.channel.expression,
+    );
+    _selectedColor = display.color;
+    _showLine = display.showLine;
+    _pointSize = display.pointSize;
+    _lineWidth = display.lineWidth;
+    _offsetEnabled = display.offsetEnabled;
+  }
+
+  @override
+  void dispose() {
+    _expressionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: Text('${AppStrings.plot.editMathChannel} ${widget.channel.name}'),
+      content: SizedBox(
+        width: 320,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppStrings.plot.mathExpression,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _expressionController,
+                decoration: secondaryDialogFieldDecoration(
+                  hintText: AppStrings.plot.mathExpressionHint,
+                ).copyWith(errorText: _errorText),
+                onChanged: (_) {
+                  if (_errorText != null) setState(() => _errorText = null);
+                },
+              ),
+              const SizedBox(height: 14),
+              Text(
+                AppStrings.plot.color,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              _buildColorPicker(),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Text(
+                    AppStrings.plot.showLine,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  Switch(
+                    value: _showLine,
+                    onChanged: (value) => setState(() => _showLine = value),
+                  ),
+                ],
+              ),
+              if (_showLine)
+                Row(
+                  children: [
+                    Text(
+                      AppStrings.plot.lineWidth,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Slider(
+                        value: _lineWidth,
+                        min: 0.5,
+                        max: 8,
+                        divisions: 15,
+                        label: _lineWidth.toStringAsFixed(1),
+                        onChanged:
+                            (value) => setState(() => _lineWidth = value),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 34,
+                      child: Text(
+                        _lineWidth.toStringAsFixed(1),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              Row(
+                children: [
+                  Text(
+                    AppStrings.plot.pointRadius,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Slider(
+                      value: _pointSize,
+                      min: 0.5,
+                      max: 12,
+                      divisions: 23,
+                      label: _pointSize.toStringAsFixed(1),
+                      onChanged: (value) => setState(() => _pointSize = value),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 34,
+                    child: Text(
+                      _pointSize.toStringAsFixed(1),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Text(
+                    AppStrings.plot.showOffset,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  Switch(
+                    value: _offsetEnabled,
+                    onChanged:
+                        (value) => setState(() => _offsetEnabled = value),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(AppStrings.common.cancel),
+        ),
+        TextButton(
+          onPressed: () {
+            widget.vm.resetMathChannel(widget.channel.index);
+            Navigator.of(context).pop();
+          },
+          child: Text(AppStrings.common.reset),
+        ),
+        TextButton(
+          onPressed: () {
+            widget.vm.disableMathChannel(widget.channel.index);
+            Navigator.of(context).pop();
+          },
+          child: Text(AppStrings.plot.closeMathChannel),
+        ),
+        ElevatedButton(
+          onPressed: _save,
+          child: Text(AppStrings.common.confirm),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorPicker() {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children:
+          ChannelConfig.defaultColors.take(15).map((color) {
+            final selected = color.toARGB32() == _selectedColor.toARGB32();
+            return InkWell(
+              onTap: () => setState(() => _selectedColor = color),
+              child: Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(
+                    color:
+                        selected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey.shade400,
+                    width: selected ? 3 : 1,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+    );
+  }
+
+  void _save() {
+    final expression = _expressionController.text.trim();
+    final error = widget.vm.validateMathExpression(expression);
+    if (error != null) {
+      setState(() => _errorText = error);
+      return;
+    }
+
+    final display = widget.channel.display.copyWith(
+      color: _selectedColor,
+      showLine: _showLine,
+      pointSize: _pointSize,
+      lineWidth: _lineWidth,
+      offsetEnabled: _offsetEnabled,
+      yOffset: _offsetEnabled ? widget.channel.display.yOffset : 0,
+      yScale: _offsetEnabled ? widget.channel.display.yScale : 1,
+    );
+    widget.vm.configureMathChannel(widget.channel.index, expression, display);
+    Navigator.of(context).pop();
   }
 }
 

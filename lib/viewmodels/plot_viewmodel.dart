@@ -8,9 +8,11 @@ import 'package:flutter/material.dart';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
+import '../core/utils/math_expression.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_source_config.dart';
+import '../data/models/math_channel_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
@@ -170,6 +172,13 @@ class PlotViewModel extends BaseViewModel {
   // ========== 通道配置 ==========
   /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
+  final List<MathChannelConfig> mathChannels =
+      MathChannelConfig.createDefaults();
+  final Map<int, MathExpression> _compiledMathExpressions = {};
+  List<PlotDataPoint>? _cachedDisplayDataPoints;
+  String? _cachedDisplayDataKey;
+  List<ChannelConfig>? _cachedDisplayChannels;
+  String? _cachedDisplayChannelKey;
   List<int>? _importedChannelAddresses;
   List<int>? get importedChannelAddresses =>
       _importedChannelAddresses == null
@@ -398,6 +407,7 @@ class PlotViewModel extends BaseViewModel {
     _followEnabled = settings.followEnabled;
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
     _yFitDisplayRatio = settings.yFitDisplayRatio.clamp(0.5, 0.95);
+    _replaceMathChannels(settings.mathChannels, save: false);
     _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency)
         .round()
         .clamp(1, 1000);
@@ -455,6 +465,10 @@ class PlotViewModel extends BaseViewModel {
     settings.followEnabled = _followEnabled;
     settings.followPositionRatio = _followPositionRatio;
     settings.yFitDisplayRatio = _yFitDisplayRatio;
+    settings.mathChannels =
+        mathChannels
+            .map((channel) => MathChannelConfig.fromJson(channel.toJson()))
+            .toList();
     settings.parserType = _parserType.name;
     settings.receiveCustomProtocolId = _parserConfig.customProtocolId ?? '';
     settings.sendProtocolType = _sendProtocolType.name;
@@ -492,6 +506,53 @@ class PlotViewModel extends BaseViewModel {
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
   double get yFitDisplayRatio => _yFitDisplayRatio;
+  List<MathChannelConfig> get enabledMathChannels =>
+      mathChannels.where((channel) => channel.enabled).toList(growable: false);
+  int get rawDisplayChannelCount {
+    if (_parserType == ParserType.zobow) return _parserConfig.zobowChannelCount;
+    if (_parserType == ParserType.fixedFrame) return _parserConfig.channelCount;
+    if (effectiveSendProtocolType == SendProtocolType.rProtocol) {
+      return math.max(_activeChannelCount, rAddressDisplayCount);
+    }
+    return _activeChannelCount > 0 ? _activeChannelCount : channels.length;
+  }
+
+  List<ChannelConfig> get displayChannels {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    final key = [
+      for (final channel in channels.take(rawCount))
+        '${channel.visible}:${channel.alias}:${channel.color.toARGB32()}:${channel.showLine}:${channel.pointSize}:${channel.lineWidth}:${channel.yOffset}:${channel.offsetEnabled}:${channel.yScale}',
+      for (final channel in mathChannels)
+        '${channel.enabled}:${channel.expression}:${channel.display.visible}:${channel.display.color.toARGB32()}:${channel.display.showLine}:${channel.display.pointSize}:${channel.display.lineWidth}:${channel.display.yOffset}:${channel.display.offsetEnabled}:${channel.display.yScale}',
+    ].join('|');
+    if (_cachedDisplayChannels != null && _cachedDisplayChannelKey == key) {
+      return _cachedDisplayChannels!;
+    }
+    _cachedDisplayChannelKey = key;
+    _cachedDisplayChannels = [
+      ...channels.take(rawCount),
+      for (final channel in mathChannels)
+        if (channel.enabled) channel.display,
+    ];
+    return _cachedDisplayChannels!;
+  }
+
+  List<PlotDataPoint> get displayDataPoints {
+    if (!mathChannels.any((channel) => channel.enabled)) return _dataPoints;
+    final rawCount = rawDisplayChannelCount;
+    final key =
+        '$_dataRevision|${_dataPoints.length}|$rawCount|${mathChannels.map((channel) => '${channel.enabled}:${channel.expression}').join('|')}';
+    if (_cachedDisplayDataPoints != null && _cachedDisplayDataKey == key) {
+      return _cachedDisplayDataPoints!;
+    }
+    _cachedDisplayDataKey = key;
+    _cachedDisplayDataPoints = _dataPoints
+        .map(_buildDisplayPoint)
+        .toList(growable: false);
+    return _cachedDisplayDataPoints!;
+  }
+
+  int get displayActiveChannelCount => displayChannels.length;
   bool get vCursorEnabled => _vCursorEnabled;
   bool get xMeasurementEnabled => _xMeasurementEnabled;
   bool get yMeasurementEnabled => _yMeasurementEnabled;
@@ -567,6 +628,69 @@ class PlotViewModel extends BaseViewModel {
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
 
   int get _visibleEndIndex => _visibleStartIndex + _dataPoints.length;
+
+  void _invalidateDisplayCaches() {
+    _cachedDisplayDataPoints = null;
+    _cachedDisplayDataKey = null;
+    _cachedDisplayChannels = null;
+    _cachedDisplayChannelKey = null;
+    _cachedStatsKey = null;
+    _cachedStatsText = null;
+  }
+
+  void _replaceMathChannels(
+    List<MathChannelConfig> nextChannels, {
+    bool save = true,
+  }) {
+    for (int i = 0; i < mathChannels.length; i++) {
+      mathChannels[i] =
+          i < nextChannels.length
+              ? nextChannels[i]
+              : MathChannelConfig(index: i);
+      mathChannels[i].display.alias = mathChannels[i].name;
+    }
+    _compiledMathExpressions.clear();
+    for (final channel in mathChannels) {
+      _compileMathChannel(channel);
+    }
+    _invalidateDisplayCaches();
+    if (save) _saveSettings();
+  }
+
+  void _compileMathChannel(MathChannelConfig channel) {
+    _compiledMathExpressions.remove(channel.index);
+    if (!channel.enabled || channel.expression.trim().isEmpty) return;
+    try {
+      _compiledMathExpressions[channel.index] = MathExpression.parse(
+        channel.expression,
+      );
+    } catch (_) {
+      // 表达式语法错误时保持通道启用，但运行时显示为无效点。
+    }
+  }
+
+  double _evaluateMathChannel(MathChannelConfig channel, List<double> values) {
+    final expression = _compiledMathExpressions[channel.index];
+    if (expression == null) return double.nan;
+    return expression.evaluate(values);
+  }
+
+  PlotDataPoint _buildDisplayPoint(PlotDataPoint point) {
+    final values = List<double>.from(point.values);
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    while (values.length < rawCount) {
+      values.add(double.nan);
+    }
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      values.add(_evaluateMathChannel(channel, point.values));
+    }
+    return PlotDataPoint(
+      index: point.index,
+      timestamp: point.timestamp,
+      values: values,
+    );
+  }
 
   /// 状态栏提示文本，根据当前状态给用户操作建议
   ///
@@ -1943,18 +2067,26 @@ class PlotViewModel extends BaseViewModel {
     }
     if (_dataPoints.isEmpty) return;
     final visiblePoints =
-        _dataPoints.where((p) {
+        displayDataPoints.where((p) {
           return p.index >= viewport.xMin && p.index <= viewport.xMax;
         }).toList();
     if (visiblePoints.isEmpty) return;
 
     double minY = double.infinity;
     double maxY = double.negativeInfinity;
+    final currentChannels = displayChannels;
     for (final point in visiblePoints) {
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
-        if (!channels[i].visible) continue;
-        if (channels[i].offsetEnabled) continue;
-        final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
+      for (
+        int i = 0;
+        i < point.values.length && i < currentChannels.length;
+        i++
+      ) {
+        if (!currentChannels[i].visible) continue;
+        if (currentChannels[i].offsetEnabled) continue;
+        if (!point.values[i].isFinite) continue;
+        final v =
+            point.values[i] * currentChannels[i].yScale +
+            currentChannels[i].yOffset;
         if (v < minY) minY = v;
         if (v > maxY) maxY = v;
       }
@@ -2036,11 +2168,20 @@ class PlotViewModel extends BaseViewModel {
     // Y范围（只计算可见通道）
     double minY = double.infinity;
     double maxY = double.negativeInfinity;
-    for (final point in _dataPoints) {
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
-        if (!channels[i].visible) continue;
-        if (channels[i].offsetEnabled) continue;
-        final v = point.values[i] * channels[i].yScale + channels[i].yOffset;
+    final currentData = displayDataPoints;
+    final currentChannels = displayChannels;
+    for (final point in currentData) {
+      for (
+        int i = 0;
+        i < point.values.length && i < currentChannels.length;
+        i++
+      ) {
+        if (!currentChannels[i].visible) continue;
+        if (currentChannels[i].offsetEnabled) continue;
+        if (!point.values[i].isFinite) continue;
+        final v =
+            point.values[i] * currentChannels[i].yScale +
+            currentChannels[i].yOffset;
         if (v < minY) minY = v;
         if (v > maxY) maxY = v;
       }
@@ -2064,24 +2205,27 @@ class PlotViewModel extends BaseViewModel {
     } else {
       viewport = viewport.copyWith(xMin: minX, xMax: maxX);
     }
-    _fitOffsetChannelsY(_dataPoints);
+    _fitOffsetChannelsY(currentData);
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
   bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
     final valuesByChannel = <int, (double, double)>{};
-    final activeLimit =
-        _activeChannelCount > 0 ? _activeChannelCount : channels.length;
+    final currentChannels = displayChannels;
+    final activeLimit = displayActiveChannelCount;
     for (final point in points) {
       for (
         int i = 0;
-        i < point.values.length && i < channels.length && i < activeLimit;
+        i < point.values.length &&
+            i < currentChannels.length &&
+            i < activeLimit;
         i++
       ) {
-        final channel = channels[i];
+        final channel = currentChannels[i];
         if (!channel.visible || !channel.offsetEnabled) continue;
         final value = point.values[i];
+        if (!value.isFinite) continue;
         final current = valuesByChannel[i];
         if (current == null) {
           valuesByChannel[i] = (value, value);
@@ -2105,7 +2249,7 @@ class PlotViewModel extends BaseViewModel {
       final minY = entry.value.$1;
       final maxY = entry.value.$2;
 
-      final channel = channels[entry.key];
+      final channel = currentChannels[entry.key];
       if (minY == maxY) {
         channel.yScale = 1.0;
         channel.yOffset = (targetMin + targetMax) / 2 - minY;
@@ -2180,7 +2324,81 @@ class PlotViewModel extends BaseViewModel {
     for (final ch in channels) {
       ch.visible = visible;
     }
+    for (final channel in mathChannels) {
+      if (channel.enabled) channel.display.visible = visible;
+    }
+    _invalidateDisplayCaches();
     Future.microtask(() => notifyListeners());
+  }
+
+  MathChannelConfig? firstAvailableMathChannel() {
+    for (final channel in mathChannels) {
+      if (!channel.enabled) return channel;
+    }
+    return null;
+  }
+
+  String? validateMathExpression(String expression) {
+    final trimmed = expression.trim();
+    if (trimmed.isEmpty) return '表达式不能为空';
+    try {
+      MathExpression.parse(trimmed);
+      return null;
+    } catch (e) {
+      return e is FormatException ? e.message : '表达式格式错误';
+    }
+  }
+
+  bool enableMathChannel(int index, String expression) {
+    if (index < 0 || index >= mathChannels.length) return false;
+    return configureMathChannel(index, expression, mathChannels[index].display);
+  }
+
+  bool configureMathChannel(
+    int index,
+    String expression,
+    ChannelConfig display,
+  ) {
+    if (index < 0 || index >= mathChannels.length) return false;
+    final error = validateMathExpression(expression);
+    if (error != null) {
+      showStatusMessage(error);
+      return false;
+    }
+    final channel = mathChannels[index];
+    channel.enabled = true;
+    channel.expression = expression.trim();
+    channel.display = display.copyWith(alias: channel.name);
+    channel.display.visible = true;
+    _compileMathChannel(channel);
+    _invalidateDisplayCaches();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+    return true;
+  }
+
+  void updateMathChannelDisplay(int index, ChannelConfig display) {
+    if (index < 0 || index >= mathChannels.length) return;
+    mathChannels[index].display = display.copyWith(
+      alias: mathChannels[index].name,
+    );
+    _invalidateDisplayCaches();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void disableMathChannel(int index) {
+    if (index < 0 || index >= mathChannels.length) return;
+    final old = mathChannels[index];
+    mathChannels[index] = MathChannelConfig(index: old.index);
+    _compiledMathExpressions.remove(index);
+    _invalidateDisplayCaches();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void resetMathChannel(int index) {
+    disableMathChannel(index);
   }
 
   /// 设置通道别名
@@ -2192,6 +2410,14 @@ class PlotViewModel extends BaseViewModel {
 
   /// 设置通道 Y 轴偏移
   void setChannelYOffset(int index, double offset) {
+    if (index >= 16 && index < 16 + mathChannels.length) {
+      final mathChannel = mathChannels[index - 16];
+      mathChannel.display.yOffset = offset;
+      _invalidateDisplayCaches();
+      _saveSettings();
+      Future.microtask(() => notifyListeners());
+      return;
+    }
     if (index < 0 || index >= channels.length) return;
     channels[index].yOffset = offset;
     Future.microtask(() => notifyListeners());
@@ -2218,6 +2444,14 @@ class PlotViewModel extends BaseViewModel {
 
   /// 缩放通道 Y 轴（滚轮缩放，按比例调整）
   void zoomChannelYScale(int index, double scaleDelta) {
+    if (index >= 16 && index < 16 + mathChannels.length) {
+      final display = mathChannels[index - 16].display;
+      display.yScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
+      _invalidateDisplayCaches();
+      _saveSettings();
+      Future.microtask(() => notifyListeners());
+      return;
+    }
     if (index < 0 || index >= channels.length) return;
     final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
     channels[index].yScale = newScale;
@@ -2555,7 +2789,8 @@ class PlotViewModel extends BaseViewModel {
   }
 
   PlotDataPoint? _nearestVisiblePointByX(double x) {
-    if (_dataPoints.isEmpty) return null;
+    final points = displayDataPoints;
+    if (points.isEmpty) return null;
     final range = _dataPointRangeByX(viewport.xMin, viewport.xMax);
     if (range == null) return null;
 
@@ -2563,7 +2798,7 @@ class PlotViewModel extends BaseViewModel {
     int right = range.end - 1;
     while (left <= right) {
       final mid = (left + right) ~/ 2;
-      final midX = _dataPoints[mid].index.toDouble();
+      final midX = points[mid].index.toDouble();
       if (midX < x) {
         left = mid + 1;
       } else if (midX > x) {
@@ -2579,11 +2814,11 @@ class PlotViewModel extends BaseViewModel {
     ];
     if (candidates.isEmpty) return null;
     candidates.sort((a, b) {
-      final da = (_dataPoints[a].index.toDouble() - x).abs();
-      final db = (_dataPoints[b].index.toDouble() - x).abs();
+      final da = (points[a].index.toDouble() - x).abs();
+      final db = (points[b].index.toDouble() - x).abs();
       return da.compareTo(db);
     });
-    return _dataPoints[candidates.first];
+    return points[candidates.first];
   }
 
   double _snapXToNearestVisiblePoint(double x) {
@@ -2599,9 +2834,15 @@ class PlotViewModel extends BaseViewModel {
     final point = _nearestVisiblePointByX(x);
     if (point == null) return const [];
     final highlights = <SnapHighlightPoint>[];
-    for (int i = 0; i < point.values.length && i < channels.length; i++) {
-      final channel = channels[i];
+    final currentChannels = displayChannels;
+    for (
+      int i = 0;
+      i < point.values.length && i < currentChannels.length;
+      i++
+    ) {
+      final channel = currentChannels[i];
       if (!channel.visible) continue;
+      if (!point.values[i].isFinite) continue;
       highlights.add(
         SnapHighlightPoint(
           x: point.index.toDouble(),
@@ -2614,7 +2855,8 @@ class PlotViewModel extends BaseViewModel {
   }
 
   List<SnapHighlightPoint> _snapHighlightForY(double y, Color color) {
-    if (_dataPoints.isEmpty) return const [];
+    final points = displayDataPoints;
+    if (points.isEmpty) return const [];
     const maxScanPoints = 4096;
     final range = _dataPointRangeByX(viewport.xMin, viewport.xMax);
     if (range == null) return const [];
@@ -2624,9 +2866,15 @@ class PlotViewModel extends BaseViewModel {
     SnapHighlightPoint? best;
     var bestDistance = double.infinity;
     void visit(PlotDataPoint point) {
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
-        final channel = channels[i];
+      final currentChannels = displayChannels;
+      for (
+        int i = 0;
+        i < point.values.length && i < currentChannels.length;
+        i++
+      ) {
+        final channel = currentChannels[i];
         if (!channel.visible) continue;
+        if (!point.values[i].isFinite) continue;
         final pointY = point.values[i] * channel.yScale + channel.yOffset;
         final distance = (pointY - y).abs();
         if (distance < bestDistance) {
@@ -2641,9 +2889,9 @@ class PlotViewModel extends BaseViewModel {
     }
 
     for (int i = range.start; i < range.end; i += step) {
-      visit(_dataPoints[i]);
+      visit(points[i]);
     }
-    if (step > 1) visit(_dataPoints[range.end - 1]);
+    if (step > 1) visit(points[range.end - 1]);
     return best == null ? const [] : [best!];
   }
 
@@ -2652,9 +2900,11 @@ class PlotViewModel extends BaseViewModel {
     for (final observation in _observations) {
       final values = observation.channelValues;
       if (!observation.hasData || values == null) continue;
-      for (int i = 0; i < values.length && i < channels.length; i++) {
-        final channel = channels[i];
+      final currentChannels = displayChannels;
+      for (int i = 0; i < values.length && i < currentChannels.length; i++) {
+        final channel = currentChannels[i];
         if (!channel.visible) continue;
+        if (!values[i].isFinite) continue;
         highlights.add(
           SnapHighlightPoint(
             x: observation.x,
@@ -2759,7 +3009,9 @@ class PlotViewModel extends BaseViewModel {
 
   /// 统计测量信息文本，显示各通道最大值、最小值、平均值
   String? get statsText {
-    if (!_statsEnabled || _dataPoints.isEmpty) return null;
+    final points = displayDataPoints;
+    final currentChannels = displayChannels;
+    if (!_statsEnabled || points.isEmpty) return null;
 
     final xMin =
         _statsRangeEnabled && _statsX1 != null && _statsX2 != null
@@ -2770,7 +3022,7 @@ class PlotViewModel extends BaseViewModel {
             ? (_statsX1! > _statsX2! ? _statsX1! : _statsX2!)
             : viewport.xMax;
     final visibleChannelKey =
-        channels.map((channel) => channel.visible ? '1' : '0').join();
+        currentChannels.map((channel) => channel.visible ? '1' : '0').join();
     final cacheKey =
         '$_dataRevision|$xMin|$xMax|$_statsRangeEnabled|$visibleChannelKey|$_activeChannelCount';
     if (_cachedStatsKey == cacheKey) return _cachedStatsText;
@@ -2795,8 +3047,8 @@ class PlotViewModel extends BaseViewModel {
             : 1;
     final statPrefix = approximate ? '约' : '';
 
-    for (int i = 0; i < channels.length; i++) {
-      if (!channels[i].visible) continue;
+    for (int i = 0; i < currentChannels.length; i++) {
+      if (!currentChannels[i].visible) continue;
 
       double? maxVal, minVal, sum;
       int count = 0;
@@ -2806,10 +3058,11 @@ class PlotViewModel extends BaseViewModel {
         pointIndex < range.end;
         pointIndex += sampleStep
       ) {
-        final point = _dataPoints[pointIndex];
+        final point = points[pointIndex];
         if (i >= point.channelCount) continue;
 
         final val = point.values[i];
+        if (!val.isFinite) continue;
         maxVal = maxVal == null || val > maxVal ? val : maxVal;
         minVal = minVal == null || val < minVal ? val : minVal;
         sum = (sum ?? 0) + val;
@@ -2820,7 +3073,11 @@ class PlotViewModel extends BaseViewModel {
       if (hasVisibleChannel) buffer.writeln('---');
       hasVisibleChannel = true;
 
-      buffer.writeln('Ch$i:');
+      final name =
+          currentChannels[i].alias.isNotEmpty
+              ? currentChannels[i].alias
+              : 'Ch$i';
+      buffer.writeln('$name:');
       buffer.writeln('  Max: $statPrefix${_formatDisplayNumber(maxVal!)}');
       buffer.writeln('  Min: $statPrefix${_formatDisplayNumber(minVal!)}');
       buffer.writeln('  Avg: $statPrefix${_formatDisplayNumber(sum! / count)}');
@@ -2836,8 +3093,8 @@ class PlotViewModel extends BaseViewModel {
     buffer.writeln('---');
     buffer.writeln('N: $commonCount');
     if (approximate) buffer.writeln('Mode: 约 $exactStatsPointLimit samples');
-    final rangeStart = _dataPoints[range.start].index;
-    final rangeEnd = _dataPoints[range.end - 1].index;
+    final rangeStart = points[range.start].index;
+    final rangeEnd = points[range.end - 1].index;
     buffer.writeln('Range: $rangeStart ~ $rangeEnd');
 
     _cachedStatsKey = cacheKey;

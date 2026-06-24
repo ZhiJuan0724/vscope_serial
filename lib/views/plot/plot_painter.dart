@@ -602,19 +602,34 @@ class PlotPainter extends CustomPainter {
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
+    var hasInvalid = false;
     for (int i = visibleRange.start; i < visibleRange.end; i++) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) {
+        hasInvalid = true;
+        continue;
+      }
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
+    }
+
+    if (hasInvalid) {
+      _drawInvalidAwareRawPath(
+        canvas,
+        size,
         channelIndex,
         channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+        visibleRange,
+        paint,
+      );
+      return;
     }
 
     if (rawIndex >= 4) {
@@ -656,13 +671,12 @@ class PlotPainter extends CustomPainter {
       for (int i = start; i < end && i < visibleRange.end; i++) {
         final point = data[i];
         if (channelIndex >= point.values.length) continue;
+        final value = _displayValue(point, channelIndex, channel);
+        if (!value.isFinite) continue;
         final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-        final y = _screenY(
-          point,
-          channelIndex,
-          channel,
-          size.height,
-        ).clamp(marginTop, marginBottom);
+        final y = viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom);
 
         final bucketPoint = _BucketPoint(point.index, x, y);
         firstPoint ??= bucketPoint;
@@ -716,16 +730,15 @@ class PlotPainter extends CustomPainter {
     for (int i = visibleRange.start; i < visibleRange.end; i += step) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) continue;
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
-        channelIndex,
-        channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
     }
 
     if (rawIndex > 0) {
@@ -737,16 +750,90 @@ class PlotPainter extends CustomPainter {
     }
   }
 
-  double _screenY(
+  double _displayValue(
     PlotDataPoint point,
     int channelIndex,
     ChannelConfig channel,
-    double height,
   ) {
-    return viewport.dataToScreenY(
-      point.values[channelIndex] * channel.yScale + channel.yOffset,
-      height,
-    );
+    final value = point.values[channelIndex];
+    if (!value.isFinite) return double.nan;
+    final displayValue = value * channel.yScale + channel.yOffset;
+    return displayValue.isFinite ? displayValue : double.nan;
+  }
+
+  void _drawInvalidAwareRawPath(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint normalPaint,
+  ) {
+    final dataCount = visibleRange.end - visibleRange.start;
+    final plotW = viewport.plotWidth(size.width);
+    if (dataCount > plotW * 2) return;
+
+    final zeroY =
+        viewport
+            .dataToScreenY(0, size.height)
+            .clamp(viewport.marginTop, size.height - viewport.marginBottom)
+            .toDouble();
+    final dashPaint =
+        Paint()
+          ..color = channel.color.withValues(alpha: 0.65)
+          ..strokeWidth = math.max(1.0, channel.lineWidth)
+          ..style = PaintingStyle.stroke;
+    final invalidPoints = <Offset>[];
+
+    Offset? previous;
+    var previousInvalid = false;
+    for (int i = visibleRange.start; i < visibleRange.end; i++) {
+      final point = data[i];
+      if (channelIndex >= point.values.length) continue;
+      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
+      final value = _displayValue(point, channelIndex, channel);
+      final invalid = !value.isFinite;
+      final y =
+          invalid
+              ? zeroY
+              : viewport
+                  .dataToScreenY(value, size.height)
+                  .clamp(
+                    viewport.marginTop,
+                    size.height - viewport.marginBottom,
+                  )
+                  .toDouble();
+      final current = Offset(x, y);
+      if (previous != null) {
+        if (previousInvalid || invalid) {
+          _drawDashedLine(canvas, previous, current, dashPaint);
+        } else {
+          canvas.drawLine(previous, current, normalPaint);
+        }
+      }
+      if (invalid) invalidPoints.add(current);
+      previous = current;
+      previousInvalid = invalid;
+    }
+
+    _drawInvalidHollowPoints(canvas, invalidPoints, channel);
+  }
+
+  void _drawInvalidHollowPoints(
+    Canvas canvas,
+    List<Offset> invalidPoints,
+    ChannelConfig channel,
+  ) {
+    if (invalidPoints.isEmpty) return;
+    final pointPaint =
+        Paint()
+          ..color = channel.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(1.0, channel.lineWidth);
+    final radius = math.max(2.0, channel.pointSize);
+    for (final point in invalidPoints) {
+      canvas.drawCircle(point, radius, pointPaint);
+    }
   }
 
   /// 绘制坐标轴、刻度线和刻度值

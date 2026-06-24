@@ -143,6 +143,23 @@ void main() {
       expect(vm.pointCount, 0);
     });
 
+    test('数学通道追加到显示数据且无效求值为NaN', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([8, 0], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 / CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      expect(
+        vm.displayChannels.map((channel) => channel.alias),
+        contains('Math1'),
+      );
+      expect(vm.displayDataPoints[0].values.last, 5);
+      expect(vm.displayDataPoints[1].values.last.isNaN, true);
+    });
+
     test('丢弃包数会跳过开始后的前N个有效数据包', () {
       vm.setDiscardInitialPacketCount(2);
       vm.setPlottingForTest(true);

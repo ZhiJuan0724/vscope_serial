@@ -191,6 +191,13 @@ final class _PlotStrings {
   String get hideChannel => '点击隐藏通道';
   String get showChannel => '点击显示通道';
   String get editChannel => '编辑通道';
+  String get addMathChannel => '添加数学通道';
+  String get editMathChannel => '编辑数学通道';
+  String get closeMathChannel => '关闭数学通道';
+  String get resetMathChannel => '重置数学通道';
+  String get mathExpression => '表达式';
+  String get mathExpressionHint => '例如: CH0-CH1';
+  String get noAvailableMathChannel => '没有可用的数学通道';
   String get selectAddress => '选择地址';
   String editChannelTitle(int index) => '编辑 Ch$index';
   String get color => '颜色';

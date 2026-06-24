@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../data/models/math_channel_config.dart';
 import '../data/models/serial_config.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
@@ -84,6 +85,9 @@ class AppSettings {
 
   /// Y 轴自适应数据显示占比，范围 0.50~0.95。
   double yFitDisplayRatio = 0.9;
+
+  /// 数学通道配置，固定 Math1~Math4。
+  List<MathChannelConfig> mathChannels = MathChannelConfig.createDefaults();
 
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
@@ -213,6 +217,7 @@ class AppSettings {
     followEnabled = false;
     followPositionRatio = 0.9;
     yFitDisplayRatio = 0.9;
+    mathChannels = MathChannelConfig.createDefaults();
     parserType = 'fireWater';
     sendProtocolType = 'none';
     receiveCustomProtocolId = '';
@@ -291,6 +296,7 @@ class AppSettings {
           );
       yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.9)
           .clamp(0.5, 0.95);
+      mathChannels = MathChannelConfig.normalizeList(json['mathChannels']);
       parserType = json['parserType'] as String? ?? 'fireWater';
       sendProtocolType = json['sendProtocolType'] as String? ?? 'none';
       receiveCustomProtocolId =
@@ -374,6 +380,7 @@ class AppSettings {
       'followEnabled': followEnabled,
       'followPositionRatio': followPositionRatio,
       'yFitDisplayRatio': yFitDisplayRatio,
+      'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
       'parserType': parserType,
       'sendProtocolType': sendProtocolType,
       'receiveCustomProtocolId': receiveCustomProtocolId,

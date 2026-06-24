@@ -190,6 +190,13 @@ extension PlotViewModelImportExport on PlotViewModel {
       return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
     }, growable: false);
     final metadata = <String, dynamic>{'channelNames': names};
+    final enabledMathChannels = mathChannels
+        .where((channel) => channel.enabled)
+        .map((channel) => channel.toJson())
+        .toList(growable: false);
+    if (enabledMathChannels.isNotEmpty) {
+      metadata['mathChannels'] = enabledMathChannels;
+    }
     if (_importedChannelAddresses != null) {
       metadata['channelAddresses'] = _importedChannelAddresses!
           .take(channelCount)
@@ -781,6 +788,13 @@ extension PlotViewModelImportExport on PlotViewModel {
       _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
       AppSettings().parserType = ParserType.zobow.name;
       _saveSettings();
+    }
+
+    final importedMathChannels = metadata['mathChannels'];
+    if (importedMathChannels is List) {
+      _replaceMathChannels(
+        MathChannelConfig.normalizeList(importedMathChannels),
+      );
     }
   }
 

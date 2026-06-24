@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import '../../core/utils/crc.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
+import '../../data/models/math_channel_config.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../services/app_settings.dart';
@@ -1009,16 +1010,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 通道面板内容（展开状态）
   Widget _buildChannelPanelContent(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
-    final activeCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    final displayCount =
-        vm.parserType == ParserType.zobow
-            ? vm.parserConfig.zobowChannelCount
-            : vm.parserType == ParserType.fixedFrame
-            ? vm.parserConfig.channelCount
-            : vm.effectiveSendProtocolType == SendProtocolType.rProtocol
-            ? math.max(vm.activeChannelCount, vm.rAddressDisplayCount)
-            : activeCount;
+    final rawDisplayCount = vm.rawDisplayChannelCount;
+    final enabledMathChannels = vm.enabledMathChannels;
+    final displayCount = rawDisplayCount + enabledMathChannels.length;
 
     return Container(
       decoration: BoxDecoration(
@@ -1109,11 +1103,28 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             child: ListView.builder(
               itemCount: displayCount,
               itemBuilder: (context, index) {
+                if (index >= rawDisplayCount) {
+                  final mathChannel =
+                      enabledMathChannels[index - rawDisplayCount];
+                  return _MathChannelItem(
+                    key: ValueKey('math_${mathChannel.index}'),
+                    vm: vm,
+                    channel: mathChannel,
+                  );
+                }
                 final ch = vm.channels[index];
-                return _ChannelItem(
-                  key: ValueKey('ch_${ch.index}'),
-                  vm: vm,
-                  ch: ch,
+                return GestureDetector(
+                  onSecondaryTapDown:
+                      (details) => _showChannelContextMenu(
+                        context,
+                        vm,
+                        details.globalPosition,
+                      ),
+                  child: _ChannelItem(
+                    key: ValueKey('ch_${ch.index}'),
+                    vm: vm,
+                    ch: ch,
+                  ),
                 );
               },
             ),
@@ -1121,6 +1132,35 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ],
       ),
     );
+  }
+
+  Future<void> _showChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position,
+  ) async {
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'add_math',
+          child: Text(AppStrings.plot.addMathChannel),
+        ),
+      ],
+    );
+    if (selected != 'add_math' || !context.mounted) return;
+    final channel = vm.firstAvailableMathChannel();
+    if (channel == null) {
+      vm.showStatusMessage(AppStrings.plot.noAvailableMathChannel);
+      return;
+    }
+    _showMathChannelDialog(context, vm, channel);
   }
 
   // ========== 绘图区域 ==========
@@ -1152,15 +1192,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
 
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
-    final activeChannelCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
+    final displayChannels = vm.displayChannels;
+    final displayDataPoints = vm.displayDataPoints;
+    final activeChannelCount = vm.displayActiveChannelCount;
     return LayoutBuilder(
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
         final offsetAxisColumnWidths =
             PlotPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
@@ -1178,9 +1219,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               boxZoomEnabled: vm.boxZoomEnabled,
               refreshFps: vm.refreshFps,
               plotFontSizeDelta: vm.plotFontSizeDelta,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
-              data: vm.dataPoints,
+              data: displayDataPoints,
               observations: vm.observations,
               onObservationDrag: (index, x) => vm.updateObservation(index, x),
               onObservationDelete: (index) => vm.removeObservation(index),
@@ -1231,10 +1272,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: CustomPaint(
                 painter: PlotPainter(
                   viewport: renderViewport,
-                  data: vm.dataPoints,
+                  data: displayDataPoints,
                   dataRevision: vm.dataRevision,
                   lodIndex: vm.lodIndex,
-                  channels: vm.channels,
+                  channels: displayChannels,
                   activeChannelCount: activeChannelCount,
                   showGrid: vm.showGrid,
                   gridDensity: gridDensity,
