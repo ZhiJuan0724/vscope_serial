@@ -110,7 +110,11 @@ class UpdateDownloadException implements Exception {
 }
 
 typedef ReleaseFetcher =
-    Future<ReleaseInfo> Function(String tagName, String source);
+    Future<ReleaseInfo> Function(
+      String tagName,
+      String source,
+      UpdateChannel channel,
+    );
 typedef BytesFetcher = Future<List<int>> Function(Uri uri);
 typedef UpdateFileDownloader =
     Future<void> Function(
@@ -146,6 +150,7 @@ class UpdateService {
   Future<PreparedUpdate> downloadAndPrepare(
     ReleaseInfo checkedRelease, {
     required UpdateChannel channel,
+    bool allowSourceFallback = true,
     required void Function(UpdateDownloadProgress progress) onProgress,
   }) async {
     if (!Platform.isWindows) {
@@ -159,17 +164,24 @@ class UpdateService {
     final payloadDir = Directory('${updateDir.path}/payload');
 
     Object? lastError;
-    final sources = [
-      checkedRelease.source,
-      for (final source in const ['GitHub', 'Gitee'])
-        if (source != checkedRelease.source) source,
-    ];
+    final sources =
+        allowSourceFallback
+            ? [
+              checkedRelease.source,
+              for (final source in const ['GitHub', 'Gitee'])
+                if (source != checkedRelease.source) source,
+            ]
+            : [checkedRelease.source];
     for (final source in sources) {
       try {
         final release =
             checkedRelease.source == source
                 ? checkedRelease
-                : await _releaseFetcher(checkedRelease.tagName, source);
+                : await _releaseFetcher(
+                  checkedRelease.tagName,
+                  source,
+                  channel,
+                );
         final manifestName = 'update-manifest-${checkedRelease.tagName}.json';
         final packageName =
             'vscope_serial-windows-${checkedRelease.tagName}.zip';
@@ -681,10 +693,15 @@ class UpdateService {
   static Future<ReleaseInfo> _defaultFetchRelease(
     String tagName,
     String source,
+    UpdateChannel channel,
   ) async {
     final base = source == 'GitHub' ? _githubReleaseByTag : _giteeReleaseByTag;
     final json = await _defaultFetchJson(Uri.parse('$base$tagName'));
-    return UpdateChecker.parseReleaseJson(json, source: source);
+    return UpdateChecker.parseReleaseJson(
+      json,
+      source: source,
+      channel: channel,
+    );
   }
 
   static Future<List<int>> _defaultFetchBytes(Uri uri) async {

@@ -358,10 +358,13 @@ final class _AppInfoStrings {
   String get unknown => '未知';
   String get releaseNotes => '版本说明';
   String get autoCheckUpdates => '启动时自动检查更新';
-  String get autoCheckUpdatesHelp => '默认关闭；开启后每次打开应用会访问 GitHub，失败后尝试 Gitee';
+  String get autoCheckUpdatesHelp => '默认关闭；开启后每次打开应用会按更新来源设置检查更新';
   String get updateChannelTitle => '更新通道';
   String get betaChannelHelp => '只检查预发布版本';
   String get stableChannelHelp => '只检查稳定版本';
+  String get updateSourceTitle => '更新来源';
+  String get updateSourceAutoHelp => '自动模式会优先访问 GitHub，失败后尝试 Gitee';
+  String updateSourceLockedHelp(String source) => '只访问 $source，不自动切换到其他来源';
   String get checking => '检查中...';
   String get manualCheckUpdates => '手动检查更新';
   String openReleasePage(String source) => '打开 $source 发布页';

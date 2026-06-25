@@ -179,5 +179,25 @@ void main() {
       expect(requestedUris, hasLength(1));
       expect(requestedUris.single.host, 'gitee.com');
     });
+
+    test('parses update source preference', () {
+      expect(
+        UpdateSourcePreference.fromString('github'),
+        UpdateSourcePreference.github,
+      );
+      expect(
+        UpdateSourcePreference.fromString('gitee'),
+        UpdateSourcePreference.gitee,
+      );
+      expect(
+        UpdateSourcePreference.fromString('unexpected'),
+        UpdateSourcePreference.auto,
+      );
+      expect(
+        UpdateSourcePreference.github.releaseSource,
+        UpdateReleaseSource.github,
+      );
+      expect(UpdateSourcePreference.auto.releaseSource, isNull);
+    });
   });
 }

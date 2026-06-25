@@ -110,6 +110,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   Future<void> _handleStartupUpdates() async {
     final service = UpdateService();
     final channel = UpdateChannel.fromString(AppSettings().updateChannel);
+    final sourcePreference = UpdateSourcePreference.fromString(
+      AppSettings().updateSource,
+    );
     final message = await service.consumeLastResult();
     if (message != null && mounted) AppNotifications.show(message);
     final prepared = await service.findLatestPreparedUpdate(
@@ -117,7 +120,11 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       channel: channel,
     );
     if (prepared != null && mounted) {
-      await showUpdateAvailableDialog(context, prepared.release);
+      await showUpdateAvailableDialog(
+        context,
+        prepared.release,
+        sourcePreference: sourcePreference,
+      );
     } else if (AppSettings().autoUpdateCheckEnabled) {
       await _checkForUpdatesOnStartup();
     }
@@ -132,10 +139,20 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   Future<void> _checkForUpdatesOnStartup() async {
     final result = await UpdateChecker().check(
       channel: UpdateChannel.fromString(AppSettings().updateChannel),
+      source:
+          UpdateSourcePreference.fromString(
+            AppSettings().updateSource,
+          ).releaseSource,
     );
     if (!mounted) return;
     if (result.hasUpdate && result.latestRelease != null) {
-      await showUpdateAvailableDialog(context, result.latestRelease!);
+      await showUpdateAvailableDialog(
+        context,
+        result.latestRelease!,
+        sourcePreference: UpdateSourcePreference.fromString(
+          AppSettings().updateSource,
+        ),
+      );
     } else if (result.error != null) {
       AppLogger().warning('自动检查更新失败: ${result.error}', category: 'UPDATE');
     }

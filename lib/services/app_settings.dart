@@ -117,6 +117,9 @@ class AppSettings {
   /// 更新通道：stable / beta。默认稳定版，Beta 需要用户手动选择。
   String updateChannel = 'stable';
 
+  /// 更新来源：auto / github / gitee。auto 表示 GitHub 优先，失败后尝试 Gitee。
+  String updateSource = 'auto';
+
   // ========== 全局设置 ==========
   /// 强制关闭应用内临时提示信息。
   bool disableNotifications = false;
@@ -225,6 +228,7 @@ class AppSettings {
 
     autoUpdateCheckEnabled = false;
     updateChannel = 'stable';
+    updateSource = 'auto';
     disableNotifications = false;
 
     rawDataDisplayLineLimit = 10000;
@@ -308,6 +312,11 @@ class AppSettings {
       autoUpdateCheckEnabled = json['autoUpdateCheckEnabled'] as bool? ?? false;
       updateChannel =
           (json['updateChannel'] as String?) == 'beta' ? 'beta' : 'stable';
+      updateSource = switch ((json['updateSource'] as String?)?.toLowerCase()) {
+        'github' => 'github',
+        'gitee' => 'gitee',
+        _ => 'auto',
+      };
       disableNotifications = json['disableNotifications'] as bool? ?? false;
       rawDataDisplayLineLimit =
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
@@ -385,6 +394,7 @@ class AppSettings {
       'zobowPresetViewMode': zobowPresetViewMode,
       'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
       'updateChannel': updateChannel,
+      'updateSource': updateSource,
       'disableNotifications': disableNotifications,
       'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
       'rawDataShellMode': rawDataShellMode,

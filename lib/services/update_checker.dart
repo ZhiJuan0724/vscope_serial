@@ -34,6 +34,33 @@ enum UpdateReleaseSource {
   }
 }
 
+enum UpdateSourcePreference {
+  auto('auto', '自动'),
+  github('github', 'GitHub'),
+  gitee('gitee', 'Gitee');
+
+  final String value;
+  final String label;
+
+  const UpdateSourcePreference(this.value, this.label);
+
+  static UpdateSourcePreference fromString(String value) {
+    return switch (value.trim().toLowerCase()) {
+      'github' => github,
+      'gitee' => gitee,
+      _ => auto,
+    };
+  }
+
+  UpdateReleaseSource? get releaseSource {
+    return switch (this) {
+      auto => null,
+      github => UpdateReleaseSource.github,
+      gitee => UpdateReleaseSource.gitee,
+    };
+  }
+}
+
 class ReleaseAsset {
   final String name;
   final int size;

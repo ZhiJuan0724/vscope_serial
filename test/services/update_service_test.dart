@@ -90,8 +90,9 @@ void main() {
     );
     final service = UpdateService(
       updatesRoot: root,
-      releaseFetcher: (_, source) async {
+      releaseFetcher: (_, source, channel) async {
         expect(source, 'Gitee');
+        expect(channel, UpdateChannel.stable);
         return gitee;
       },
       bytesFetcher: (_) async => manifest,
@@ -155,29 +156,30 @@ void main() {
         ),
       ],
     );
-    final gitee = ReleaseInfo(
-      tagName: tag,
-      htmlUrl: '',
-      source: 'Gitee',
-      body: '',
-      assets: [
-        ReleaseAsset(
-          name: 'update-manifest-$tag.json',
-          size: manifest.length,
-          downloadUrl: 'https://example.com/gitee-manifest',
-        ),
-        ReleaseAsset(
-          name: 'vscope_serial-windows-$tag.zip',
-          size: package.length,
-          downloadUrl: 'https://example.com/gitee-package',
-        ),
-      ],
-    );
     final service = UpdateService(
       updatesRoot: root,
-      releaseFetcher: (_, source) async {
+      releaseFetcher: (_, source, channel) async {
         expect(source, 'Gitee');
-        return gitee;
+        expect(channel, UpdateChannel.beta);
+        return UpdateChecker.parseReleaseJson(
+          {
+            'tag_name': tag,
+            'assets': [
+              {
+                'name': 'update-manifest-$tag.json',
+                'size': manifest.length,
+                'browser_download_url': 'https://example.com/gitee-manifest',
+              },
+              {
+                'name': 'vscope_serial-windows-$tag.zip',
+                'size': package.length,
+                'browser_download_url': 'https://example.com/gitee-package',
+              },
+            ],
+          },
+          source: source,
+          channel: channel,
+        );
       },
       bytesFetcher: (uri) async {
         if (uri.toString().contains('gitee-manifest')) return manifest;
@@ -205,6 +207,41 @@ void main() {
     expect(
       File('${prepared.payloadDirectory.path}/vscope_serial.exe').existsSync(),
       isTrue,
+    );
+  });
+
+  test('locked source download does not fall back to another source', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-update-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const tag = 'v9.9.9-beta.1';
+    final github = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+      prerelease: true,
+    );
+    final service = UpdateService(
+      updatesRoot: root,
+      releaseFetcher: (_, source, channel) async {
+        throw StateError('unexpected $source fallback');
+      },
+    );
+
+    expect(
+      () => service.downloadAndPrepare(
+        github,
+        channel: UpdateChannel.beta,
+        allowSourceFallback: false,
+        onProgress: (_) {},
+      ),
+      throwsA(
+        isA<UpdateDownloadException>().having(
+          (error) => error.message,
+          'message',
+          contains('GitHub 尚未提供完整更新附件'),
+        ),
+      ),
     );
   });
 
@@ -245,7 +282,7 @@ void main() {
     );
     final service = UpdateService(
       updatesRoot: root,
-      releaseFetcher: (_, source) async {
+      releaseFetcher: (_, source, channel) async {
         throw StateError('unexpected $source fallback');
       },
       bytesFetcher: (_) async => manifest,
@@ -283,7 +320,7 @@ void main() {
     final service = UpdateService(
       updatesRoot: root,
       releaseFetcher:
-          (_, source) async =>
+          (_, source, channel) async =>
               ReleaseInfo(tagName: tag, htmlUrl: '', source: source, body: ''),
     );
 
@@ -376,7 +413,7 @@ void main() {
     );
     final service = UpdateService(
       updatesRoot: root,
-      releaseFetcher: (_, source) async {
+      releaseFetcher: (_, source, channel) async {
         throw Exception('$source unavailable');
       },
       bytesFetcher: (_) async => manifest,

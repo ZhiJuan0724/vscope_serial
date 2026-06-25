@@ -21,8 +21,9 @@ Future<void> showAppInfoDialog(BuildContext context) {
 
 Future<void> showUpdateAvailableDialog(
   BuildContext context,
-  ReleaseInfo release,
-) async {
+  ReleaseInfo release, {
+  UpdateSourcePreference sourcePreference = UpdateSourcePreference.auto,
+}) async {
   final currentVersion = await AppInfo.displayVersion();
   if (!context.mounted) return;
   return showDialog(
@@ -32,6 +33,7 @@ Future<void> showUpdateAvailableDialog(
         (context) => _UpdateAvailableDialog(
           release: release,
           currentVersion: currentVersion,
+          sourcePreference: sourcePreference,
         ),
   );
 }
@@ -52,10 +54,12 @@ Widget _scrollWithoutScrollbar(BuildContext context, {required Widget child}) {
 class _UpdateAvailableDialog extends StatefulWidget {
   final ReleaseInfo release;
   final String currentVersion;
+  final UpdateSourcePreference sourcePreference;
 
   const _UpdateAvailableDialog({
     required this.release,
     required this.currentVersion,
+    required this.sourcePreference,
   });
 
   @override
@@ -214,6 +218,8 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       final prepared = await _service.downloadAndPrepare(
         widget.release,
         channel: _channel,
+        allowSourceFallback:
+            widget.sourcePreference == UpdateSourcePreference.auto,
         onProgress: (progress) {
           if (mounted) setState(() => _progress = progress);
         },
@@ -278,6 +284,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   UpdateChannel _updateChannel = UpdateChannel.fromString(
     AppSettings().updateChannel,
   );
+  UpdateSourcePreference _updateSourcePreference =
+      UpdateSourcePreference.fromString(AppSettings().updateSource);
   bool _checking = false;
   bool _loadingRollback = false;
   String? _version;
@@ -408,6 +416,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       ),
                     ),
                   ),
+                  _buildUpdateSourceTile(),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -435,8 +444,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       OutlinedButton.icon(
                         onPressed:
                             _lastResult?.hasUpdate == true && release != null
-                                ? () =>
-                                    showUpdateAvailableDialog(context, release)
+                                ? () => showUpdateAvailableDialog(
+                                  context,
+                                  release,
+                                  sourcePreference: _updateSourcePreference,
+                                )
                                 : null,
                         icon: const Icon(Icons.download, size: 16),
                         label: Text(AppStrings.update.downloadAndInstall),
@@ -488,6 +500,48 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           child: Text(AppStrings.common.close),
         ),
       ],
+    );
+  }
+
+  Widget _buildUpdateSourceTile() {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      title: Text(AppStrings.appInfo.updateSourceTitle),
+      subtitle: Text(
+        _updateSourcePreference == UpdateSourcePreference.auto
+            ? AppStrings.appInfo.updateSourceAutoHelp
+            : AppStrings.appInfo.updateSourceLockedHelp(
+              _updateSourcePreference.label,
+            ),
+      ),
+      trailing: SizedBox(
+        width: 116,
+        child: NoAnimDropdown<UpdateSourcePreference>(
+          value: _updateSourcePreference,
+          hint: AppStrings.appInfo.updateSourceTitle,
+          decoration: const InputDecoration(
+            isDense: true,
+            border: OutlineInputBorder(),
+            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          ),
+          items: UpdateSourcePreference.values
+              .map(
+                (source) =>
+                    DropdownMenuItem(value: source, child: Text(source.label)),
+              )
+              .toList(growable: false),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _updateSourcePreference = value;
+              _lastResult = null;
+            });
+            final settings = AppSettings()..updateSource = value.value;
+            settings.save();
+          },
+        ),
+      ),
     );
   }
 
@@ -744,6 +798,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _autoUpdateCheckEnabled = settings.autoUpdateCheckEnabled;
       _disableNotifications = settings.disableNotifications;
       _updateChannel = UpdateChannel.fromString(settings.updateChannel);
+      _updateSourcePreference = UpdateSourcePreference.fromString(
+        settings.updateSource,
+      );
       _lastResult = null;
     });
     AppNotifications.show(
@@ -758,7 +815,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _checking = true;
       _lastResult = null;
     });
-    final result = await _checker.check(channel: _updateChannel);
+    final result = await _checker.check(
+      channel: _updateChannel,
+      source: _updateSourcePreference.releaseSource,
+    );
     if (!mounted) return;
     setState(() {
       _checking = false;

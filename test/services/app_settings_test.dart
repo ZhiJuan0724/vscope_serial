@@ -31,6 +31,7 @@ void main() {
             ..zobowPresetViewMode = 'list'
             ..autoUpdateCheckEnabled = true
             ..updateChannel = 'beta'
+            ..updateSource = 'gitee'
             ..disableNotifications = true
             ..rawDataDisplayLineLimit = 500
             ..rawDataShellMode = true
@@ -72,6 +73,7 @@ void main() {
       expect(settings.zobowPresetViewMode, 'grid');
       expect(settings.autoUpdateCheckEnabled, isFalse);
       expect(settings.updateChannel, 'stable');
+      expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
       expect(settings.rawDataDisplayLineLimit, 10000);
       expect(settings.rawDataShellMode, isFalse);
