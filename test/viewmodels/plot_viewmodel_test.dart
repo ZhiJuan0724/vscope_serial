@@ -53,6 +53,10 @@ void main() {
       settings.rChannelAddresses = List.filled(16, '');
       settings.discardInitialPacketCount = 0;
       settings.rProfileId = '';
+      settings.xMin = 0;
+      settings.xMax = 1000;
+      settings.yMin = 0;
+      settings.yMax = 32768;
       serialService = SerialService();
       vm = PlotViewModel(serialService);
     });
@@ -158,6 +162,46 @@ void main() {
       );
       expect(vm.displayDataPoints[0].values.last, 5);
       expect(vm.displayDataPoints[1].values.last.isNaN, true);
+    });
+
+    test('观察和吸附高亮包含数学通道', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([8, 3], bytesConsumed: 8));
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 1));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      vm.updateFollowCursor(0, 0, const Offset(10, 10));
+      vm.addObservation();
+      expect(vm.observations.single.channelValues, [10, 2, 12]);
+
+      vm.setSnapHighlightColorMode('channel');
+      vm.setXCursor1(0);
+
+      final xCursorHighlights = vm.snapHighlights.take(3).toList();
+      expect(xCursorHighlights, hasLength(3));
+      expect(xCursorHighlights.last.y, 12);
+      expect(xCursorHighlights.last.color, vm.mathChannels[0].display.color);
+    });
+
+    test('X测量线在视口外时切换高亮颜色不会吸附到边缘', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.setXCursor1(2);
+      expect(vm.snapHighlights, isNotEmpty);
+
+      vm.updateViewport(vm.viewport.copyWith(xMin: 6, xMax: 9));
+      vm.setSnapHighlightColorMode('channel');
+
+      expect(vm.xCursor1, 2);
+      expect(vm.snapHighlights, isEmpty);
     });
 
     test('丢弃包数会跳过开始后的前N个有效数据包', () {
@@ -321,6 +365,18 @@ void main() {
 
       vm.setFollowEnabled(true);
       expect(vm.followEnabled, true);
+    });
+
+    test('测量统计工具开关只控制工具栏入口', () {
+      expect(vm.statsToolbarEnabled, false);
+      expect(vm.statsEnabled, false);
+      expect(vm.statsRangeEnabled, false);
+
+      vm.setStatsToolbarEnabled(true);
+
+      expect(vm.statsToolbarEnabled, true);
+      expect(vm.statsEnabled, false);
+      expect(vm.statsRangeEnabled, false);
     });
 
     test('拖动画布时自动关闭跟随', () {

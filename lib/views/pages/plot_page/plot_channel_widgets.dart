@@ -571,7 +571,6 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   late bool _showLine;
   late double _pointSize;
   late double _lineWidth;
-  late bool _offsetEnabled;
   String? _errorText;
 
   @override
@@ -585,7 +584,6 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
     _showLine = display.showLine;
     _pointSize = display.pointSize;
     _lineWidth = display.lineWidth;
-    _offsetEnabled = display.offsetEnabled;
   }
 
   @override
@@ -596,122 +594,122 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final contentMaxHeight =
+        (MediaQuery.sizeOf(context).height - 220)
+            .clamp(240.0, 540.0)
+            .toDouble();
+
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       title: Text('${AppStrings.plot.editMathChannel} ${widget.channel.name}'),
       content: SizedBox(
-        width: 320,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                AppStrings.plot.mathExpression,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _expressionController,
-                decoration: secondaryDialogFieldDecoration(
-                  hintText: AppStrings.plot.mathExpressionHint,
-                ).copyWith(errorText: _errorText),
-                onChanged: (_) {
-                  if (_errorText != null) setState(() => _errorText = null);
-                },
-              ),
-              const SizedBox(height: 14),
-              Text(
-                AppStrings.plot.color,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              _buildColorPicker(),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Text(
-                    AppStrings.plot.showLine,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  Switch(
-                    value: _showLine,
-                    onChanged: (value) => setState(() => _showLine = value),
-                  ),
-                ],
-              ),
-              if (_showLine)
+        width: 280,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: contentMaxHeight),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppStrings.plot.mathExpression,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _expressionController,
+                  decoration: secondaryDialogFieldDecoration(
+                    hintText: AppStrings.plot.mathExpressionHint,
+                  ).copyWith(errorText: _errorText),
+                  onChanged: (_) {
+                    if (_errorText != null) setState(() => _errorText = null);
+                  },
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  AppStrings.plot.mathExpressionHelp,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  AppStrings.plot.color,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                _buildColorPicker(),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Text(
-                      AppStrings.plot.lineWidth,
+                      AppStrings.plot.showLine,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    Switch(
+                      value: _showLine,
+                      onChanged: (value) => setState(() => _showLine = value),
+                    ),
+                  ],
+                ),
+                if (_showLine)
+                  Row(
+                    children: [
+                      Text(
+                        AppStrings.plot.lineWidth,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Slider(
+                          value: _lineWidth,
+                          min: 0.5,
+                          max: 8,
+                          divisions: 15,
+                          label: _lineWidth.toStringAsFixed(1),
+                          onChanged:
+                              (value) => setState(() => _lineWidth = value),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 34,
+                        child: Text(
+                          _lineWidth.toStringAsFixed(1),
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                Row(
+                  children: [
+                    Text(
+                      AppStrings.plot.pointRadius,
                       style: const TextStyle(fontSize: 13),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Slider(
-                        value: _lineWidth,
+                        value: _pointSize,
                         min: 0.5,
-                        max: 8,
-                        divisions: 15,
-                        label: _lineWidth.toStringAsFixed(1),
+                        max: 12,
+                        divisions: 23,
+                        label: _pointSize.toStringAsFixed(1),
                         onChanged:
-                            (value) => setState(() => _lineWidth = value),
+                            (value) => setState(() => _pointSize = value),
                       ),
                     ),
                     SizedBox(
                       width: 34,
                       child: Text(
-                        _lineWidth.toStringAsFixed(1),
+                        _pointSize.toStringAsFixed(1),
                         textAlign: TextAlign.right,
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   ],
                 ),
-              Row(
-                children: [
-                  Text(
-                    AppStrings.plot.pointRadius,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Slider(
-                      value: _pointSize,
-                      min: 0.5,
-                      max: 12,
-                      divisions: 23,
-                      label: _pointSize.toStringAsFixed(1),
-                      onChanged: (value) => setState(() => _pointSize = value),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 34,
-                    child: Text(
-                      _pointSize.toStringAsFixed(1),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Text(
-                    AppStrings.plot.showOffset,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const Spacer(),
-                  Switch(
-                    value: _offsetEnabled,
-                    onChanged:
-                        (value) => setState(() => _offsetEnabled = value),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -744,31 +742,192 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
 
   Widget _buildColorPicker() {
     return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children:
-          ChannelConfig.defaultColors.take(15).map((color) {
-            final selected = color.toARGB32() == _selectedColor.toARGB32();
-            return InkWell(
-              onTap: () => setState(() => _selectedColor = color),
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(3),
-                  border: Border.all(
-                    color:
-                        selected
-                            ? Theme.of(context).colorScheme.primary
-                            : Colors.grey.shade400,
-                    width: selected ? 3 : 1,
-                  ),
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ..._channelPresetColors.map((color) {
+          final selected = color.toARGB32() == _selectedColor.toARGB32();
+          return InkWell(
+            onTap: () => setState(() => _selectedColor = color),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(4),
+                border:
+                    selected ? Border.all(color: Colors.white, width: 2) : null,
+                boxShadow:
+                    selected
+                        ? [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.3),
+                            blurRadius: 4,
+                          ),
+                        ]
+                        : null,
+              ),
+              child:
+                  selected
+                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      : null,
+            ),
+          );
+        }),
+        Tooltip(
+          message: AppStrings.plot.customColor,
+          child: InkWell(
+            onTap: _showCustomColorPicker,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: _usesCustomColor ? _selectedColor : Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color:
+                      _usesCustomColor
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey.shade400,
+                  width: _usesCustomColor ? 2 : 1,
                 ),
               ),
-            );
-          }).toList(),
+              child: Icon(
+                Icons.palette_outlined,
+                size: 18,
+                color:
+                    _usesCustomColor
+                        ? _foregroundForColor(_selectedColor)
+                        : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
+  }
+
+  bool get _usesCustomColor =>
+      !_channelPresetColors.any(
+        (color) => color.toARGB32() == _selectedColor.toARGB32(),
+      );
+
+  Future<void> _showCustomColorPicker() async {
+    var selectedHsv = HSVColor.fromColor(_selectedColor);
+    final selectedColor = await showDialog<Color>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final color = selectedHsv.toColor();
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: Text(AppStrings.plot.customColor),
+              content: SizedBox(
+                width: 300,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.grey.shade400),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _buildColorSlider(
+                      label: AppStrings.plot.hue,
+                      value: selectedHsv.hue,
+                      max: 360,
+                      displayValue: '${selectedHsv.hue.round()}°',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withHue(value);
+                        });
+                      },
+                    ),
+                    _buildColorSlider(
+                      label: AppStrings.plot.saturation,
+                      value: selectedHsv.saturation * 100,
+                      max: 100,
+                      displayValue:
+                          '${(selectedHsv.saturation * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withSaturation(value / 100);
+                        });
+                      },
+                    ),
+                    _buildColorSlider(
+                      label: AppStrings.plot.brightness,
+                      value: selectedHsv.value * 100,
+                      max: 100,
+                      displayValue: '${(selectedHsv.value * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedHsv = selectedHsv.withValue(value / 100);
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(AppStrings.common.cancel),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, color),
+                  child: Text(AppStrings.common.confirm),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (selectedColor != null && mounted) {
+      setState(() => _selectedColor = selectedColor);
+    }
+  }
+
+  Widget _buildColorSlider({
+    required String label,
+    required double value,
+    required double max,
+    required String displayValue,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 34,
+          child: Text(label, style: const TextStyle(fontSize: 12)),
+        ),
+        Expanded(
+          child: Slider(value: value, min: 0, max: max, onChanged: onChanged),
+        ),
+        SizedBox(
+          width: 38,
+          child: Text(
+            displayValue,
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Color _foregroundForColor(Color background) {
+    return ThemeData.estimateBrightnessForColor(background) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
   }
 
   void _save() {
@@ -784,14 +943,17 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
       showLine: _showLine,
       pointSize: _pointSize,
       lineWidth: _lineWidth,
-      offsetEnabled: _offsetEnabled,
-      yOffset: _offsetEnabled ? widget.channel.display.yOffset : 0,
-      yScale: _offsetEnabled ? widget.channel.display.yScale : 1,
+      offsetEnabled: widget.channel.display.offsetEnabled,
+      yOffset: widget.channel.display.yOffset,
+      yScale: widget.channel.display.yScale,
     );
     widget.vm.configureMathChannel(widget.channel.index, expression, display);
     Navigator.of(context).pop();
   }
 }
+
+final List<Color> _channelPresetColors =
+    ChannelConfig.defaultColors.take(23).toList();
 
 /// 通道编辑对话框
 ///
@@ -814,7 +976,6 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   late bool _showLine;
   late double _pointSize;
   late double _lineWidth;
-  late bool _offsetEnabled;
   late DataType _zobowDataType;
   late final TextEditingController _aliasController;
   bool _isClosing = false;
@@ -827,7 +988,6 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _showLine = widget.ch.showLine;
     _pointSize = widget.ch.pointSize;
     _lineWidth = widget.ch.lineWidth;
-    _offsetEnabled = widget.ch.offsetEnabled;
     final parserConfig = widget.vm.parserConfig;
     if (widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < parserConfig.zobowChannelCount) {
@@ -975,31 +1135,6 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     ),
                   ],
                 ),
-                // 偏移开关
-                Row(
-                  children: [
-                    Text(
-                      AppStrings.plot.showOffset,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    Switch(
-                      value: _offsetEnabled,
-                      onChanged:
-                          (value) => setState(() => _offsetEnabled = value),
-                    ),
-                  ],
-                ),
-                if (_offsetEnabled) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    AppStrings.plot.offsetHint,
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                  ),
-                ],
                 // 众邦电控模式下显示数据类型选择
                 if (widget.vm.parserType == ParserType.zobow &&
                     widget.ch.index <
@@ -1134,7 +1269,6 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       _showLine = true;
       _pointSize = 3.0;
       _lineWidth = 1.5;
-      _offsetEnabled = false;
       _zobowDataType = DataType.uint16;
     });
   }
@@ -1147,7 +1281,6 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     widget.vm.setChannelShowLine(widget.ch.index, _showLine);
     widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
     widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
-    widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
 
     if (widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < widget.vm.parserConfig.zobowChannelCount &&
@@ -1208,9 +1341,9 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     progressNotifier.dispose();
   }
 
-  /// 构建颜色选择器（15 个黑底可识别预设色 + 自选色入口）
+  /// 构建颜色选择器（23 个黑底可识别预设色 + 自选色入口）
   Widget _buildColorPicker() {
-    final presetColors = ChannelConfig.defaultColors.take(15).toList();
+    final presetColors = _channelPresetColors;
     final usesCustomColor =
         !presetColors.any(
           (color) => color.toARGB32() == _selectedColor.toARGB32(),

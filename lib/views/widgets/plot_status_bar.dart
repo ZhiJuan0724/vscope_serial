@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/utils/plot_value_formatter.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
 /// 绘图页面状态栏
@@ -49,7 +50,7 @@ class PlotStatusBar extends StatelessWidget {
     buffer.write('X: ${cursor.x.toInt()} ');
 
     // 查找最近的数据点
-    final points = vm.dataPoints;
+    final points = vm.displayDataPoints;
     if (points.isNotEmpty) {
       final target = cursor.x.round();
       var left = 0;
@@ -71,10 +72,15 @@ class PlotStatusBar extends StatelessWidget {
         }
       }
 
-      for (int i = 0; i < nearest.channelCount && i < vm.channels.length; i++) {
-        if (!vm.channels[i].visible) continue;
+      final channels = vm.displayChannels;
+      for (int i = 0; i < nearest.channelCount && i < channels.length; i++) {
+        if (!channels[i].visible) continue;
         final value = nearest.values[i];
-        buffer.write('Ch$i: ${_formatExactNumber(value)} ');
+        final name =
+            channels[i].alias.isNotEmpty
+                ? channels[i].alias
+                : 'Ch${channels[i].index}';
+        buffer.write('$name: ${formatPlotValue(value)} ');
       }
     }
 
@@ -82,11 +88,5 @@ class PlotStatusBar extends StatelessWidget {
       buffer.toString(),
       style: const TextStyle(fontSize: 11, color: Colors.grey),
     );
-  }
-
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
   }
 }

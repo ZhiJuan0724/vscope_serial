@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
+import '../../core/utils/plot_value_formatter.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
@@ -214,6 +215,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
           child: _buildChannelPanelContent(context, vm),
         ),
+        const SizedBox(width: 4),
         // 右边缘拖动条
         MouseRegion(
           cursor: SystemMouseCursors.resizeLeftRight,
@@ -785,6 +787,54 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
+        if (vm.statsToolbarEnabled || vm.statsEnabled) ...[
+          Tooltip(
+            message: AppStrings.plot.statsTooltip,
+            child: TextButton.icon(
+              onPressed: () => vm.toggleStats(),
+              icon: Icon(
+                Icons.query_stats,
+                size: 18,
+                color: vm.statsEnabled ? Colors.blue : null,
+              ),
+              label: Text(
+                AppStrings.plot.stats,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: vm.statsEnabled ? Colors.blue : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    vm.statsEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: AppStrings.plot.statsRangeTooltip,
+            child: IconButton(
+              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
+              icon: Icon(
+                Icons.swap_horiz,
+                size: 18,
+                color: vm.statsRangeEnabled ? Colors.blue : null,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              style: IconButton.styleFrom(
+                backgroundColor:
+                    vm.statsRangeEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
+            ),
+          ),
+        ],
         // 最新点跟随
         Tooltip(
           message: AppStrings.plot.followTooltip,
@@ -792,21 +842,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
             icon: AppIcon(
               AppIcons.plotFollow,
-              color: vm.followEnabled ? Colors.blue : null,
+              color: vm.followEnabled ? Colors.orange : null,
             ),
             label: Text(
               AppStrings.plot.follow,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
-                color: vm.followEnabled ? Colors.blue : null,
+                color: vm.followEnabled ? Colors.orange : null,
               ),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
               backgroundColor:
-                  vm.followEnabled ? Colors.blue.withValues(alpha: 0.1) : null,
+                  vm.followEnabled
+                      ? Colors.orange.withValues(alpha: 0.1)
+                      : null,
             ),
           ),
         ),
@@ -1576,13 +1628,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
     ];
     if (observation.hasData && values != null) {
-      for (int i = 0; i < values.length && i < vm.channels.length; i++) {
-        final channel = vm.channels[i];
+      final currentChannels = vm.displayChannels;
+      for (int i = 0; i < values.length && i < currentChannels.length; i++) {
+        final channel = currentChannels[i];
         if (!channel.visible) continue;
-        final name = channel.alias.isNotEmpty ? channel.alias : 'Ch$i';
+        final name =
+            channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
         rows.add(
           Text(
-            '$name: ${_formatExactNumber(values[i])}',
+            '$name: ${formatPlotValue(values[i])}',
             style: TextStyle(
               color: channel.color,
               fontSize: _plotFontSize(vm, 12),
@@ -1607,12 +1661,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: rows,
       ),
     );
-  }
-
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
   }
 
   Widget _buildLegendBox(PlotViewModel vm) {
@@ -2190,7 +2238,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final discardInitialPacketController = TextEditingController(
       text: _formatCompactCount(vm.discardInitialPacketCount),
     );
+    final followPositionController = TextEditingController(
+      text: (vm.followPositionRatio * 100).round().toString(),
+    );
+    final yFitDisplayRatioController = TextEditingController(
+      text: (vm.yFitDisplayRatio * 100).round().toString(),
+    );
     final advancedSettingsScrollController = ScrollController();
+
+    void applyFollowPosition(StateSetter setDialogState) {
+      final percent = double.tryParse(followPositionController.text.trim());
+      if (percent != null) {
+        vm.setFollowPositionRatio(percent / 100);
+      }
+      followPositionController.text =
+          (vm.followPositionRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    void applyYFitRatio(StateSetter setDialogState) {
+      final percent = double.tryParse(yFitDisplayRatioController.text.trim());
+      if (percent != null) {
+        vm.setYFitDisplayRatio(percent / 100);
+      }
+      yFitDisplayRatioController.text =
+          (vm.yFitDisplayRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
     showDialog(
       context: context,
       builder:
@@ -2341,10 +2416,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               ),
                               const Spacer(),
                               Text(
-                                AppStrings.plot.basedOnDefaultFontSize,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
+                                AppStrings.plot.fontPreview,
+                                style: TextStyle(
+                                  fontSize: _plotFontSize(vm, 14),
+                                  fontFamily: 'SarasaUiSC',
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
@@ -2377,38 +2456,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Text(
-                                '${(vm.followPositionRatio * 100).round()}%',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: followPositionController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted:
+                                      (_) => applyFollowPosition(setState),
                                 ),
                               ),
-                              const Spacer(),
-                              Flexible(
-                                child: Text(
-                                  AppStrings.plot.followPositionHelp,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyFollowPosition(setState),
+                                child: Text(AppStrings.common.apply),
                               ),
                             ],
                           ),
-                          Slider(
-                            value: vm.followPositionRatio * 100,
-                            min: 50,
-                            max: 95,
-                            divisions: 45,
-                            label: '${(vm.followPositionRatio * 100).round()}%',
-                            onChanged: (value) {
-                              vm.setFollowPositionRatio(value / 100);
-                              setState(() {});
-                            },
-                          ),
                           const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.followPositionHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
                           Text(
                             AppStrings.plot.yFitDisplayRatio,
                             style: const TextStyle(fontSize: 14),
@@ -2416,59 +2488,55 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Text(
-                                '${(vm.yFitDisplayRatio * 100).round()}%',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: yFitDisplayRatioController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted: (_) => applyYFitRatio(setState),
                                 ),
                               ),
-                              const Spacer(),
-                              Flexible(
-                                child: Text(
-                                  AppStrings.plot.yFitDisplayRatioHelp,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyYFitRatio(setState),
+                                child: Text(AppStrings.common.apply),
                               ),
                             ],
                           ),
-                          Slider(
-                            value: vm.yFitDisplayRatio * 100,
-                            min: 50,
-                            max: 95,
-                            divisions: 45,
-                            label: '${(vm.yFitDisplayRatio * 100).round()}%',
-                            onChanged: (value) {
-                              vm.setYFitDisplayRatio(value / 100);
-                              setState(() {});
-                            },
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.yFitDisplayRatioHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
                           ),
                           const Divider(),
                           Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  AppStrings.plot.statsTooltip,
-                                  style: const TextStyle(fontSize: 14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.statsFeatureToggle,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.statsFeatureHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               Switch(
-                                value: vm.statsEnabled && vm.statsRangeEnabled,
+                                value: vm.statsToolbarEnabled,
                                 onChanged: (value) {
-                                  if (value) {
-                                    if (!vm.statsEnabled) {
-                                      vm.toggleStats();
-                                    }
-                                    if (!vm.statsRangeEnabled) {
-                                      vm.toggleStatsRange();
-                                    }
-                                  } else if (vm.statsEnabled) {
-                                    vm.toggleStats();
-                                  }
+                                  vm.setStatsToolbarEnabled(value);
                                   setState(() {});
                                 },
                               ),
@@ -2546,6 +2614,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Text(
                             AppStrings.plot.snapHighlightHelp,
                             style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            AppStrings.plot.snapHighlightColorMode,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SegmentedButton<String>(
+                            segments: [
+                              ButtonSegment<String>(
+                                value: 'cursor',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorCursor,
+                                ),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'channel',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorChannel,
+                                ),
+                              ),
+                            ],
+                            selected: {vm.snapHighlightColorMode},
+                            onSelectionChanged:
+                                vm.snapHighlightEnabled
+                                    ? (values) {
+                                      vm.setSnapHighlightColorMode(
+                                        values.first,
+                                      );
+                                      setState(() {});
+                                    }
+                                    : null,
                           ),
                           const Divider(),
                           Text(
@@ -2695,6 +2795,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       snapDiameterController.dispose();
       maxVisibleController.dispose();
       discardInitialPacketController.dispose();
+      followPositionController.dispose();
+      yFitDisplayRatioController.dispose();
       advancedSettingsScrollController.dispose();
     });
   }

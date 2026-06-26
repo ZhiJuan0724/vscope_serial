@@ -15,11 +15,15 @@ void main() {
             ..discardInitialPacketCount = 8
             ..snapHighlightEnabled = false
             ..snapHighlightDiameter = 12
+            ..snapHighlightColorMode = 'channel'
+            ..statsToolbarEnabled = true
             ..showGrid = false
             ..gridDensity = 'dense'
             ..useRandomSource = true
             ..randomFrequency = 500
             ..followEnabled = true
+            ..followPositionRatio = 0.5
+            ..yFitDisplayRatio = 0.95
             ..parserType = 'zobow'
             ..sendProtocolType = 'rProtocol'
             ..receiveCustomProtocolId = 'receive'
@@ -56,11 +60,15 @@ void main() {
       expect(settings.discardInitialPacketCount, 0);
       expect(settings.snapHighlightEnabled, isTrue);
       expect(settings.snapHighlightDiameter, 8);
+      expect(settings.snapHighlightColorMode, 'cursor');
+      expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.useRandomSource, isFalse);
       expect(settings.randomFrequency, 1000);
       expect(settings.followEnabled, isFalse);
+      expect(settings.followPositionRatio, 0.9);
+      expect(settings.yFitDisplayRatio, 0.8);
       expect(settings.parserType, 'fireWater');
       expect(settings.sendProtocolType, 'none');
       expect(settings.receiveCustomProtocolId, isEmpty);

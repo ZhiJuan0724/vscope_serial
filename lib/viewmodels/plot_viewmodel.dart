@@ -216,11 +216,13 @@ class PlotViewModel extends BaseViewModel {
   static const bool _antiAliasEnabled = true;
   bool _snapHighlightEnabled = true;
   double _snapHighlightDiameter = 8.0;
+  String _snapHighlightColorMode = 'cursor';
+  bool _statsToolbarEnabled = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
   bool _followEnabled = false;
   double _followPositionRatio = 0.9;
-  double _yFitDisplayRatio = 0.9;
+  double _yFitDisplayRatio = 0.8;
 
   /// 单垂直光标开关（鼠标悬停显示垂直线+tooltip）
   bool _vCursorEnabled = false;
@@ -403,6 +405,8 @@ class PlotViewModel extends BaseViewModel {
     _gridDensity = settings.gridDensity;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
+    _snapHighlightColorMode = settings.snapHighlightColorMode;
+    _statsToolbarEnabled = settings.statsToolbarEnabled;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
@@ -458,6 +462,8 @@ class PlotViewModel extends BaseViewModel {
     settings.discardInitialPacketCount = _discardInitialPacketCount;
     settings.snapHighlightEnabled = _snapHighlightEnabled;
     settings.snapHighlightDiameter = _snapHighlightDiameter;
+    settings.snapHighlightColorMode = _snapHighlightColorMode;
+    settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.useRandomSource = _useRandomSource;
@@ -558,11 +564,13 @@ class PlotViewModel extends BaseViewModel {
   bool get yMeasurementEnabled => _yMeasurementEnabled;
   bool get statsEnabled => _statsEnabled;
   bool get statsRangeEnabled => _statsRangeEnabled;
+  bool get statsToolbarEnabled => _statsToolbarEnabled;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
   bool get snapHighlightEnabled => _snapHighlightEnabled;
   double get snapHighlightDiameter => _snapHighlightDiameter;
+  String get snapHighlightColorMode => _snapHighlightColorMode;
   CursorState? get cursor => _cursor;
   List<CursorState> get observations => List.unmodifiable(_observations);
   List<SnapHighlightPoint> get snapHighlights {
@@ -2571,6 +2579,22 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setSnapHighlightColorMode(String value) {
+    final next = value == 'channel' ? 'channel' : 'cursor';
+    if (_snapHighlightColorMode == next) return;
+    _snapHighlightColorMode = next;
+    _refreshSnapHighlightColors();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setStatsToolbarEnabled(bool value) {
+    if (_statsToolbarEnabled == value) return;
+    _statsToolbarEnabled = value;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   void setFollowPositionRatio(double value) {
     final next = value.clamp(0.5, 0.95).toDouble();
     if ((_followPositionRatio - next).abs() < 1e-9) return;
@@ -2804,7 +2828,7 @@ class PlotViewModel extends BaseViewModel {
       } else if (midX > x) {
         right = mid - 1;
       } else {
-        return _dataPoints[mid];
+        return points[mid];
       }
     }
 
@@ -2831,6 +2855,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 同时保留 xCursor2 和 yCursor2，避免拖动时覆盖另一组测量线。
   List<SnapHighlightPoint> _snapHighlightsForX(double x, Color color) {
+    if (!viewport.isVisibleX(x)) return const [];
     final point = _nearestVisiblePointByX(x);
     if (point == null) return const [];
     final highlights = <SnapHighlightPoint>[];
@@ -2847,7 +2872,7 @@ class PlotViewModel extends BaseViewModel {
         SnapHighlightPoint(
           x: point.index.toDouble(),
           y: point.values[i] * channel.yScale + channel.yOffset,
-          color: color,
+          color: _snapHighlightColor(channel, color),
         ),
       );
     }
@@ -2882,7 +2907,7 @@ class PlotViewModel extends BaseViewModel {
           best = SnapHighlightPoint(
             x: point.index.toDouble(),
             y: pointY,
-            color: color,
+            color: _snapHighlightColor(channel, color),
           );
         }
       }
@@ -2909,7 +2934,7 @@ class PlotViewModel extends BaseViewModel {
           SnapHighlightPoint(
             x: observation.x,
             y: values[i] * channel.yScale + channel.yOffset,
-            color: Colors.amber,
+            color: _snapHighlightColor(channel, Colors.amber),
           ),
         );
       }
@@ -2922,6 +2947,25 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2SnapHighlights = const [];
     _yCursor1SnapHighlights = const [];
     _yCursor2SnapHighlights = const [];
+  }
+
+  Color _snapHighlightColor(ChannelConfig channel, Color cursorColor) {
+    return _snapHighlightColorMode == 'channel' ? channel.color : cursorColor;
+  }
+
+  void _refreshSnapHighlightColors() {
+    if (_xCursor1 != null) {
+      _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+    }
+    if (_xCursor2 != null) {
+      _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+    }
+    if (_yCursor1 != null) {
+      _yCursor1SnapHighlights = _snapHighlightForY(_yCursor1!, Colors.cyan);
+    }
+    if (_yCursor2 != null) {
+      _yCursor2SnapHighlights = _snapHighlightForY(_yCursor2!, Colors.yellow);
+    }
   }
 
   void _notifyLater() {
