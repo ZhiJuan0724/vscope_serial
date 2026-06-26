@@ -1948,6 +1948,7 @@ class PlotViewModel extends BaseViewModel {
     if (!fromDrag) {
       _loadWindowForViewport();
     }
+    _refreshSnapHighlightColors();
     if (!fromDrag) {
       _saveSettings();
       AppLogger().trace(
@@ -1970,6 +1971,7 @@ class PlotViewModel extends BaseViewModel {
   void saveDragViewport() {
     _saveViewport();
     _loadWindowForViewport();
+    _refreshSnapHighlightColors();
     _saveSettings();
     AppLogger().trace(
       'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
