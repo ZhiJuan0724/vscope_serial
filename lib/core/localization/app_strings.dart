@@ -191,7 +191,10 @@ final class _PlotStrings {
   String get hideChannel => '点击隐藏通道';
   String get showChannel => '点击显示通道';
   String get editChannel => '编辑通道';
+  String get channelActions => '通道功能';
+  String get noChannelAction => '暂无可用操作';
   String get addMathChannel => '添加数学通道';
+  String get deleteMathChannel => '删除数学通道';
   String get editMathChannel => '编辑数学通道';
   String get closeMathChannel => '关闭数学通道';
   String get resetMathChannel => '重置数学通道';

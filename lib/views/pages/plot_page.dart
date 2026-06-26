@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -107,6 +108,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 是否显示悬浮图例
   bool _legendVisible = false;
+
+  OverlayEntry? _channelContextMenuEntry;
+  Rect? _channelContextMenuRect;
+  bool _channelContextMenuRouteAttached = false;
+  Duration? _channelContextMenuHandledPointerTime;
+
+  @override
+  void dispose() {
+    _hideChannelContextMenu();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1100,33 +1112,75 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: displayCount,
-              itemBuilder: (context, index) {
-                if (index >= rawDisplayCount) {
-                  final mathChannel =
-                      enabledMathChannels[index - rawDisplayCount];
-                  return _MathChannelItem(
-                    key: ValueKey('math_${mathChannel.index}'),
-                    vm: vm,
-                    channel: mathChannel,
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                if (event.kind != PointerDeviceKind.mouse) return;
+                if (event.buttons == kPrimaryMouseButton) {
+                  _hideChannelContextMenu();
+                } else if (event.buttons == kSecondaryMouseButton) {
+                  _showBlankChannelContextMenu(
+                    context,
+                    vm,
+                    event.position,
+                    event.timeStamp,
                   );
                 }
-                final ch = vm.channels[index];
-                return GestureDetector(
-                  onSecondaryTapDown:
-                      (details) => _showChannelContextMenu(
-                        context,
-                        vm,
-                        details.globalPosition,
-                      ),
-                  child: _ChannelItem(
-                    key: ValueKey('ch_${ch.index}'),
-                    vm: vm,
-                    ch: ch,
-                  ),
-                );
               },
+              child: ListView.builder(
+                itemCount: displayCount + 1,
+                itemBuilder: (context, index) {
+                  if (index == displayCount) {
+                    return const SizedBox(height: 88);
+                  }
+                  if (index >= rawDisplayCount) {
+                    final mathChannel =
+                        enabledMathChannels[index - rawDisplayCount];
+                    return Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (event) {
+                        if (event.kind == PointerDeviceKind.mouse &&
+                            event.buttons == kSecondaryMouseButton) {
+                          _channelContextMenuHandledPointerTime =
+                              event.timeStamp;
+                          _showChannelContextMenu(
+                            context,
+                            vm,
+                            event.position,
+                            target: _ChannelContextMenuTarget.math(mathChannel),
+                          );
+                        }
+                      },
+                      child: _MathChannelItem(
+                        key: ValueKey('math_${mathChannel.index}'),
+                        vm: vm,
+                        channel: mathChannel,
+                      ),
+                    );
+                  }
+                  final ch = vm.channels[index];
+                  return Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: (event) {
+                      if (event.kind == PointerDeviceKind.mouse &&
+                          event.buttons == kSecondaryMouseButton) {
+                        _channelContextMenuHandledPointerTime = event.timeStamp;
+                        _showChannelContextMenu(
+                          context,
+                          vm,
+                          event.position,
+                          target: _ChannelContextMenuTarget.raw(ch),
+                        );
+                      }
+                    },
+                    child: _ChannelItem(
+                      key: ValueKey('ch_${ch.index}'),
+                      vm: vm,
+                      ch: ch,
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -1134,27 +1188,109 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
-  Future<void> _showChannelContextMenu(
+  void _showChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position, {
+    _ChannelContextMenuTarget target = const _ChannelContextMenuTarget.blank(),
+  }) {
+    _hideChannelContextMenu();
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    final menuContext = context;
+
+    const menuWidth = 188.0;
+    const menuHeight = 82.0;
+    final screenSize = MediaQuery.sizeOf(context);
+    final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
+    final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
+    final left = position.dx.clamp(8.0, maxLeft);
+    final top = position.dy.clamp(8.0, maxTop);
+    _channelContextMenuRect = Rect.fromLTWH(left, top, menuWidth, menuHeight);
+    _attachChannelContextMenuGlobalRoute();
+
+    _channelContextMenuEntry = OverlayEntry(
+      builder:
+          (context) => Stack(
+            children: [
+              Positioned(
+                left: left,
+                top: top,
+                width: menuWidth,
+                child: _ChannelContextMenu(
+                  target: target,
+                  onAddMathChannel:
+                      target.kind == _ChannelContextMenuTargetKind.blank
+                          ? () {
+                            _hideChannelContextMenu();
+                            _addMathChannelFromContextMenu(menuContext, vm);
+                          }
+                          : null,
+                  onDeleteMathChannel:
+                      target.mathChannel == null
+                          ? null
+                          : () {
+                            _hideChannelContextMenu();
+                            vm.disableMathChannel(target.mathChannel!.index);
+                          },
+                ),
+              ),
+            ],
+          ),
+    );
+    overlay.insert(_channelContextMenuEntry!);
+  }
+
+  void _showBlankChannelContextMenu(
     BuildContext context,
     PlotViewModel vm,
     Offset position,
-  ) async {
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx,
-        position.dy,
-      ),
-      items: [
-        PopupMenuItem(
-          value: 'add_math',
-          child: Text(AppStrings.plot.addMathChannel),
-        ),
-      ],
+    Duration pointerTime,
+  ) {
+    Future.microtask(() {
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      if (_channelContextMenuHandledPointerTime == pointerTime) return;
+      _showChannelContextMenu(context, vm, position);
+    });
+  }
+
+  void _hideChannelContextMenu() {
+    _channelContextMenuEntry?.remove();
+    _channelContextMenuEntry = null;
+    _channelContextMenuRect = null;
+    _detachChannelContextMenuGlobalRoute();
+  }
+
+  void _attachChannelContextMenuGlobalRoute() {
+    if (_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.addGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
     );
-    if (selected != 'add_math' || !context.mounted) return;
+    _channelContextMenuRouteAttached = true;
+  }
+
+  void _detachChannelContextMenuGlobalRoute() {
+    if (!_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
+    );
+    _channelContextMenuRouteAttached = false;
+  }
+
+  void _handleChannelContextMenuPointerEvent(PointerEvent event) {
+    if (event is! PointerDownEvent) return;
+    final rect = _channelContextMenuRect;
+    if (rect != null && rect.contains(event.position)) return;
+    final entry = _channelContextMenuEntry;
+    Future.microtask(() {
+      if (!mounted || _channelContextMenuEntry != entry) return;
+      _hideChannelContextMenu();
+    });
+  }
+
+  void _addMathChannelFromContextMenu(BuildContext context, PlotViewModel vm) {
     final channel = vm.firstAvailableMathChannel();
     if (channel == null) {
       vm.showStatusMessage(AppStrings.plot.noAvailableMathChannel);
@@ -2054,6 +2190,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final discardInitialPacketController = TextEditingController(
       text: _formatCompactCount(vm.discardInitialPacketCount),
     );
+    final advancedSettingsScrollController = ScrollController();
     showDialog(
       context: context,
       builder:
@@ -2067,7 +2204,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: StatefulBuilder(
                 builder: (context, setState) {
                   return Scrollbar(
+                    controller: advancedSettingsScrollController,
                     child: SingleChildScrollView(
+                      controller: advancedSettingsScrollController,
                       padding: const EdgeInsets.only(right: 12),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -2556,6 +2695,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       snapDiameterController.dispose();
       maxVisibleController.dispose();
       discardInitialPacketController.dispose();
+      advancedSettingsScrollController.dispose();
     });
   }
 
@@ -2606,5 +2746,147 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             protocolType: AddressProfileProtocolType.rProtocol,
           ),
     );
+  }
+}
+
+/// 通道面板使用自绘右键菜单，避免 [showMenu] 默认动画偏慢且样式过重。
+class _ChannelContextMenu extends StatelessWidget {
+  final _ChannelContextMenuTarget target;
+  final VoidCallback? onAddMathChannel;
+  final VoidCallback? onDeleteMathChannel;
+
+  const _ChannelContextMenu({
+    required this.target,
+    required this.onAddMathChannel,
+    required this.onDeleteMathChannel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final children = switch (target.kind) {
+      _ChannelContextMenuTargetKind.blank => [
+        _ChannelContextMenuItem(
+          icon: Icons.functions,
+          label: AppStrings.plot.addMathChannel,
+          onTap: onAddMathChannel,
+        ),
+      ],
+      _ChannelContextMenuTargetKind.math => [
+        _ChannelContextMenuItem(
+          icon: Icons.delete_outline,
+          label: AppStrings.plot.deleteMathChannel,
+          onTap: onDeleteMathChannel,
+        ),
+      ],
+      _ChannelContextMenuTargetKind.raw => [
+        _ChannelContextMenuItem(
+          icon: Icons.info_outline,
+          label: AppStrings.plot.noChannelAction,
+          onTap: null,
+        ),
+      ],
+    };
+    return Material(
+      color: colorScheme.surface,
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(6),
+      clipBehavior: Clip.antiAlias,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Text(
+                target.title,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChannelContextMenuItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _ChannelContextMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final color =
+        enabled ? IconTheme.of(context).color : Theme.of(context).disabledColor;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _ChannelContextMenuTargetKind { blank, raw, math }
+
+class _ChannelContextMenuTarget {
+  final _ChannelContextMenuTargetKind kind;
+  final ChannelConfig? rawChannel;
+  final MathChannelConfig? mathChannel;
+
+  const _ChannelContextMenuTarget.blank()
+    : kind = _ChannelContextMenuTargetKind.blank,
+      rawChannel = null,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.raw(this.rawChannel)
+    : kind = _ChannelContextMenuTargetKind.raw,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.math(this.mathChannel)
+    : kind = _ChannelContextMenuTargetKind.math,
+      rawChannel = null;
+
+  String get title {
+    return switch (kind) {
+      _ChannelContextMenuTargetKind.blank => AppStrings.plot.channelActions,
+      _ChannelContextMenuTargetKind.raw =>
+        rawChannel == null
+            ? AppStrings.plot.channelActions
+            : 'Ch${rawChannel!.index}',
+      _ChannelContextMenuTargetKind.math =>
+        mathChannel?.name ?? AppStrings.plot.channelActions,
+    };
   }
 }
