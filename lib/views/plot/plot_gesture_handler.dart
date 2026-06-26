@@ -587,9 +587,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return _DragTarget.none;
 
-    // X-X 测量：检测 X1/X2 标签（标签在测量线顶部）
+    // X-X 测量：检测 X1/X2 标签（标签在绘图区顶部内侧）
     if (widget.xCursor1 != null || widget.xCursor2 != null) {
-      final topY = PlotViewport().marginTop - 12;
+      final topY = PlotViewport().marginTop + 12;
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
         if (widget.xCursor1 != null) {
           final sx1 = widget.viewport.dataToScreenX(

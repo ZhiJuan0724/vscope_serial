@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../core/utils/plot_value_formatter.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
@@ -60,6 +61,7 @@ enum GridDensity { sparse, normal, dense }
 /// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
 class PlotPainter extends CustomPainter {
   static const double _denseLinePointThresholdRatio = 0.5;
+  static const double _invalidPointThresholdRatio = 0.5;
 
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -239,7 +241,7 @@ class PlotPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 光标 → 统计范围
+    // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 测量线 → 光标浮窗
     _drawBackground(canvas, size);
 
     if (showGrid) {
@@ -251,9 +253,6 @@ class PlotPainter extends CustomPainter {
 
     // 通道偏移基准线和标签（绘制在数据层之上，坐标轴之下）
     _drawChannelOffsetBaselines(canvas, size);
-
-    // 垂直光标（鼠标悬停跟随）
-    _drawCursor(canvas, size);
 
     // X-X 测量线（独立绘制，不依赖 cursor）
     if (xCursor1 != null || xCursor2 != null) {
@@ -286,6 +285,9 @@ class PlotPainter extends CustomPainter {
         statsX2 != null) {
       _drawStatsRange(canvas, size);
     }
+
+    // 垂直光标和 tooltip 最后绘制，避免测量线压住悬浮窗。
+    _drawCursor(canvas, size);
   }
 
   /// 绘制深色背景
@@ -602,19 +604,34 @@ class PlotPainter extends CustomPainter {
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
+    var hasInvalid = false;
     for (int i = visibleRange.start; i < visibleRange.end; i++) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) {
+        hasInvalid = true;
+        continue;
+      }
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
+    }
+
+    if (hasInvalid) {
+      _drawInvalidAwareRawPath(
+        canvas,
+        size,
         channelIndex,
         channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+        visibleRange,
+        paint,
+      );
+      return;
     }
 
     if (rawIndex >= 4) {
@@ -656,13 +673,12 @@ class PlotPainter extends CustomPainter {
       for (int i = start; i < end && i < visibleRange.end; i++) {
         final point = data[i];
         if (channelIndex >= point.values.length) continue;
+        final value = _displayValue(point, channelIndex, channel);
+        if (!value.isFinite) continue;
         final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-        final y = _screenY(
-          point,
-          channelIndex,
-          channel,
-          size.height,
-        ).clamp(marginTop, marginBottom);
+        final y = viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom);
 
         final bucketPoint = _BucketPoint(point.index, x, y);
         firstPoint ??= bucketPoint;
@@ -716,16 +732,15 @@ class PlotPainter extends CustomPainter {
     for (int i = visibleRange.start; i < visibleRange.end; i += step) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) continue;
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
-        channelIndex,
-        channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
     }
 
     if (rawIndex > 0) {
@@ -737,16 +752,103 @@ class PlotPainter extends CustomPainter {
     }
   }
 
-  double _screenY(
+  double _displayValue(
     PlotDataPoint point,
     int channelIndex,
     ChannelConfig channel,
-    double height,
   ) {
-    return viewport.dataToScreenY(
-      point.values[channelIndex] * channel.yScale + channel.yOffset,
-      height,
-    );
+    final value = point.values[channelIndex];
+    if (!value.isFinite) return double.nan;
+    final displayValue = value * channel.yScale + channel.yOffset;
+    return displayValue.isFinite ? displayValue : double.nan;
+  }
+
+  void _drawInvalidAwareRawPath(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint normalPaint,
+  ) {
+    final dataCount = visibleRange.end - visibleRange.start;
+    final plotW = viewport.plotWidth(size.width);
+    if (dataCount > plotW * 2) return;
+
+    final zeroY =
+        viewport
+            .dataToScreenY(0, size.height)
+            .clamp(viewport.marginTop, size.height - viewport.marginBottom)
+            .toDouble();
+    final dashPaint =
+        Paint()
+          ..color = channel.color.withValues(alpha: 0.65)
+          ..strokeWidth = math.max(1.0, channel.lineWidth)
+          ..style = PaintingStyle.stroke;
+    final invalidPoints = <Offset>[];
+    final dashedPoints = <Offset>[];
+    final showInvalidPoints =
+        dataCount <= math.max(1, plotW * _invalidPointThresholdRatio).round();
+
+    void flushDashedPoints() {
+      if (dashedPoints.length >= 2) {
+        _drawDashedPolyline(canvas, dashedPoints, dashPaint);
+      }
+      dashedPoints.clear();
+    }
+
+    Offset? previous;
+    var previousInvalid = false;
+    for (int i = visibleRange.start; i < visibleRange.end; i++) {
+      final point = data[i];
+      if (channelIndex >= point.values.length) continue;
+      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
+      final value = _displayValue(point, channelIndex, channel);
+      final invalid = !value.isFinite;
+      final y =
+          invalid
+              ? zeroY
+              : viewport
+                  .dataToScreenY(value, size.height)
+                  .clamp(
+                    viewport.marginTop,
+                    size.height - viewport.marginBottom,
+                  )
+                  .toDouble();
+      final current = Offset(x, y);
+      if (previous != null) {
+        if (previousInvalid || invalid) {
+          if (dashedPoints.isEmpty) dashedPoints.add(previous);
+          dashedPoints.add(current);
+        } else {
+          flushDashedPoints();
+          canvas.drawLine(previous, current, normalPaint);
+        }
+      }
+      if (showInvalidPoints && invalid) invalidPoints.add(current);
+      previous = current;
+      previousInvalid = invalid;
+    }
+
+    flushDashedPoints();
+    _drawInvalidHollowPoints(canvas, invalidPoints, channel);
+  }
+
+  void _drawInvalidHollowPoints(
+    Canvas canvas,
+    List<Offset> invalidPoints,
+    ChannelConfig channel,
+  ) {
+    if (invalidPoints.isEmpty) return;
+    final pointPaint =
+        Paint()
+          ..color = channel.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(0.75, channel.lineWidth * 0.75);
+    final radius = math.max(1.5, channel.pointSize * 0.7);
+    for (final point in invalidPoints) {
+      canvas.drawCircle(point, radius, pointPaint);
+    }
   }
 
   /// 绘制坐标轴、刻度线和刻度值
@@ -1189,7 +1291,7 @@ class PlotPainter extends CustomPainter {
         rows.add(
           _CursorValueRow(
             index: i,
-            text: '$displayName: ${_formatExactNumber(values[i])}',
+            text: '$displayName: ${formatPlotValue(values[i])}',
           ),
         );
       }
@@ -1438,12 +1540,6 @@ class PlotPainter extends CustomPainter {
     return value.toStringAsFixed(3);
   }
 
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
-  }
-
   bool _visibleYValuesAreInteger() {
     var hasValue = false;
     for (final point in data) {
@@ -1497,7 +1593,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X1',
           sx1,
-          PlotViewport().marginTop - 12,
+          PlotViewport().marginTop + 12,
           Colors.cyan,
         );
       }
@@ -1517,7 +1613,7 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X2',
           sx2,
-          PlotViewport().marginTop - 12,
+          PlotViewport().marginTop + 12,
           Colors.yellow,
         );
       }
@@ -1740,13 +1836,13 @@ class PlotPainter extends CustomPainter {
     );
   }
 
-  /// 绘制虚线（5px 实线 + 3px 间隙）
+  /// 绘制虚线（7px 实线 + 5px 间隙）
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
     final dx = end.dx - start.dx;
     final dy = end.dy - start.dy;
     final distance = math.sqrt(dx * dx + dy * dy);
-    const dashLength = 5.0;
-    const gapLength = 3.0;
+    const dashLength = 7.0;
+    const gapLength = 5.0;
     final dashCount = (distance / (dashLength + gapLength)).floor();
 
     for (int i = 0; i < dashCount; i++) {
@@ -1760,6 +1856,44 @@ class PlotPainter extends CustomPainter {
         ),
         paint,
       );
+    }
+  }
+
+  void _drawDashedPolyline(Canvas canvas, List<Offset> points, Paint paint) {
+    if (points.length < 2) return;
+    const dashLength = 7.0;
+    const gapLength = 5.0;
+    const patternLength = dashLength + gapLength;
+    var patternOffset = 0.0;
+
+    for (int i = 1; i < points.length; i++) {
+      final start = points[i - 1];
+      final end = points[i];
+      final dx = end.dx - start.dx;
+      final dy = end.dy - start.dy;
+      final segmentLength = math.sqrt(dx * dx + dy * dy);
+      if (segmentLength <= 0) continue;
+
+      var consumed = 0.0;
+      while (consumed < segmentLength) {
+        final inDash = patternOffset < dashLength;
+        final remainInPattern =
+            (inDash ? dashLength : patternLength) - patternOffset;
+        final step = math.min(remainInPattern, segmentLength - consumed);
+
+        if (inDash) {
+          final t1 = consumed / segmentLength;
+          final t2 = (consumed + step) / segmentLength;
+          canvas.drawLine(
+            Offset(start.dx + dx * t1, start.dy + dy * t1),
+            Offset(start.dx + dx * t2, start.dy + dy * t2),
+            paint,
+          );
+        }
+
+        consumed += step;
+        patternOffset = (patternOffset + step) % patternLength;
+      }
     }
   }
 

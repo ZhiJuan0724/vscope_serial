@@ -3,14 +3,17 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
+import '../../core/utils/plot_value_formatter.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
+import '../../data/models/math_channel_config.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../services/app_settings.dart';
@@ -107,6 +110,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 是否显示悬浮图例
   bool _legendVisible = false;
 
+  OverlayEntry? _channelContextMenuEntry;
+  Rect? _channelContextMenuRect;
+  bool _channelContextMenuRouteAttached = false;
+  Duration? _channelContextMenuHandledPointerTime;
+
+  @override
+  void dispose() {
+    _hideChannelContextMenu();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<PlotViewModel>(
@@ -201,6 +215,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
           child: _buildChannelPanelContent(context, vm),
         ),
+        const SizedBox(width: 4),
         // 右边缘拖动条
         MouseRegion(
           cursor: SystemMouseCursors.resizeLeftRight,
@@ -772,6 +787,54 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
+        if (vm.statsToolbarEnabled || vm.statsEnabled) ...[
+          Tooltip(
+            message: AppStrings.plot.statsTooltip,
+            child: TextButton.icon(
+              onPressed: () => vm.toggleStats(),
+              icon: Icon(
+                Icons.query_stats,
+                size: 18,
+                color: vm.statsEnabled ? Colors.blue : null,
+              ),
+              label: Text(
+                AppStrings.plot.stats,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: vm.statsEnabled ? Colors.blue : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    vm.statsEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: AppStrings.plot.statsRangeTooltip,
+            child: IconButton(
+              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
+              icon: Icon(
+                Icons.swap_horiz,
+                size: 18,
+                color: vm.statsRangeEnabled ? Colors.blue : null,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              style: IconButton.styleFrom(
+                backgroundColor:
+                    vm.statsRangeEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
+            ),
+          ),
+        ],
         // 最新点跟随
         Tooltip(
           message: AppStrings.plot.followTooltip,
@@ -779,21 +842,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
             icon: AppIcon(
               AppIcons.plotFollow,
-              color: vm.followEnabled ? Colors.blue : null,
+              color: vm.followEnabled ? Colors.orange : null,
             ),
             label: Text(
               AppStrings.plot.follow,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
-                color: vm.followEnabled ? Colors.blue : null,
+                color: vm.followEnabled ? Colors.orange : null,
               ),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
               backgroundColor:
-                  vm.followEnabled ? Colors.blue.withValues(alpha: 0.1) : null,
+                  vm.followEnabled
+                      ? Colors.orange.withValues(alpha: 0.1)
+                      : null,
             ),
           ),
         ),
@@ -1009,16 +1074,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 通道面板内容（展开状态）
   Widget _buildChannelPanelContent(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
-    final activeCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    final displayCount =
-        vm.parserType == ParserType.zobow
-            ? vm.parserConfig.zobowChannelCount
-            : vm.parserType == ParserType.fixedFrame
-            ? vm.parserConfig.channelCount
-            : vm.effectiveSendProtocolType == SendProtocolType.rProtocol
-            ? math.max(vm.activeChannelCount, vm.rAddressDisplayCount)
-            : activeCount;
+    final rawDisplayCount = vm.rawDisplayChannelCount;
+    final enabledMathChannels = vm.enabledMathChannels;
+    final displayCount = rawDisplayCount + enabledMathChannels.length;
 
     return Container(
       decoration: BoxDecoration(
@@ -1106,21 +1164,191 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: displayCount,
-              itemBuilder: (context, index) {
-                final ch = vm.channels[index];
-                return _ChannelItem(
-                  key: ValueKey('ch_${ch.index}'),
-                  vm: vm,
-                  ch: ch,
-                );
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                if (event.kind != PointerDeviceKind.mouse) return;
+                if (event.buttons == kPrimaryMouseButton) {
+                  _hideChannelContextMenu();
+                } else if (event.buttons == kSecondaryMouseButton) {
+                  _showBlankChannelContextMenu(
+                    context,
+                    vm,
+                    event.position,
+                    event.timeStamp,
+                  );
+                }
               },
+              child: ListView.builder(
+                itemCount: displayCount + 1,
+                itemBuilder: (context, index) {
+                  if (index == displayCount) {
+                    return const SizedBox(height: 88);
+                  }
+                  if (index >= rawDisplayCount) {
+                    final mathChannel =
+                        enabledMathChannels[index - rawDisplayCount];
+                    return Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (event) {
+                        if (event.kind == PointerDeviceKind.mouse &&
+                            event.buttons == kSecondaryMouseButton) {
+                          _channelContextMenuHandledPointerTime =
+                              event.timeStamp;
+                          _showChannelContextMenu(
+                            context,
+                            vm,
+                            event.position,
+                            target: _ChannelContextMenuTarget.math(mathChannel),
+                          );
+                        }
+                      },
+                      child: _MathChannelItem(
+                        key: ValueKey('math_${mathChannel.index}'),
+                        vm: vm,
+                        channel: mathChannel,
+                      ),
+                    );
+                  }
+                  final ch = vm.channels[index];
+                  return Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: (event) {
+                      if (event.kind == PointerDeviceKind.mouse &&
+                          event.buttons == kSecondaryMouseButton) {
+                        _channelContextMenuHandledPointerTime = event.timeStamp;
+                        _showChannelContextMenu(
+                          context,
+                          vm,
+                          event.position,
+                          target: _ChannelContextMenuTarget.raw(ch),
+                        );
+                      }
+                    },
+                    child: _ChannelItem(
+                      key: ValueKey('ch_${ch.index}'),
+                      vm: vm,
+                      ch: ch,
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _showChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position, {
+    _ChannelContextMenuTarget target = const _ChannelContextMenuTarget.blank(),
+  }) {
+    _hideChannelContextMenu();
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    final menuContext = context;
+
+    const menuWidth = 188.0;
+    const menuHeight = 82.0;
+    final screenSize = MediaQuery.sizeOf(context);
+    final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
+    final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
+    final left = position.dx.clamp(8.0, maxLeft);
+    final top = position.dy.clamp(8.0, maxTop);
+    _channelContextMenuRect = Rect.fromLTWH(left, top, menuWidth, menuHeight);
+    _attachChannelContextMenuGlobalRoute();
+
+    _channelContextMenuEntry = OverlayEntry(
+      builder:
+          (context) => Stack(
+            children: [
+              Positioned(
+                left: left,
+                top: top,
+                width: menuWidth,
+                child: _ChannelContextMenu(
+                  target: target,
+                  onAddMathChannel:
+                      target.kind == _ChannelContextMenuTargetKind.blank
+                          ? () {
+                            _hideChannelContextMenu();
+                            _addMathChannelFromContextMenu(menuContext, vm);
+                          }
+                          : null,
+                  onDeleteMathChannel:
+                      target.mathChannel == null
+                          ? null
+                          : () {
+                            _hideChannelContextMenu();
+                            vm.disableMathChannel(target.mathChannel!.index);
+                          },
+                ),
+              ),
+            ],
+          ),
+    );
+    overlay.insert(_channelContextMenuEntry!);
+  }
+
+  void _showBlankChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position,
+    Duration pointerTime,
+  ) {
+    Future.microtask(() {
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      if (_channelContextMenuHandledPointerTime == pointerTime) return;
+      _showChannelContextMenu(context, vm, position);
+    });
+  }
+
+  void _hideChannelContextMenu() {
+    _channelContextMenuEntry?.remove();
+    _channelContextMenuEntry = null;
+    _channelContextMenuRect = null;
+    _detachChannelContextMenuGlobalRoute();
+  }
+
+  void _attachChannelContextMenuGlobalRoute() {
+    if (_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.addGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
+    );
+    _channelContextMenuRouteAttached = true;
+  }
+
+  void _detachChannelContextMenuGlobalRoute() {
+    if (!_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
+    );
+    _channelContextMenuRouteAttached = false;
+  }
+
+  void _handleChannelContextMenuPointerEvent(PointerEvent event) {
+    if (event is! PointerDownEvent) return;
+    final rect = _channelContextMenuRect;
+    if (rect != null && rect.contains(event.position)) return;
+    final entry = _channelContextMenuEntry;
+    Future.microtask(() {
+      if (!mounted || _channelContextMenuEntry != entry) return;
+      _hideChannelContextMenu();
+    });
+  }
+
+  void _addMathChannelFromContextMenu(BuildContext context, PlotViewModel vm) {
+    final channel = vm.firstAvailableMathChannel();
+    if (channel == null) {
+      vm.showStatusMessage(AppStrings.plot.noAvailableMathChannel);
+      return;
+    }
+    _showMathChannelDialog(context, vm, channel);
   }
 
   // ========== 绘图区域 ==========
@@ -1152,15 +1380,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
 
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
-    final activeChannelCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
+    final displayChannels = vm.displayChannels;
+    final displayDataPoints = vm.displayDataPoints;
+    final activeChannelCount = vm.displayActiveChannelCount;
     return LayoutBuilder(
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
         final offsetAxisColumnWidths =
             PlotPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
@@ -1178,9 +1407,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               boxZoomEnabled: vm.boxZoomEnabled,
               refreshFps: vm.refreshFps,
               plotFontSizeDelta: vm.plotFontSizeDelta,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
-              data: vm.dataPoints,
+              data: displayDataPoints,
               observations: vm.observations,
               onObservationDrag: (index, x) => vm.updateObservation(index, x),
               onObservationDelete: (index) => vm.removeObservation(index),
@@ -1231,10 +1460,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: CustomPaint(
                 painter: PlotPainter(
                   viewport: renderViewport,
-                  data: vm.dataPoints,
+                  data: displayDataPoints,
                   dataRevision: vm.dataRevision,
                   lodIndex: vm.lodIndex,
-                  channels: vm.channels,
+                  channels: displayChannels,
                   activeChannelCount: activeChannelCount,
                   showGrid: vm.showGrid,
                   gridDensity: gridDensity,
@@ -1399,13 +1628,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
     ];
     if (observation.hasData && values != null) {
-      for (int i = 0; i < values.length && i < vm.channels.length; i++) {
-        final channel = vm.channels[i];
+      final currentChannels = vm.displayChannels;
+      for (int i = 0; i < values.length && i < currentChannels.length; i++) {
+        final channel = currentChannels[i];
         if (!channel.visible) continue;
-        final name = channel.alias.isNotEmpty ? channel.alias : 'Ch$i';
+        final name =
+            channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
         rows.add(
           Text(
-            '$name: ${_formatExactNumber(values[i])}',
+            '$name: ${formatPlotValue(values[i])}',
             style: TextStyle(
               color: channel.color,
               fontSize: _plotFontSize(vm, 12),
@@ -1430,12 +1661,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: rows,
       ),
     );
-  }
-
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
   }
 
   Widget _buildLegendBox(PlotViewModel vm) {
@@ -2013,6 +2238,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final discardInitialPacketController = TextEditingController(
       text: _formatCompactCount(vm.discardInitialPacketCount),
     );
+    final followPositionController = TextEditingController(
+      text: (vm.followPositionRatio * 100).round().toString(),
+    );
+    final yFitDisplayRatioController = TextEditingController(
+      text: (vm.yFitDisplayRatio * 100).round().toString(),
+    );
+    final advancedSettingsScrollController = ScrollController();
+
+    void applyFollowPosition(StateSetter setDialogState) {
+      final percent = double.tryParse(followPositionController.text.trim());
+      if (percent != null) {
+        vm.setFollowPositionRatio(percent / 100);
+      }
+      followPositionController.text =
+          (vm.followPositionRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    void applyYFitRatio(StateSetter setDialogState) {
+      final percent = double.tryParse(yFitDisplayRatioController.text.trim());
+      if (percent != null) {
+        vm.setYFitDisplayRatio(percent / 100);
+      }
+      yFitDisplayRatioController.text =
+          (vm.yFitDisplayRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
     showDialog(
       context: context,
       builder:
@@ -2026,7 +2279,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: StatefulBuilder(
                 builder: (context, setState) {
                   return Scrollbar(
+                    controller: advancedSettingsScrollController,
                     child: SingleChildScrollView(
+                      controller: advancedSettingsScrollController,
                       padding: const EdgeInsets.only(right: 12),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -2161,10 +2416,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               ),
                               const Spacer(),
                               Text(
-                                AppStrings.plot.basedOnDefaultFontSize,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
+                                AppStrings.plot.fontPreview,
+                                style: TextStyle(
+                                  fontSize: _plotFontSize(vm, 14),
+                                  fontFamily: 'SarasaUiSC',
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ],
@@ -2197,38 +2456,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Text(
-                                '${(vm.followPositionRatio * 100).round()}%',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: followPositionController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted:
+                                      (_) => applyFollowPosition(setState),
                                 ),
                               ),
-                              const Spacer(),
-                              Flexible(
-                                child: Text(
-                                  AppStrings.plot.followPositionHelp,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyFollowPosition(setState),
+                                child: Text(AppStrings.common.apply),
                               ),
                             ],
                           ),
-                          Slider(
-                            value: vm.followPositionRatio * 100,
-                            min: 50,
-                            max: 95,
-                            divisions: 45,
-                            label: '${(vm.followPositionRatio * 100).round()}%',
-                            onChanged: (value) {
-                              vm.setFollowPositionRatio(value / 100);
-                              setState(() {});
-                            },
-                          ),
                           const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.followPositionHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
                           Text(
                             AppStrings.plot.yFitDisplayRatio,
                             style: const TextStyle(fontSize: 14),
@@ -2236,59 +2488,55 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              Text(
-                                '${(vm.yFitDisplayRatio * 100).round()}%',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: yFitDisplayRatioController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted: (_) => applyYFitRatio(setState),
                                 ),
                               ),
-                              const Spacer(),
-                              Flexible(
-                                child: Text(
-                                  AppStrings.plot.yFitDisplayRatioHelp,
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyYFitRatio(setState),
+                                child: Text(AppStrings.common.apply),
                               ),
                             ],
                           ),
-                          Slider(
-                            value: vm.yFitDisplayRatio * 100,
-                            min: 50,
-                            max: 95,
-                            divisions: 45,
-                            label: '${(vm.yFitDisplayRatio * 100).round()}%',
-                            onChanged: (value) {
-                              vm.setYFitDisplayRatio(value / 100);
-                              setState(() {});
-                            },
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.yFitDisplayRatioHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
                           ),
                           const Divider(),
                           Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  AppStrings.plot.statsTooltip,
-                                  style: const TextStyle(fontSize: 14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.statsFeatureToggle,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.statsFeatureHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               Switch(
-                                value: vm.statsEnabled && vm.statsRangeEnabled,
+                                value: vm.statsToolbarEnabled,
                                 onChanged: (value) {
-                                  if (value) {
-                                    if (!vm.statsEnabled) {
-                                      vm.toggleStats();
-                                    }
-                                    if (!vm.statsRangeEnabled) {
-                                      vm.toggleStatsRange();
-                                    }
-                                  } else if (vm.statsEnabled) {
-                                    vm.toggleStats();
-                                  }
+                                  vm.setStatsToolbarEnabled(value);
                                   setState(() {});
                                 },
                               ),
@@ -2366,6 +2614,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Text(
                             AppStrings.plot.snapHighlightHelp,
                             style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            AppStrings.plot.snapHighlightColorMode,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SegmentedButton<String>(
+                            segments: [
+                              ButtonSegment<String>(
+                                value: 'cursor',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorCursor,
+                                ),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'channel',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorChannel,
+                                ),
+                              ),
+                            ],
+                            selected: {vm.snapHighlightColorMode},
+                            onSelectionChanged:
+                                vm.snapHighlightEnabled
+                                    ? (values) {
+                                      vm.setSnapHighlightColorMode(
+                                        values.first,
+                                      );
+                                      setState(() {});
+                                    }
+                                    : null,
                           ),
                           const Divider(),
                           Text(
@@ -2515,6 +2795,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       snapDiameterController.dispose();
       maxVisibleController.dispose();
       discardInitialPacketController.dispose();
+      followPositionController.dispose();
+      yFitDisplayRatioController.dispose();
+      advancedSettingsScrollController.dispose();
     });
   }
 
@@ -2565,5 +2848,147 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             protocolType: AddressProfileProtocolType.rProtocol,
           ),
     );
+  }
+}
+
+/// 通道面板使用自绘右键菜单，避免 [showMenu] 默认动画偏慢且样式过重。
+class _ChannelContextMenu extends StatelessWidget {
+  final _ChannelContextMenuTarget target;
+  final VoidCallback? onAddMathChannel;
+  final VoidCallback? onDeleteMathChannel;
+
+  const _ChannelContextMenu({
+    required this.target,
+    required this.onAddMathChannel,
+    required this.onDeleteMathChannel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final children = switch (target.kind) {
+      _ChannelContextMenuTargetKind.blank => [
+        _ChannelContextMenuItem(
+          icon: Icons.functions,
+          label: AppStrings.plot.addMathChannel,
+          onTap: onAddMathChannel,
+        ),
+      ],
+      _ChannelContextMenuTargetKind.math => [
+        _ChannelContextMenuItem(
+          icon: Icons.delete_outline,
+          label: AppStrings.plot.deleteMathChannel,
+          onTap: onDeleteMathChannel,
+        ),
+      ],
+      _ChannelContextMenuTargetKind.raw => [
+        _ChannelContextMenuItem(
+          icon: Icons.info_outline,
+          label: AppStrings.plot.noChannelAction,
+          onTap: null,
+        ),
+      ],
+    };
+    return Material(
+      color: colorScheme.surface,
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(6),
+      clipBehavior: Clip.antiAlias,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Text(
+                target.title,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChannelContextMenuItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  const _ChannelContextMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final color =
+        enabled ? IconTheme.of(context).color : Theme.of(context).disabledColor;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _ChannelContextMenuTargetKind { blank, raw, math }
+
+class _ChannelContextMenuTarget {
+  final _ChannelContextMenuTargetKind kind;
+  final ChannelConfig? rawChannel;
+  final MathChannelConfig? mathChannel;
+
+  const _ChannelContextMenuTarget.blank()
+    : kind = _ChannelContextMenuTargetKind.blank,
+      rawChannel = null,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.raw(this.rawChannel)
+    : kind = _ChannelContextMenuTargetKind.raw,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.math(this.mathChannel)
+    : kind = _ChannelContextMenuTargetKind.math,
+      rawChannel = null;
+
+  String get title {
+    return switch (kind) {
+      _ChannelContextMenuTargetKind.blank => AppStrings.plot.channelActions,
+      _ChannelContextMenuTargetKind.raw =>
+        rawChannel == null
+            ? AppStrings.plot.channelActions
+            : 'Ch${rawChannel!.index}',
+      _ChannelContextMenuTargetKind.math =>
+        mathChannel?.name ?? AppStrings.plot.channelActions,
+    };
   }
 }

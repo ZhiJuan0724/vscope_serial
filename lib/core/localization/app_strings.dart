@@ -161,8 +161,13 @@ final class _PlotStrings {
   String get refreshFps => '绘图刷新帧率';
   String get plotFontSize => '绘图字体大小';
   String get defaultValue => '默认';
-  String get basedOnDefaultFontSize => '基于默认字号';
+  String get fontPreview => '参考字体';
+  String get statsFeatureToggle => '显示测量统计工具';
+  String get statsFeatureHelp => '开启后在工具栏添加测量统计入口，点击工具栏按钮后才启用统计';
   String get snapHighlight => '吸附点高亮';
+  String get snapHighlightColorMode => '吸附点颜色';
+  String get snapHighlightColorCursor => '跟随光标线';
+  String get snapHighlightColorChannel => '跟随各自通道';
   String get plotWindowLimit => '绘图窗口上限';
   String get droppedPackets => '丢弃包数';
   String get unitFps => 'fps';
@@ -170,7 +175,7 @@ final class _PlotStrings {
   String get unitPacket => '包';
 
   String get refreshFpsHelp => '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率';
-  String get plotFontSizeHelp => '范围: -3~+6，影响绘图区坐标轴、光标、观察、测量和统计文本';
+  String get plotFontSizeHelp => '范围: -3~+6，基于默认字号调整，影响绘图区坐标轴、光标、观察、测量和统计文本';
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
 
   String plotWindowLimitHelp({
@@ -191,6 +196,17 @@ final class _PlotStrings {
   String get hideChannel => '点击隐藏通道';
   String get showChannel => '点击显示通道';
   String get editChannel => '编辑通道';
+  String get channelActions => '通道功能';
+  String get noChannelAction => '暂无可用操作';
+  String get addMathChannel => '添加数学通道';
+  String get deleteMathChannel => '删除数学通道';
+  String get editMathChannel => '编辑数学通道';
+  String get closeMathChannel => '关闭数学通道';
+  String get resetMathChannel => '重置数学通道';
+  String get mathExpression => '表达式';
+  String get mathExpressionHint => '例如: CH0-CH1';
+  String get mathExpressionHelp => '支持 CH0~CH15，支持 +、-、*、/、括号、负数和 abs()。';
+  String get noAvailableMathChannel => '没有可用的数学通道';
   String get selectAddress => '选择地址';
   String editChannelTitle(int index) => '编辑 Ch$index';
   String get color => '颜色';

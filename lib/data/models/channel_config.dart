@@ -118,6 +118,14 @@ class ChannelConfig {
     const Color(0xFFE6BEFF), // 淡紫
     const Color(0xFFFFD43B), // 金黄
     const Color(0xFFFFFFFF), // 白
+    const Color(0xFF212529), // 近黑
+    const Color(0xFF868E96), // 灰
+    const Color(0xFF15AABF), // 蓝绿
+    const Color(0xFF228BE6), // 深蓝
+    const Color(0xFF7048E8), // 靛紫
+    const Color(0xFFC2255C), // 玫红
+    const Color(0xFF82C91E), // 草绿
+    const Color(0xFFFF922B), // 橙黄
   ];
 
   /// 创建默认 16 通道配置

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../data/models/math_channel_config.dart';
 import '../data/models/serial_config.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
@@ -63,6 +64,8 @@ class AppSettings {
   int discardInitialPacketCount = 0;
   bool snapHighlightEnabled = true;
   double snapHighlightDiameter = 8.0;
+  String snapHighlightColorMode = 'cursor';
+  bool statsToolbarEnabled = false;
 
   /// 是否显示网格
   bool showGrid = true;
@@ -83,7 +86,10 @@ class AppSettings {
   double followPositionRatio = 0.9;
 
   /// Y 轴自适应数据显示占比，范围 0.50~0.95。
-  double yFitDisplayRatio = 0.9;
+  double yFitDisplayRatio = 0.8;
+
+  /// 数学通道配置，固定 Math1~Math4。
+  List<MathChannelConfig> mathChannels = MathChannelConfig.createDefaults();
 
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
   String parserType = 'fireWater';
@@ -209,13 +215,16 @@ class AppSettings {
     discardInitialPacketCount = 0;
     snapHighlightEnabled = true;
     snapHighlightDiameter = 8.0;
+    snapHighlightColorMode = 'cursor';
+    statsToolbarEnabled = false;
     showGrid = true;
     gridDensity = 'normal';
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
     followPositionRatio = 0.9;
-    yFitDisplayRatio = 0.9;
+    yFitDisplayRatio = 0.8;
+    mathChannels = MathChannelConfig.createDefaults();
     parserType = 'fireWater';
     sendProtocolType = 'none';
     receiveCustomProtocolId = '';
@@ -283,6 +292,10 @@ class AppSettings {
             6.0,
             12.0,
           );
+      final snapColorMode = json['snapHighlightColorMode'] as String?;
+      snapHighlightColorMode =
+          snapColorMode == 'channel' ? 'channel' : 'cursor';
+      statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
@@ -293,8 +306,9 @@ class AppSettings {
             0.5,
             0.95,
           );
-      yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.9)
+      yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.8)
           .clamp(0.5, 0.95);
+      mathChannels = MathChannelConfig.normalizeList(json['mathChannels']);
       parserType = json['parserType'] as String? ?? 'fireWater';
       sendProtocolType = json['sendProtocolType'] as String? ?? 'none';
       receiveCustomProtocolId =
@@ -376,6 +390,8 @@ class AppSettings {
       'discardInitialPacketCount': discardInitialPacketCount,
       'snapHighlightEnabled': snapHighlightEnabled,
       'snapHighlightDiameter': snapHighlightDiameter,
+      'snapHighlightColorMode': snapHighlightColorMode,
+      'statsToolbarEnabled': statsToolbarEnabled,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'useRandomSource': useRandomSource,
@@ -383,6 +399,7 @@ class AppSettings {
       'followEnabled': followEnabled,
       'followPositionRatio': followPositionRatio,
       'yFitDisplayRatio': yFitDisplayRatio,
+      'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
       'parserType': parserType,
       'sendProtocolType': sendProtocolType,
       'receiveCustomProtocolId': receiveCustomProtocolId,
