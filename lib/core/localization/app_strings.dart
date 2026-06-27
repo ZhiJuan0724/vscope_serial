@@ -429,7 +429,8 @@ final class _ProfileStrings {
   String get add => '添加';
   String presetCount(int count) => '$count 个预设';
   String get deleteProfile => '删除配置';
-  String get importExternal => '从外部导入';
+  String get exportProfile => '导出配置';
+  String get importExternal => '导入配置';
   String deleteProfileTitle(String name) => '删除配置文件';
   String deleteProfileMessage(String name) => '确定删除“$name”吗？此操作无法撤销。';
   String get ignoreComments => '忽略注释';
@@ -441,9 +442,12 @@ final class _ProfileStrings {
   String get importZobowProfileDialogTitle => '导入众邦配置文件';
   String get importAddressCsvDialogTitle => '导入地址配置 CSV';
   String get importZobowCDialogTitle => '导入 Zobow C 配置';
+  String get exportProfileDialogTitle => '导出配置文件';
   String get invalidProfileFormat => '配置文件格式不正确';
   String get emptyProfilePresets => '配置文件没有可导入的地址预设';
   String importProfileFailed(String error) => '导入配置失败: $error';
+  String exportProfileFailed(String error) => '导出配置失败: $error';
+  String exportProfileCompleted(String path) => '已导出配置: $path';
   String importCsvFailed(String error) => '导入 CSV 配置失败: $error';
   String importCFailed(String error) => '导入 C 配置失败: $error';
   String get pasteCCodeHint => '粘贴包含 ChxValueTable 的 C 代码';

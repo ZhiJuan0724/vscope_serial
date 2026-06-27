@@ -215,7 +215,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
           child: _buildChannelPanelContent(context, vm),
         ),
-        const SizedBox(width: 4),
         // 右边缘拖动条
         MouseRegion(
           cursor: SystemMouseCursors.resizeLeftRight,
@@ -1180,6 +1179,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 }
               },
               child: ListView.builder(
+                padding: const EdgeInsets.only(right: 12),
                 itemCount: displayCount + 1,
                 itemBuilder: (context, index) {
                   if (index == displayCount) {

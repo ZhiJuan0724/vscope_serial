@@ -188,6 +188,88 @@ void ChxValueTable(INT16U Addr)
       expect(result.presets[1].name, 'Other.Value');
     });
 
+    test('parses VisualScope function and TxVar.VsCh left value', () {
+      final result = ZobowCProfileImporter.parseSource('''
+void VisualScope(void)
+{
+  switch (addr)
+  {
+    case 0x50:
+      TxVar.VsCh[i] = Motor.Speed;
+      break;
+  }
+}
+''');
+
+      expect(result.presets, hasLength(1));
+      expect(result.presets.first.address, 0x50);
+      expect(result.presets.first.name, 'Motor.Speed');
+    });
+
+    test('uses the only function when no known function name exists', () {
+      final result = ZobowCProfileImporter.parseSource('''
+void UserScopeTable(void)
+{
+  switch (addr)
+  {
+    case 0x51:
+      VsTemp[i] = User.Value;
+      break;
+  }
+}
+''');
+
+      expect(result.presets, hasLength(1));
+      expect(result.presets.first.address, 0x51);
+      expect(result.presets.first.name, 'User.Value');
+    });
+
+    test('uses the only assignment rhs when case has no known left value', () {
+      final result = ZobowCProfileImporter.parseSource(
+        _source('''
+      case 0x52:
+        OutputValue = Sensor.Current;
+        break;
+'''),
+      );
+
+      expect(result.presets, hasLength(1));
+      expect(result.presets.first.address, 0x52);
+      expect(result.presets.first.name, 'Sensor.Current');
+    });
+
+    test(
+      'does not guess unknown left value when case has multiple assignments',
+      () {
+        final result = ZobowCProfileImporter.parseSource(
+          _source('''
+      case 0x53:
+        TempA = Sensor.Current;
+        TempB = Sensor.Voltage;
+        break;
+'''),
+        );
+
+        expect(result.presets, isEmpty);
+      },
+    );
+
+    test(
+      'skips case with multiple assignments even when known left exists',
+      () {
+        final result = ZobowCProfileImporter.parseSource(
+          _source('''
+      case 0x54:
+        DebugValue = Sensor.Current;
+        VsTemp[i] = Sensor.Voltage;
+        break;
+'''),
+        );
+
+        expect(result.presets, isEmpty);
+      },
+    );
+
     test('uses GBK candidate when UTF-8 is malformed', () {
       final source = _source('''
       case 0x40:// 母线电压

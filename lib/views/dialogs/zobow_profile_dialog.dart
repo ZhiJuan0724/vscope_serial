@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/localization/app_strings.dart';
+import '../../core/utils/file_name_sanitizer.dart';
 import '../../data/models/zobow_config_profile.dart';
 import '../../services/app_notifications.dart';
 import '../../services/address_profile_csv_importer.dart';
@@ -329,6 +330,12 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                 icon: const Icon(Icons.delete_outline, size: 16),
                 label: Text(AppStrings.profile.deleteProfile),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: _exportProfile,
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: Text(AppStrings.profile.exportProfile),
               ),
               const SizedBox(width: 8),
             ],
@@ -747,9 +754,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     });
   }
 
-  void _saveProfile() {
+  ZobowConfigProfile? _buildProfileFromInput({required bool keepExistingId}) {
     final name = _nameController.text.trim();
-    if (name.isEmpty) return;
+    if (name.isEmpty) return null;
 
     final presets = <ZobowChannelPreset>[];
     for (final row in _rows) {
@@ -772,15 +779,66 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       }
     }
 
+    return ZobowConfigProfile(
+      id:
+          keepExistingId && widget.profile != null
+              ? widget.profile!.id
+              : sanitizeFileName(name, fallback: 'profile'),
+      name: name,
+      protocolType: widget.protocolType,
+      presets: presets,
+    );
+  }
+
+  Future<void> _exportProfile() async {
+    final profile = _buildProfileFromInput(keepExistingId: true);
+    if (profile == null) return;
+
+    try {
+      final defaultName =
+          '${sanitizeFileName(profile.name, fallback: AppStrings.profile.defaultConfigName)}.json';
+      final selectedPath = await FilePicker.saveFile(
+        dialogTitle: AppStrings.profile.exportProfileDialogTitle,
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+      if (selectedPath == null || !mounted) return;
+
+      final exportPath =
+          selectedPath.toLowerCase().endsWith('.json')
+              ? selectedPath
+              : '$selectedPath.json';
+      await File(
+        exportPath,
+      ).writeAsString(profile.toJsonString(), encoding: utf8);
+      if (!mounted) return;
+      AppNotifications.show(
+        AppStrings.profile.exportProfileCompleted(exportPath),
+        messenger: ScaffoldMessenger.of(context),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      AppNotifications.show(
+        AppStrings.profile.exportProfileFailed(error.toString()),
+        messenger: ScaffoldMessenger.of(context),
+      );
+    }
+  }
+
+  void _saveProfile() {
+    final inputProfile = _buildProfileFromInput(keepExistingId: true);
+    if (inputProfile == null) return;
+
     if (widget.profile == null) {
       // 创建新配置
       final create =
           _isRProtocol
-              ? widget.vm.createRProfile(name)
-              : widget.vm.createZobowProfile(name);
+              ? widget.vm.createRProfile(inputProfile.name)
+              : widget.vm.createZobowProfile(inputProfile.name);
       create.then((profile) {
         if (profile != null) {
-          profile.presets = presets;
+          profile.presets = inputProfile.presets;
           final update =
               _isRProtocol
                   ? widget.vm.updateRProfile(profile)
@@ -798,9 +856,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     } else {
       // 更新现有配置
       final updated = widget.profile!.copyWith(
-        name: name,
+        name: inputProfile.name,
         protocolType: widget.protocolType,
-        presets: presets,
+        presets: inputProfile.presets,
       );
       final update =
           _isRProtocol
