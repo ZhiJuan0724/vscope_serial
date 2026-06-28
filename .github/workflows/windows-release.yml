@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Verify plot rebuild isolation
+        run: flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METRICS=true
+
   build-windows:
     name: Build Windows release
     runs-on: windows-latest

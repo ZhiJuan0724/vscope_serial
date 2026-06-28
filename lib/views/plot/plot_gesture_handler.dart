@@ -346,7 +346,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     }
   }
 
-  /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
+  /// 标签尺寸（与 PlotLayerPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
   static const double _labelHeight = 20;
 
@@ -704,7 +704,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     for (final ch in widget.channels.take(widget.activeChannelCount)) {
       if (!ch.visible || !ch.offsetEnabled) continue;
 
-      // 计算标签位置（与 PlotPainter 中一致）
+      // 计算标签位置（与 PlotLayerPainter 中一致）
       final zeroDataY = 0.0 * ch.yScale + ch.yOffset;
       final zeroY = widget.viewport.dataToScreenY(zeroDataY, size.height);
       final plotH = widget.viewport.plotHeight(size.height);

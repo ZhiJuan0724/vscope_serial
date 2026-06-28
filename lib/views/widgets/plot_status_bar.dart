@@ -13,8 +13,18 @@ class PlotStatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<PlotViewModel>(
-      builder: (context, vm, child) {
+    return Selector<
+      PlotViewModel,
+      ({String statusText, int overlayRevision, int channelConfigRevision})
+    >(
+      selector:
+          (_, vm) => (
+            statusText: vm.statusText,
+            overlayRevision: vm.overlayRevision,
+            channelConfigRevision: vm.channelConfigRevision,
+          ),
+      builder: (context, selection, child) {
+        final vm = context.read<PlotViewModel>();
         return Container(
           height: 24,
           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -28,7 +38,7 @@ class PlotStatusBar extends StatelessWidget {
             children: [
               // 左侧：视口范围、数据点数、速率、运行状态
               Text(
-                vm.statusText,
+                selection.statusText,
                 style: const TextStyle(fontSize: 11, color: Colors.grey),
               ),
               const Spacer(),

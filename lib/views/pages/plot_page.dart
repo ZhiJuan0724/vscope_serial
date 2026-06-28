@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
 import '../../core/utils/plot_value_formatter.dart';
+import '../../core/utils/plot_performance_metrics.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
@@ -68,6 +69,49 @@ const double kRProtocolAddressWidth = 108;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
 
+typedef _PlotToolbarSelection =
+    ({
+      bool isPlotting,
+      bool isStopping,
+      bool hasData,
+      ParserType parserType,
+      bool useRandomSource,
+      double randomFrequency,
+      bool canUndoZoom,
+      bool vCursorEnabled,
+      bool boxZoomEnabled,
+      bool xMeasurementEnabled,
+      bool yMeasurementEnabled,
+      bool statsToolbarEnabled,
+      bool statsEnabled,
+      bool statsRangeEnabled,
+      bool followEnabled,
+      bool showGrid,
+      String gridDensity,
+    });
+
+typedef _PlotChannelPanelSelection =
+    ({
+      int channelConfigRevision,
+      bool isPlotting,
+      bool isStopping,
+      ParserType parserType,
+      int activeChannelCount,
+      int rawDisplayChannelCount,
+      SendProtocolType effectiveSendProtocolType,
+      String selectedZobowProfileId,
+      String selectedRProfileId,
+    });
+
+typedef _PlotAreaSelection =
+    ({
+      bool hasData,
+      int dataRevision,
+      int channelConfigRevision,
+      int viewportRevision,
+      int overlayRevision,
+    });
+
 int? _parseCompactCount(String input) {
   final text = input.trim();
   if (text.isEmpty) return null;
@@ -123,35 +167,103 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<PlotViewModel>(
-      builder: (context, vm, child) {
-        return Column(
-          children: [
-            // 第一栏工具栏
-            _buildPrimaryToolbar(context, vm),
-            // 第二栏工具栏（光标+缩放）
-            _buildSecondaryToolbar(context, vm),
-            // 主区域
-            Expanded(
-              child: Row(
-                children: [
-                  // 通道设置面板（可折叠/可拉伸）
-                  _buildChannelPanelArea(context, vm),
-                  // 绘图区域
-                  Expanded(child: _buildPlotArea(context, vm)),
-                ],
+    PlotPerformanceMetrics.instance.increment(PlotPerformanceMetric.pageBuild);
+    return Column(
+      children: [
+        Selector<PlotViewModel, _PlotToolbarSelection>(
+          selector: (_, vm) => _selectToolbar(vm),
+          builder:
+              (context, _, _) =>
+                  _buildPrimaryToolbar(context, context.read<PlotViewModel>()),
+        ),
+        Selector<PlotViewModel, _PlotToolbarSelection>(
+          selector: (_, vm) => _selectToolbar(vm),
+          builder:
+              (context, _, _) => _buildSecondaryToolbar(
+                context,
+                context.read<PlotViewModel>(),
               ),
-            ),
-            // 状态栏
-            const PlotStatusBar(),
-          ],
-        );
-      },
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Selector<PlotViewModel, _PlotChannelPanelSelection>(
+                selector: (_, vm) => _selectChannelPanel(vm),
+                builder:
+                    (context, _, _) => _buildChannelPanelArea(
+                      context,
+                      context.read<PlotViewModel>(),
+                    ),
+              ),
+              Expanded(
+                child: Selector<PlotViewModel, _PlotAreaSelection>(
+                  selector: (_, vm) => _selectPlotArea(vm),
+                  builder:
+                      (context, _, _) => _buildPlotArea(
+                        context,
+                        context.read<PlotViewModel>(),
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PlotStatusBar(),
+      ],
+    );
+  }
+
+  _PlotToolbarSelection _selectToolbar(PlotViewModel vm) {
+    return (
+      isPlotting: vm.isPlotting,
+      isStopping: vm.isStopping,
+      hasData: vm.dataPoints.isNotEmpty,
+      parserType: vm.parserType,
+      useRandomSource: vm.useRandomSource,
+      randomFrequency: vm.randomFrequency,
+      canUndoZoom: vm.canUndoZoom,
+      vCursorEnabled: vm.vCursorEnabled,
+      boxZoomEnabled: vm.boxZoomEnabled,
+      xMeasurementEnabled: vm.xMeasurementEnabled,
+      yMeasurementEnabled: vm.yMeasurementEnabled,
+      statsToolbarEnabled: vm.statsToolbarEnabled,
+      statsEnabled: vm.statsEnabled,
+      statsRangeEnabled: vm.statsRangeEnabled,
+      followEnabled: vm.followEnabled,
+      showGrid: vm.showGrid,
+      gridDensity: vm.gridDensity,
+    );
+  }
+
+  _PlotChannelPanelSelection _selectChannelPanel(PlotViewModel vm) {
+    return (
+      channelConfigRevision: vm.channelConfigRevision,
+      isPlotting: vm.isPlotting,
+      isStopping: vm.isStopping,
+      parserType: vm.parserType,
+      activeChannelCount: vm.activeChannelCount,
+      rawDisplayChannelCount: vm.rawDisplayChannelCount,
+      effectiveSendProtocolType: vm.effectiveSendProtocolType,
+      selectedZobowProfileId: vm.selectedZobowProfileId,
+      selectedRProfileId: vm.selectedRProfileId,
+    );
+  }
+
+  _PlotAreaSelection _selectPlotArea(PlotViewModel vm) {
+    return (
+      hasData: vm.dataPoints.isNotEmpty,
+      dataRevision: vm.dataRevision,
+      channelConfigRevision: vm.channelConfigRevision,
+      viewportRevision: vm.viewportRevision,
+      overlayRevision: vm.overlayRevision,
     );
   }
 
   /// 构建通道面板区域（折叠状态或展开状态）
   Widget _buildChannelPanelArea(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.channelPanelBuild,
+    );
     if (_isPanelCollapsed) {
       return _buildCollapsedPanel(context);
     }
@@ -295,6 +407,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 包含：开始/停止、数据源设置、解析器、文件、清空+设置
   Widget _buildPrimaryToolbar(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.primaryToolbarBuild,
+    );
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -345,6 +460,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 构建第二栏工具栏（光标+缩放）
   Widget _buildSecondaryToolbar(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.secondaryToolbarBuild,
+    );
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1366,9 +1484,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 无数据时显示提示，有数据时显示：
   /// - [PlotGestureHandler]：处理手势交互
-  /// - [PlotPainter]：绘制波形
+  /// - [PlotLayerPainter]：分层绘制波形
   /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.plotAreaBuild,
+    );
     if (vm.dataPoints.isEmpty) {
       return Center(
         child: Column(
@@ -1397,7 +1518,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
         final offsetAxisColumnWidths =
-            PlotPainter.calculateOffsetAxisColumnWidths(
+            PlotLayerPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
               channels: displayChannels,
               activeChannelCount: activeChannelCount,
@@ -1408,6 +1529,48 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         final renderViewport =
             vm.viewport.copy()
               ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+
+        PlotLayerPainter createPainter(PlotPaintLayer layer) {
+          return PlotLayerPainter(
+            layer: layer,
+            viewport: renderViewport,
+            data: displayDataPoints,
+            dataRevision: vm.dataRevision,
+            channelConfigRevision: vm.channelConfigRevision,
+            viewportRevision: vm.viewportRevision,
+            overlayRevision: vm.overlayRevision,
+            lodIndex: vm.lodIndex,
+            channels: displayChannels,
+            activeChannelCount: activeChannelCount,
+            showGrid: vm.showGrid,
+            gridDensity: gridDensity,
+            cursor: vm.cursor,
+            xCursor1: vm.xCursor1,
+            xCursor2: vm.xCursor2,
+            yCursor1: vm.yCursor1,
+            yCursor2: vm.yCursor2,
+            statsEnabled: vm.statsEnabled,
+            statsRangeEnabled: vm.statsRangeEnabled,
+            statsX1: vm.statsX1,
+            statsX2: vm.statsX2,
+            snapHighlights: vm.snapHighlights,
+            snapHighlightEnabled: vm.snapHighlightEnabled,
+            snapHighlightDiameter: vm.snapHighlightDiameter,
+            antiAliasEnabled: vm.antiAliasEnabled,
+            yValuesAreInteger: vm.displayYValuesAreInteger,
+            plotFontSizeDelta: vm.plotFontSizeDelta,
+          );
+        }
+
+        Widget buildLayer(PlotPaintLayer layer) {
+          return RepaintBoundary(
+            key: ValueKey<String>('plot-layer-${layer.name}'),
+            child: CustomPaint(
+              painter: createPainter(layer),
+              size: Size.infinite,
+            ),
+          );
+        }
 
         return Stack(
           children: [
@@ -1467,32 +1630,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               onChannelYScaleZoom:
                   (index, scaleDelta) =>
                       vm.zoomChannelYScale(index, scaleDelta),
-              child: CustomPaint(
-                painter: PlotPainter(
-                  viewport: renderViewport,
-                  data: displayDataPoints,
-                  dataRevision: vm.dataRevision,
-                  lodIndex: vm.lodIndex,
-                  channels: displayChannels,
-                  activeChannelCount: activeChannelCount,
-                  showGrid: vm.showGrid,
-                  gridDensity: gridDensity,
-                  cursor: vm.cursor,
-                  xCursor1: vm.xCursor1,
-                  xCursor2: vm.xCursor2,
-                  yCursor1: vm.yCursor1,
-                  yCursor2: vm.yCursor2,
-                  statsEnabled: vm.statsEnabled,
-                  statsRangeEnabled: vm.statsRangeEnabled,
-                  statsX1: vm.statsX1,
-                  statsX2: vm.statsX2,
-                  snapHighlights: vm.snapHighlights,
-                  snapHighlightEnabled: vm.snapHighlightEnabled,
-                  snapHighlightDiameter: vm.snapHighlightDiameter,
-                  antiAliasEnabled: vm.antiAliasEnabled,
-                  plotFontSizeDelta: vm.plotFontSizeDelta,
-                ),
-                size: Size.infinite,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  buildLayer(PlotPaintLayer.background),
+                  buildLayer(PlotPaintLayer.data),
+                  buildLayer(PlotPaintLayer.axis),
+                  buildLayer(PlotPaintLayer.overlay),
+                ],
               ),
             ),
             Positioned.fill(

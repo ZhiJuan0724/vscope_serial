@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
@@ -10,6 +11,7 @@ import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/views/plot/plot_painter.dart';
 
 Future<void> _writeLegacyDat(File file) async {
   const channelCount = 4;
@@ -703,6 +705,61 @@ void main() {
       expect(match, isNotNull);
       final rate = double.parse(match!.group(1)!);
       expect(rate, greaterThan(60000));
+    });
+
+    test('十万包速率统计只保留固定数量时间桶', () {
+      for (int i = 0; i < 100000; i++) {
+        vm.recordRateSampleForTest(i, i ~/ 100);
+      }
+
+      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(25));
+      expect(vm.highRateMode, true);
+    });
+
+    test('数据类型元数据替代绘制阶段全量整数扫描', () {
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(
+        ParserConfig.fireWaterDefault()..fireWaterChannelCount = 2,
+      );
+      for (int i = 0; i < 2; i++) {
+        vm.setChannelVisible(i, true);
+        vm.setChannelOffsetEnabled(i, false);
+        vm.setChannelYScale(i, 1);
+      }
+      for (final channel in vm.mathChannels) {
+        if (channel.enabled) vm.disableMathChannel(channel.index);
+      }
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      expect(vm.displayYValuesAreInteger, true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3.5, 4], bytesConsumed: 1));
+      expect(vm.displayYValuesAreInteger, false);
+
+      vm.clearData();
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 4], bytesConsumed: 1));
+      vm.setChannelYScale(0, 0.5);
+      expect(vm.displayYValuesAreInteger, false);
+    });
+
+    test('数据、通道、视口和覆盖层revision互不串扰', () {
+      final dataRevision = vm.dataRevision;
+      final channelRevision = vm.channelConfigRevision;
+      final viewportRevision = vm.viewportRevision;
+      final overlayRevision = vm.overlayRevision;
+
+      vm.setChannelColor(0, Colors.purple);
+      expect(vm.channelConfigRevision, channelRevision + 1);
+      expect(vm.dataRevision, dataRevision);
+      expect(vm.viewportRevision, viewportRevision);
+      expect(vm.overlayRevision, overlayRevision);
+
+      vm.updateViewport(vm.viewport.copyWith(xMin: 10, xMax: 1010));
+      expect(vm.viewportRevision, viewportRevision + 1);
+      expect(vm.overlayRevision, overlayRevision);
+
+      vm.updateCursor(CursorState(x: 10, y: 1, hasData: false));
+      expect(vm.overlayRevision, overlayRevision + 1);
+      expect(vm.dataRevision, dataRevision);
     });
 
     test('高频接收强制使用30fps但不修改用户刷新帧率', () {

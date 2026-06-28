@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../core/utils/plot_value_formatter.dart';
+import '../../core/utils/plot_performance_metrics.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
@@ -55,13 +56,16 @@ class SnapHighlightPoint {
 /// - [dense]: 每 40px 一条线（最密集）
 enum GridDensity { sparse, normal, dense }
 
-/// 绘图 CustomPainter
+enum PlotPaintLayer { background, data, axis, overlay }
+
+/// 分层绘图 CustomPainter
 ///
-/// 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
-/// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
-class PlotPainter extends CustomPainter {
+/// 四个实例共享绘制算法，但每个实例只绘制一个图层，并按该层依赖判断重绘。
+class PlotLayerPainter extends CustomPainter {
   static const double _denseLinePointThresholdRatio = 0.5;
   static const double _invalidPointThresholdRatio = 0.5;
+
+  final PlotPaintLayer layer;
 
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -71,6 +75,9 @@ class PlotPainter extends CustomPainter {
 
   /// 数据版本，窗口长度不变但内容滚动时也会变化
   final int dataRevision;
+  final int channelConfigRevision;
+  final int viewportRevision;
+  final int overlayRevision;
 
   /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
   final PlotLodIndex? lodIndex;
@@ -120,13 +127,20 @@ class PlotPainter extends CustomPainter {
   /// 抗锯齿状态。高级设置中不再提供开关，默认固定开启。
   final bool antiAliasEnabled;
 
+  /// 当前显示通道是否都只包含整数值。
+  final bool yValuesAreInteger;
+
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
   final int plotFontSizeDelta;
 
-  PlotPainter({
+  PlotLayerPainter({
+    required this.layer,
     required this.viewport,
     required this.data,
     this.dataRevision = 0,
+    this.channelConfigRevision = 0,
+    this.viewportRevision = 0,
+    this.overlayRevision = 0,
     this.lodIndex,
     required this.channels,
     int? activeChannelCount,
@@ -145,6 +159,7 @@ class PlotPainter extends CustomPainter {
     this.snapHighlightEnabled = true,
     this.snapHighlightDiameter = 8,
     this.antiAliasEnabled = true,
+    this.yValuesAreInteger = false,
     this.plotFontSizeDelta = 0,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
          0,
@@ -236,58 +251,74 @@ class PlotPainter extends CustomPainter {
     return a.xMin == b.xMin &&
         a.xMax == b.xMax &&
         a.yMin == b.yMin &&
-        a.yMax == b.yMax;
+        a.yMax == b.yMax &&
+        _doubleListsEqual(a.offsetAxisColumnWidths, b.offsetAxisColumnWidths);
+  }
+
+  bool _doubleListsEqual(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 测量线 → 光标浮窗
-    _drawBackground(canvas, size);
-
-    if (showGrid) {
-      _drawGrid(canvas, size);
+    switch (layer) {
+      case PlotPaintLayer.background:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.backgroundPainterPaint,
+        );
+        _drawBackground(canvas, size);
+        if (showGrid) _drawGrid(canvas, size);
+        break;
+      case PlotPaintLayer.data:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.dataPainterPaint,
+        );
+        _drawChannels(canvas, size);
+        break;
+      case PlotPaintLayer.axis:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.axisPainterPaint,
+        );
+        _drawAxes(canvas, size);
+        _drawChannelOffsetBaselines(canvas, size);
+        break;
+      case PlotPaintLayer.overlay:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.overlayPainterPaint,
+        );
+        if (xCursor1 != null || xCursor2 != null) {
+          _drawXMeasurement(
+            canvas,
+            size,
+            xCursor1,
+            xCursor2,
+            viewport.plotHeight(size.height),
+          );
+        }
+        if (yCursor1 != null || yCursor2 != null) {
+          _drawYMeasurement(
+            canvas,
+            size,
+            yCursor1,
+            yCursor2,
+            viewport.plotWidth(size.width),
+          );
+        }
+        _drawSnapHighlights(canvas, size);
+        if (statsEnabled &&
+            statsRangeEnabled &&
+            statsX1 != null &&
+            statsX2 != null) {
+          _drawStatsRange(canvas, size);
+        }
+        // 光标和浮窗最后绘制，避免被测量线遮挡。
+        _drawCursor(canvas, size);
+        break;
     }
-
-    _drawChannels(canvas, size);
-    _drawAxes(canvas, size);
-
-    // 通道偏移基准线和标签（绘制在数据层之上，坐标轴之下）
-    _drawChannelOffsetBaselines(canvas, size);
-
-    // X-X 测量线（独立绘制，不依赖 cursor）
-    if (xCursor1 != null || xCursor2 != null) {
-      _drawXMeasurement(
-        canvas,
-        size,
-        xCursor1,
-        xCursor2,
-        viewport.plotHeight(size.height),
-      );
-    }
-
-    // Y-Y 测量线（独立绘制，不依赖 cursor）
-    if (yCursor1 != null || yCursor2 != null) {
-      _drawYMeasurement(
-        canvas,
-        size,
-        yCursor1,
-        yCursor2,
-        viewport.plotWidth(size.width),
-      );
-    }
-
-    // 统计范围框（独立绘制）
-    _drawSnapHighlights(canvas, size);
-
-    if (statsEnabled &&
-        statsRangeEnabled &&
-        statsX1 != null &&
-        statsX2 != null) {
-      _drawStatsRange(canvas, size);
-    }
-
-    // 垂直光标和 tooltip 最后绘制，避免测量线压住悬浮窗。
-    _drawCursor(canvas, size);
   }
 
   /// 绘制深色背景
@@ -963,9 +994,8 @@ class PlotPainter extends CustomPainter {
     // Y 轴刻度（使用 nice number 取整）
     final yGridCount = _calculateGridCount(plotH, 60);
     final roughStep = viewport.yRange / yGridCount;
-    final integerYValues = _visibleYValuesAreInteger();
     final step = _niceNumber(
-      integerYValues ? math.max(1.0, roughStep) : roughStep,
+      yValuesAreInteger ? math.max(1.0, roughStep) : roughStep,
       true,
     );
     final Set<double> drawnValues = {};
@@ -1540,23 +1570,6 @@ class PlotPainter extends CustomPainter {
     return value.toStringAsFixed(3);
   }
 
-  bool _visibleYValuesAreInteger() {
-    var hasValue = false;
-    for (final point in data) {
-      if (point.index < viewport.xMin || point.index > viewport.xMax) continue;
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
-        final channel = channels[i];
-        if (!channel.visible) continue;
-        final value = point.values[i] * channel.yScale + channel.yOffset;
-        hasValue = true;
-        if ((value - value.roundToDouble()).abs() > 1e-9) {
-          return false;
-        }
-      }
-    }
-    return hasValue;
-  }
-
   // ========== X-X / Y-Y 测量绘制 ==========
   /// 绘制 X-X 测量两条垂直线及标签
   void _drawXMeasurement(
@@ -1901,32 +1914,42 @@ class PlotPainter extends CustomPainter {
   ///
   /// 比较视口、数据长度、光标、网格、统计范围等关键属性。
   @override
-  bool shouldRepaint(covariant PlotPainter oldDelegate) {
+  bool shouldRepaint(covariant PlotLayerPainter oldDelegate) {
+    if (oldDelegate.layer != layer) return true;
     final viewportChanged = !_viewportEquals(oldDelegate.viewport, viewport);
     final dataChanged = oldDelegate.data.length != data.length;
     final dataRevisionChanged = oldDelegate.dataRevision != dataRevision;
-    final result =
+    return switch (layer) {
+      PlotPaintLayer.background =>
         viewportChanged ||
-        dataChanged ||
-        dataRevisionChanged ||
-        oldDelegate.lodIndex != lodIndex ||
-        oldDelegate.cursor != cursor ||
-        oldDelegate.showGrid != showGrid ||
-        oldDelegate.statsEnabled != statsEnabled ||
-        oldDelegate.statsRangeEnabled != statsRangeEnabled ||
-        oldDelegate.statsX1 != statsX1 ||
-        oldDelegate.statsX2 != statsX2 ||
-        oldDelegate.snapHighlights != snapHighlights ||
-        oldDelegate.snapHighlightEnabled != snapHighlightEnabled ||
-        oldDelegate.snapHighlightDiameter != snapHighlightDiameter ||
-        oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
-    final cursorChanged =
-        oldDelegate.cursor != cursor ||
-        oldDelegate.xCursor1 != xCursor1 ||
-        oldDelegate.xCursor2 != xCursor2 ||
-        oldDelegate.yCursor1 != yCursor1 ||
-        oldDelegate.yCursor2 != yCursor2;
-    return result || cursorChanged;
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.showGrid != showGrid ||
+            oldDelegate.gridDensity != gridDensity ||
+            oldDelegate.antiAliasEnabled != antiAliasEnabled,
+      PlotPaintLayer.data =>
+        viewportChanged ||
+            dataChanged ||
+            dataRevisionChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.lodIndex != lodIndex ||
+            oldDelegate.activeChannelCount != activeChannelCount ||
+            oldDelegate.antiAliasEnabled != antiAliasEnabled,
+      PlotPaintLayer.axis =>
+        viewportChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.activeChannelCount != activeChannelCount ||
+            oldDelegate.gridDensity != gridDensity ||
+            oldDelegate.yValuesAreInteger != yValuesAreInteger ||
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+      PlotPaintLayer.overlay =>
+        viewportChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.overlayRevision != overlayRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+    };
   }
 }
 

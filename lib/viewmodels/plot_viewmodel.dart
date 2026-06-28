@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../core/utils/math_expression.dart';
+import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_source_config.dart';
@@ -71,7 +72,7 @@ class PlotImportProgress {
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
-/// 数据流：DataSourceManager → IDataParser → 历史缓存/当前窗口 → PlotPainter。
+/// 数据流：DataSourceManager → IDataParser → 历史缓存/当前窗口 → 分层 Painter。
 ///
 /// 这里同时维护“全量历史”和“当前绘图窗口”两套数据结构：
 /// - 当前窗口 `_dataPoints` 只保存 UI 正在绘制的点，避免 Flutter 持有过多对象。
@@ -115,6 +116,13 @@ class PlotViewModel extends BaseViewModel {
   int _activeDiscardInitialPacketLimit = 0;
   int _discardedInitialPacketCount = 0;
   int _dataRevision = 0;
+  int _channelConfigRevision = 0;
+  int _viewportRevision = 0;
+  int _overlayRevision = 0;
+
+  /// 各显示通道是否已经观察到有限小数值，避免 Painter 每帧扫描窗口。
+  final List<bool> _observedChannelValues = List<bool>.filled(20, false);
+  final List<bool> _observedFractionalValues = List<bool>.filled(20, false);
 
   /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
   ///
@@ -138,11 +146,12 @@ class PlotViewModel extends BaseViewModel {
   DateTime? _startTime;
 
   // ========== 速率统计（基于计数器，避免遍历列表）==========
-  /// 速率统计样本队列，用于计算实时接收速率。
-  final ListQueue<_RateSample> _rateSamples = ListQueue<_RateSample>();
+  /// 速率统计按 50ms 聚合，避免高频接收时每包创建一个 Dart 对象。
+  final ListQueue<_RateBucket> _rateBuckets = ListQueue<_RateBucket>();
 
   /// 速率统计保留窗口，必须按时间裁剪，不能按固定样本数裁剪。
   static const int _rateSampleWindowMs = 1200;
+  static const int _rateBucketDurationMs = 50;
 
   static const int _rateCalculationIntervalMs = 250;
   static const double _highRateEnterThreshold = 10000.0;
@@ -387,6 +396,14 @@ class PlotViewModel extends BaseViewModel {
     _startRefreshTimer();
   }
 
+  @override
+  void notifyListeners() {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.viewModelNotify,
+    );
+    super.notifyListeners();
+  }
+
   /// 初始化Zobow配置文件服务
   Future<void> _initZobowProfileService() async {
     await _profileService.init();
@@ -439,11 +456,13 @@ class PlotViewModel extends BaseViewModel {
             .round()
             .clamp(1, 1000)
             .toInt();
-    viewport = PlotViewport(
-      xMin: settings.xMin,
-      xMax: settings.xMax,
-      yMin: settings.yMin,
-      yMax: settings.yMax,
+    _setViewport(
+      PlotViewport(
+        xMin: settings.xMin,
+        xMax: settings.xMax,
+        yMin: settings.yMin,
+        yMax: settings.yMax,
+      ),
     );
     // 同步到 serialService
     serialService.useRandomSource = _useRandomSource;
@@ -679,12 +698,38 @@ class PlotViewModel extends BaseViewModel {
 
   /// 当前窗口数据版本，用于窗口长度不变但内容滚动时触发重绘。
   int get dataRevision => _dataRevision;
+  int get channelConfigRevision => _channelConfigRevision;
+  int get viewportRevision => _viewportRevision;
+  int get overlayRevision => _overlayRevision;
+
+  bool get displayYValuesAreInteger {
+    final currentChannels = displayChannels;
+    var hasVisibleValues = false;
+    for (int i = 0; i < currentChannels.length; i++) {
+      final channel = currentChannels[i];
+      if (!channel.visible) continue;
+      if (channel.yScale != channel.yScale.roundToDouble() ||
+          channel.yOffset != channel.yOffset.roundToDouble()) {
+        return false;
+      }
+      if (i >= _observedChannelValues.length ||
+          !_observedChannelValues[i] ||
+          _observedFractionalValues[i]) {
+        return false;
+      }
+      hasVisibleValues = true;
+    }
+    return hasVisibleValues;
+  }
 
   @visibleForTesting
   int get notifyBatchSizeForTest => _notifyBatchSize;
 
   @visibleForTesting
   int get lodSampleStepForTest => _lodSampleStep;
+
+  @visibleForTesting
+  int get rateBucketCountForTest => _rateBuckets.length;
 
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
@@ -716,6 +761,48 @@ class PlotViewModel extends BaseViewModel {
     _cachedDisplayChannelKey = null;
     _cachedStatsKey = null;
     _cachedStatsText = null;
+  }
+
+  void _resetObservedValueMetadata() {
+    _observedChannelValues.fillRange(0, _observedChannelValues.length, false);
+    _observedFractionalValues.fillRange(
+      0,
+      _observedFractionalValues.length,
+      false,
+    );
+  }
+
+  void _recordObservedValues(List<double> values, {int startChannel = 0}) {
+    for (int i = 0; i < values.length; i++) {
+      final channelIndex = startChannel + i;
+      if (channelIndex >= _observedChannelValues.length) return;
+      final value = values[i];
+      if (!value.isFinite) continue;
+      _observedChannelValues[channelIndex] = true;
+      if ((value - value.roundToDouble()).abs() > 1e-9) {
+        _observedFractionalValues[channelIndex] = true;
+      }
+    }
+  }
+
+  void _rebuildObservedRawValueMetadata() {
+    _resetObservedValueMetadata();
+    for (final point in _dataPoints) {
+      _recordObservedValues(point.values);
+    }
+  }
+
+  void _setViewport(PlotViewport next) {
+    viewport = next;
+    _viewportRevision++;
+  }
+
+  void _markChannelConfigChanged() {
+    _channelConfigRevision++;
+  }
+
+  void _markOverlayChanged() {
+    _overlayRevision++;
   }
 
   int get _mathDisplayFutureLookahead {
@@ -797,10 +884,14 @@ class PlotViewModel extends BaseViewModel {
     while (values.length < rawCount) {
       values.add(double.nan);
     }
+    final mathValues = <double>[];
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
-      values.add(_evaluateMathChannel(channel, pointPosition, sourcePoints));
+      final value = _evaluateMathChannel(channel, pointPosition, sourcePoints);
+      values.add(value);
+      mathValues.add(value);
     }
+    _recordObservedValues(mathValues, startChannel: rawCount);
     return PlotDataPoint(
       index: point.index,
       timestamp: point.timestamp,
@@ -876,7 +967,7 @@ class PlotViewModel extends BaseViewModel {
   /// 计算每秒点数，基于最近500ms的数据（响应更快）
   /// 使用计数器方式，避免遍历整个数据列表
   double? _calculatePointsPerSecond({int? nowMs, bool force = false}) {
-    if (_rateSamples.length < 2 || _startTime == null) {
+    if (_rateBuckets.isEmpty || _startTime == null) {
       _cachedPointsPerSecond = null;
       return null;
     }
@@ -890,47 +981,55 @@ class PlotViewModel extends BaseViewModel {
 
     final cutoffMs = effectiveNowMs - 500; // 最近500ms
 
-    _RateSample? first;
-    _RateSample? last;
-    var count = 0;
-    for (final sample in _rateSamples) {
-      if (sample.timestampMs < cutoffMs) continue;
-      first ??= sample;
-      last = sample;
-      count++;
+    _RateBucket? first;
+    _RateBucket? last;
+    for (final bucket in _rateBuckets) {
+      if (bucket.lastTimestampMs < cutoffMs) continue;
+      first ??= bucket;
+      last = bucket;
     }
 
     _lastRateCalculationMs = effectiveNowMs;
-    if (first == null || last == null || count < 2) {
+    if (first == null || last == null) {
       _cachedPointsPerSecond = null;
       return null;
     }
-    final elapsedMs = last.timestampMs - first.timestampMs;
+    final elapsedMs = last.lastTimestampMs - first.firstTimestampMs;
     if (elapsedMs <= 0) {
       _cachedPointsPerSecond = null;
       return null;
     }
-    _cachedPointsPerSecond = (last.index - first.index) * 1000.0 / elapsedMs;
+    _cachedPointsPerSecond =
+        (last.lastIndex - first.firstIndex) * 1000.0 / elapsedMs;
     return _cachedPointsPerSecond;
   }
 
   void _recordRateSample(int pointIndex, int timestampMs) {
-    _rateSamples.add(_RateSample(pointIndex, timestampMs));
-    final cutoffMs = timestampMs - _rateSampleWindowMs;
-    while (_rateSamples.isNotEmpty &&
-        _rateSamples.first.timestampMs < cutoffMs) {
-      _rateSamples.removeFirst();
+    final bucketStartMs =
+        timestampMs ~/ _rateBucketDurationMs * _rateBucketDurationMs;
+    final lastBucket = _rateBuckets.isEmpty ? null : _rateBuckets.last;
+    if (lastBucket != null && lastBucket.startMs == bucketStartMs) {
+      lastBucket.update(pointIndex, timestampMs);
+    } else {
+      _rateBuckets.add(
+        _RateBucket(
+          startMs: bucketStartMs,
+          firstIndex: pointIndex,
+          firstTimestampMs: timestampMs,
+        ),
+      );
     }
-    const hardLimit = 150000;
-    while (_rateSamples.length > hardLimit) {
-      _rateSamples.removeFirst();
+    final cutoffMs = timestampMs - _rateSampleWindowMs;
+    while (_rateBuckets.isNotEmpty &&
+        _rateBuckets.first.lastTimestampMs < cutoffMs) {
+      _rateBuckets.removeFirst();
     }
     final rate = _calculatePointsPerSecond(nowMs: timestampMs);
     _updateHighRateMode(rate, timestampMs);
   }
 
   void _resetRateState() {
-    _rateSamples.clear();
+    _rateBuckets.clear();
     _cachedPointsPerSecond = null;
     _lastRateCalculationMs = null;
     _highRateMode = false;
@@ -1048,6 +1147,8 @@ class PlotViewModel extends BaseViewModel {
   /// 状态，但不会把随机源接入当前解析链。
   void setParserType(ParserType type) {
     _parserType = type;
+    _markChannelConfigChanged();
+    _resetObservedValueMetadata();
     _parserConfig
       ..type = type
       ..source = ProtocolSource.builtIn
@@ -1083,6 +1184,7 @@ class PlotViewModel extends BaseViewModel {
   void setSendProtocolType(SendProtocolType type) {
     if (type == SendProtocolType.zobowBuiltIn) return;
     _sendProtocolType = type;
+    _markChannelConfigChanged();
     _sendProtocolConfig
       ..type = type
       ..source = ProtocolSource.builtIn
@@ -1094,6 +1196,7 @@ class PlotViewModel extends BaseViewModel {
   void setRChannelAddress(int index, String address) {
     if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
     _sendProtocolConfig.rChannelAddresses[index] = address.trim();
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -1154,6 +1257,8 @@ class PlotViewModel extends BaseViewModel {
         throw ArgumentError(error);
       }
     }
+    _markChannelConfigChanged();
+    _resetObservedValueMetadata();
     final oldZobowFrameLength = ZobowParser.frameLengthForConfig(_parserConfig);
     final oldFixedFrameLength = _parserConfig.totalFrameLength;
     final oldFixedFrameTypeLayout = _fixedFrameTypeLayoutKey(_parserConfig);
@@ -1296,6 +1401,7 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = 0;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
     _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
@@ -1312,9 +1418,9 @@ class PlotViewModel extends BaseViewModel {
     // 保留上一轮缩放比例；首次启动仍使用默认视口。
     if (_hasStartedPlottingOnce) {
       final xRange = viewport.xRange;
-      viewport = viewport.copyWith(xMin: 0, xMax: xRange);
+      _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
     } else {
-      viewport = viewport.reset();
+      _setViewport(viewport.reset());
       _hasStartedPlottingOnce = true;
     }
     _viewportHistory.clear();
@@ -1494,6 +1600,7 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = 0;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
     _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
@@ -1504,7 +1611,7 @@ class PlotViewModel extends BaseViewModel {
     _lastRateLogIndex = 0;
     _totalReceivedBytes = 0;
     _lastRateLogBytes = 0;
-    viewport = viewport.reset();
+    _setViewport(viewport.reset());
     _viewportHistory.clear();
     _resetCursorPositions();
     Future.microtask(() => notifyListeners());
@@ -1564,6 +1671,7 @@ class PlotViewModel extends BaseViewModel {
       timestamp: timestamp,
       values: List.from(result.values!),
     );
+    _recordObservedValues(point.values);
 
     // 历史缓存按协议分流：
     // - Zobow/FixedFrame 保留原始帧，导出和视口重建都从原始帧重新解析。
@@ -1604,12 +1712,13 @@ class PlotViewModel extends BaseViewModel {
                 : _activeChannelCount);
     if (nextActiveChannelCount != _activeChannelCount) {
       _activeChannelCount = nextActiveChannelCount;
+      _markChannelConfigChanged();
     }
 
     // 自动跟随最新数据（仅跟随模式开启时）
     if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
       final lastIndex = _dataPoints.last.index;
-      viewport = _followViewportForLatestIndex(lastIndex.toDouble());
+      _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
     }
 
     // 数据接收：每包数据都处理，不丢失
@@ -1691,9 +1800,8 @@ class PlotViewModel extends BaseViewModel {
     final limit = effectiveMaxVisiblePoints;
     if (end - start > limit) {
       end = start + limit;
-      viewport = viewport.copyWith(
-        xMin: start.toDouble(),
-        xMax: end.toDouble(),
+      _setViewport(
+        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
       );
     }
 
@@ -1739,9 +1847,8 @@ class PlotViewModel extends BaseViewModel {
     final limit = effectiveMaxVisiblePoints;
     if (end - start > limit) {
       end = start + limit;
-      viewport = viewport.copyWith(
-        xMin: start.toDouble(),
-        xMax: end.toDouble(),
+      _setViewport(
+        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
       );
     }
 
@@ -1760,9 +1867,8 @@ class PlotViewModel extends BaseViewModel {
     final limit = effectiveMaxVisiblePoints;
     if (end - start > limit) {
       end = start + limit;
-      viewport = viewport.copyWith(
-        xMin: start.toDouble(),
-        xMax: end.toDouble(),
+      _setViewport(
+        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
       );
     }
 
@@ -1803,15 +1909,18 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = start;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
     if (count <= 0) return;
 
     for (int i = 0; i < count; i++) {
       final pointIndex = start + i;
+      final values = _parsedHistory.valuesAt(pointIndex);
+      _recordObservedValues(values);
       _dataPoints.add(
         PlotDataPoint(
           index: pointIndex,
           timestamp: pointIndex.toDouble(),
-          values: _parsedHistory.valuesAt(pointIndex),
+          values: values,
         ),
       );
     }
@@ -1830,15 +1939,18 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = start;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
 
     for (int i = 0; i < count; i++) {
       final packetIndex = start + i;
       final frame = _zobowRawFrames.readPacket(packetIndex);
+      final values = ZobowParser.decodeFrameValues(frame, _parserConfig);
+      _recordObservedValues(values);
       _dataPoints.add(
         PlotDataPoint(
           index: packetIndex,
           timestamp: packetIndex.toDouble(),
-          values: ZobowParser.decodeFrameValues(frame, _parserConfig),
+          values: values,
         ),
       );
     }
@@ -1853,16 +1965,19 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = start;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
 
     const batchSize = 4096;
     for (int i = 0; i < count; i++) {
       final packetIndex = start + i;
       final frame = _zobowRawFrames.readPacket(packetIndex);
+      final values = ZobowParser.decodeFrameValues(frame, _parserConfig);
+      _recordObservedValues(values);
       _dataPoints.add(
         PlotDataPoint(
           index: packetIndex,
           timestamp: packetIndex.toDouble(),
-          values: ZobowParser.decodeFrameValues(frame, _parserConfig),
+          values: values,
         ),
       );
       if ((i + 1) % batchSize == 0 || i + 1 == count) {
@@ -2132,7 +2247,7 @@ class PlotViewModel extends BaseViewModel {
     if (!fromDrag) {
       _saveViewport();
     }
-    viewport = _limitXRange(newViewport).copy();
+    _setViewport(_limitXRange(newViewport).copy());
     viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
     if (!fromDrag) {
       _loadWindowForViewport();
@@ -2172,7 +2287,7 @@ class PlotViewModel extends BaseViewModel {
   /// 重置视口到默认值并保存历史记录
   void resetViewport() {
     _saveViewport();
-    viewport = viewport.reset();
+    _setViewport(viewport.reset());
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2181,7 +2296,7 @@ class PlotViewModel extends BaseViewModel {
   void undoZoom() {
     if (_viewportHistory.isEmpty) return;
     final previous = _viewportHistory.removeLast();
-    viewport = _limitXRange(previous).copy();
+    _setViewport(_limitXRange(previous).copy());
     _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2220,7 +2335,7 @@ class PlotViewModel extends BaseViewModel {
   void zoomXIn() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    viewport = _limitXRange(viewport.zoomX(0.8, centerX));
+    _setViewport(_limitXRange(viewport.zoomX(0.8, centerX)));
     _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2230,7 +2345,7 @@ class PlotViewModel extends BaseViewModel {
   void zoomXOut() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    viewport = _limitXRange(viewport.zoomX(1.25, centerX));
+    _setViewport(_limitXRange(viewport.zoomX(1.25, centerX)));
     _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2240,7 +2355,7 @@ class PlotViewModel extends BaseViewModel {
   void zoomYIn() {
     _saveViewport();
     final centerY = viewport.yMin + viewport.yRange / 2;
-    viewport = viewport.zoomY(0.8, centerY);
+    _setViewport(viewport.zoomY(0.8, centerY));
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2249,7 +2364,7 @@ class PlotViewModel extends BaseViewModel {
   void zoomYOut() {
     _saveViewport();
     final centerY = viewport.yMin + viewport.yRange / 2;
-    viewport = viewport.zoomY(1.25, centerY);
+    _setViewport(viewport.zoomY(1.25, centerY));
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2299,7 +2414,7 @@ class PlotViewModel extends BaseViewModel {
         showStatusMessage('Y轴数据范围为0，跳过默认Y轴自适应');
       } else {
         final (yMin, yMax) = _fitYRange(minY, maxY);
-        viewport = viewport.copyWith(yMin: yMin, yMax: yMax);
+        _setViewport(viewport.copyWith(yMin: yMin, yMax: yMax));
         changed = true;
       }
     }
@@ -2320,7 +2435,7 @@ class PlotViewModel extends BaseViewModel {
     final minX = (maxX - effectiveMaxVisiblePoints).clamp(0, maxX).toDouble();
 
     _saveViewport();
-    viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+    _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
     _loadTailWindow();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2341,15 +2456,18 @@ class PlotViewModel extends BaseViewModel {
     _visibleStartIndex = start;
     _dataRevision++;
     _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
 
     for (int i = 0; i < count; i++) {
       final packetIndex = start + i;
       final frame = _fixedFrameRawFrames.readPacket(packetIndex);
+      final values = FixedFrameParser.decodeFrameValues(frame, _parserConfig);
+      _recordObservedValues(values);
       _dataPoints.add(
         PlotDataPoint(
           index: packetIndex,
           timestamp: packetIndex.toDouble(),
-          values: FixedFrameParser.decodeFrameValues(frame, _parserConfig),
+          values: values,
         ),
       );
     }
@@ -2393,20 +2511,17 @@ class PlotViewModel extends BaseViewModel {
     _saveViewport();
     if (minY != double.infinity && maxY != double.negativeInfinity) {
       if (minY == maxY) {
-        viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+        _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
         showStatusMessage('默认Y轴数据范围为0，仅自适应X轴');
       }
       if (minY != maxY) {
         final (yMin, yMax) = _fitYRange(minY, maxY);
-        viewport = viewport.copyWith(
-          xMin: minX,
-          xMax: maxX,
-          yMin: yMin,
-          yMax: yMax,
+        _setViewport(
+          viewport.copyWith(xMin: minX, xMax: maxX, yMin: yMin, yMax: yMax),
         );
       }
     } else {
-      viewport = viewport.copyWith(xMin: minX, xMax: maxX);
+      _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
     }
     _fitOffsetChannelsY(currentData);
     _saveSettings();
@@ -2470,7 +2585,7 @@ class PlotViewModel extends BaseViewModel {
   void setFollowEnabled(bool value) {
     _followEnabled = value;
     if (value && _historyPointCount > 0) {
-      viewport = _followViewportForLatestIndex(_latestFollowIndex());
+      _setViewport(_followViewportForLatestIndex(_latestFollowIndex()));
       _loadTailWindow();
     }
     _saveSettings();
@@ -2483,6 +2598,7 @@ class PlotViewModel extends BaseViewModel {
   void setVCursorEnabled(bool value) {
     _vCursorEnabled = value;
     _cursor = null;
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2491,6 +2607,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelVisible(int index, bool visible) {
     if (index < 0 || index >= channels.length) return;
     channels[index].visible = visible;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2498,6 +2615,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelColor(int index, Color color) {
     if (index < 0 || index >= channels.length) return;
     channels[index].color = color;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2505,6 +2623,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelShowLine(int index, bool show) {
     if (index < 0 || index >= channels.length) return;
     channels[index].showLine = show;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2512,6 +2631,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelPointSize(int index, double size) {
     if (index < 0 || index >= channels.length) return;
     channels[index].pointSize = size.clamp(0.5, 12.0);
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2519,6 +2639,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelLineWidth(int index, double width) {
     if (index < 0 || index >= channels.length) return;
     channels[index].lineWidth = width.clamp(0.5, 8.0);
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2530,6 +2651,7 @@ class PlotViewModel extends BaseViewModel {
     for (final channel in mathChannels) {
       if (channel.enabled) channel.display.visible = visible;
     }
+    _markChannelConfigChanged();
     _invalidateDisplayCaches();
     Future.microtask(() => notifyListeners());
   }
@@ -2575,6 +2697,8 @@ class PlotViewModel extends BaseViewModel {
     channel.display.visible = true;
     _compileMathChannel(channel);
     _invalidateDisplayCaches();
+    _rebuildObservedRawValueMetadata();
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
     return true;
@@ -2586,6 +2710,7 @@ class PlotViewModel extends BaseViewModel {
       alias: mathChannels[index].name,
     );
     _invalidateDisplayCaches();
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2596,6 +2721,8 @@ class PlotViewModel extends BaseViewModel {
     mathChannels[index] = MathChannelConfig(index: old.index);
     _compiledMathExpressions.remove(index);
     _invalidateDisplayCaches();
+    _rebuildObservedRawValueMetadata();
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2608,6 +2735,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelAlias(int index, String alias) {
     if (index < 0 || index >= channels.length) return;
     channels[index].alias = alias;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2617,12 +2745,14 @@ class PlotViewModel extends BaseViewModel {
       final mathChannel = mathChannels[index - 16];
       mathChannel.display.yOffset = offset;
       _invalidateDisplayCaches();
+      _markChannelConfigChanged();
       _saveSettings();
       Future.microtask(() => notifyListeners());
       return;
     }
     if (index < 0 || index >= channels.length) return;
     channels[index].yOffset = offset;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2635,6 +2765,7 @@ class PlotViewModel extends BaseViewModel {
       channels[index].yOffset = 0;
       channels[index].yScale = 1.0;
     }
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2642,6 +2773,7 @@ class PlotViewModel extends BaseViewModel {
   void setChannelYScale(int index, double scale) {
     if (index < 0 || index >= channels.length) return;
     channels[index].yScale = scale;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2651,6 +2783,7 @@ class PlotViewModel extends BaseViewModel {
       final display = mathChannels[index - 16].display;
       display.yScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
       _invalidateDisplayCaches();
+      _markChannelConfigChanged();
       _saveSettings();
       Future.microtask(() => notifyListeners());
       return;
@@ -2658,6 +2791,7 @@ class PlotViewModel extends BaseViewModel {
     if (index < 0 || index >= channels.length) return;
     final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
     channels[index].yScale = newScale;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2665,6 +2799,7 @@ class PlotViewModel extends BaseViewModel {
   void setZobowChannelId(int index, int channelId) {
     if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
     _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
+    _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2683,6 +2818,8 @@ class PlotViewModel extends BaseViewModel {
     if (index < channels.length) {
       channels[index].dataType = type;
     }
+    _markChannelConfigChanged();
+    _resetObservedValueMetadata();
     if (_parserConfig.zobowChannelTypes[index] == type) return true;
 
     _parserConfig.zobowChannelTypes[index] = type;
@@ -2735,6 +2872,8 @@ class PlotViewModel extends BaseViewModel {
       return false;
     }
     channels[index].dataType = type;
+    _markChannelConfigChanged();
+    _resetObservedValueMetadata();
     if (_parserConfig.fixedFrameChannelTypes[index] == type) return true;
 
     _parserConfig.fixedFrameChannelTypes[index] = type;
@@ -2748,6 +2887,7 @@ class PlotViewModel extends BaseViewModel {
   /// 设置网格显示开关
   void setShowGrid(bool show) {
     _showGrid = show;
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2762,6 +2902,7 @@ class PlotViewModel extends BaseViewModel {
   void setSnapHighlightEnabled(bool value) {
     if (_snapHighlightEnabled == value) return;
     _snapHighlightEnabled = value;
+    _markOverlayChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2770,6 +2911,7 @@ class PlotViewModel extends BaseViewModel {
     final next = value.clamp(6.0, 12.0).toDouble();
     if ((_snapHighlightDiameter - next).abs() < 1e-9) return;
     _snapHighlightDiameter = next;
+    _markOverlayChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2779,6 +2921,7 @@ class PlotViewModel extends BaseViewModel {
     if (_snapHighlightColorMode == next) return;
     _snapHighlightColorMode = next;
     _refreshSnapHighlightColors();
+    _markOverlayChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2795,7 +2938,7 @@ class PlotViewModel extends BaseViewModel {
     if ((_followPositionRatio - next).abs() < 1e-9) return;
     _followPositionRatio = next;
     if (_followEnabled && _historyPointCount > 0) {
-      viewport = _followViewportForLatestIndex(_latestFollowIndex());
+      _setViewport(_followViewportForLatestIndex(_latestFollowIndex()));
       _loadWindowForViewport(force: true);
     }
     _saveSettings();
@@ -2813,6 +2956,7 @@ class PlotViewModel extends BaseViewModel {
   /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
   void setPlotFontSizeDelta(int delta) {
     _plotFontSizeDelta = delta.clamp(-3, 6);
+    _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }
@@ -2824,7 +2968,7 @@ class PlotViewModel extends BaseViewModel {
     _maxVisiblePoints = next;
 
     if (_historyPointCount > 0) {
-      viewport = _limitXRange(viewport).copy();
+      _setViewport(_limitXRange(viewport).copy());
       _loadWindowForViewport(force: true);
     }
 
@@ -2848,6 +2992,7 @@ class PlotViewModel extends BaseViewModel {
     const valid = {'sparse', 'normal', 'dense'};
     if (valid.contains(density)) {
       _gridDensity = density;
+      _markChannelConfigChanged();
       _saveSettings();
       Future.microtask(() => notifyListeners());
     }
@@ -2873,6 +3018,7 @@ class PlotViewModel extends BaseViewModel {
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2896,6 +3042,7 @@ class PlotViewModel extends BaseViewModel {
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2914,6 +3061,7 @@ class PlotViewModel extends BaseViewModel {
       _statsX2 = null;
       _statsRangeEnabled = false;
     }
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2934,18 +3082,21 @@ class PlotViewModel extends BaseViewModel {
       _statsX1 = viewport.xMin;
       _statsX2 = viewport.xMax;
     }
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置统计范围左边界
   void setStatsX1(double x) {
     _statsX1 = x;
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置统计范围右边界
   void setStatsX2(double x) {
     _statsX2 = x;
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -2956,6 +3107,7 @@ class PlotViewModel extends BaseViewModel {
   /// - 未绘制到数据点的区域设置 hasData=false，tooltip 不显示
   void updateFollowCursor(double x, double y, Offset screenPosition) {
     _cursor = _buildCursorAtX(x, y: y, screenPosition: screenPosition);
+    _markOverlayChanged();
     // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
     scheduleMicrotask(notifyListeners);
   }
@@ -2963,6 +3115,7 @@ class PlotViewModel extends BaseViewModel {
   /// 更新光标状态（由外部直接设置）
   void updateCursor(CursorState? cursor) {
     _cursor = cursor;
+    _markOverlayChanged();
     // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
     scheduleMicrotask(notifyListeners);
   }
@@ -2974,18 +3127,21 @@ class PlotViewModel extends BaseViewModel {
             ? cursorX
             : viewport.xMin + viewport.xRange / 2;
     _observations.add(_buildCursorAtX(sourceX));
+    _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
 
   void updateObservation(int index, double x) {
     if (index < 0 || index >= _observations.length) return;
     _observations[index] = _buildCursorAtX(x);
+    _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
 
   void removeObservation(int index) {
     if (index < 0 || index >= _observations.length) return;
     _observations.removeAt(index);
+    _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
 
@@ -3181,11 +3337,13 @@ class PlotViewModel extends BaseViewModel {
     _statsX1 = null;
     _statsX2 = null;
     _clearSnapHighlights();
+    _markOverlayChanged();
   }
 
   void setXCursor1(double x) {
     _xCursor1 = _snapXToNearestVisiblePoint(x);
     _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3193,6 +3351,7 @@ class PlotViewModel extends BaseViewModel {
   void setXCursor2(double x) {
     _xCursor2 = _snapXToNearestVisiblePoint(x);
     _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3200,6 +3359,7 @@ class PlotViewModel extends BaseViewModel {
   void setYCursor1(double y) {
     _yCursor1 = y;
     _yCursor1SnapHighlights = _snapHighlightForY(y, Colors.cyan);
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3207,6 +3367,7 @@ class PlotViewModel extends BaseViewModel {
   void setYCursor2(double y) {
     _yCursor2 = y;
     _yCursor2SnapHighlights = _snapHighlightForY(y, Colors.yellow);
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3218,6 +3379,7 @@ class PlotViewModel extends BaseViewModel {
     _yCursor2 = null;
     _clearSnapHighlights();
     _cursor = null;
+    _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
 

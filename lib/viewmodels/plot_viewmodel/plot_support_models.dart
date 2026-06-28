@@ -59,10 +59,24 @@ class _ParsedValueHistory {
   }
 }
 
-class _RateSample {
-  final int index;
-  final int timestampMs;
-  _RateSample(this.index, this.timestampMs);
+class _RateBucket {
+  final int startMs;
+  final int firstIndex;
+  final int firstTimestampMs;
+  int lastIndex;
+  int lastTimestampMs;
+
+  _RateBucket({
+    required this.startMs,
+    required this.firstIndex,
+    required this.firstTimestampMs,
+  }) : lastIndex = firstIndex,
+       lastTimestampMs = firstTimestampMs;
+
+  void update(int index, int timestampMs) {
+    lastIndex = index;
+    lastTimestampMs = timestampMs;
+  }
 }
 
 /// 将字符串解析为 ParserType
