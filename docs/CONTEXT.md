@@ -35,7 +35,7 @@ VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目�
 - `lib/data/`：数据模型、协议解析器、数据源和 LOD 索引。解析器统一通过 `IDataParser.feed()` 和 `outputStream` 工作。
 - `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。
 - `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态。
-- `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。
+- `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；绘图区按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。
 - `test_tools/`：本地模拟设备和测试数据生成脚本。
 - `windows/`：Flutter Windows runner 与原生串口读取 DLL 构建。
 
@@ -59,6 +59,8 @@ VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目�
 - FireWater 只面向 ASCII 数字文本。
 - 随机源只输出 FireWater 格式。切换到其它解析器时保留开关状态，但不接入当前解析链，也不在底部状态栏显示随机源状态。
 - 绘图区动态布局不能在 Flutter build 阶段直接修改 ViewModel 状态；需要使用临时渲染状态或在事件阶段更新。
+- 绘图重绘依赖 `dataRevision`、`channelConfigRevision`、`viewportRevision` 和 `overlayRevision`；新增绘图状态时必须归入正确 revision，避免扩大重建范围或遗漏重绘。
+- 本地绘图性能基准使用 `pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label <名称>`，报告输出到未跟踪的 `build/performance/`；耗时数据只用于同机对比，不作为 CI 硬门禁。
 - 通道列表使用可回收列表，列表滚动时临时编辑状态可能丢失；编辑类状态要谨慎放在 item state 中。
 - Flutter Windows 的 `ListView + Tooltip` 组合存在已知 accessibility 日志噪声，不影响功能。
 

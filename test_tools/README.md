@@ -125,3 +125,27 @@ python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode 
 ```bash
 python generate_plot_bin.py -o E:\temp\big_8ch.bin -n 1800000 -c 8
 ```
+
+## 绘图性能基准
+
+`run_plot_benchmark.ps1` 用于在 Windows Profile 模式下运行绘图性能基准，采集帧耗时、内存、接收速率、有效 FPS、页面重建次数和 Painter 绘制次数。它是开发者对比工具，只适合同一台机器前后对比，不作为 CI 的耗时硬门禁。
+
+运行快速基准：
+
+```bash
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label baseline
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label optimized
+```
+
+运行长时间压测：
+
+```bash
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
+```
+
+输出文件保存在 `build/performance/`，该目录不提交到仓库：
+
+- `<Label>.json`：原始指标，便于脚本或后续工具分析。
+- `<Label>.md`：场景汇总和对比报告。
+
+脚本会自动传入 `PLOT_PERF_METRICS=true`，应用正式构建不会启用这些计数器。

@@ -447,6 +447,8 @@ final class _ProfileStrings {
   String get importAddressCsvDialogTitle => '导入地址配置 CSV';
   String get importZobowCDialogTitle => '导入 Zobow C 配置';
   String get exportProfileDialogTitle => '导出配置文件';
+  String get exportingProfile => '正在导出配置';
+  String get exportProfileWriting => '正在写入配置文件...';
   String get invalidProfileFormat => '配置文件格式不正确';
   String get emptyProfilePresets => '配置文件没有可导入的地址预设';
   String importProfileFailed(String error) => '导入配置失败: $error';

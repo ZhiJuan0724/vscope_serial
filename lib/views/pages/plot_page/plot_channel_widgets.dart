@@ -181,16 +181,12 @@ class _ChannelItemState extends State<_ChannelItem> {
       ),
       child: Row(
         children: [
-          // 颜色指示器（点击打开编辑弹窗）
-          InkWell(
-            onTap: () => _showChannelEditDialog(context),
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: widget.ch.color,
-                borderRadius: BorderRadius.circular(2),
-              ),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: widget.ch.color,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
           const SizedBox(width: 4),
@@ -363,28 +359,8 @@ class _ChannelItemState extends State<_ChannelItem> {
               ),
             ),
           ),
-          // 编辑按钮
-          Tooltip(
-            message: AppStrings.plot.editChannel,
-            child: InkWell(
-              onTap: () => _showChannelEditDialog(context),
-              child: const SizedBox(
-                width: 20,
-                height: 24,
-                child: Icon(Icons.settings, size: 14),
-              ),
-            ),
-          ),
         ],
       ),
-    );
-  }
-
-  /// 显示通道编辑弹窗
-  void _showChannelEditDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => _ChannelEditDialog(vm: widget.vm, ch: widget.ch),
     );
   }
 
@@ -467,15 +443,12 @@ class _MathChannelItem extends StatelessWidget {
       ),
       child: Row(
         children: [
-          InkWell(
-            onTap: () => _showMathChannelDialog(context, vm, channel),
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: display.color,
-                borderRadius: BorderRadius.circular(2),
-              ),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: display.color,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
           const SizedBox(width: 4),
@@ -535,17 +508,6 @@ class _MathChannelItem extends StatelessWidget {
                     ),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 visualDensity: VisualDensity.compact,
-              ),
-            ),
-          ),
-          Tooltip(
-            message: AppStrings.plot.editMathChannel,
-            child: InkWell(
-              onTap: () => _showMathChannelDialog(context, vm, channel),
-              child: const SizedBox(
-                width: 20,
-                height: 24,
-                child: Icon(Icons.functions, size: 14),
               ),
             ),
           ),

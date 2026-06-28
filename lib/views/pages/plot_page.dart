@@ -1374,7 +1374,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
 
     const menuWidth = 188.0;
-    const menuHeight = 82.0;
+    final menuHeight =
+        target.kind == _ChannelContextMenuTargetKind.math ? 118.0 : 82.0;
     final screenSize = MediaQuery.sizeOf(context);
     final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
     final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
@@ -1399,6 +1400,26 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ? () {
                               _hideChannelContextMenu();
                               _addMathChannelFromContextMenu(menuContext, vm);
+                            }
+                            : null,
+                    onEditChannel:
+                        target.kind == _ChannelContextMenuTargetKind.raw
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showChannelEditDialog(
+                                menuContext,
+                                vm,
+                                target.rawChannel!,
+                              );
+                            }
+                            : target.kind == _ChannelContextMenuTargetKind.math
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showMathChannelDialog(
+                                menuContext,
+                                vm,
+                                target.mathChannel!,
+                              );
                             }
                             : null,
                     onDeleteMathChannel:
@@ -1477,6 +1498,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       return;
     }
     _showMathChannelDialog(context, vm, channel);
+  }
+
+  void _showChannelEditDialog(
+    BuildContext context,
+    PlotViewModel vm,
+    ChannelConfig channel,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => _ChannelEditDialog(vm: vm, ch: channel),
+    );
   }
 
   // ========== 绘图区域 ==========
@@ -3011,11 +3043,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 class _ChannelContextMenu extends StatelessWidget {
   final _ChannelContextMenuTarget target;
   final VoidCallback? onAddMathChannel;
+  final VoidCallback? onEditChannel;
   final VoidCallback? onDeleteMathChannel;
 
   const _ChannelContextMenu({
     required this.target,
     required this.onAddMathChannel,
+    required this.onEditChannel,
     required this.onDeleteMathChannel,
   });
 
@@ -3032,6 +3066,11 @@ class _ChannelContextMenu extends StatelessWidget {
       ],
       _ChannelContextMenuTargetKind.math => [
         _ChannelContextMenuItem(
+          icon: Icons.settings_outlined,
+          label: AppStrings.plot.editMathChannel,
+          onTap: onEditChannel,
+        ),
+        _ChannelContextMenuItem(
           icon: Icons.delete_outline,
           label: AppStrings.plot.deleteMathChannel,
           onTap: onDeleteMathChannel,
@@ -3039,9 +3078,9 @@ class _ChannelContextMenu extends StatelessWidget {
       ],
       _ChannelContextMenuTargetKind.raw => [
         _ChannelContextMenuItem(
-          icon: Icons.info_outline,
-          label: AppStrings.plot.noChannelAction,
-          onTap: null,
+          icon: Icons.settings_outlined,
+          label: AppStrings.plot.editChannel,
+          onTap: onEditChannel,
         ),
       ],
     };

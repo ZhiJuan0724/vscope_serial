@@ -43,7 +43,7 @@ void main() {
     expect(
       PlotPerformanceMetrics.enabled,
       isTrue,
-      reason: '请通过 tools/run_plot_benchmark.ps1 运行性能基准',
+      reason: '请通过 test_tools/run_plot_benchmark.ps1 运行性能基准',
     );
 
     // 这里手动搭建绘图页需要的最小 Provider 环境，不启动完整 main.dart。

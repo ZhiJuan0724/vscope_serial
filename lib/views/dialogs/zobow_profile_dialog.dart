@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -809,9 +810,15 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           selectedPath.toLowerCase().endsWith('.json')
               ? selectedPath
               : '$selectedPath.json';
-      await File(
-        exportPath,
-      ).writeAsString(profile.toJsonString(), encoding: utf8);
+      await _runWithProgressDialog(
+        title: AppStrings.profile.exportingProfile,
+        message: AppStrings.profile.exportProfileWriting,
+        action: () async {
+          await File(
+            exportPath,
+          ).writeAsString(profile.toJsonString(), encoding: utf8);
+        },
+      );
       if (!mounted) return;
       AppNotifications.show(
         AppStrings.profile.exportProfileCompleted(exportPath),
@@ -823,6 +830,30 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
         AppStrings.profile.exportProfileFailed(error.toString()),
         messenger: ScaffoldMessenger.of(context),
       );
+    }
+  }
+
+  Future<void> _runWithProgressDialog({
+    required String title,
+    required String message,
+    required Future<void> Function() action,
+  }) async {
+    var dialogClosed = false;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (context) => _ProfileProgressDialog(title: title, message: message),
+      ).whenComplete(() => dialogClosed = true),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    try {
+      await action();
+    } finally {
+      if (mounted && !dialogClosed) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
     }
   }
 
@@ -881,5 +912,37 @@ class _PresetRow {
   void dispose() {
     nameController.dispose();
     addressController.dispose();
+  }
+}
+
+class _ProfileProgressDialog extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const _ProfileProgressDialog({required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        title: Text(title),
+        content: SizedBox(
+          width: 280,
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 14),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
