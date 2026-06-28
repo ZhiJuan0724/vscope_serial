@@ -20,6 +20,26 @@ void main() {
       expect(MathExpression.parse('+CH0').evaluate([7]), 7);
     });
 
+    test('支持通道 X 偏移取值', () {
+      final expression = MathExpression.parse('CH1[-1] + CH0[1]');
+      final points = [
+        [1.0, 10.0],
+        [2.0, 20.0],
+        [3.0, 30.0],
+      ];
+
+      final value = expression.evaluateWithContext(
+        MathEvalContext(
+          currentIndex: 1,
+          pointCount: points.length,
+          valueAt:
+              (pointIndex, channelIndex) => points[pointIndex][channelIndex],
+        ),
+      );
+
+      expect(value, 31);
+    });
+
     test('无效运行结果返回 NaN', () {
       expect(MathExpression.parse('CH0/CH1').evaluate([1, 0]).isNaN, true);
       expect(MathExpression.parse('CH2').evaluate([1, 2]).isNaN, true);
@@ -32,6 +52,8 @@ void main() {
     test('拒绝非法表达式', () {
       expect(() => MathExpression.parse(''), throwsFormatException);
       expect(() => MathExpression.parse('CH16'), throwsFormatException);
+      expect(() => MathExpression.parse('CH1[abc]'), throwsFormatException);
+      expect(() => MathExpression.parse('CH1[1.5]'), throwsFormatException);
       expect(() => MathExpression.parse('Math1+CH0'), throwsFormatException);
       expect(() => MathExpression.parse('CH0+'), throwsFormatException);
       expect(() => MathExpression.parse('sin(CH0)'), throwsFormatException);

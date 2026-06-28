@@ -10,15 +10,47 @@ class MathExpression {
   }
 
   double evaluate(List<double> channels) {
-    final value = _root.evaluate(channels);
+    final value = evaluateWithContext(MathEvalContext.single(channels));
     return value.isFinite ? value : double.nan;
+  }
+
+  double evaluateWithContext(MathEvalContext context) {
+    final value = _root.evaluate(context);
+    return value.isFinite ? value : double.nan;
+  }
+}
+
+class MathEvalContext {
+  final int currentIndex;
+  final int pointCount;
+  final double Function(int pointIndex, int channelIndex) valueAt;
+
+  const MathEvalContext({
+    required this.currentIndex,
+    required this.pointCount,
+    required this.valueAt,
+  });
+
+  factory MathEvalContext.single(List<double> channels) {
+    return MathEvalContext(
+      currentIndex: 0,
+      pointCount: 1,
+      valueAt: (pointIndex, channelIndex) {
+        if (pointIndex != 0 ||
+            channelIndex < 0 ||
+            channelIndex >= channels.length) {
+          return double.nan;
+        }
+        return channels[channelIndex];
+      },
+    );
   }
 }
 
 abstract class _ExprNode {
   const _ExprNode();
 
-  double evaluate(List<double> channels);
+  double evaluate(MathEvalContext context);
 }
 
 class _NumberNode extends _ExprNode {
@@ -27,18 +59,22 @@ class _NumberNode extends _ExprNode {
   const _NumberNode(this.value);
 
   @override
-  double evaluate(List<double> channels) => value;
+  double evaluate(MathEvalContext context) => value;
 }
 
 class _ChannelNode extends _ExprNode {
   final int index;
+  final int xOffset;
 
-  const _ChannelNode(this.index);
+  const _ChannelNode(this.index, {this.xOffset = 0});
 
   @override
-  double evaluate(List<double> channels) {
-    if (index < 0 || index >= channels.length) return double.nan;
-    return channels[index];
+  double evaluate(MathEvalContext context) {
+    final sourceIndex = context.currentIndex - xOffset;
+    if (sourceIndex < 0 || sourceIndex >= context.pointCount) {
+      return double.nan;
+    }
+    return context.valueAt(sourceIndex, index);
   }
 }
 
@@ -49,8 +85,8 @@ class _UnaryNode extends _ExprNode {
   const _UnaryNode(this.op, this.child);
 
   @override
-  double evaluate(List<double> channels) {
-    final value = child.evaluate(channels);
+  double evaluate(MathEvalContext context) {
+    final value = child.evaluate(context);
     return switch (op) {
       '-' => -value,
       'abs' => value.isNaN ? double.nan : value.abs(),
@@ -67,9 +103,9 @@ class _BinaryNode extends _ExprNode {
   const _BinaryNode(this.op, this.left, this.right);
 
   @override
-  double evaluate(List<double> channels) {
-    final a = left.evaluate(channels);
-    final b = right.evaluate(channels);
+  double evaluate(MathEvalContext context) {
+    final a = left.evaluate(context);
+    final b = right.evaluate(context);
     if (!a.isFinite || !b.isFinite) return double.nan;
     return switch (op) {
       '+' => a + b,
@@ -162,9 +198,35 @@ class _MathExpressionParser {
       if (index < 0 || index > 15) {
         throw FormatException('通道索引超出范围 CH0~CH15', source, start);
       }
-      return _ChannelNode(index);
+      final xOffset = _parseOptionalChannelOffset();
+      return _ChannelNode(index, xOffset: xOffset);
     }
     return _parseNumber();
+  }
+
+  int _parseOptionalChannelOffset() {
+    _skipSpaces();
+    if (!_consume('[')) return 0;
+    _skipSpaces();
+    var sign = 1;
+    if (_consume('-')) {
+      sign = -1;
+    } else {
+      _consume('+');
+    }
+    final start = _offset;
+    while (!_isEnd && _isDigit(source.codeUnitAt(_offset))) {
+      _offset++;
+    }
+    if (start == _offset) {
+      throw FormatException('CH 偏移缺少整数', source, _offset);
+    }
+    final value = int.parse(source.substring(start, _offset)) * sign;
+    _skipSpaces();
+    if (!_consume(']')) {
+      throw FormatException('CH 偏移缺少右中括号', source, _offset);
+    }
+    return value;
   }
 
   _ExprNode _parseNumber() {

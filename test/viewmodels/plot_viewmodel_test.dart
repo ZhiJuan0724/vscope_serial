@@ -164,6 +164,34 @@ void main() {
       expect(vm.displayDataPoints[1].values.last.isNaN, true);
     });
 
+    test('数学通道支持按X偏移取相邻点数据', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 10], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 20], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 30], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[-1] + CH0', vm.mathChannels[0].display),
+        true,
+      );
+
+      final values = vm.displayDataPoints.map((point) => point.values.last);
+      expect(values.elementAt(0), 21);
+      expect(values.elementAt(1), 32);
+      expect(values.elementAt(2).isNaN, true);
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[1]', vm.mathChannels[0].display),
+        true,
+      );
+
+      final shiftedValues = vm.displayDataPoints.map(
+        (point) => point.values.last,
+      );
+      expect(shiftedValues.elementAt(0).isNaN, true);
+      expect(shiftedValues.elementAt(1), 10);
+      expect(shiftedValues.elementAt(2), 20);
+    });
+
     test('观察和吸附高亮包含数学通道', () {
       vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
       vm.ingestParsedResultForTest(ParseResult.ok([8, 3], bytesConsumed: 8));
@@ -636,6 +664,14 @@ void main() {
 
       expect(vm.isPlotting, false);
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
+    });
+
+    test('随机源频率支持整数100KHz上限', () {
+      vm.setRandomFrequency(100000.4);
+      expect(vm.randomFrequency, 100000);
+
+      vm.setRandomFrequency(0);
+      expect(vm.randomFrequency, 1);
     });
 
     test('众邦初始化帧使用4字节小端通道号', () {

@@ -1247,9 +1247,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     _ChannelContextMenuTarget target = const _ChannelContextMenuTarget.blank(),
   }) {
     _hideChannelContextMenu();
-    final overlay = Overlay.maybeOf(context);
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
     if (overlay == null) return;
     final menuContext = context;
+    final capturedThemes = InheritedTheme.capture(
+      from: context,
+      to: overlay.context,
+    );
 
     const menuWidth = 188.0;
     const menuHeight = 82.0;
@@ -1263,31 +1267,33 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     _channelContextMenuEntry = OverlayEntry(
       builder:
-          (context) => Stack(
-            children: [
-              Positioned(
-                left: left,
-                top: top,
-                width: menuWidth,
-                child: _ChannelContextMenu(
-                  target: target,
-                  onAddMathChannel:
-                      target.kind == _ChannelContextMenuTargetKind.blank
-                          ? () {
-                            _hideChannelContextMenu();
-                            _addMathChannelFromContextMenu(menuContext, vm);
-                          }
-                          : null,
-                  onDeleteMathChannel:
-                      target.mathChannel == null
-                          ? null
-                          : () {
-                            _hideChannelContextMenu();
-                            vm.disableMathChannel(target.mathChannel!.index);
-                          },
+          (context) => capturedThemes.wrap(
+            Stack(
+              children: [
+                Positioned(
+                  left: left,
+                  top: top,
+                  width: menuWidth,
+                  child: _ChannelContextMenu(
+                    target: target,
+                    onAddMathChannel:
+                        target.kind == _ChannelContextMenuTargetKind.blank
+                            ? () {
+                              _hideChannelContextMenu();
+                              _addMathChannelFromContextMenu(menuContext, vm);
+                            }
+                            : null,
+                    onDeleteMathChannel:
+                        target.mathChannel == null
+                            ? null
+                            : () {
+                              _hideChannelContextMenu();
+                              vm.disableMathChannel(target.mathChannel!.index);
+                            },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
     );
     overlay.insert(_channelContextMenuEntry!);
@@ -1309,10 +1315,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _hideChannelContextMenu() {
-    _channelContextMenuEntry?.remove();
+    final entry = _channelContextMenuEntry;
     _channelContextMenuEntry = null;
     _channelContextMenuRect = null;
     _detachChannelContextMenuGlobalRoute();
+    if (entry == null) return;
+    entry
+      ..remove()
+      ..dispose();
   }
 
   void _attachChannelContextMenuGlobalRoute() {
@@ -1771,7 +1781,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 显示随机源频率设置对话框
   void _showRandomFreqDialog(BuildContext context, PlotViewModel vm) {
     final controller = TextEditingController(
-      text: vm.randomFrequency.toStringAsFixed(1),
+      text: vm.randomFrequency.round().toString(),
     );
     showDialog(
       context: context,
@@ -1787,9 +1797,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 TextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
                     labelText: AppStrings.plot.frequencyHz,
-                    hintText: '1 ~ 10000',
+                    hintText: '1 ~ 100000',
                     suffixText: 'Hz',
                   ),
                   autofocus: true,
@@ -1808,9 +1819,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               ),
               TextButton(
                 onPressed: () {
-                  final hz = double.tryParse(controller.text);
+                  final hz = int.tryParse(controller.text);
                   if (hz != null) {
-                    vm.setRandomFrequency(hz);
+                    vm.setRandomFrequency(hz.toDouble());
                   }
                   Navigator.pop(context);
                 },

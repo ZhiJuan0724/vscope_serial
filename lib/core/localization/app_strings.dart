@@ -75,7 +75,7 @@ final class _PlotStrings {
   String get stopping => '停止中';
   String get randomSource => '随机源';
   String randomSourceFrequencyTooltip(double hz) {
-    return '设置随机源频率: ${hz.toStringAsFixed(1)} Hz';
+    return '设置随机源频率: ${hz.round()} Hz';
   }
 
   String get receiveProtocolHint => '接收协议';
@@ -130,7 +130,7 @@ final class _PlotStrings {
   String get startPlotHint => '点击"开始"按钮开始绘图';
   String get randomSourceFrequency => '随机源频率';
   String get frequencyHz => '频率 (Hz)';
-  String currentFrequency(double hz) => '当前: ${hz.toStringAsFixed(1)} Hz';
+  String currentFrequency(double hz) => '当前: ${hz.round()} Hz';
   String get csvText => 'CSV 文本';
   String get binBinary => 'BIN 二进制';
   String get legacyDat => '旧版虚拟示波器 DAT';
@@ -205,7 +205,8 @@ final class _PlotStrings {
   String get resetMathChannel => '重置数学通道';
   String get mathExpression => '表达式';
   String get mathExpressionHint => '例如: CH0-CH1';
-  String get mathExpressionHelp => '支持 CH0~CH15，支持 +、-、*、/、括号、负数和 abs()。';
+  String get mathExpressionHelp =>
+      '支持 CH0~CH15、CHn[偏移]，支持 +、-、*、/、括号、负数和 abs()。';
   String get noAvailableMathChannel => '没有可用的数学通道';
   String get selectAddress => '选择地址';
   String editChannelTitle(int index) => '编辑 Ch$index';

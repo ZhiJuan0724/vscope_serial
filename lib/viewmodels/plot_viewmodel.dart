@@ -328,13 +328,12 @@ class PlotViewModel extends BaseViewModel {
 
   /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收
   /// 根据 _refreshFps 计算：batchSize = targetRate / fps
-  /// 串口数据源使用固定批量大小（1000Hz / 30fps ≈ 33），避免依赖 randomIntervalMs
+  /// 串口数据源使用固定批量大小（1000Hz / 30fps ≈ 33），避免依赖随机源频率。
   int get _notifyBatchSize {
     if (_useRandomSource) {
       // 随机数据源：根据配置的频率计算
-      final intervalMs = _sourceConfig.randomIntervalMs;
-      final targetRate = 1000.0 / intervalMs; // 每秒目标包数
-      final batch = (targetRate / _refreshFps).round().clamp(1, 1000);
+      final targetRate = _sourceConfig.randomFrequencyHz; // 每秒目标包数
+      final batch = (targetRate / _refreshFps).round().clamp(1, 5000);
       return batch;
     } else {
       // 串口数据源：使用固定批量，假设典型速率 1000Hz
@@ -412,9 +411,15 @@ class PlotViewModel extends BaseViewModel {
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
     _yFitDisplayRatio = settings.yFitDisplayRatio.clamp(0.5, 0.95);
     _replaceMathChannels(settings.mathChannels, save: false);
-    _sourceConfig.randomIntervalMs = (1000.0 / settings.randomFrequency)
-        .round()
-        .clamp(1, 1000);
+    _sourceConfig.randomFrequencyHz = settings.randomFrequency.clamp(
+      1.0,
+      100000.0,
+    );
+    _sourceConfig.randomIntervalMs =
+        (1000.0 / _sourceConfig.randomFrequencyHz)
+            .round()
+            .clamp(1, 1000)
+            .toInt();
     viewport = PlotViewport(
       xMin: settings.xMin,
       xMax: settings.xMax,
@@ -552,9 +557,10 @@ class PlotViewModel extends BaseViewModel {
       return _cachedDisplayDataPoints!;
     }
     _cachedDisplayDataKey = key;
-    _cachedDisplayDataPoints = _dataPoints
-        .map(_buildDisplayPoint)
-        .toList(growable: false);
+    _cachedDisplayDataPoints = [
+      for (int i = 0; i < _dataPoints.length; i++)
+        _buildDisplayPoint(_dataPoints[i], i, _dataPoints),
+    ];
     return _cachedDisplayDataPoints!;
   }
 
@@ -618,7 +624,7 @@ class PlotViewModel extends BaseViewModel {
   int get activeChannelCount => _activeChannelCount;
 
   /// 随机源频率（Hz），由间隔毫秒数换算
-  double get randomFrequency => 1000.0 / _sourceConfig.randomIntervalMs;
+  double get randomFrequency => _sourceConfig.randomFrequencyHz;
 
   /// X-X 测量第一条垂直线位置
   double? get xCursor1 => _xCursor1;
@@ -677,13 +683,36 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  double _evaluateMathChannel(MathChannelConfig channel, List<double> values) {
+  double _evaluateMathChannel(
+    MathChannelConfig channel,
+    int pointPosition,
+    List<PlotDataPoint> sourcePoints,
+  ) {
     final expression = _compiledMathExpressions[channel.index];
     if (expression == null) return double.nan;
-    return expression.evaluate(values);
+    return expression.evaluateWithContext(
+      MathEvalContext(
+        currentIndex: pointPosition,
+        pointCount: sourcePoints.length,
+        valueAt: (pointIndex, channelIndex) {
+          if (pointIndex < 0 || pointIndex >= sourcePoints.length) {
+            return double.nan;
+          }
+          final values = sourcePoints[pointIndex].values;
+          if (channelIndex < 0 || channelIndex >= values.length) {
+            return double.nan;
+          }
+          return values[channelIndex];
+        },
+      ),
+    );
   }
 
-  PlotDataPoint _buildDisplayPoint(PlotDataPoint point) {
+  PlotDataPoint _buildDisplayPoint(
+    PlotDataPoint point,
+    int pointPosition,
+    List<PlotDataPoint> sourcePoints,
+  ) {
     final values = List<double>.from(point.values);
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
     while (values.length < rawCount) {
@@ -691,7 +720,7 @@ class PlotViewModel extends BaseViewModel {
     }
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
-      values.add(_evaluateMathChannel(channel, point.values));
+      values.add(_evaluateMathChannel(channel, pointPosition, sourcePoints));
     }
     return PlotDataPoint(
       index: point.index,
@@ -857,10 +886,11 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置随机源频率（Hz），范围 1~10000
+  /// 设置随机源频率（Hz），范围 1~100000
   void setRandomFrequency(double hz) {
-    final clampedHz = hz.clamp(1.0, 10000.0);
-    final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000);
+    final clampedHz = hz.roundToDouble().clamp(1.0, 100000.0);
+    final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000).toInt();
+    _sourceConfig.randomFrequencyHz = clampedHz;
     _sourceConfig.randomIntervalMs = intervalMs;
     _sourceManager.updateConfig(_sourceConfig);
     _saveSettings();

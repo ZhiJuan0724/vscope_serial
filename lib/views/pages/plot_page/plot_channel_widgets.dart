@@ -598,6 +598,19 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
         (MediaQuery.sizeOf(context).height - 220)
             .clamp(240.0, 540.0)
             .toDouble();
+    final expressionText = _expressionController.text.trim();
+    final validationError =
+        expressionText.isEmpty
+            ? null
+            : widget.vm.validateMathExpression(expressionText);
+    final validationIcon =
+        expressionText.isEmpty
+            ? null
+            : Icon(
+              validationError == null ? Icons.check : Icons.close,
+              color: validationError == null ? Colors.green : Colors.red,
+              size: 18,
+            );
 
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
@@ -620,9 +633,16 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
                   controller: _expressionController,
                   decoration: secondaryDialogFieldDecoration(
                     hintText: AppStrings.plot.mathExpressionHint,
-                  ).copyWith(errorText: _errorText),
+                  ).copyWith(
+                    errorText: _errorText,
+                    suffixIcon: validationIcon,
+                    suffixIconConstraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
                   onChanged: (_) {
-                    if (_errorText != null) setState(() => _errorText = null);
+                    setState(() => _errorText = null);
                   },
                 ),
                 const SizedBox(height: 4),

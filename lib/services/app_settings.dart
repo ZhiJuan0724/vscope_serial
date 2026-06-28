@@ -76,7 +76,7 @@ class AppSettings {
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
 
-  /// 随机数据源频率 (Hz)
+  /// 随机数据源频率 (Hz)，范围 1~100000。
   double randomFrequency = 1000.0;
 
   /// 最新点跟随模式开关
@@ -299,7 +299,10 @@ class AppSettings {
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
-      randomFrequency = (json['randomFrequency'] as num?)?.toDouble() ?? 1000.0;
+      randomFrequency = ((json['randomFrequency'] as num?)?.toDouble() ??
+              1000.0)
+          .roundToDouble()
+          .clamp(1.0, 100000.0);
       followEnabled = json['followEnabled'] as bool? ?? false;
       followPositionRatio =
           ((json['followPositionRatio'] as num?)?.toDouble() ?? 0.9).clamp(
