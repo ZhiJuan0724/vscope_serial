@@ -192,6 +192,26 @@ void main() {
       expect(shiftedValues.elementAt(2), 20);
     });
 
+    test('数学通道缓存会在新点到来后补算受未来偏移影响的尾部点', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 10], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 20], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[-1]', vm.mathChannels[0].display),
+        true,
+      );
+
+      final firstDisplay = vm.displayDataPoints;
+      expect(firstDisplay[0].values.last, 20);
+      expect(firstDisplay[1].values.last.isNaN, true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 30], bytesConsumed: 8));
+
+      final nextDisplay = vm.displayDataPoints;
+      expect(nextDisplay[1].values.last, 30);
+      expect(nextDisplay[2].values.last.isNaN, true);
+    });
+
     test('观察和吸附高亮包含数学通道', () {
       vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
       vm.ingestParsedResultForTest(ParseResult.ok([8, 3], bytesConsumed: 8));
@@ -674,6 +694,115 @@ void main() {
       expect(vm.randomFrequency, 1);
     });
 
+    test('状态栏高速率统计不会被1000个样本限制在2000每秒', () {
+      for (int ms = 500; ms <= 1000; ms++) {
+        vm.recordRateSampleForTest(ms * 64, ms);
+      }
+
+      final match = RegExp(r'\(([\d.]+)/s\)').firstMatch(vm.statusText);
+      expect(match, isNotNull);
+      final rate = double.parse(match!.group(1)!);
+      expect(rate, greaterThan(60000));
+    });
+
+    test('高频接收强制使用30fps但不修改用户刷新帧率', () {
+      vm.setRefreshFps(60);
+
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 20, ms);
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.refreshFps, 60);
+      expect(vm.effectiveRefreshFps, 30);
+      expect(vm.statusText, contains('高频模式 30fps'));
+    });
+
+    test('高频模式在10K附近不会反复切换并在低于8K后延迟退出', () {
+      vm.setRefreshFps(60);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(10500, 800);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(13500, 1300);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(16500, 1800);
+      vm.recordRateSampleForTest(19500, 2300);
+      vm.recordRateSampleForTest(22500, 2800);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(25500, 3300);
+      expect(vm.highRateMode, false);
+      expect(vm.effectiveRefreshFps, 60);
+    });
+
+    test('串口源高频刷新批量按实测速率和有效fps计算', () {
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 100, ms);
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.notifyBatchSizeForTest, inInclusiveRange(3300, 3350));
+    });
+
+    test('高频模式使用用户配置的当前精确窗口上限', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      expect(vm.highRateMode, true);
+      expect(vm.maxVisiblePoints, 1000000);
+      expect(vm.effectiveMaxVisiblePoints, 1000000);
+    });
+
+    test('高频模式未达到用户窗口上限时保留当前精确窗口', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      for (int i = 0; i < 200005; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.visiblePointCount, 200005);
+      expect(vm.pointCount, greaterThan(vm.visiblePointCount));
+      expect(vm.lodIndex.length, vm.pointCount);
+    });
+
+    test('高频模式超过40万点时不使用固定窗口上限', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+      final startPointCount = vm.pointCount;
+
+      for (int i = 0; i < 400005; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.visiblePointCount, 400005);
+      expect(vm.pointCount - startPointCount, 400005);
+      expect(vm.lodIndex.length, vm.pointCount);
+    });
+
+    test('高频模式按实测速率降低LOD逐包更新压力', () {
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(50000, 500);
+
+      expect(vm.highRateMode, true);
+      expect(vm.lodSampleStepForTest, greaterThan(1));
+    });
+
     test('众邦初始化帧使用4字节小端通道号', () {
       final frame = PlotViewModel.buildZobowInitFrame([
         0x01020304,
@@ -910,6 +1039,25 @@ void main() {
 
       await stopFuture;
       expect(vm.isStopping, false);
+    });
+
+    test('stopPlotting后高频模式恢复用户配置刷新帧率', () async {
+      vm.setRefreshFps(60);
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.startPlotting();
+      expect(vm.isPlotting, true);
+
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+      expect(vm.highRateMode, true);
+      expect(vm.effectiveRefreshFps, 30);
+
+      await vm.stopPlotting();
+
+      expect(vm.highRateMode, false);
+      expect(vm.refreshFps, 60);
+      expect(vm.effectiveRefreshFps, 60);
     });
 
     test('canUndoZoom初始为false', () {

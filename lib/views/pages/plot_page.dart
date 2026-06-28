@@ -1415,7 +1415,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               viewport: renderViewport,
               vCursorEnabled: vm.vCursorEnabled,
               boxZoomEnabled: vm.boxZoomEnabled,
-              refreshFps: vm.refreshFps,
+              refreshFps: vm.effectiveRefreshFps,
               plotFontSizeDelta: vm.plotFontSizeDelta,
               channels: displayChannels,
               activeChannelCount: activeChannelCount,

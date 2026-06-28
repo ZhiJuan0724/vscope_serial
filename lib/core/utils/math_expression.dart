@@ -1,12 +1,13 @@
 class MathExpression {
   final _ExprNode _root;
+  final int futureLookahead;
 
-  const MathExpression._(this._root);
+  const MathExpression._(this._root, {required this.futureLookahead});
 
   static MathExpression parse(String source) {
     final parser = _MathExpressionParser(source);
     final root = parser.parse();
-    return MathExpression._(root);
+    return MathExpression._(root, futureLookahead: root.futureLookahead);
   }
 
   double evaluate(List<double> channels) {
@@ -50,6 +51,8 @@ class MathEvalContext {
 abstract class _ExprNode {
   const _ExprNode();
 
+  int get futureLookahead => 0;
+
   double evaluate(MathEvalContext context);
 }
 
@@ -69,6 +72,9 @@ class _ChannelNode extends _ExprNode {
   const _ChannelNode(this.index, {this.xOffset = 0});
 
   @override
+  int get futureLookahead => xOffset < 0 ? -xOffset : 0;
+
+  @override
   double evaluate(MathEvalContext context) {
     final sourceIndex = context.currentIndex - xOffset;
     if (sourceIndex < 0 || sourceIndex >= context.pointCount) {
@@ -83,6 +89,9 @@ class _UnaryNode extends _ExprNode {
   final _ExprNode child;
 
   const _UnaryNode(this.op, this.child);
+
+  @override
+  int get futureLookahead => child.futureLookahead;
 
   @override
   double evaluate(MathEvalContext context) {
@@ -101,6 +110,12 @@ class _BinaryNode extends _ExprNode {
   final _ExprNode right;
 
   const _BinaryNode(this.op, this.left, this.right);
+
+  @override
+  int get futureLookahead =>
+      left.futureLookahead > right.futureLookahead
+          ? left.futureLookahead
+          : right.futureLookahead;
 
   @override
   double evaluate(MathEvalContext context) {

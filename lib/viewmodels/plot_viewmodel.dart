@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -137,11 +138,23 @@ class PlotViewModel extends BaseViewModel {
   DateTime? _startTime;
 
   // ========== 速率统计（基于计数器，避免遍历列表）==========
-  /// 速率统计样本列表，用于计算实时接收速率
-  final List<_RateSample> _rateSamples = [];
+  /// 速率统计样本队列，用于计算实时接收速率。
+  final ListQueue<_RateSample> _rateSamples = ListQueue<_RateSample>();
 
-  /// 速率样本最大数量（最近1000个）
-  static const int _maxRateSamples = 1000;
+  /// 速率统计保留窗口，必须按时间裁剪，不能按固定样本数裁剪。
+  static const int _rateSampleWindowMs = 1200;
+
+  static const int _rateCalculationIntervalMs = 250;
+  static const double _highRateEnterThreshold = 10000.0;
+  static const double _highRateExitThreshold = 8000.0;
+  static const int _highRateExitHoldMs = 2000;
+  static const int _highRateRefreshFps = 30;
+  static const double _highRateLodTargetUpdatesPerSecond = 5000.0;
+
+  double? _cachedPointsPerSecond;
+  int? _lastRateCalculationMs;
+  bool _highRateMode = false;
+  int? _belowHighRateSinceMs;
 
   // ========== 当前数据实际通道数 ==========
   /// 当前数据中实际出现的通道数（用于动态显示通道面板）。
@@ -326,22 +339,28 @@ class PlotViewModel extends BaseViewModel {
   /// 待刷新的数据包计数，达到批量大小后触发 UI 刷新
   int _pendingNotifyCount = 0;
 
-  /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收
-  /// 根据 _refreshFps 计算：batchSize = targetRate / fps
-  /// 串口数据源使用固定批量大小（1000Hz / 30fps ≈ 33），避免依赖随机源频率。
+  /// 动态批量大小：控制 UI 刷新频率，数据始终全部接收。
   int get _notifyBatchSize {
+    final fps = effectiveRefreshFps;
+    final double targetRate;
     if (_useRandomSource) {
-      // 随机数据源：根据配置的频率计算
-      final targetRate = _sourceConfig.randomFrequencyHz; // 每秒目标包数
-      final batch = (targetRate / _refreshFps).round().clamp(1, 5000);
-      return batch;
+      targetRate = _sourceConfig.randomFrequencyHz;
     } else {
-      // 串口数据源：使用固定批量，假设典型速率 1000Hz
-      // 1000Hz / 30fps = 33 帧/刷新
-      const assumedRate = 1000.0;
-      final batch = (assumedRate / _refreshFps).round().clamp(10, 200);
-      return batch;
+      targetRate = _cachedPointsPerSecond ?? 1000.0;
     }
+    return (targetRate / fps).round().clamp(1, 5000);
+  }
+
+  int get _visibleTrimBatchSize {
+    final byRatio = (_maxVisiblePoints / 32).round();
+    return byRatio.clamp(4096, 65536).toInt();
+  }
+
+  int get _lodSampleStep {
+    if (!_highRateMode) return 1;
+    final rate = _cachedPointsPerSecond;
+    if (rate == null || rate <= _highRateLodTargetUpdatesPerSecond) return 1;
+    return (rate / _highRateLodTargetUpdatesPerSecond).ceil().clamp(1, 128);
   }
 
   /// 兜底定时器：确保数据流中断时 UI 仍能刷新。
@@ -511,6 +530,9 @@ class PlotViewModel extends BaseViewModel {
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
+  int get effectiveRefreshFps =>
+      _highRateMode ? _highRateRefreshFps : _refreshFps;
+  bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
   String get gridDensity => _gridDensity;
   bool get boxZoomEnabled => _boxZoomEnabled;
@@ -552,16 +574,52 @@ class PlotViewModel extends BaseViewModel {
     if (!mathChannels.any((channel) => channel.enabled)) return _dataPoints;
     final rawCount = rawDisplayChannelCount;
     final key =
-        '$_dataRevision|${_dataPoints.length}|$rawCount|${mathChannels.map((channel) => '${channel.enabled}:${channel.expression}').join('|')}';
-    if (_cachedDisplayDataPoints != null && _cachedDisplayDataKey == key) {
-      return _cachedDisplayDataPoints!;
+        '$rawCount|${mathChannels.map((channel) => '${channel.enabled}:${channel.expression}').join('|')}';
+    final futureLookahead = _mathDisplayFutureLookahead;
+    var cache = _cachedDisplayDataPoints;
+    final mustRebuild =
+        cache == null ||
+        _cachedDisplayDataKey != key ||
+        (cache.isNotEmpty &&
+            _dataPoints.isNotEmpty &&
+            cache.first.index > _dataPoints.first.index) ||
+        cache.length > _dataPoints.length;
+
+    if (mustRebuild) {
+      cache = <PlotDataPoint>[];
+      _cachedDisplayDataPoints = cache;
+      _cachedDisplayDataKey = key;
+    } else {
+      if (cache.isNotEmpty && _dataPoints.isNotEmpty) {
+        final dropCount = _dataPoints.first.index - cache.first.index;
+        if (dropCount > 0) {
+          if (dropCount >= cache.length) {
+            cache.clear();
+          } else {
+            cache.removeRange(0, dropCount);
+          }
+        }
+      }
     }
-    _cachedDisplayDataKey = key;
-    _cachedDisplayDataPoints = [
-      for (int i = 0; i < _dataPoints.length; i++)
-        _buildDisplayPoint(_dataPoints[i], i, _dataPoints),
-    ];
-    return _cachedDisplayDataPoints!;
+
+    if (_dataPoints.isEmpty) {
+      cache.clear();
+      return cache;
+    }
+
+    final start =
+        cache.isNotEmpty
+            ? (cache.length - futureLookahead)
+                .clamp(0, _dataPoints.length)
+                .toInt()
+            : 0;
+    if (cache.length > start) {
+      cache.removeRange(start, cache.length);
+    }
+    for (int i = start; i < _dataPoints.length; i++) {
+      cache.add(_buildDisplayPoint(_dataPoints[i], i, _dataPoints));
+    }
+    return cache;
   }
 
   int get displayActiveChannelCount => displayChannels.length;
@@ -614,11 +672,19 @@ class PlotViewModel extends BaseViewModel {
   /// 当前窗口点数上限
   int get maxVisiblePoints => _maxVisiblePoints;
 
+  int get effectiveMaxVisiblePoints => _maxVisiblePoints;
+
   /// 每次开始绘图时丢弃的前置有效数据包数量。
   int get discardInitialPacketCount => _discardInitialPacketCount;
 
   /// 当前窗口数据版本，用于窗口长度不变但内容滚动时触发重绘。
   int get dataRevision => _dataRevision;
+
+  @visibleForTesting
+  int get notifyBatchSizeForTest => _notifyBatchSize;
+
+  @visibleForTesting
+  int get lodSampleStepForTest => _lodSampleStep;
 
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
@@ -650,6 +716,19 @@ class PlotViewModel extends BaseViewModel {
     _cachedDisplayChannelKey = null;
     _cachedStatsKey = null;
     _cachedStatsText = null;
+  }
+
+  int get _mathDisplayFutureLookahead {
+    var lookahead = 0;
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      final expression = _compiledMathExpressions[channel.index];
+      if (expression == null) continue;
+      if (expression.futureLookahead > lookahead) {
+        lookahead = expression.futureLookahead;
+      }
+    }
+    return lookahead;
   }
 
   void _replaceMathChannels(
@@ -776,12 +855,14 @@ class PlotViewModel extends BaseViewModel {
     final buffer = StringBuffer();
     buffer.write('X: ${viewport.xMin.toInt()}-${viewport.xMax.toInt()} ');
     buffer.write('Y: ${viewport.yMin.toInt()}-${viewport.yMax.toInt()} ');
-    // 计算每秒点数
     final pointsPerSecond = _calculatePointsPerSecond();
     if (pointsPerSecond != null) {
       buffer.write('点数: $_nextIndex (${pointsPerSecond.toStringAsFixed(1)}/s)');
     } else {
       buffer.write('点数: $_nextIndex');
+    }
+    if (_highRateMode) {
+      buffer.write(' 高频模式 ${effectiveRefreshFps}fps');
     }
     if (_dataPoints.isNotEmpty && _dataPoints.length < _nextIndex) {
       buffer.write(' 窗口: $_visibleStartIndex-${_visibleEndIndex - 1}');
@@ -794,28 +875,85 @@ class PlotViewModel extends BaseViewModel {
 
   /// 计算每秒点数，基于最近500ms的数据（响应更快）
   /// 使用计数器方式，避免遍历整个数据列表
-  double? _calculatePointsPerSecond() {
-    if (_rateSamples.length < 2 || _startTime == null) return null;
-    final now = DateTime.now();
-    final nowMs = now.difference(_startTime!).inMilliseconds;
-    final cutoffMs = nowMs - 500; // 最近500ms
-
-    // 二分查找找到500ms前的样本位置
-    int left = 0, right = _rateSamples.length - 1;
-    int startIdx = 0;
-    while (left <= right) {
-      final mid = (left + right) ~/ 2;
-      if (_rateSamples[mid].timestampMs < cutoffMs) {
-        startIdx = mid + 1;
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
+  double? _calculatePointsPerSecond({int? nowMs, bool force = false}) {
+    if (_rateSamples.length < 2 || _startTime == null) {
+      _cachedPointsPerSecond = null;
+      return null;
+    }
+    final effectiveNowMs =
+        nowMs ?? DateTime.now().difference(_startTime!).inMilliseconds;
+    if (!force &&
+        _lastRateCalculationMs != null &&
+        effectiveNowMs - _lastRateCalculationMs! < _rateCalculationIntervalMs) {
+      return _cachedPointsPerSecond;
     }
 
-    final recentCount = _rateSamples.length - startIdx;
-    if (recentCount < 2) return null;
-    return recentCount * 2.0; // 500ms * 2 = 1s
+    final cutoffMs = effectiveNowMs - 500; // 最近500ms
+
+    _RateSample? first;
+    _RateSample? last;
+    var count = 0;
+    for (final sample in _rateSamples) {
+      if (sample.timestampMs < cutoffMs) continue;
+      first ??= sample;
+      last = sample;
+      count++;
+    }
+
+    _lastRateCalculationMs = effectiveNowMs;
+    if (first == null || last == null || count < 2) {
+      _cachedPointsPerSecond = null;
+      return null;
+    }
+    final elapsedMs = last.timestampMs - first.timestampMs;
+    if (elapsedMs <= 0) {
+      _cachedPointsPerSecond = null;
+      return null;
+    }
+    _cachedPointsPerSecond = (last.index - first.index) * 1000.0 / elapsedMs;
+    return _cachedPointsPerSecond;
+  }
+
+  void _recordRateSample(int pointIndex, int timestampMs) {
+    _rateSamples.add(_RateSample(pointIndex, timestampMs));
+    final cutoffMs = timestampMs - _rateSampleWindowMs;
+    while (_rateSamples.isNotEmpty &&
+        _rateSamples.first.timestampMs < cutoffMs) {
+      _rateSamples.removeFirst();
+    }
+    const hardLimit = 150000;
+    while (_rateSamples.length > hardLimit) {
+      _rateSamples.removeFirst();
+    }
+    final rate = _calculatePointsPerSecond(nowMs: timestampMs);
+    _updateHighRateMode(rate, timestampMs);
+  }
+
+  void _resetRateState() {
+    _rateSamples.clear();
+    _cachedPointsPerSecond = null;
+    _lastRateCalculationMs = null;
+    _highRateMode = false;
+    _belowHighRateSinceMs = null;
+  }
+
+  void _updateHighRateMode(double? pointsPerSecond, int timestampMs) {
+    if (pointsPerSecond == null) return;
+    if (pointsPerSecond > _highRateEnterThreshold) {
+      _highRateMode = true;
+      _belowHighRateSinceMs = null;
+      return;
+    }
+    if (!_highRateMode) return;
+    if (pointsPerSecond >= _highRateExitThreshold) {
+      _belowHighRateSinceMs = null;
+      return;
+    }
+    _belowHighRateSinceMs ??= timestampMs;
+    if (timestampMs - _belowHighRateSinceMs! >= _highRateExitHoldMs) {
+      _highRateMode = false;
+      _belowHighRateSinceMs = null;
+    }
   }
 
   /// 显示浮动临时提示。
@@ -1157,7 +1295,8 @@ class PlotViewModel extends BaseViewModel {
     _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
-    _rateSamples.clear();
+    _invalidateDisplayCaches();
+    _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
     _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
@@ -1247,10 +1386,14 @@ class PlotViewModel extends BaseViewModel {
     if (_isStopping) {
       return _stopFuture ?? Future.value();
     }
-    if (!_isPlotting) return Future.value();
+    if (!_isPlotting) {
+      _resetRateState();
+      return Future.value();
+    }
 
     _isStopping = true;
     _isPlotting = false;
+    _resetRateState();
     serialService.isPlotting = false;
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
@@ -1350,7 +1493,8 @@ class PlotViewModel extends BaseViewModel {
     _importedChannelAddresses = null;
     _visibleStartIndex = 0;
     _dataRevision++;
-    _rateSamples.clear();
+    _invalidateDisplayCaches();
+    _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
     _activeDiscardInitialPacketLimit = 0;
@@ -1379,6 +1523,15 @@ class PlotViewModel extends BaseViewModel {
       _discardedInitialPacketCount = 0;
     }
     _isPlotting = value;
+  }
+
+  @visibleForTesting
+  void recordRateSampleForTest(int pointIndex, int timestampMs) {
+    _startTime ??= DateTime.now().subtract(Duration(milliseconds: timestampMs));
+    if (pointIndex >= _nextIndex) {
+      _nextIndex = pointIndex + 1;
+    }
+    _recordRateSample(pointIndex, timestampMs);
   }
 
   /// 处理解析器输出的数据包
@@ -1423,7 +1576,7 @@ class PlotViewModel extends BaseViewModel {
     } else {
       _parsedHistory.add(point.values);
     }
-    _lodIndex.add(point.index, point.values);
+    _lodIndex.addSampled(point.index, point.values, _lodSampleStep);
 
     final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
@@ -1436,10 +1589,7 @@ class PlotViewModel extends BaseViewModel {
     _totalReceivedBytes += result.bytesConsumed;
 
     // 记录速率统计样本
-    _rateSamples.add(_RateSample(_nextIndex - 1, timestamp.toInt()));
-    while (_rateSamples.length > _maxRateSamples) {
-      _rateSamples.removeAt(0);
-    }
+    _recordRateSample(_nextIndex - 1, timestamp.toInt());
 
     // 更新实际通道数。JustFloat 自动识别模式下以最新有效帧为准，
     // 避免上一帧较多通道遗留的偏置轴继续显示。
@@ -1495,7 +1645,7 @@ class PlotViewModel extends BaseViewModel {
       Future.microtask(() => notifyListeners());
     } else if (_notifyTimer == null) {
       // 兜底定时器：确保即使数据流中断也能刷新 UI。
-      final delayMs = (1000 / _refreshFps).round();
+      final delayMs = (1000 / effectiveRefreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
@@ -1519,12 +1669,14 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _trimVisibleWindowToLimit() {
-    if (_dataPoints.length <= _maxVisiblePoints) {
+    final limit = effectiveMaxVisiblePoints;
+    final trimThreshold = limit + _visibleTrimBatchSize;
+    if (_dataPoints.length <= trimThreshold) {
       _visibleStartIndex = _dataPoints.isEmpty ? 0 : _dataPoints.first.index;
       return;
     }
 
-    final removeCount = _dataPoints.length - _maxVisiblePoints;
+    final removeCount = _dataPoints.length - limit;
     _dataPoints.removeRange(0, removeCount);
     _visibleStartIndex = _dataPoints.first.index;
   }
@@ -1536,8 +1688,9 @@ class PlotViewModel extends BaseViewModel {
         viewport.xMin.floor().clamp(0, _zobowRawFrames.packetCount).toInt();
     var end =
         viewport.xMax.ceil().clamp(start, _zobowRawFrames.packetCount).toInt();
-    if (end - start > _maxVisiblePoints) {
-      end = start + _maxVisiblePoints;
+    final limit = effectiveMaxVisiblePoints;
+    if (end - start > limit) {
+      end = start + limit;
       viewport = viewport.copyWith(
         xMin: start.toDouble(),
         xMax: end.toDouble(),
@@ -1583,8 +1736,9 @@ class PlotViewModel extends BaseViewModel {
             .ceil()
             .clamp(start, _fixedFrameRawFrames.packetCount)
             .toInt();
-    if (end - start > _maxVisiblePoints) {
-      end = start + _maxVisiblePoints;
+    final limit = effectiveMaxVisiblePoints;
+    if (end - start > limit) {
+      end = start + limit;
       viewport = viewport.copyWith(
         xMin: start.toDouble(),
         xMax: end.toDouble(),
@@ -1603,8 +1757,9 @@ class PlotViewModel extends BaseViewModel {
 
     var start = viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
     var end = viewport.xMax.ceil().clamp(start, _parsedHistory.length).toInt();
-    if (end - start > _maxVisiblePoints) {
-      end = start + _maxVisiblePoints;
+    final limit = effectiveMaxVisiblePoints;
+    if (end - start > limit) {
+      end = start + limit;
       viewport = viewport.copyWith(
         xMin: start.toDouble(),
         xMax: end.toDouble(),
@@ -1625,7 +1780,8 @@ class PlotViewModel extends BaseViewModel {
         break;
       case ParserType.fireWater:
       case ParserType.justFloat:
-        final count = _parsedHistory.length.clamp(0, _maxVisiblePoints).toInt();
+        final count =
+            _parsedHistory.length.clamp(0, effectiveMaxVisiblePoints).toInt();
         final start = _parsedHistory.length - count;
         _rebuildParsedWindow(start, count);
         break;
@@ -1634,7 +1790,7 @@ class PlotViewModel extends BaseViewModel {
           _loadFixedFrameTailWindow();
         } else {
           final count =
-              _parsedHistory.length.clamp(0, _maxVisiblePoints).toInt();
+              _parsedHistory.length.clamp(0, effectiveMaxVisiblePoints).toInt();
           final start = _parsedHistory.length - count;
           _rebuildParsedWindow(start, count);
         }
@@ -1646,6 +1802,7 @@ class PlotViewModel extends BaseViewModel {
     _dataPoints.clear();
     _visibleStartIndex = start;
     _dataRevision++;
+    _invalidateDisplayCaches();
     if (count <= 0) return;
 
     for (int i = 0; i < count; i++) {
@@ -1663,7 +1820,7 @@ class PlotViewModel extends BaseViewModel {
   void _loadZobowTailWindow() {
     if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
     final count =
-        _zobowRawFrames.packetCount.clamp(0, _maxVisiblePoints).toInt();
+        _zobowRawFrames.packetCount.clamp(0, effectiveMaxVisiblePoints).toInt();
     final start = _zobowRawFrames.packetCount - count;
     _rebuildZobowWindow(start, count);
   }
@@ -1672,6 +1829,7 @@ class PlotViewModel extends BaseViewModel {
     _dataPoints.clear();
     _visibleStartIndex = start;
     _dataRevision++;
+    _invalidateDisplayCaches();
 
     for (int i = 0; i < count; i++) {
       final packetIndex = start + i;
@@ -1694,6 +1852,7 @@ class PlotViewModel extends BaseViewModel {
     _dataPoints.clear();
     _visibleStartIndex = start;
     _dataRevision++;
+    _invalidateDisplayCaches();
 
     const batchSize = 4096;
     for (int i = 0; i < count; i++) {
@@ -2029,8 +2188,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   PlotViewport _limitXRange(PlotViewport candidate) {
-    if (candidate.xRange <= _maxVisiblePoints) return candidate;
-    return candidate.copyWith(xMax: candidate.xMin + _maxVisiblePoints);
+    final limit = effectiveMaxVisiblePoints;
+    if (candidate.xRange <= limit) return candidate;
+    return candidate.copyWith(xMax: candidate.xMin + limit);
   }
 
   PlotViewport _followViewportForLatestIndex(double latestIndex) {
@@ -2157,7 +2317,7 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
     final maxX = _nextIndex.toDouble();
-    final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
+    final minX = (maxX - effectiveMaxVisiblePoints).clamp(0, maxX).toDouble();
 
     _saveViewport();
     viewport = viewport.copyWith(xMin: minX, xMax: maxX);
@@ -2169,7 +2329,9 @@ class PlotViewModel extends BaseViewModel {
   void _loadFixedFrameTailWindow() {
     if (_fixedFrameRawFrames.isEmpty) return;
     final count =
-        _fixedFrameRawFrames.packetCount.clamp(0, _maxVisiblePoints).toInt();
+        _fixedFrameRawFrames.packetCount
+            .clamp(0, effectiveMaxVisiblePoints)
+            .toInt();
     final start = _fixedFrameRawFrames.packetCount - count;
     _rebuildFixedFrameWindow(start, count);
   }
@@ -2178,6 +2340,7 @@ class PlotViewModel extends BaseViewModel {
     _dataPoints.clear();
     _visibleStartIndex = start;
     _dataRevision++;
+    _invalidateDisplayCaches();
 
     for (int i = 0; i < count; i++) {
       final packetIndex = start + i;
@@ -2203,7 +2366,7 @@ class PlotViewModel extends BaseViewModel {
 
     // X范围
     final maxX = _nextIndex.toDouble();
-    final minX = (maxX - _maxVisiblePoints).clamp(0, maxX).toDouble();
+    final minX = (maxX - effectiveMaxVisiblePoints).clamp(0, maxX).toDouble();
 
     // Y范围（只计算可见通道）
     double minY = double.infinity;
@@ -3230,6 +3393,7 @@ class PlotViewModel extends BaseViewModel {
     _isPlotting = false;
     _isStopping = false;
     _stopFuture = null;
+    _resetRateState();
     // 全局单例模式下不重置 serialService.isPlotting
     // serialService.isPlotting = false;
     _notifyTimer?.cancel();

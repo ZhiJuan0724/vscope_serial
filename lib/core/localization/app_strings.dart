@@ -201,7 +201,6 @@ final class _PlotStrings {
   String get addMathChannel => '添加数学通道';
   String get deleteMathChannel => '删除数学通道';
   String get editMathChannel => '编辑数学通道';
-  String get closeMathChannel => '关闭数学通道';
   String get resetMathChannel => '重置数学通道';
   String get mathExpression => '表达式';
   String get mathExpressionHint => '例如: CH0-CH1';
@@ -223,9 +222,13 @@ final class _PlotStrings {
   String get fixedFrameDataTypeHelp => '固定帧类型不一致时，按当前通道类型解析';
   String get typeHint => '类型';
   String get customColor => '自定义颜色';
-  String get hue => '色相';
-  String get saturation => '饱和';
-  String get brightness => '亮度';
+  String get customColorPreview => '调色盘';
+  String get redChannel => 'R';
+  String get greenChannel => 'G';
+  String get blueChannel => 'B';
+  String get hexColor => 'HEX';
+  String get hexColorHint => '例如 #33AAFF';
+  String get colorInputInvalid => '请输入有效的 RGB 或 HEX 颜色';
   String get selectAddressSearchClear => '清空搜索';
   String get switchToGrid => '切换为平铺';
   String get switchToList => '切换为列表';

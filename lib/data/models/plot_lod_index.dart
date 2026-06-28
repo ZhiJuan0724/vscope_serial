@@ -33,13 +33,28 @@ class PlotLodIndex {
   }
 
   void add(int index, List<double> values) {
-    final count = math.min(values.length, maxChannels);
-    if (count > _maxChannelCount) _maxChannelCount = count;
-    if (index >= _length) _length = index + 1;
+    final count = _recordPoint(index, values);
 
     for (final level in _levels) {
       level.add(index, values, count);
     }
+  }
+
+  void addSampled(int index, List<double> values, int sampleStep) {
+    final count = _recordPoint(index, values);
+    final step = math.max(1, sampleStep);
+    if (index % step != 0) return;
+
+    for (final level in _levels) {
+      level.add(index, values, count);
+    }
+  }
+
+  int _recordPoint(int index, List<double> values) {
+    final count = math.min(values.length, maxChannels);
+    if (count > _maxChannelCount) _maxChannelCount = count;
+    if (index >= _length) _length = index + 1;
+    return count;
   }
 
   void rebuild(Iterable<List<double>> rows) {
