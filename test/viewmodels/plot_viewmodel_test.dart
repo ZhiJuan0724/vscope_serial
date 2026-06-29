@@ -482,6 +482,16 @@ void main() {
       expect(vm.viewport.xRange, greaterThan(oldRange));
     });
 
+    test('X范围达到显示上限后继续缩小不移动视口', () {
+      vm.updateViewport(vm.viewport.copyWith(xMin: 100, xMax: 1000100));
+      final before = vm.viewport.copy();
+
+      vm.zoomXOut();
+
+      expect(vm.viewport.xMin, before.xMin);
+      expect(vm.viewport.xMax, before.xMax);
+    });
+
     test('resetViewport恢复默认', () {
       vm.updateViewport(vm.viewport.copyWith(xMin: 100, xMax: 500));
       expect(vm.viewport.xMin, 100.0);

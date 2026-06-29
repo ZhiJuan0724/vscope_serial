@@ -2420,7 +2420,7 @@ class PlotViewModel extends BaseViewModel {
     if (!fromDrag) {
       _saveViewport();
     }
-    _setViewport(_limitXRange(newViewport).copy());
+    _setViewport(_limitXRange(newViewport, previous: viewport).copy());
     viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
     if (!fromDrag) {
       _loadWindowForViewport();
@@ -2475,9 +2475,12 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  PlotViewport _limitXRange(PlotViewport candidate) {
+  PlotViewport _limitXRange(PlotViewport candidate, {PlotViewport? previous}) {
     final limit = effectiveMaxVisiblePoints;
     if (candidate.xRange <= limit) return candidate;
+    if (previous != null && previous.xRange >= limit) {
+      return previous;
+    }
     return candidate.copyWith(xMax: candidate.xMin + limit);
   }
 
@@ -2508,7 +2511,9 @@ class PlotViewModel extends BaseViewModel {
   void zoomXIn() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    _setViewport(_limitXRange(viewport.zoomX(0.8, centerX)));
+    _setViewport(
+      _limitXRange(viewport.zoomX(0.8, centerX), previous: viewport),
+    );
     _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2518,7 +2523,9 @@ class PlotViewModel extends BaseViewModel {
   void zoomXOut() {
     _saveViewport();
     final centerX = viewport.xMin + viewport.xRange / 2;
-    _setViewport(_limitXRange(viewport.zoomX(1.25, centerX)));
+    _setViewport(
+      _limitXRange(viewport.zoomX(1.25, centerX), previous: viewport),
+    );
     _loadWindowForViewport();
     _saveSettings();
     Future.microtask(() => notifyListeners());
