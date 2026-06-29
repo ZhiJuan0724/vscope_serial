@@ -89,6 +89,9 @@ typedef _PlotToolbarSelection =
       bool showGrid,
       String gridDensity,
       SendProtocolType sendProtocolType,
+      int profileRevision,
+      String selectedZobowProfileId,
+      String selectedRProfileId,
     });
 
 typedef _PlotChannelPanelSelection =
@@ -234,6 +237,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       showGrid: vm.showGrid,
       gridDensity: vm.gridDensity,
       sendProtocolType: vm.sendProtocolType,
+      profileRevision: vm.profileRevision,
+      selectedZobowProfileId: vm.selectedZobowProfileId,
+      selectedRProfileId: vm.selectedRProfileId,
     );
   }
 
@@ -668,7 +674,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         IconButton(
           key: const ValueKey('send-protocol-config-button'),
           onPressed:
-              vm.sendProtocolType == SendProtocolType.rProtocol
+              vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                   ? () => _showSendProtocolConfigDialog(context, vm)
                   : null,
           icon: const Icon(Icons.settings, size: 18),
@@ -1983,7 +1989,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             content: SizedBox(
               width: 360,
               child:
-                  vm.sendProtocolType == SendProtocolType.rProtocol
+                  vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                       ? StatefulBuilder(
                         builder:
                             (context, setDialogState) => SwitchListTile(

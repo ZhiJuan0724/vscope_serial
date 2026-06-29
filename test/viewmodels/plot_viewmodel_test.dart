@@ -81,6 +81,14 @@ void main() {
       expect(vm.cursor, null);
     });
 
+    test('配置选择会递增配置修订号以刷新工具栏', () {
+      final before = vm.profileRevision;
+
+      vm.selectZobowProfile(null);
+
+      expect(vm.profileRevision, before + 1);
+    });
+
     test('视口默认范围', () {
       expect(vm.viewport.xMin, 0.0);
       expect(vm.viewport.xMax, 1000.0);

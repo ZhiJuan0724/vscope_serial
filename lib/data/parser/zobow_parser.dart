@@ -18,7 +18,7 @@ import 'data_parser.dart';
 /// - 前8字节为4个通道的uint16/int16数据（小端序）
 /// - 后2字节为前8字节的CRC16（MODBUS）
 /// - 每个通道可单独配置uint16或int16
-/// - 缓冲区最大128字节，超时500ms未成功则清空重试
+/// - 缓冲区最大4096字节，超时500ms未成功则清空重试
 class ZobowParser extends IDataParser {
   /// 内部字节缓冲区，用于缓存未解析的字节
   final _buffer = <int>[];
@@ -32,14 +32,26 @@ class ZobowParser extends IDataParser {
   /// 连续解析失败次数
   int _consecutiveFailures = 0;
 
+  /// 上次打印连续失败日志的时间戳。CRC长期错误时必须限频，避免日志拖垮UI。
+  DateTime? _lastFailureLogTime;
+
+  /// 上次打印缓冲区溢出日志的时间戳。
+  DateTime? _lastOverflowLogTime;
+
   /// 最大缓冲区大小
-  static const int _maxBufferSize = 128;
+  static const int _maxBufferSize = 4096;
+
+  /// 单次 feed 最多滑窗尝试次数。协议无帧头，错误数据不能无限扫描阻塞 UI。
+  static const int _maxScanAttemptsPerFeed = 2048;
 
   /// 超时时间（未成功解析则清空缓冲区）
   static const int _timeoutMs = 500;
 
   /// 最大连续失败次数
   static const int _maxConsecutiveFailures = 10;
+
+  /// 解析异常日志限频间隔。
+  static const int _warningLogIntervalMs = 1000;
 
   /// CRC-16/MODBUS 多项式（缓存避免重复查找）
   static final CrcPoly _crcPoly = crc16Polys['CRC-16/MODBUS']!;
@@ -84,26 +96,24 @@ class ZobowParser extends IDataParser {
       }
     }
 
-    // 防止缓冲区无限增长
-    if (_buffer.length > _maxBufferSize) {
-      AppLogger().warning(
-        '众邦电控缓冲区溢出(${_buffer.length}>$_maxBufferSize)，保留最后${_frameLength - 1}字节',
-        category: 'PARSER',
-      );
-      _buffer.removeRange(0, _buffer.length - _frameLength + 1);
-    }
+    var scanOffset = 0;
+    var scanAttempts = 0;
 
-    // 滑动窗口解析
-    while (_buffer.length >= _frameLength) {
-      final result = _tryParseAt(0);
+    // 滑动窗口解析。CRC失败时只推进游标，最后批量删除，避免 removeAt(0)
+    // 在大缓冲区下反复搬移数据。
+    while (scanOffset + _frameLength <= _buffer.length &&
+        scanAttempts < _maxScanAttemptsPerFeed) {
+      final result = _tryParseAt(scanOffset);
+      scanAttempts++;
 
       if (result != null) {
         // 解析成功
         _consecutiveFailures = 0;
         _lastSuccessTime = DateTime.now();
 
-        // 移除已消费的帧
-        _buffer.removeRange(0, _frameLength);
+        // 移除已跳过的噪声和已消费的帧
+        _buffer.removeRange(0, scanOffset + _frameLength);
+        scanOffset = 0;
 
         if (!_controller.isClosed) {
           _controller.add(result);
@@ -113,13 +123,19 @@ class ZobowParser extends IDataParser {
         // AppLogger().trace(...)
       } else {
         // CRC失败，尝试下一个位置（滑动窗口）
-        // 保留最后 _frameLength - 1 字节，可能包含下一帧的部分数据
-        if (_buffer.length > _frameLength - 1) {
-          _buffer.removeAt(0);
-        } else {
-          break;
-        }
+        scanOffset++;
       }
+    }
+
+    if (scanOffset > 0) {
+      _buffer.removeRange(0, scanOffset);
+    }
+
+    // 防止协议不匹配或通道数配置错误时持续积压。这里在扫描后处理，
+    // 合法的大块连续帧会优先被解析，不会因为刚进缓冲就超过上限而被丢掉。
+    if (_buffer.length > _maxBufferSize) {
+      _logOverflow();
+      _buffer.removeRange(0, _buffer.length - _frameLength + 1);
     }
   }
 
@@ -148,10 +164,7 @@ class ZobowParser extends IDataParser {
     if (calculatedCrc != receivedCrc) {
       _consecutiveFailures++;
       if (_consecutiveFailures >= _maxConsecutiveFailures) {
-        AppLogger().warning(
-          '众邦电控连续失败$_consecutiveFailures次，缓冲区=${_bytesToHex(Uint8List.fromList(_buffer))}',
-          category: 'PARSER',
-        );
+        _logConsecutiveFailures();
         _consecutiveFailures = 0;
       }
       return null;
@@ -207,9 +220,46 @@ class ZobowParser extends IDataParser {
   static int frameLengthForConfig(ParserConfig config) =>
       config.zobowChannelCount * 2 + 2;
 
-  /// 将字节列表转为16进制字符串（用于日志）
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+  bool _shouldLogWarning(DateTime? lastTime) {
+    if (lastTime == null) return true;
+    return DateTime.now().difference(lastTime).inMilliseconds >=
+        _warningLogIntervalMs;
+  }
+
+  void _logConsecutiveFailures() {
+    if (!_shouldLogWarning(_lastFailureLogTime)) return;
+    _lastFailureLogTime = DateTime.now();
+    AppLogger().warning(
+      '众邦电控连续CRC失败，缓冲区=${_buffer.length}字节，'
+      '帧长=$_frameLength，样本=${_bufferPreviewHex()}',
+      category: 'PARSER',
+    );
+  }
+
+  void _logOverflow() {
+    if (!_shouldLogWarning(_lastOverflowLogTime)) return;
+    _lastOverflowLogTime = DateTime.now();
+    AppLogger().warning(
+      '众邦电控缓冲区溢出(${_buffer.length}>$_maxBufferSize)，'
+      '保留最后${_frameLength - 1}字节',
+      category: 'PARSER',
+    );
+  }
+
+  /// 只打印首尾少量字节，避免CRC持续错误时构造超长日志字符串。
+  String _bufferPreviewHex() {
+    if (_buffer.isEmpty) return '<empty>';
+    const previewBytes = 16;
+    String toHex(Iterable<int> bytes) {
+      return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    }
+
+    if (_buffer.length <= previewBytes * 2) {
+      return toHex(_buffer);
+    }
+    final head = toHex(_buffer.take(previewBytes));
+    final tail = toHex(_buffer.skip(_buffer.length - previewBytes));
+    return '$head ... $tail';
   }
 
   @override
@@ -217,6 +267,8 @@ class ZobowParser extends IDataParser {
     _buffer.clear();
     _lastSuccessTime = null;
     _consecutiveFailures = 0;
+    _lastFailureLogTime = null;
+    _lastOverflowLogTime = null;
     AppLogger().trace('众邦电控解析器已重置', category: 'PARSER');
   }
 

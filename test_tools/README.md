@@ -30,15 +30,30 @@ Windows 下可以使用 com0com 或 Virtual Serial Port Driver 创建虚拟串�
 python zobow_device.py --port COM14
 python zobow_device.py --port COM14 --baud 115200 --mode sine --interval 1
 python zobow_device.py --port COM14 --mode random --interval 10
+python zobow_device.py --port COM14 --mode sine --preset 4k --baud 2000000
+python zobow_device.py --port COM14 --mode sine --preset 8k --baud 3000000
+python zobow_device.py --port COM14 --mode ramp --rate 8000 --baud 3000000
 python zobow_device.py --help
 ```
 
-数据模式：
+高频测试：
 
-- `sine`：正弦波，默认模式。
-- `random`：随机数据。
-- `ramp`：递增斜坡。
-- `fixed`：固定递增。
+- 4/8 通道高频时需要足够高的串口波特率。脚本会在收到配置帧后按实际通道数估算最低波特率，低于估算值会打印警告。
+
+参数：
+
+- `--port/-p`：脚本连接的串口号，必填，例如 `COM14`。
+- `--baud/-b`：串口波特率，默认 `115200`。
+- `--mode/-m`：数据模式，支持 `sine`（正弦波，默认）、`random`（随机数据）、`ramp`（递增斜坡）和 `fixed`（固定递增）。
+- `--interval/-i`：单帧发送间隔，单位毫秒，默认 `1`，即约 1000 帧/s。
+- `--rate/-r`：自定义目标发送频率，单位 Hz；设置后覆盖 `--interval`。
+- `--preset`：常用频率预设，支持 `1k`、`4k`、`8k`；优先级高于 `--rate` 和 `--interval`。
+- `--batch-ms`：批量写入窗口，单位毫秒，默认 `1`。4kHz 默认每批约 4 帧，8kHz 默认每批约 8 帧，用于降低 Python 和串口写入调用开销。
+- `--flush-every-batch`：每批写入后调用 `serial.flush()`；默认不启用。它更接近阻塞式串口写入，但可能显著降低高频发送速度。
+- `--amplitude/-a`：生成数据的幅度，默认 `10000`。
+- `--help/-h`：显示脚本参数帮助。
+
+频率参数优先级为 `--preset`、`--rate`、`--interval`。三者同时提供时，只使用优先级最高的一项。
 
 ## JustFloat 协议模拟
 
@@ -54,6 +69,15 @@ python justfloat_device.py --port COM14 --mode sine --interval 1
 python justfloat_device.py --port COM14 --mode ramp --interval 1
 python justfloat_device.py --help
 ```
+
+参数：
+
+- `--port/-p`：脚本连接的串口号，必填，例如 `COM14`。
+- `--baud/-b`：串口波特率，默认 `115200`。
+- `--mode/-m`：数据模式，支持 `sine`（正弦波，默认）、`random`（随机数据）、`ramp`（递增斜坡）和 `fixed`（固定值）。
+- `--interval/-i`：每帧发送间隔，单位毫秒，默认 `1`，即约 1000 帧/s。
+- `--amplitude/-a`：生成数据的幅度，默认 `100`。
+- `--help/-h`：显示脚本参数帮助。
 
 ## Shell/YMODEM 模拟
 
@@ -96,6 +120,38 @@ python shell_device.py --port COM14 --mode ymodem-send --file E:\temp\tx.bin
 python shell_device.py --port COM14 --mode ymodem-receive --output E:\temp\ymodem_rx
 ```
 
+参数：
+
+- `--port`：脚本连接的串口号，必填，例如 `COM14`。
+- `--baud`：串口波特率，默认 `115200`。
+- `--timeout`：串口读写超时，单位秒，默认 `0.1`。
+- `--mode`：运行模式，支持 `terminal`（Shell 交互，默认）、`ymodem-send`（脚本向应用发送文件）和 `ymodem-receive`（脚本接收应用文件）。
+- `--file`：待发送文件路径。使用 `--mode ymodem-send` 时必填；在 `terminal` 模式中执行 `ysend` 时可选，未指定则发送脚本内置示例文本。
+- `--output`：接收文件目录，默认是当前工作目录下的 `ymodem_rx`。用于 `ymodem-receive` 模式以及 `terminal` 模式中的 `yrecv` 命令。
+- `--help/-h`：显示脚本参数帮助。
+
+## 多编码文本发送
+
+`text_sender.py` 按指定编码和行尾持续发送文本，用于验证数据收发页的解码、换行、混合文本和串口回显。
+
+```bash
+python text_sender.py --port COM14
+python text_sender.py --port COM14 --encoding GBK --mode mixed --interval 100
+python text_sender.py --port COM14 --encoding Shift_JIS --mode line --line-ending lf
+python text_sender.py --port COM14 --mode echo
+```
+
+参数：
+
+- `--port/-p`：脚本连接的串口号，必填，例如 `COM14`。
+- `--baud/-b`：串口波特率，默认 `115200`。
+- `--encoding/-e`：文本编码，支持 `UTF-8`（默认）、`GBK`、`BIG5`、`Shift_JIS`、`EUC-KR`、`Latin-1` 和 `ASCII`。
+- `--mode/-m`：发送模式，支持 `plain`（固定文本）、`line`（带行号文本）、`mixed`（多语言混排，默认）和 `echo`（回显应用发来的数据）。
+- `--interval/-i`：发送间隔，单位毫秒，默认 `100`。
+- `--no-line-ending`：不在发送文本后自动添加行尾；默认会添加行尾。
+- `--line-ending`：自动添加的行尾类型，支持 `crlf`（默认）、`lf` 和 `cr`；启用 `--no-line-ending` 后此参数不生效。
+- `--help/-h`：显示脚本参数帮助。
+
 ## 绘图 BIN 生成
 
 `generate_plot_bin.py` 生成可直接在绘图页面导入的 `.bin` 文件，用于测试大数据导入、LOD 绘图和测量交互。
@@ -105,12 +161,29 @@ python generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 18000
 python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
 ```
 
-常用参数：
+参数：
 
 - `--output/-o`：输出文件路径。
 - `--packets/-n`：生成包数。
 - `--channels/-c`：通道数，范围 1~16。
-- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`。
+- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`，默认 `sine`。
+- `--amplitude/-a`：生成数据的幅度，默认 `1000`。
+- `--progress`：每生成多少包打印一次进度，默认 `100000`；设置为 `0` 时不打印进度。
+- `--help/-h`：显示脚本参数帮助。
+
+## Zobow C 配置导入
+
+`zobow_c_profile_import.dart` 调用应用内的 C 配置解析器，将 C 文件中识别到的通道地址预设输出为 JSON，适合独立验证配置导入规则。
+
+```bash
+dart run test_tools/zobow_c_profile_import.dart E:\temp\device.c
+dart run test_tools/zobow_c_profile_import.dart --ignore-comments E:\temp\device.c
+```
+
+参数：
+
+- `--ignore-comments`：忽略注释中的通道名称，输出预设时不使用注释提供的名称。
+- `<file.c>`：待解析的 C 文件路径，必填且只能提供一个。
 
 ## 建议测试流程
 
@@ -149,3 +222,8 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 - `<Label>.md`：场景汇总和对比报告。
 
 脚本会自动传入 `PLOT_PERF_METRICS=true`，应用正式构建不会启用这些计数器。
+
+参数：
+
+- `-Preset`：测试场景集合，支持 `quick`（默认，快速覆盖典型负载）和 `soak`（长时间高负载测试）。
+- `-Label`：报告文件名标签，默认 `optimized`；只允许字母、数字、点、下划线和连字符。

@@ -204,6 +204,27 @@ void main() {
       expect(results[1], [500.0, 600.0, 700.0, 800.0]);
     });
 
+    test('大块连续帧到达不会触发小缓冲区提前丢弃', () async {
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      final frames = <int>[];
+      for (var i = 0; i < 200; i++) {
+        frames.addAll(buildFrame([i, i + 1, i + 2, i + 3]));
+      }
+
+      parser.feed(Uint8List.fromList(frames));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(results.length, 200);
+      expect(results.first, [0.0, 1.0, 2.0, 3.0]);
+      expect(results.last, [199.0, 200.0, 201.0, 202.0]);
+    });
+
     test('int16 数据类型转换', () async {
       // 设置通道0为int16
       config.zobowChannelTypes[0] = DataType.int16;

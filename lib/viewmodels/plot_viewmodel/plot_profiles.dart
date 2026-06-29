@@ -7,16 +7,23 @@ extension PlotViewModelProfiles on PlotViewModel {
   /// 选择配置文件
   void selectZobowProfile(String? profileId) {
     _profileService.selectProfile(profileId);
+    _profileRevision++;
     // 保存到设置
     final settings = AppSettings();
     settings.zobowProfileId = profileId ?? '';
     settings.save();
+    AppLogger().info(
+      'Zobow配置切换为 ${_profileService.selectedProfile?.name ?? '<不使用配置>'}',
+      category: 'PLOT',
+    );
     _notifyLater();
   }
 
   /// 创建新配置文件
   Future<ZobowConfigProfile?> createZobowProfile(String name) async {
     final profile = await _profileService.createProfile(name);
+    _profileRevision++;
+    AppLogger().info('新增Zobow配置：${profile.name}', category: 'PLOT');
     _notifyLater();
     return profile;
   }
@@ -24,12 +31,23 @@ extension PlotViewModelProfiles on PlotViewModel {
   /// 更新配置文件
   Future<void> updateZobowProfile(ZobowConfigProfile profile) async {
     await _profileService.updateProfile(profile);
+    _profileRevision++;
+    AppLogger().info('更新Zobow配置：${profile.name}', category: 'PLOT');
     _notifyLater();
   }
 
   /// 删除配置文件
   Future<void> deleteZobowProfile(String id) async {
+    String? name;
+    for (final profile in _profileService.profiles) {
+      if (profile.id == id) {
+        name = profile.name;
+        break;
+      }
+    }
     await _profileService.deleteProfile(id);
+    _profileRevision++;
+    AppLogger().info('删除Zobow配置：${name ?? id}', category: 'PLOT');
     _notifyLater();
   }
 
@@ -49,29 +67,52 @@ extension PlotViewModelProfiles on PlotViewModel {
   /// 重新加载配置文件列表
   Future<void> reloadZobowProfiles() async {
     await _profileService.reload();
+    _profileRevision++;
+    AppLogger().info(
+      '重新加载Zobow配置列表，共${_profileService.profiles.length}项',
+      category: 'PLOT',
+    );
     _notifyLater();
   }
 
   void selectRProfile(String? profileId) {
     _rProfileService.selectProfile(profileId);
+    _profileRevision++;
     _saveSettings();
+    AppLogger().info(
+      'r协议配置切换为 ${_rProfileService.selectedProfile?.name ?? '<不使用配置>'}',
+      category: 'PLOT',
+    );
     _notifyLater();
   }
 
   Future<ZobowConfigProfile?> createRProfile(String name) async {
     final profile = await _rProfileService.createProfile(name);
+    _profileRevision++;
+    AppLogger().info('新增r协议配置：${profile.name}', category: 'PLOT');
     _notifyLater();
     return profile;
   }
 
   Future<void> updateRProfile(ZobowConfigProfile profile) async {
     await _rProfileService.updateProfile(profile);
+    _profileRevision++;
+    AppLogger().info('更新r协议配置：${profile.name}', category: 'PLOT');
     _notifyLater();
   }
 
   Future<void> deleteRProfile(String id) async {
+    String? name;
+    for (final profile in _rProfileService.profiles) {
+      if (profile.id == id) {
+        name = profile.name;
+        break;
+      }
+    }
     await _rProfileService.deleteProfile(id);
+    _profileRevision++;
     _saveSettings();
+    AppLogger().info('删除r协议配置：${name ?? id}', category: 'PLOT');
     _notifyLater();
   }
 

@@ -319,9 +319,11 @@ class PlotViewModel extends BaseViewModel {
   final ZobowProfileService _rProfileService = ZobowProfileService(
     protocolType: AddressProfileProtocolType.rProtocol,
   );
+  int _profileRevision = 0;
 
   /// 配置文件列表（供UI下拉框使用）
   List<ZobowConfigProfile> get zobowProfiles => _profileService.profiles;
+  int get profileRevision => _profileRevision;
 
   /// 当前选中的配置文件
   ZobowConfigProfile? get selectedZobowProfile =>
@@ -420,6 +422,7 @@ class PlotViewModel extends BaseViewModel {
     if (savedRProfileId.isNotEmpty) {
       _rProfileService.selectProfile(savedRProfileId);
     }
+    _profileRevision++;
     Future.microtask(() {
       if (!_disposed) notifyListeners();
     });
@@ -1103,6 +1106,7 @@ class PlotViewModel extends BaseViewModel {
   /// 如果正在绘图，会自动重启数据源以应用变更。
   /// 同时同步更新 serialService 的随机源状态。
   void setUseRandomSource(bool value) {
+    if (_useRandomSource == value) return;
     _useRandomSource = value;
     _sourceConfig.useRandom = value && _parserType == ParserType.fireWater;
     _sourceConfig.useSerial = serialService.isConnected;
@@ -1114,6 +1118,11 @@ class PlotViewModel extends BaseViewModel {
             : 4;
     _sourceManager.updateConfig(_sourceConfig);
     _saveSettings();
+    AppLogger().info(
+      '随机源${value ? '启用' : '关闭'}，解析器=${_parserType.label}，'
+      '接入当前解析链=${_sourceConfig.useRandom}',
+      category: 'PLOT',
+    );
 
     if (value && _parserType != ParserType.fireWater) {
       showStatusMessage('随机源已保留；随机源数据仅支持 FireWater 解析器');
@@ -1131,11 +1140,16 @@ class PlotViewModel extends BaseViewModel {
   /// 设置随机源频率（Hz），范围 1~100000
   void setRandomFrequency(double hz) {
     final clampedHz = hz.roundToDouble().clamp(1.0, 100000.0);
+    if (_sourceConfig.randomFrequencyHz == clampedHz) return;
     final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000).toInt();
     _sourceConfig.randomFrequencyHz = clampedHz;
     _sourceConfig.randomIntervalMs = intervalMs;
     _sourceManager.updateConfig(_sourceConfig);
     _saveSettings();
+    AppLogger().info(
+      '随机源频率设置为 ${clampedHz.toInt()} Hz，生成间隔=${intervalMs}ms',
+      category: 'PLOT',
+    );
 
     // 如果正在绘图，重启数据源以应用新频率
     if (_isPlotting) {
@@ -1151,6 +1165,8 @@ class PlotViewModel extends BaseViewModel {
   /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时保留开关
   /// 状态，但不会把随机源接入当前解析链。
   void setParserType(ParserType type) {
+    if (_parserType == type) return;
+    final oldType = _parserType;
     _parserType = type;
     _markChannelConfigChanged();
     _resetObservedValueMetadata();
@@ -1170,6 +1186,10 @@ class PlotViewModel extends BaseViewModel {
       AppLogger().info('切换到非 FireWater 协议，保留随机源开关但不接入当前解析链', category: 'PLOT');
       showStatusMessage('随机源已保留；当前解析器仅使用串口数据');
     }
+    AppLogger().info(
+      '接收协议从 ${oldType.label} 切换为 ${type.label}',
+      category: 'PLOT',
+    );
 
     // 保存解析器类型到设置
     final settings = AppSettings();
@@ -1188,6 +1208,8 @@ class PlotViewModel extends BaseViewModel {
 
   void setSendProtocolType(SendProtocolType type) {
     if (type == SendProtocolType.zobowBuiltIn) return;
+    if (_sendProtocolType == type) return;
+    final oldType = _sendProtocolType;
     _sendProtocolType = type;
     _markChannelConfigChanged();
     _sendProtocolConfig
@@ -1195,14 +1217,24 @@ class PlotViewModel extends BaseViewModel {
       ..source = ProtocolSource.builtIn
       ..customProtocolId = null;
     _saveSettings();
+    AppLogger().info(
+      '发送协议从 ${oldType.label} 切换为 ${type.label}',
+      category: 'PLOT',
+    );
     Future.microtask(() => notifyListeners());
   }
 
   void setRChannelAddress(int index, String address) {
     if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
-    _sendProtocolConfig.rChannelAddresses[index] = address.trim();
+    final next = address.trim();
+    if (_sendProtocolConfig.rChannelAddresses[index] == next) return;
+    _sendProtocolConfig.rChannelAddresses[index] = next;
     _markChannelConfigChanged();
     _saveSettings();
+    AppLogger().info(
+      'r协议 Ch$index 地址设置为 ${next.isEmpty ? '<空>' : next}',
+      category: 'PLOT',
+    );
     Future.microtask(() => notifyListeners());
   }
 
@@ -1210,6 +1242,7 @@ class PlotViewModel extends BaseViewModel {
     if (_rProtocolLooseChannelSettings == value) return;
     _rProtocolLooseChannelSettings = value;
     _saveSettings();
+    AppLogger().info('r协议宽松通道设置${value ? '启用' : '关闭'}', category: 'PLOT');
     Future.microtask(() => notifyListeners());
   }
 
@@ -1327,6 +1360,12 @@ class PlotViewModel extends BaseViewModel {
           _parserConfig.channelCount.clamp(0, 16).toInt();
       settings.save();
     }
+    AppLogger().info(
+      '解析器配置已更新：协议=${_parserConfig.type.label}，'
+      '通道数=${_parserConfig.channelCount}，FireWater通道=${_parserConfig.fireWaterChannelCount}，'
+      '固定帧长度=${_parserConfig.totalFrameLength}，Zobow通道=${_parserConfig.zobowChannelCount}',
+      category: 'PLOT',
+    );
 
     if (_isPlotting) {
       _restartPlotting();
@@ -1360,6 +1399,12 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
     if (_isPlotting) return;
+    AppLogger().info(
+      '用户请求开始绘图：接收协议=${_parserType.label}，发送协议=${effectiveSendProtocolType.label}，'
+      '串口连接=${serialService.isConnected}，随机源=$_useRandomSource，'
+      '随机频率=${_sourceConfig.randomFrequencyHz.toInt()}Hz，丢弃前置包=$_discardInitialPacketCount',
+      category: 'PLOT',
+    );
 
     if (serialService.isConnected) {
       final connected = await serialService.refreshConnectionStatus();
@@ -1404,6 +1449,10 @@ class PlotViewModel extends BaseViewModel {
     // 再次确认数据源配置与实际状态一致
     _sourceConfig.useSerial = serialService.isConnected;
     _sourceConfig.useRandom = canUseRandom;
+    AppLogger().info(
+      '绘图数据源确认：串口=${_sourceConfig.useSerial}，随机源=${_sourceConfig.useRandom}',
+      category: 'PLOT',
+    );
 
     // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
     // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
@@ -1517,6 +1566,10 @@ class PlotViewModel extends BaseViewModel {
     _isPlotting = false;
     _resetRateState();
     serialService.isPlotting = false;
+    AppLogger().info(
+      '用户请求停止绘图：已接收点=$_nextIndex，当前显示点=${_dataPoints.length}',
+      category: 'PLOT',
+    );
     // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
     showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
@@ -1539,6 +1592,11 @@ class PlotViewModel extends BaseViewModel {
         _isStopping = false;
         if (!_disposed) {
           showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
+          AppLogger().info(
+            '绘图已停止：总点数=$_nextIndex，Zobow原始帧=${_zobowRawFrames.packetCount}，'
+            '固定帧原始帧=${_fixedFrameRawFrames.packetCount}',
+            category: 'PLOT',
+          );
           Future.microtask(() {
             if (!_disposed) notifyListeners();
           });
@@ -1600,6 +1658,7 @@ class PlotViewModel extends BaseViewModel {
 
   /// 重启绘图（用于配置变更时）
   void _restartPlotting() {
+    AppLogger().info('配置变更触发绘图重启', category: 'PLOT');
     stopPlotting().then((_) {
       if (!_disposed) unawaited(startPlotting());
     });
@@ -1607,6 +1666,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// 清空所有数据、速率统计、视口和光标
   void clearData() {
+    AppLogger().info(
+      '用户清空绘图数据：清空前总点数=$_nextIndex，显示点=${_dataPoints.length}',
+      category: 'PLOT',
+    );
     _dataPoints.clear();
     _parsedHistory.clear();
     _lodIndex.clear();

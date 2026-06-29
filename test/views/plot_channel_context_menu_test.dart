@@ -78,6 +78,17 @@ void main() {
 
     expect(find.text(AppStrings.plot.rProtocolLooseChannelSettings), findsOne);
 
+    await tester.tap(find.text(AppStrings.common.close));
+    await tester.pumpAndSettle();
+
+    vm.setParserType(ParserType.zobow);
+    await tester.pumpAndSettle();
+
+    expect(vm.sendProtocolType, SendProtocolType.rProtocol);
+    expect(vm.effectiveSendProtocolType, SendProtocolType.zobowBuiltIn);
+    final zobowConfigButton = tester.widget<IconButton>(configIconButton());
+    expect(zobowConfigButton.onPressed, isNull);
+
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
     await tester.pump(const Duration(milliseconds: 100));

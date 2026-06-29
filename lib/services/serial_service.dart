@@ -862,6 +862,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataDisplayLineLimit = next;
     unawaited(settings.save());
+    AppLogger().info('接收区最多显示 $next 行', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -873,6 +874,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataShellMode = value;
     unawaited(settings.save());
+    AppLogger().info('Shell模式${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -887,6 +889,10 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellEnabled = value;
     settings.rawDataShellMode = rawDataShellMode;
     unawaited(settings.save());
+    AppLogger().info(
+      'Shell入口${value ? '显示' : '隐藏'}，当前Shell模式=$rawDataShellMode',
+      category: 'DATA',
+    );
     Future.microtask(() => notifyListeners());
   }
 
@@ -896,6 +902,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataShellInputMode = value.value;
     unawaited(settings.save());
+    AppLogger().info('Shell输入模式切换为 ${value.label}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -906,6 +913,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataTerminalFontSize = next;
     unawaited(settings.save());
+    AppLogger().info('Shell字体大小设置为 $next', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -916,6 +924,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataTerminalFontFamily = next;
     unawaited(settings.save());
+    AppLogger().info('Shell字体设置为 $next', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -925,6 +934,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataShellTheme = value.value;
     unawaited(settings.save());
+    AppLogger().info('Shell主题切换为 ${value.label}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -934,6 +944,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     settings.rawDataShellCursor = value.value;
     unawaited(settings.save());
+    AppLogger().info('Shell光标样式切换为 ${value.label}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -953,6 +964,7 @@ class SerialService extends ChangeNotifier {
     receiveHex = value;
     _aggregator = null;
     _resetTextLineBuffers();
+    AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -977,6 +989,7 @@ class SerialService extends ChangeNotifier {
     showTimestamp = value;
     _aggregator = null;
     _resetTextLineBuffers();
+    AppLogger().info('接收时间戳${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
