@@ -37,9 +37,6 @@ class MathChannelConfig {
       'showLine': display.showLine,
       'pointSize': display.pointSize,
       'lineWidth': display.lineWidth,
-      'yOffset': display.yOffset,
-      'offsetEnabled': display.offsetEnabled,
-      'yScale': display.yScale,
     };
   }
 
@@ -70,12 +67,6 @@ class MathChannelConfig {
         lineWidth: ((json['lineWidth'] as num?)?.toDouble() ?? 1.5).clamp(
           0.5,
           8.0,
-        ),
-        yOffset: (json['yOffset'] as num?)?.toDouble() ?? 0.0,
-        offsetEnabled: json['offsetEnabled'] as bool? ?? false,
-        yScale: ((json['yScale'] as num?)?.toDouble() ?? 1.0).clamp(
-          0.001,
-          1000.0,
         ),
         dataType: DataType.double,
       ),

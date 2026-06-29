@@ -765,6 +765,10 @@ class PlotViewModel extends BaseViewModel {
   void _invalidateDisplayCaches() {
     _cachedDisplayDataPoints = null;
     _cachedDisplayDataKey = null;
+    _invalidateDisplayChannelCaches();
+  }
+
+  void _invalidateDisplayChannelCaches() {
     _cachedDisplayChannels = null;
     _cachedDisplayChannelKey = null;
     _cachedStatsKey = null;
@@ -2878,7 +2882,7 @@ class PlotViewModel extends BaseViewModel {
     mathChannels[index].display = display.copyWith(
       alias: mathChannels[index].name,
     );
-    _invalidateDisplayCaches();
+    _invalidateDisplayChannelCaches();
     _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
@@ -2913,9 +2917,8 @@ class PlotViewModel extends BaseViewModel {
     if (index >= 16 && index < 16 + mathChannels.length) {
       final mathChannel = mathChannels[index - 16];
       mathChannel.display.yOffset = offset;
-      _invalidateDisplayCaches();
+      _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
-      _saveSettings();
       Future.microtask(() => notifyListeners());
       return;
     }
@@ -2951,9 +2954,8 @@ class PlotViewModel extends BaseViewModel {
     if (index >= 16 && index < 16 + mathChannels.length) {
       final display = mathChannels[index - 16].display;
       display.yScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
-      _invalidateDisplayCaches();
+      _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
-      _saveSettings();
       Future.microtask(() => notifyListeners());
       return;
     }

@@ -223,6 +223,27 @@ void main() {
       expect(nextDisplay[2].values.last.isNaN, true);
     });
 
+    test('数学通道显示偏移和缩放不重建表达式数据缓存', () {
+      for (int i = 0; i < 20; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble(), (i * 2).toDouble()], bytesConsumed: 8),
+        );
+      }
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      final firstDisplay = vm.displayDataPoints;
+
+      vm.setChannelYOffset(16, 25);
+      expect(identical(vm.displayDataPoints, firstDisplay), true);
+
+      vm.zoomChannelYScale(16, 1.2);
+      expect(identical(vm.displayDataPoints, firstDisplay), true);
+    });
+
     test('观察和吸附高亮包含数学通道', () {
       vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
       vm.ingestParsedResultForTest(ParseResult.ok([8, 3], bytesConsumed: 8));
