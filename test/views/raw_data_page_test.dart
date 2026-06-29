@@ -25,18 +25,15 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
     );
+    // 虚拟列表跳到底部后，需要下一帧构建新的可见行。
+    await tester.pump();
 
     final scrollable = tester.state<ScrollableState>(
       find.byType(Scrollable).first,
     );
-    final receiveText = tester.widget<SelectableText>(
-      find.descendant(
-        of: find.byKey(const Key('rawDataReceiveTextField')),
-        matching: find.byType(SelectableText),
-      ),
-    );
-    expect(receiveText.data, contains('line0\nline1'));
-    expect(receiveText.data, endsWith('line99'));
+    expect(service.receivedLines.first, 'line0');
+    expect(service.receivedLines.last, 'line99');
+    expect(find.text('line99'), findsOneWidget);
     expect(scrollable.position.maxScrollExtent, greaterThan(0));
     expect(scrollable.position.pixels, scrollable.position.maxScrollExtent);
 
@@ -62,6 +59,46 @@ void main() {
 
     service.clearReceivedData();
     service.autoScroll = true;
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('关闭自动滚动后淘汰最旧行会保持当前视口', (tester) async {
+    final service = SerialService();
+    service.clearReceivedData();
+    service.autoScroll = false;
+    service.setDisplayLineLimit(100);
+    for (var i = 0; i < 100; i++) {
+      service.debugAddRawReceiveData(
+        Uint8List.fromList(utf8.encode('line$i\n')),
+      );
+    }
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+
+    final receiveScrollable = find.descendant(
+      of: find.byKey(const Key('rawDataReceiveTextField')),
+      matching: find.byType(Scrollable),
+    );
+    final scrollable = tester.state<ScrollableState>(receiveScrollable);
+    scrollable.position.jumpTo(300);
+    await tester.pump();
+    final previousOffset = scrollable.position.pixels;
+
+    service.debugAddRawReceiveData(Uint8List.fromList(utf8.encode('latest\n')));
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump();
+
+    expect(service.receivedLines.first, 'line1');
+    expect(service.receivedLines.last, 'latest');
+    expect(scrollable.position.pixels, lessThan(previousOffset - 5));
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

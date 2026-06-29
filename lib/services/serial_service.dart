@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
@@ -19,7 +21,141 @@ import 'native_serial_reader.dart';
 import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
 
+/// 支持 O(1) 头部淘汰的字符串列表。
+///
+/// 原始收发达到显示上限后会持续删除最旧行。普通 List 的 removeAt(0)
+/// 每次都要移动所有元素，环形存储可以避免高行数下的重复整体搬移。
+class _CircularStringList extends ListBase<String> {
+  List<String?> _items = List<String?>.filled(16, null);
+  int _head = 0;
+  int _length = 0;
+
+  @override
+  int get length => _length;
+
+  @override
+  set length(int value) {
+    if (value < 0) {
+      throw RangeError.range(value, 0, null, 'length');
+    }
+    if (value > _length) {
+      throw UnsupportedError('不能通过 length 扩展环形列表');
+    }
+    while (_length > value) {
+      removeLast();
+    }
+  }
+
+  @override
+  String operator [](int index) {
+    RangeError.checkValidIndex(index, this);
+    return _items[_physicalIndex(index)]!;
+  }
+
+  @override
+  void operator []=(int index, String value) {
+    RangeError.checkValidIndex(index, this);
+    _items[_physicalIndex(index)] = value;
+  }
+
+  @override
+  void add(String value) {
+    _ensureCapacity(_length + 1);
+    _items[_physicalIndex(_length)] = value;
+    _length++;
+  }
+
+  String removeFirst() {
+    if (_length == 0) throw StateError('列表为空');
+    final value = _items[_head]!;
+    _items[_head] = null;
+    _head = (_head + 1) % _items.length;
+    _length--;
+    if (_length == 0) _head = 0;
+    return value;
+  }
+
+  @override
+  String removeLast() {
+    if (_length == 0) throw StateError('列表为空');
+    final index = _physicalIndex(_length - 1);
+    final value = _items[index]!;
+    _items[index] = null;
+    _length--;
+    if (_length == 0) _head = 0;
+    return value;
+  }
+
+  @override
+  String removeAt(int index) {
+    RangeError.checkValidIndex(index, this);
+    if (index == 0) return removeFirst();
+    if (index == _length - 1) return removeLast();
+
+    final value = this[index];
+    for (var i = index; i < _length - 1; i++) {
+      this[i] = this[i + 1];
+    }
+    removeLast();
+    return value;
+  }
+
+  @override
+  void clear() {
+    _items = List<String?>.filled(16, null);
+    _head = 0;
+    _length = 0;
+  }
+
+  int _physicalIndex(int logicalIndex) =>
+      (_head + logicalIndex) % _items.length;
+
+  void _ensureCapacity(int required) {
+    if (required <= _items.length) return;
+    final next = List<String?>.filled(_items.length * 2, null);
+    for (var i = 0; i < _length; i++) {
+      next[i] = this[i];
+    }
+    _items = next;
+    _head = 0;
+  }
+}
+
 enum SendDisplaySource { user, plot }
+
+typedef ExportProgressCallback = void Function(double progress);
+
+String _decodeBytesWithEncoding(Uint8List data, String encoding) {
+  String decodeOrFallback(String Function(Uint8List) decode) {
+    try {
+      return decode(data);
+    } on FormatException {
+      return String.fromCharCodes(data);
+    }
+  }
+
+  return switch (encoding) {
+    'UTF-8' => utf8.decode(data, allowMalformed: true),
+    'GBK' => gbk.decode(data, allowMalformed: true),
+    'BIG5' => decodeOrFallback(CodePage('cp950', 'BIG5').decode),
+    'Shift_JIS' => decodeOrFallback(shiftJis.decode),
+    'EUC-KR' => decodeOrFallback(eucKr.decode),
+    'Latin-1' => decodeOrFallback(latin1.decode),
+    'ASCII' => decodeOrFallback(ascii.decode),
+    _ => utf8.decode(data, allowMalformed: true),
+  };
+}
+
+Uint8List _buildRawExportBytes(Uint8List bytes) {
+  final crcPoly = crc32Polys['CRC-32']!;
+  final crcValue = calculateCrc(bytes, crcPoly);
+  final crcBytes = crcToBytes(crcValue, 32);
+  final output =
+      BytesBuilder(copy: false)
+        ..add(bytes)
+        ..add(Uint8List.fromList(crcBytes));
+  return output.takeBytes();
+}
 
 enum RawShellInputMode {
   line('line', '命令行'),
@@ -124,8 +260,15 @@ class SerialService extends ChangeNotifier {
   int get _rawBytesSize => _rawBytes.length;
 
   // 原始文本数据（用于原始数据页面显示）
-  final List<String> receivedLines = [];
+  final _CircularStringList _receivedLines = _CircularStringList();
+  List<String> get receivedLines => _receivedLines;
   int _receivedTextBytes = 0;
+  Timer? _displayNotifyTimer;
+  bool _displayBatchHasTrim = false;
+  int _displayTrimRevision = 0;
+  List<String> _lastTrimmedDisplayLines = <String>[];
+  int get displayTrimRevision => _displayTrimRevision;
+  List<String> get lastTrimmedDisplayLines => _lastTrimmedDisplayLines;
   String _pendingReceiveText = '';
   int? _pendingReceiveLineIndex;
   String _pendingReceiveLinePrefix = '';
@@ -630,35 +773,8 @@ class SerialService extends ChangeNotifier {
   void debugFlushSendLogForTest() => _flushSendLog();
 
   /// 使用当前选择的编码解码字节数据
-  String _decodeBytes(Uint8List data) {
-    switch (_receiveEncoding) {
-      case 'UTF-8':
-        return utf8.decode(data, allowMalformed: true);
-      case 'GBK':
-        return gbk.decode(data, allowMalformed: true);
-      case 'BIG5':
-        return _tryDecodeCharset(data, CodePage('cp950', 'BIG5').decode);
-      case 'Shift_JIS':
-        return _tryDecodeCharset(data, shiftJis.decode);
-      case 'EUC-KR':
-        return _tryDecodeCharset(data, eucKr.decode);
-      case 'Latin-1':
-        return _tryDecodeCharset(data, latin1.decode);
-      case 'ASCII':
-        return _tryDecodeCharset(data, ascii.decode);
-      default:
-        return utf8.decode(data, allowMalformed: true);
-    }
-  }
-
-  /// 尝试用指定解码器解码，失败时回退为逐字节显示
-  String _tryDecodeCharset(Uint8List data, String Function(Uint8List) decode) {
-    try {
-      return decode(data);
-    } on FormatException {
-      return String.fromCharCodes(data);
-    }
-  }
+  String _decodeBytes(Uint8List data) =>
+      _decodeBytesWithEncoding(data, _receiveEncoding);
 
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
@@ -679,6 +795,7 @@ class SerialService extends ChangeNotifier {
 
   @visibleForTesting
   void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
+    _rawBytes.append(data);
     _addRawDataLine(timestamp ?? DateTime.now(), data);
   }
 
@@ -820,37 +937,65 @@ class SerialService extends ChangeNotifier {
 
   /// 添加一行到显示列表（通用）
   int _addDisplayLine(String line) {
-    receivedLines.add(line);
+    _beginDisplayMutation();
+    _receivedLines.add(line);
     _receivedTextBytes += line.length * 2; // UTF-16 编码估算
 
     _trimDisplayLines();
-    Future.microtask(() => notifyListeners());
-    return receivedLines.length - 1;
+    _scheduleDisplayNotify();
+    return _receivedLines.length - 1;
   }
 
   void _updateDisplayLine(int index, String line) {
-    if (index < 0 || index >= receivedLines.length) return;
-    final oldLine = receivedLines[index];
-    receivedLines[index] = line;
+    if (index < 0 || index >= _receivedLines.length) return;
+    _beginDisplayMutation();
+    final oldLine = _receivedLines[index];
+    _receivedLines[index] = line;
     _receivedTextBytes += (line.length - oldLine.length) * 2;
     _trimDisplayLines();
-    Future.microtask(() => notifyListeners());
+    _scheduleDisplayNotify();
   }
 
   void _trimDisplayLines() {
     // 文本缓存限制（按字节）
     while (_receivedTextBytes > _maxReceivedTextBytes &&
-        receivedLines.isNotEmpty) {
-      final removed = receivedLines.removeAt(0);
+        _receivedLines.isNotEmpty) {
+      final removed = _receivedLines.removeFirst();
       _receivedTextBytes -= removed.length * 2;
+      _recordTrimmedDisplayLine(removed);
       _shiftPendingLineIndexesAfterRemove();
     }
     // 显示行数限制，超出时按 FIFO 丢弃最早内容。
-    while (receivedLines.length > _displayLineLimit) {
-      final removed = receivedLines.removeAt(0);
+    while (_receivedLines.length > _displayLineLimit) {
+      final removed = _receivedLines.removeFirst();
       _receivedTextBytes -= removed.length * 2;
+      _recordTrimmedDisplayLine(removed);
       _shiftPendingLineIndexesAfterRemove();
     }
+  }
+
+  void _beginDisplayMutation() {
+    if (_displayNotifyTimer == null) {
+      _displayBatchHasTrim = false;
+    }
+  }
+
+  void _recordTrimmedDisplayLine(String line) {
+    if (!_displayBatchHasTrim) {
+      _displayBatchHasTrim = true;
+      _displayTrimRevision++;
+      _lastTrimmedDisplayLines = <String>[];
+    }
+    _lastTrimmedDisplayLines.add(line);
+  }
+
+  /// 合并同一帧内的接收更新，避免一个串口数据块中的多行触发多次重建。
+  void _scheduleDisplayNotify() {
+    if (_displayNotifyTimer != null) return;
+    _displayNotifyTimer = Timer(const Duration(milliseconds: 16), () {
+      _displayNotifyTimer = null;
+      notifyListeners();
+    });
   }
 
   void setDisplayLineLimit(int value) {
@@ -858,12 +1003,13 @@ class SerialService extends ChangeNotifier {
     if (next == _displayLineLimit) return;
 
     _displayLineLimit = next;
+    _beginDisplayMutation();
     _trimDisplayLines();
     final settings = AppSettings();
     settings.rawDataDisplayLineLimit = next;
     unawaited(settings.save());
     AppLogger().info('接收区最多显示 $next 行', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _scheduleDisplayNotify();
   }
 
   void setRawDataShellMode(bool value) {
@@ -1019,7 +1165,7 @@ class SerialService extends ChangeNotifier {
   /// 清空所有数据（切换串口时调用）
   void _clearAllData() {
     _rawBytes.clear();
-    receivedLines.clear();
+    _receivedLines.clear();
     _receivedTextBytes = 0;
     _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
@@ -1031,18 +1177,35 @@ class SerialService extends ChangeNotifier {
     AppLogger().info('接收区已清空', category: 'SERIAL');
   }
 
-  /// 导出数据为字符串文件
-  Future<String?> exportAsText() async {
+  /// 将完整原始接收字节按当前编码重新解码并导出为文本。
+  ///
+  /// 显示行数上限只影响界面缓存，不影响这里的导出内容。界面生成的时间戳、
+  /// 收发方向标记以及手动发送记录不属于原始接收字节，因此不会写入文本文件。
+  Future<String?> exportAsText({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) async {
     try {
+      onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}/exports');
+      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.txt';
       final file = File(path);
-      final content = receivedLines.join('\n');
+      final bytes = _rawBytes.toBytes();
+      onProgress?.call(0.25);
+      final encoding = _receiveEncoding;
+      final content = await Isolate.run(
+        () => _decodeBytesWithEncoding(bytes, encoding),
+      );
+      onProgress?.call(0.75);
       await file.writeAsString(content);
-      AppLogger().info('已导出文本: $path', category: 'DATA');
+      onProgress?.call(1);
+      AppLogger().info(
+        '已导出完整接收文本: $path，编码=$encoding，原始字节=${bytes.length}',
+        category: 'DATA',
+      );
       return path;
     } catch (e) {
       AppLogger().error('导出失败: $e', category: 'DATA');
@@ -1051,28 +1214,25 @@ class SerialService extends ChangeNotifier {
   }
 
   /// 导出数据为原始字节文件（末尾附加 CRC-32 校验）
-  Future<String?> exportAsRawBytes() async {
+  Future<String?> exportAsRawBytes({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) async {
     try {
+      onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}/exports');
+      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.bin';
       final file = File(path);
 
-      // 原始数据
       final bytes = _rawBytes.toBytes();
-
-      // 计算 CRC-32 并附加到末尾
-      final crcPoly = crc32Polys['CRC-32']!;
-      final crcValue = calculateCrc(bytes, crcPoly);
-      final crcBytes = crcToBytes(crcValue, 32);
-
-      // 写入文件：数据 + CRC
-      final output = BytesBuilder();
-      output.add(bytes);
-      output.add(Uint8List.fromList(crcBytes));
-      await file.writeAsBytes(output.toBytes());
+      onProgress?.call(0.25);
+      final output = await Isolate.run(() => _buildRawExportBytes(bytes));
+      onProgress?.call(0.75);
+      await file.writeAsBytes(output);
+      onProgress?.call(1);
 
       AppLogger().info('已导出原始字节: $path', category: 'DATA');
       return path;
@@ -1087,15 +1247,13 @@ class SerialService extends ChangeNotifier {
 
   /// 获取数据大小信息
   Map<String, String> get dataStats {
-    final stats = <String, String>{
-      '文本行数': '${receivedLines.length}',
-      '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+    return <String, String>{
+      '显示行数': '${receivedLines.length} / $_displayLineLimit',
+      '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+      '完整原始数据':
+          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
+      '文本导出编码': _receiveEncoding,
     };
-    if (receiveHex) {
-      stats['原始字节'] =
-          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)';
-    }
-    return stats;
   }
 
   Uint8List? prepareSendData(String text) {
@@ -1285,6 +1443,8 @@ class SerialService extends ChangeNotifier {
     // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
     _flushReceiveLog();
     _flushSendLog();
+    _displayNotifyTimer?.cancel();
+    _displayNotifyTimer = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();

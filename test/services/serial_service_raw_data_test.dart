@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -56,7 +57,7 @@ void main() {
       service.debugAddRawReceiveData(Uint8List.fromList([0x01, 0xAB]));
 
       expect(service.receivedLines.single, '01 AB (2 bytes)');
-      expect(service.dataStats.containsKey('原始字节'), isTrue);
+      expect(service.dataStats.containsKey('完整原始数据'), isTrue);
     });
 
     test('text send data can append configured line ending', () {
@@ -148,6 +149,64 @@ void main() {
       expect(service.receivedLines, hasLength(100));
       expect(service.receivedLines.first, 'line5');
       expect(service.receivedLines.last, 'line104');
+    });
+
+    test('display line limit keeps FIFO order after continuous eviction', () {
+      service.setDisplayLineLimit(100);
+
+      for (var i = 0; i < 10000; i++) {
+        service.debugAddRawReceiveData(_utf8('line$i\n'));
+      }
+
+      expect(service.receivedLines, hasLength(100));
+      expect(service.receivedLines.first, 'line9900');
+      expect(service.receivedLines.last, 'line9999');
+    });
+
+    test(
+      'text export decodes all raw bytes beyond the display line limit',
+      () async {
+        service.setDisplayLineLimit(100);
+        for (var i = 0; i < 105; i++) {
+          service.debugAddRawReceiveData(_utf8('line$i\n'));
+        }
+        expect(service.receivedLines.first, 'line5');
+
+        final outputDirectory = await Directory.systemTemp.createTemp(
+          'vscope_text_export_',
+        );
+        addTearDown(() => outputDirectory.delete(recursive: true));
+        final progress = <double>[];
+        final path = await service.exportAsText(
+          outputDirectory: outputDirectory,
+          onProgress: progress.add,
+        );
+        final content = await File(path!).readAsString();
+
+        expect(content, startsWith('line0\n'));
+        expect(content, endsWith('line104\n'));
+        expect(const LineSplitter().convert(content), hasLength(105));
+        expect(progress, [0.05, 0.25, 0.75, 1.0]);
+      },
+    );
+
+    test('raw export reports progress while building CRC payload', () async {
+      service.debugAddRawReceiveData(Uint8List.fromList([1, 2, 3, 4]));
+      final outputDirectory = await Directory.systemTemp.createTemp(
+        'vscope_raw_export_',
+      );
+      addTearDown(() => outputDirectory.delete(recursive: true));
+      final progress = <double>[];
+
+      final path = await service.exportAsRawBytes(
+        outputDirectory: outputDirectory,
+        onProgress: progress.add,
+      );
+      final output = await File(path!).readAsBytes();
+
+      expect(output.sublist(0, 4), [1, 2, 3, 4]);
+      expect(output, hasLength(8));
+      expect(progress, [0.05, 0.25, 0.75, 1.0]);
     });
   });
 }

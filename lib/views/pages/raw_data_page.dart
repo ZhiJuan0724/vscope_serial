@@ -31,6 +31,8 @@ enum _ShellFileTransferProtocol {
   const _ShellFileTransferProtocol(this.label);
 }
 
+enum _RawDataExportFormat { text, rawBytes }
+
 extension on YmodemPacketSizeMode {
   String get label {
     return switch (this) {
@@ -50,6 +52,11 @@ class RawDataPage extends StatefulWidget {
 }
 
 class _RawDataPageState extends State<RawDataPage> {
+  static const TextStyle _receiveLineStyle = TextStyle(
+    fontFamily: 'SarasaUiSC',
+    fontSize: 13,
+  );
+
   static const List<String> _terminalFontFamilies = [
     'Consolas',
     'Cascadia Mono',
@@ -76,7 +83,7 @@ class _RawDataPageState extends State<RawDataPage> {
     debugLabel: 'rawDataShellLineInput',
   );
   bool _autoScrollScheduled = false;
-  String _receiveText = '';
+  int _handledDisplayTrimRevision = 0;
   double _splitRatio = 0.65;
   StreamSubscription<Uint8List>? _shellSubscription;
   RawDataViewModel? _shellVm;
@@ -106,13 +113,6 @@ class _RawDataPageState extends State<RawDataPage> {
     super.dispose();
   }
 
-  void _syncReceiveText(RawDataViewModel vm) {
-    final text = vm.receivedLines.join('\n');
-    if (_receiveText != text) {
-      _receiveText = text;
-    }
-  }
-
   void _scrollToBottom(RawDataViewModel vm) {
     if (!vm.autoScroll || _autoScrollScheduled) return;
 
@@ -121,6 +121,46 @@ class _RawDataPageState extends State<RawDataPage> {
       _autoScrollScheduled = false;
       if (!mounted || !vm.autoScroll || !_scrollController.hasClients) return;
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    });
+  }
+
+  void _preserveScrollAfterTrim(
+    BuildContext context,
+    RawDataViewModel vm,
+    double lineWidth,
+  ) {
+    if (_handledDisplayTrimRevision == vm.displayTrimRevision) return;
+    _handledDisplayTrimRevision = vm.displayTrimRevision;
+    if (vm.autoScroll ||
+        vm.lastTrimmedDisplayLines.isEmpty ||
+        !_scrollController.hasClients) {
+      return;
+    }
+
+    final textDirection = Directionality.of(context);
+    final textScaler = MediaQuery.textScalerOf(context);
+    var removedHeight = 0.0;
+    for (final line in vm.lastTrimmedDisplayLines) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: line.isEmpty ? ' ' : line,
+          style: _receiveLineStyle,
+        ),
+        textDirection: textDirection,
+        textScaler: textScaler,
+      )..layout(maxWidth: lineWidth);
+      removedHeight += painter.height;
+    }
+
+    final previousOffset = _scrollController.offset;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || vm.autoScroll || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final target = (previousOffset - removedHeight).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      position.jumpTo(target);
     });
   }
 
@@ -1117,7 +1157,6 @@ class _RawDataPageState extends State<RawDataPage> {
         builder: (context, vm, child) {
           _syncShellSubscription(vm);
           _syncShellFocus(vm);
-          _syncReceiveText(vm);
           _scrollToBottom(vm);
           if (vm.shellMode) {
             return _buildShellArea(vm);
@@ -1328,22 +1367,28 @@ class _RawDataPageState extends State<RawDataPage> {
               children: [
                 // 数据列表或提示文字
                 vm.receivedLines.isNotEmpty
-                    ? SingleChildScrollView(
-                      key: const Key('rawDataReceiveTextField'),
-                      controller: _scrollController,
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 28),
-                          child: SelectableText(
-                            _receiveText,
-                            style: const TextStyle(
-                              fontFamily: 'SarasaUiSC',
-                              fontSize: 13,
-                            ),
+                    ? LayoutBuilder(
+                      builder: (context, constraints) {
+                        _preserveScrollAfterTrim(
+                          context,
+                          vm,
+                          constraints.maxWidth,
+                        );
+                        return SelectionArea(
+                          key: const Key('rawDataReceiveTextField'),
+                          child: ListView.builder(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.only(bottom: 28),
+                            itemCount: vm.receivedLines.length,
+                            itemBuilder:
+                                (context, index) => Text(
+                                  vm.receivedLines[index],
+                                  softWrap: true,
+                                  style: _receiveLineStyle,
+                                ),
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     )
                     : const Center(
                       child: Text(
@@ -1679,7 +1724,7 @@ class _RawDataPageState extends State<RawDataPage> {
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
+          (dialogContext) => AlertDialog(
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
@@ -1700,42 +1745,118 @@ class _RawDataPageState extends State<RawDataPage> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(dialogContext).pop(),
                 child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton.icon(
-                onPressed: () async {
-                  final path = await vm.exportAsText();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pop();
-                  if (path != null) {
-                    _showSnackBar(
+                onPressed:
+                    () => _runDataExport(
                       context,
-                      '${AppStrings.raw.savedTextPrefix}: $path',
-                    );
-                  }
-                },
+                      dialogContext,
+                      vm,
+                      _RawDataExportFormat.text,
+                    ),
                 icon: const Icon(Icons.text_snippet),
                 label: Text(AppStrings.raw.textFileFormat),
               ),
               ElevatedButton.icon(
-                onPressed: () async {
-                  final path = await vm.exportAsRawBytes();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pop();
-                  if (path != null) {
-                    _showSnackBar(
+                onPressed:
+                    () => _runDataExport(
                       context,
-                      '${AppStrings.raw.savedRawPrefix}: $path',
-                    );
-                  }
-                },
+                      dialogContext,
+                      vm,
+                      _RawDataExportFormat.rawBytes,
+                    ),
                 icon: const Icon(Icons.memory),
                 label: Text(AppStrings.raw.rawBytesFormat),
               ),
             ],
           ),
     );
+  }
+
+  Future<void> _runDataExport(
+    BuildContext pageContext,
+    BuildContext formatDialogContext,
+    RawDataViewModel vm,
+    _RawDataExportFormat format,
+  ) async {
+    Navigator.of(formatDialogContext).pop();
+    await Future<void>.delayed(Duration.zero);
+    if (!pageContext.mounted) return;
+
+    final progress = ValueNotifier<double>(0);
+    final progressDialog = showDialog<void>(
+      context: pageContext,
+      barrierDismissible: false,
+      builder:
+          (context) => PopScope(
+            canPop: false,
+            child: AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+              title: Text(AppStrings.raw.exportingData),
+              content: SizedBox(
+                width: 360,
+                child: ValueListenableBuilder<double>(
+                  valueListenable: progress,
+                  builder: (context, value, child) {
+                    final stage =
+                        value < 0.25
+                            ? AppStrings.raw.preparingExport
+                            : value < 0.75
+                            ? format == _RawDataExportFormat.text
+                                ? AppStrings.raw.decodingExportText
+                                : AppStrings.raw.buildingRawExport
+                            : AppStrings.raw.writingExportFile;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        LinearProgressIndicator(value: value),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(child: Text(stage)),
+                            Text(AppStrings.raw.exportProgressPercent(value)),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+    );
+
+    // 确保进度弹窗先完成首帧绘制，再开始复制大块原始数据。
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    String? path;
+    try {
+      void updateProgress(double value) {
+        progress.value = value.clamp(0, 1);
+      }
+
+      path =
+          format == _RawDataExportFormat.text
+              ? await vm.exportAsText(onProgress: updateProgress)
+              : await vm.exportAsRawBytes(onProgress: updateProgress);
+    } finally {
+      if (pageContext.mounted) {
+        Navigator.of(pageContext, rootNavigator: true).pop();
+      }
+      await progressDialog;
+      progress.dispose();
+    }
+
+    if (!pageContext.mounted || path == null) return;
+    final prefix =
+        format == _RawDataExportFormat.text
+            ? AppStrings.raw.savedTextPrefix
+            : AppStrings.raw.savedRawPrefix;
+    _showSnackBar(pageContext, '$prefix: $path');
   }
 
   void _showSnackBar(BuildContext context, String message) {

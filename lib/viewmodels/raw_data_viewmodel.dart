@@ -12,6 +12,9 @@ class RawDataViewModel extends BaseViewModel {
   RawDataViewModel(super.serialService);
 
   List<String> get receivedLines => serialService.receivedLines;
+  int get displayTrimRevision => serialService.displayTrimRevision;
+  List<String> get lastTrimmedDisplayLines =>
+      serialService.lastTrimmedDisplayLines;
   bool get isConnected => serialService.isConnected;
   bool get receiveHex => serialService.receiveHex;
   bool get showTimestamp => serialService.showTimestamp;
@@ -241,7 +244,9 @@ class RawDataViewModel extends BaseViewModel {
     return serialService.ymodemService.cancel();
   }
 
-  Future<String?> exportAsText() => serialService.exportAsText();
-  Future<String?> exportAsRawBytes() => serialService.exportAsRawBytes();
+  Future<String?> exportAsText({ExportProgressCallback? onProgress}) =>
+      serialService.exportAsText(onProgress: onProgress);
+  Future<String?> exportAsRawBytes({ExportProgressCallback? onProgress}) =>
+      serialService.exportAsRawBytes(onProgress: onProgress);
   Map<String, String> get dataStats => serialService.dataStats;
 }

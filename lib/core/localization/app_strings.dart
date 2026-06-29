@@ -321,6 +321,13 @@ final class _RawDataStrings {
   String get savedRawPrefix => '已保存为原始字节';
   String get textFileFormat => '文本 (.txt)';
   String get rawBytesFormat => '原始字节 (.bin)';
+  String get exportingData => '正在导出数据';
+  String get preparingExport => '正在准备原始数据';
+  String get decodingExportText => '正在按接收编码解析文本';
+  String get buildingRawExport => '正在计算校验并生成 BIN 数据';
+  String get writingExportFile => '正在写入文件';
+  String exportProgressPercent(double progress) =>
+      '${(progress * 100).round()}%';
   String get rawSettingsTitle => '普通收发设置';
   String get textDecoding => '文本解码方式:';
   String get decodingHint => '解码';
