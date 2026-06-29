@@ -15,7 +15,10 @@ void main() {
       service.disconnect();
       service.config = SerialConfig();
       AppNotifications.lastMessage = null;
-      AppSettings().disableNotifications = false;
+      AppSettings()
+        ..lastPort = null
+        ..baudRate = 115200
+        ..disableNotifications = false;
     });
 
     test(
@@ -56,6 +59,29 @@ void main() {
       AppNotifications.show('不会显示');
 
       expect(AppNotifications.lastMessage, isNull);
+    });
+
+    test('loadSettings restores saved baud rate before auto connect', () async {
+      AppSettings()
+        ..lastPort = 'COM7'
+        ..baudRate = 1152000;
+      service.loadSettings();
+
+      String? openedPort;
+      int? openedBaudRate;
+      service.debugPortOpener = (port, baudRate) async {
+        openedPort = port;
+        openedBaudRate = baudRate;
+        return false;
+      };
+
+      expect(service.config.port, 'COM7');
+      expect(service.config.baudRate, 1152000);
+
+      await service.connect();
+
+      expect(openedPort, 'COM7');
+      expect(openedBaudRate, 1152000);
     });
   });
 }

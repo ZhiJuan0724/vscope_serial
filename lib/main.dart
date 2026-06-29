@@ -34,6 +34,7 @@ void main() async {
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
   await AppSettings().init();
+  SerialService().loadSettings();
   await AppIcon.precacheAll();
 
   // 初始化窗口管理
