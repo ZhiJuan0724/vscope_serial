@@ -197,7 +197,7 @@ git push origin v1.0.5
 
 ## 主要依赖
 
-- `flutter_libserialport`：串口枚举
+- Windows 原生 DLL：串口枚举、设备变化监听和数据读写
 - `provider`：状态管理
 - `path_provider`：路径获取
 - `file_picker`：文件选择

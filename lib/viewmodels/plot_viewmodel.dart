@@ -1617,14 +1617,10 @@ class PlotViewModel extends BaseViewModel {
     final settings = AppSettings();
     showStatusMessage('正在自动连接串口...', duration: const Duration(seconds: 2));
 
-    // 刷新串口列表
-    serialService.refreshPorts();
-
-    // 尝试历史串口
+    // 历史端口直接尝试打开，不依赖枚举结果。部分 USB 串口驱动枚举可能很慢，
+    // 但已保存端口的 CreateFile 可以在后台 isolate 中快速确认是否可用。
     final lastPort = settings.lastPort;
-    if (lastPort != null &&
-        lastPort.isNotEmpty &&
-        serialService.availablePorts.contains(lastPort)) {
+    if (lastPort != null && lastPort.isNotEmpty) {
       AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
       serialService.config = serialService.config.copyWith(port: lastPort);
       await serialService.connect();
@@ -1637,10 +1633,14 @@ class PlotViewModel extends BaseViewModel {
       }
     }
 
-    // 尝试唯一串口
-    serialService.refreshPorts();
-    if (serialService.availablePorts.length == 1) {
+    // 历史端口失败后只刷新一次；若当前只有另一个串口，则尝试该端口。
+    final refreshed = await serialService.refreshPorts(reason: '自动连接唯一端口');
+    if (refreshed && serialService.availablePorts.length == 1) {
       final solePort = serialService.availablePorts.first;
+      if (solePort == lastPort) {
+        AppLogger().warning('历史串口连接失败，不重复尝试: $solePort', category: 'PLOT');
+        return;
+      }
       AppLogger().info('尝试连接唯一串口: $solePort', category: 'PLOT');
       serialService.config = serialService.config.copyWith(port: solePort);
       await serialService.connect();
@@ -1655,6 +1655,9 @@ class PlotViewModel extends BaseViewModel {
 
     AppLogger().warning('自动连接串口失败', category: 'PLOT');
   }
+
+  @visibleForTesting
+  Future<void> autoConnectSerialForTest() => _autoConnectSerial();
 
   /// 重启绘图（用于配置变更时）
   void _restartPlotting() {

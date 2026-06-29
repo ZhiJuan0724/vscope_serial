@@ -1,4 +1,10 @@
 /// 串口配置模型
+abstract final class SerialParity {
+  static const int none = 0;
+  static const int odd = 1;
+  static const int even = 2;
+}
+
 class SerialConfig {
   String? port;
   int baudRate;
@@ -13,7 +19,7 @@ class SerialConfig {
     this.baudRate = 115200,
     this.dataBits = 8,
     this.stopBits = 1,
-    this.parity = 0, // SerialPortParity.none：无校验
+    this.parity = SerialParity.none,
     this.rts = false,
     this.dtr = false,
   });

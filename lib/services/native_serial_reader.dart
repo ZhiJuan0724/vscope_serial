@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -67,6 +68,15 @@ typedef NsrIsOpenDart = int Function();
 typedef NsrIsConnectionHealthyC = Int32 Function();
 typedef NsrIsConnectionHealthyDart = int Function();
 
+typedef NsrListPortsC = Int32 Function(Pointer<Uint8> buffer, Int32 capacity);
+typedef NsrListPortsDart = int Function(Pointer<Uint8> buffer, int capacity);
+
+typedef NsrStartPortMonitorC = Int32 Function(Int64 dartPort);
+typedef NsrStartPortMonitorDart = int Function(int dartPort);
+
+typedef NsrStopPortMonitorC = Void Function();
+typedef NsrStopPortMonitorDart = void Function();
+
 // 获取函数指针
 final _nsrInitDartApi = _dll
     .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
@@ -97,6 +107,52 @@ final _nsrIsConnectionHealthy = _dll
     .lookupFunction<NsrIsConnectionHealthyC, NsrIsConnectionHealthyDart>(
       'nsr_is_connection_healthy',
     );
+final _nsrListPorts = _dll.lookupFunction<NsrListPortsC, NsrListPortsDart>(
+  'nsr_list_ports',
+);
+final _nsrStartPortMonitor = _dll
+    .lookupFunction<NsrStartPortMonitorC, NsrStartPortMonitorDart>(
+      'nsr_start_port_monitor',
+    );
+final _nsrStopPortMonitor = _dll
+    .lookupFunction<NsrStopPortMonitorC, NsrStopPortMonitorDart>(
+      'nsr_stop_port_monitor',
+    );
+
+List<String> _listNativePorts() {
+  final required = _nsrListPorts(nullptr, 0);
+  if (required < 0) {
+    throw StateError('Windows 串口枚举失败: $required');
+  }
+  if (required < 2) return const [];
+
+  final buffer = calloc<Uint8>(required);
+  try {
+    final written = _nsrListPorts(buffer, required);
+    if (written < 0) {
+      throw StateError('Windows 串口枚举失败: $written');
+    }
+    if (written > required) {
+      // 插拔可能导致两次调用之间的列表长度发生变化，重新读取即可。
+      return _listNativePorts();
+    }
+
+    final bytes = buffer.asTypedList(written);
+    final ports = <String>[];
+    var start = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != 0) continue;
+      if (i == start) break;
+      ports.add(utf8.decode(bytes.sublist(start, i)));
+      start = i + 1;
+    }
+    return ports;
+  } finally {
+    calloc.free(buffer);
+  }
+}
+
+bool _checkNativeConnectionHealth() => _nsrIsConnectionHealthy() == 1;
 
 /// Windows 原生串口读取器
 class NativeSerialReader {
@@ -221,6 +277,16 @@ class NativeSerialReader {
   /// 外部断开后，已打开句柄是否仍有响应。
   bool get isConnectionHealthy => _nsrIsConnectionHealthy() == 1;
 
+  /// 在后台 isolate 中枚举串口，避免异常驱动阻塞 Flutter UI。
+  static Future<List<String>> listPortsInBackground() {
+    return Isolate.run(_listNativePorts);
+  }
+
+  /// 在后台 isolate 中检查句柄，驱动异常时不阻塞 Flutter UI。
+  static Future<bool> checkConnectionHealthInBackground() {
+    return Isolate.run(_checkNativeConnectionHealth);
+  }
+
   void _onDataReceived(dynamic message) {
     if (message is! Uint8List) {
       AppLogger().debug(
@@ -255,6 +321,37 @@ class NativeSerialReader {
     _nsrClosePort();
     _isOpen = false;
     _dataController.close();
+  }
+}
+
+/// Windows 串口设备到达/移除监听器。
+///
+/// 原生回调只发送变化信号，实际枚举由上层做防抖和并发合并。
+class NativeSerialPortMonitor {
+  final _changesController = StreamController<void>.broadcast();
+  ReceivePort? _receivePort;
+
+  Stream<void> get changes => _changesController.stream;
+
+  bool start() {
+    if (_receivePort != null) return true;
+    if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+
+    final receivePort = ReceivePort();
+    receivePort.listen((_) => _changesController.add(null));
+    if (_nsrStartPortMonitor(receivePort.sendPort.nativePort) != 0) {
+      receivePort.close();
+      return false;
+    }
+    _receivePort = receivePort;
+    return true;
+  }
+
+  void dispose() {
+    _nsrStopPortMonitor();
+    _receivePort?.close();
+    _receivePort = null;
+    _changesController.close();
   }
 }
 

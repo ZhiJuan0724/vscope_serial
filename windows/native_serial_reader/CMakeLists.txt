@@ -12,11 +12,14 @@ add_library(native_serial_reader SHARED
 )
 
 target_compile_definitions(native_serial_reader PRIVATE NATIVE_SERIAL_READER_EXPORTS)
+target_compile_options(native_serial_reader PRIVATE /utf-8)
 
 # 链接 Windows 库
 target_link_libraries(native_serial_reader PRIVATE
   kernel32
   user32
+  setupapi
+  cfgmgr32
 )
 
 # 设置输出目录到 runner 的构建目录

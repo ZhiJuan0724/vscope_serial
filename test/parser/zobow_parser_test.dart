@@ -302,5 +302,48 @@ void main() {
 
       expect(results.length, 1);
     });
+
+    test('调度暂停后新到达的有效帧优先解析并恢复', () async {
+      var now = DateTime(2026, 6, 29, 12);
+      parser = ZobowParser(config, () => now);
+      final frame = buildFrame([11, 22, 33, 44]);
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      parser.feed(Uint8List.fromList([1, 2, 3, 4, 5]));
+      now = now.add(const Duration(seconds: 15));
+      parser.feed(frame);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(results, [
+        [11.0, 22.0, 33.0, 44.0],
+      ]);
+    });
+
+    test('过期残留只清理一次且后续有效帧可以恢复', () async {
+      var now = DateTime(2026, 6, 29, 12);
+      parser = ZobowParser(config, () => now);
+      final frame = buildFrame([101, 202, 303, 404]);
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      parser.feed(Uint8List.fromList([1, 2, 3, 4, 5]));
+      now = now.add(const Duration(seconds: 1));
+      parser.feed(Uint8List.fromList([6]));
+      parser.feed(frame);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(results, [
+        [101.0, 202.0, 303.0, 404.0],
+      ]);
+    });
   });
 }

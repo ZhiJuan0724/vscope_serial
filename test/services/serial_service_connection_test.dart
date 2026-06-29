@@ -5,6 +5,7 @@ import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_notifications.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 void main() {
   group('SerialService connection', () {
@@ -12,6 +13,9 @@ void main() {
 
     tearDown(() {
       service.debugPortOpener = null;
+      service.debugPortEnumerator = null;
+      service.debugConnectionHealthChecker = null;
+      service.debugNativePortOpen = null;
       service.disconnect();
       service.config = SerialConfig();
       AppNotifications.lastMessage = null;
@@ -82,6 +86,45 @@ void main() {
 
       expect(openedPort, 'COM7');
       expect(openedBaudRate, 1152000);
+    });
+
+    test('healthy connected port does not enumerate', () async {
+      var enumerationCalls = 0;
+      service
+        ..config = SerialConfig(port: 'COM7')
+        ..isConnected = true
+        ..debugNativePortOpen = true
+        ..debugConnectionHealthChecker = (() async => true)
+        ..debugPortEnumerator = () async {
+          enumerationCalls++;
+          return ['COM7'];
+        };
+
+      expect(await service.refreshConnectionStatus(), isTrue);
+      expect(enumerationCalls, 0);
+    });
+
+    test('auto connect tries saved port before a single enumeration', () async {
+      AppSettings().lastPort = 'COM9';
+      final openedPorts = <String>[];
+      var enumerationCalls = 0;
+      service
+        ..config = SerialConfig()
+        ..debugPortOpener = (port, baudRate) async {
+          openedPorts.add(port);
+          return false;
+        }
+        ..debugPortEnumerator = () async {
+          enumerationCalls++;
+          return ['COM8'];
+        };
+      final viewModel = PlotViewModel(service);
+
+      await viewModel.autoConnectSerialForTest();
+
+      expect(openedPorts, ['COM9', 'COM8']);
+      expect(enumerationCalls, 1);
+      viewModel.dispose();
     });
   });
 }

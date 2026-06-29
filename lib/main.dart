@@ -35,6 +35,7 @@ void main() async {
   await AppLogger().init();
   await AppSettings().init();
   SerialService().loadSettings();
+  SerialService().initializePortDiscovery();
   await AppIcon.precacheAll();
 
   // 初始化窗口管理

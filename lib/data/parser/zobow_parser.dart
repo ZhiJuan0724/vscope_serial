@@ -26,8 +26,10 @@ class ZobowParser extends IDataParser {
   /// 解析结果输出控制器
   final _controller = StreamController<ParseResult>.broadcast();
 
-  /// 上次成功解析的时间戳
-  DateTime? _lastSuccessTime;
+  /// 当前未完成残留数据开始等待的时间。
+  DateTime? _residualSince;
+
+  final DateTime Function() _now;
 
   /// 连续解析失败次数
   int _consecutiveFailures = 0;
@@ -37,6 +39,13 @@ class ZobowParser extends IDataParser {
 
   /// 上次打印缓冲区溢出日志的时间戳。
   DateTime? _lastOverflowLogTime;
+
+  /// 上次打印残留超时日志的时间戳。
+  DateTime? _lastTimeoutLogTime;
+
+  int _suppressedFailureWarnings = 0;
+  int _suppressedOverflowWarnings = 0;
+  int _suppressedTimeoutWarnings = 0;
 
   /// 最大缓冲区大小
   static const int _maxBufferSize = 4096;
@@ -56,8 +65,9 @@ class ZobowParser extends IDataParser {
   /// CRC-16/MODBUS 多项式（缓存避免重复查找）
   static final CrcPoly _crcPoly = crc16Polys['CRC-16/MODBUS']!;
 
-  ZobowParser([ParserConfig? config])
-    : super(config ?? ParserConfig.zobowDefault());
+  ZobowParser([ParserConfig? config, DateTime Function()? now])
+    : _now = now ?? DateTime.now,
+      super(config ?? ParserConfig.zobowDefault());
 
   int get _channelCount => config.zobowChannelCount;
   int get _dataLength => _channelCount * 2;
@@ -69,8 +79,13 @@ class ZobowParser extends IDataParser {
   @override
   void feed(Uint8List data) {
     try {
+      if (data.isEmpty) return;
+      final now = _now();
+      if (_buffer.isEmpty) {
+        _residualSince = now;
+      }
       _buffer.addAll(data);
-      _processBuffer();
+      _processBuffer(now);
     } catch (e, stack) {
       AppLogger().debug('众邦电控解析异常: $e\n$stack', category: 'PARSER');
     }
@@ -80,24 +95,10 @@ class ZobowParser extends IDataParser {
   ///
   /// 使用滑动窗口策略：从索引0开始尝试解析，CRC失败则移动到索引1重试，
   /// 直到找到有效帧或遍历完所有可能位置。
-  void _processBuffer() {
-    // 检查超时：超过500ms未成功解析，清空缓冲区
-    if (_lastSuccessTime != null) {
-      final elapsed =
-          DateTime.now().difference(_lastSuccessTime!).inMilliseconds;
-      if (elapsed > _timeoutMs && _buffer.isNotEmpty) {
-        AppLogger().warning(
-          '众邦电控解析超时(${elapsed}ms)，清空缓冲区(${_buffer.length}字节)',
-          category: 'PARSER',
-        );
-        _buffer.clear();
-        _consecutiveFailures = 0;
-        return;
-      }
-    }
-
+  void _processBuffer(DateTime now) {
     var scanOffset = 0;
     var scanAttempts = 0;
+    var parsedFrame = false;
 
     // 滑动窗口解析。CRC失败时只推进游标，最后批量删除，避免 removeAt(0)
     // 在大缓冲区下反复搬移数据。
@@ -109,7 +110,7 @@ class ZobowParser extends IDataParser {
       if (result != null) {
         // 解析成功
         _consecutiveFailures = 0;
-        _lastSuccessTime = DateTime.now();
+        parsedFrame = true;
 
         // 移除已跳过的噪声和已消费的帧
         _buffer.removeRange(0, scanOffset + _frameLength);
@@ -131,11 +132,31 @@ class ZobowParser extends IDataParser {
       _buffer.removeRange(0, scanOffset);
     }
 
+    if (_buffer.isEmpty) {
+      _residualSince = null;
+    } else if (parsedFrame) {
+      // 成功帧之后剩余的字节属于新的残留，重新开始计算等待时间。
+      _residualSince = now;
+    }
+
     // 防止协议不匹配或通道数配置错误时持续积压。这里在扫描后处理，
     // 合法的大块连续帧会优先被解析，不会因为刚进缓冲就超过上限而被丢掉。
     if (_buffer.length > _maxBufferSize) {
       _logOverflow();
       _buffer.removeRange(0, _buffer.length - _frameLength + 1);
+    }
+
+    // 必须在解析之后检查超时。即使调度曾暂停很久，新到达的完整有效帧也应
+    // 优先恢复解析，而不是因为上次残留过旧而整批丢弃。
+    final residualSince = _residualSince;
+    if (_buffer.isNotEmpty && residualSince != null) {
+      final elapsed = now.difference(residualSince).inMilliseconds;
+      if (elapsed > _timeoutMs) {
+        _logTimeout(elapsed);
+        _buffer.clear();
+        _residualSince = null;
+        _consecutiveFailures = 0;
+      }
     }
   }
 
@@ -222,28 +243,65 @@ class ZobowParser extends IDataParser {
 
   bool _shouldLogWarning(DateTime? lastTime) {
     if (lastTime == null) return true;
-    return DateTime.now().difference(lastTime).inMilliseconds >=
-        _warningLogIntervalMs;
+    return _now().difference(lastTime).inMilliseconds >= _warningLogIntervalMs;
   }
 
   void _logConsecutiveFailures() {
-    if (!_shouldLogWarning(_lastFailureLogTime)) return;
-    _lastFailureLogTime = DateTime.now();
+    if (!_shouldLogWarning(_lastFailureLogTime)) {
+      _suppressedFailureWarnings++;
+      return;
+    }
+    final suppressed = _takeSuppressedFailureWarnings();
+    _lastFailureLogTime = _now();
     AppLogger().warning(
       '众邦电控连续CRC失败，缓冲区=${_buffer.length}字节，'
-      '帧长=$_frameLength，样本=${_bufferPreviewHex()}',
+      '帧长=$_frameLength，样本=${_bufferPreviewHex()}$suppressed',
       category: 'PARSER',
     );
   }
 
   void _logOverflow() {
-    if (!_shouldLogWarning(_lastOverflowLogTime)) return;
-    _lastOverflowLogTime = DateTime.now();
+    if (!_shouldLogWarning(_lastOverflowLogTime)) {
+      _suppressedOverflowWarnings++;
+      return;
+    }
+    final suppressed = _takeSuppressedOverflowWarnings();
+    _lastOverflowLogTime = _now();
     AppLogger().warning(
       '众邦电控缓冲区溢出(${_buffer.length}>$_maxBufferSize)，'
-      '保留最后${_frameLength - 1}字节',
+      '保留最后${_frameLength - 1}字节$suppressed',
       category: 'PARSER',
     );
+  }
+
+  void _logTimeout(int elapsedMs) {
+    if (!_shouldLogWarning(_lastTimeoutLogTime)) {
+      _suppressedTimeoutWarnings++;
+      return;
+    }
+    final suppressed =
+        _suppressedTimeoutWarnings == 0
+            ? ''
+            : '，期间另抑制$_suppressedTimeoutWarnings次';
+    _suppressedTimeoutWarnings = 0;
+    _lastTimeoutLogTime = _now();
+    AppLogger().warning(
+      '众邦电控残留数据超时(${elapsedMs}ms)，'
+      '清空缓冲区(${_buffer.length}字节)$suppressed',
+      category: 'PARSER',
+    );
+  }
+
+  String _takeSuppressedFailureWarnings() {
+    final count = _suppressedFailureWarnings;
+    _suppressedFailureWarnings = 0;
+    return count == 0 ? '' : '，期间另抑制$count次';
+  }
+
+  String _takeSuppressedOverflowWarnings() {
+    final count = _suppressedOverflowWarnings;
+    _suppressedOverflowWarnings = 0;
+    return count == 0 ? '' : '，期间另抑制$count次';
   }
 
   /// 只打印首尾少量字节，避免CRC持续错误时构造超长日志字符串。
@@ -265,10 +323,14 @@ class ZobowParser extends IDataParser {
   @override
   void reset() {
     _buffer.clear();
-    _lastSuccessTime = null;
+    _residualSince = null;
     _consecutiveFailures = 0;
     _lastFailureLogTime = null;
     _lastOverflowLogTime = null;
+    _lastTimeoutLogTime = null;
+    _suppressedFailureWarnings = 0;
+    _suppressedOverflowWarnings = 0;
+    _suppressedTimeoutWarnings = 0;
     AppLogger().trace('众邦电控解析器已重置', category: 'PARSER');
   }
 

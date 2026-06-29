@@ -8,7 +8,6 @@ import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
@@ -18,6 +17,7 @@ import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
+import 'serial_port_catalog.dart';
 import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
 
@@ -205,20 +205,53 @@ enum RawShellCursorMode {
 class SerialService extends ChangeNotifier {
   static final SerialService _instance = SerialService._internal();
   factory SerialService() => _instance;
-  SerialService._internal();
+  SerialService._internal() {
+    _portCatalog = SerialPortCatalog(
+      enumerator: () {
+        final debugEnumerator = debugPortEnumerator;
+        return debugEnumerator != null
+            ? debugEnumerator()
+            : NativeSerialReader.listPortsInBackground();
+      },
+      onChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+    );
+  }
 
   // 串口相关
-  List<String> availablePorts = [];
   SerialConfig config = SerialConfig();
   bool isConnected = false;
   bool isConnecting = false;
+  late final SerialPortCatalog _portCatalog;
+  NativeSerialPortMonitor? _portMonitor;
+  StreamSubscription<void>? _portMonitorSubscription;
+  Timer? _portChangeDebounce;
+  bool _portDiscoveryStarted = false;
+  bool _disposed = false;
 
-  // Windows 原生串口读取器（替代 flutter_libserialport 的读取功能）
+  // Windows 原生串口读取器
   NativeSerialReader? _nativeReader;
   StreamSubscription? _nativeSubscription;
 
   /// 仅测试使用：模拟原生串口打开缓慢或失败。
   Future<bool> Function(String port, int baudRate)? debugPortOpener;
+
+  /// 仅测试使用：替换原生串口枚举。
+  Future<List<String>> Function()? debugPortEnumerator;
+
+  /// 仅测试使用：替换原生连接健康检查。
+  Future<bool> Function()? debugConnectionHealthChecker;
+
+  /// 仅测试使用：替换原生句柄打开状态。
+  bool? debugNativePortOpen;
+
+  List<String> get availablePorts => _portCatalog.ports;
+  bool get isRefreshingPorts => _portCatalog.isRefreshing;
+  String? get portRefreshError => _portCatalog.lastError;
+  Duration? get lastPortRefreshDuration => _portCatalog.lastDuration;
 
   // 时间窗口聚合器
   TimeWindowAggregator? _aggregator;
@@ -367,54 +400,80 @@ class SerialService extends ChangeNotifier {
     settings.save();
   }
 
-  bool refreshPorts({bool preserveSelectedPort = false}) {
-    try {
-      availablePorts = SerialPort.availablePorts;
-      if (!preserveSelectedPort &&
-          config.port != null &&
-          !availablePorts.contains(config.port)) {
-        config = config.copyWith(port: null);
-      }
-      AppLogger().info('已刷新串口列表', category: 'SERIAL');
-      return true;
-    } catch (e) {
-      AppLogger().warning('刷新串口列表失败: $e', category: 'SERIAL');
-      return false;
-    } finally {
-      // 延后通知，避免在 build 阶段触发 notifyListeners。
-      Future.microtask(() => notifyListeners());
+  /// 初始化串口发现。启动过程不等待枚举完成。
+  void initializePortDiscovery() {
+    if (_portDiscoveryStarted || _disposed) return;
+    _portDiscoveryStarted = true;
+
+    final monitor = NativeSerialPortMonitor();
+    if (monitor.start()) {
+      _portMonitor = monitor;
+      _portMonitorSubscription = monitor.changes.listen((_) {
+        _portChangeDebounce?.cancel();
+        _portChangeDebounce = Timer(const Duration(milliseconds: 150), () {
+          AppLogger().info('检测到串口设备列表变化', category: 'SERIAL');
+          unawaited(refreshPorts(reason: '设备插拔通知'));
+          if (isConnected) {
+            unawaited(refreshConnectionStatus(reconnectOnce: true));
+          }
+        });
+      });
+    } else {
+      monitor.dispose();
+      AppLogger().warning('无法启动串口设备变化监听', category: 'SERIAL');
     }
+
+    unawaited(refreshPorts(reason: '应用启动'));
   }
 
-  /// 刷新可用端口列表，并校验已有原生连接是否仍然有效。
+  Future<bool> refreshPorts({
+    String reason = '用户手动刷新',
+    Duration waitTimeout = const Duration(seconds: 2),
+  }) {
+    return _portCatalog.refresh(reason: reason, waitTimeout: waitTimeout);
+  }
+
+  /// 校验已有原生连接是否仍然有效。
   ///
-  /// 设备被外部拔出时，Windows 句柄可能仍保持打开，但串口 API 调用会失败。
-  /// 如果同一端口仍在列表中，则尝试重连一次；否则清理过期连接状态。
+  /// 健康连接不触发端口枚举。只有句柄异常后才刷新一次目录并决定是否重连。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
     final selectedPort = config.port;
-    final portsRefreshed = refreshPorts(preserveSelectedPort: isConnected);
-    if (!isConnected) return false;
-
-    if (portsRefreshed &&
-        (selectedPort == null || !availablePorts.contains(selectedPort))) {
-      AppLogger().warning('已连接串口不再存在: $selectedPort', category: 'SERIAL');
-      _cleanupPort();
-      config = config.copyWith(port: null);
-      _saveSettings();
-      AppNotifications.show('串口已断开，请重新连接');
-      Future.microtask(() => notifyListeners());
+    if (!isConnected) {
+      await refreshPorts(reason: '连接窗口刷新');
       return false;
     }
 
-    final healthy =
-        _nativeReader?.isOpen == true &&
-        _nativeReader?.isConnectionHealthy == true;
+    final healthChecker = debugConnectionHealthChecker;
+    final nativePortOpen = debugNativePortOpen ?? _nativeReader?.isOpen == true;
+    var healthy = false;
+    if (nativePortOpen) {
+      try {
+        healthy = await (healthChecker != null
+                ? healthChecker()
+                : NativeSerialReader.checkConnectionHealthInBackground())
+            .timeout(
+              const Duration(seconds: 2),
+              onTimeout: () {
+                AppLogger().warning(
+                  '串口健康检查超时: $selectedPort',
+                  category: 'SERIAL',
+                );
+                return false;
+              },
+            );
+      } catch (error) {
+        AppLogger().warning(
+          '串口健康检查失败: $selectedPort，错误=$error',
+          category: 'SERIAL',
+        );
+      }
+    }
     if (healthy) return true;
 
     AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
     _cleanupPort();
 
-    final reconnectPortsRefreshed = refreshPorts(preserveSelectedPort: true);
+    final reconnectPortsRefreshed = await refreshPorts(reason: '连接异常复查');
     if (!reconnectPortsRefreshed) return false;
     if (selectedPort == null || !availablePorts.contains(selectedPort)) {
       config = config.copyWith(port: null);
@@ -499,7 +558,7 @@ class SerialService extends ChangeNotifier {
       }
     }
 
-    // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
+    // 使用 Windows 原生串口读取器
     _nativeReader = NativeSerialReader();
     // 打开前使用 NativeApi.initializeApiDLData 初始化 Dart API。
     final initData = NativeApi.initializeApiDLData;
@@ -1441,10 +1500,17 @@ class SerialService extends ChangeNotifier {
   void dispose() {
     // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
     // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
+    _disposed = true;
     _flushReceiveLog();
     _flushSendLog();
     _displayNotifyTimer?.cancel();
     _displayNotifyTimer = null;
+    _portChangeDebounce?.cancel();
+    _portChangeDebounce = null;
+    unawaited(_portMonitorSubscription?.cancel());
+    _portMonitorSubscription = null;
+    _portMonitor?.dispose();
+    _portMonitor = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();

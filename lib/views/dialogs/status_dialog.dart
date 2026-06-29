@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/localization/app_strings.dart';
+import '../../data/models/serial_config.dart';
 import '../../services/serial_service.dart';
 import '../widgets/common_widgets.dart';
 
@@ -30,6 +30,12 @@ class _StatusDialogState extends State<StatusDialog> {
   Widget build(BuildContext context) {
     return Consumer<SerialService>(
       builder: (context, service, child) {
+        final selectedPort = service.config.port;
+        final displayedPorts =
+            <String>{
+              if (selectedPort != null) selectedPort,
+              ...service.availablePorts,
+            }.toList();
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
           title: Text(AppStrings.serial.connectionTitle),
@@ -55,7 +61,7 @@ class _StatusDialogState extends State<StatusDialog> {
                           ),
                         ),
                         items:
-                            service.availablePorts.map((port) {
+                            displayedPorts.map((port) {
                               return DropdownMenuItem(
                                 value: port,
                                 child: Text(port),
@@ -74,8 +80,20 @@ class _StatusDialogState extends State<StatusDialog> {
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
                       onPressed:
-                          () => unawaited(service.refreshConnectionStatus()),
-                      icon: const Icon(Icons.refresh, size: 18),
+                          service.isRefreshingPorts
+                              ? null
+                              : () => unawaited(
+                                service.refreshPorts(reason: '用户手动刷新'),
+                              ),
+                      icon:
+                          service.isRefreshingPorts
+                              ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Icon(Icons.refresh, size: 18),
                       label: Text(AppStrings.common.refresh),
                     ),
                   ],
@@ -193,15 +211,15 @@ class _StatusDialogState extends State<StatusDialog> {
                         ),
                         items: [
                           DropdownMenuItem(
-                            value: SerialPortParity.none,
+                            value: SerialParity.none,
                             child: Text(AppStrings.serial.noParity),
                           ),
                           DropdownMenuItem(
-                            value: SerialPortParity.odd,
+                            value: SerialParity.odd,
                             child: Text(AppStrings.serial.oddParity),
                           ),
                           DropdownMenuItem(
-                            value: SerialPortParity.even,
+                            value: SerialParity.even,
                             child: Text(AppStrings.serial.evenParity),
                           ),
                         ],
