@@ -88,6 +88,7 @@ typedef _PlotToolbarSelection =
       bool followEnabled,
       bool showGrid,
       String gridDensity,
+      SendProtocolType sendProtocolType,
     });
 
 typedef _PlotChannelPanelSelection =
@@ -232,6 +233,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       followEnabled: vm.followEnabled,
       showGrid: vm.showGrid,
       gridDensity: vm.gridDensity,
+      sendProtocolType: vm.sendProtocolType,
     );
   }
 
@@ -625,7 +627,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         SizedBox(
           width: 112,
           child: NoAnimDropdown<SendProtocolType>(
-            value: vm.effectiveSendProtocolType,
+            value:
+                vm.parserType == ParserType.zobow
+                    ? vm.effectiveSendProtocolType
+                    : vm.sendProtocolType,
             hint: AppStrings.plot.sendProtocolHint,
             decoration: const InputDecoration(
               isDense: true,
@@ -659,6 +664,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       if (value != null) vm.setSendProtocolType(value);
                     },
           ),
+        ),
+        IconButton(
+          key: const ValueKey('send-protocol-config-button'),
+          onPressed:
+              vm.sendProtocolType == SendProtocolType.rProtocol
+                  ? () => _showSendProtocolConfigDialog(context, vm)
+                  : null,
+          icon: const Icon(Icons.settings, size: 18),
+          tooltip: AppStrings.plot.sendProtocolConfig,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
         // Zobow模式下显示配置文件下拉框
         if (vm.parserType == ParserType.zobow) ...[
@@ -1952,6 +1968,50 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     showDialog(
       context: context,
       builder: (context) => _ParserConfigDialog(vm: vm),
+    );
+  }
+
+  void _showSendProtocolConfigDialog(BuildContext context, PlotViewModel vm) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.plot.sendProtocolConfig),
+            content: SizedBox(
+              width: 360,
+              child:
+                  vm.sendProtocolType == SendProtocolType.rProtocol
+                      ? StatefulBuilder(
+                        builder:
+                            (context, setDialogState) => SwitchListTile(
+                              value: vm.rProtocolLooseChannelSettings,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                AppStrings.plot.rProtocolLooseChannelSettings,
+                              ),
+                              subtitle: Text(
+                                AppStrings
+                                    .plot
+                                    .rProtocolLooseChannelSettingsHelp,
+                              ),
+                              onChanged: (value) {
+                                vm.setRProtocolLooseChannelSettings(value);
+                                setDialogState(() {});
+                              },
+                            ),
+                      )
+                      : Text(AppStrings.plot.noSendProtocolConfig),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(AppStrings.common.close),
+              ),
+            ],
+          ),
     );
   }
 

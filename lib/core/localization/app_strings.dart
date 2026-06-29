@@ -81,6 +81,11 @@ final class _PlotStrings {
   String get receiveProtocolHint => '接收协议';
   String get parserConfig => '解析器配置';
   String get sendProtocolHint => '发送协议';
+  String get sendProtocolConfig => '发送协议配置';
+  String get noSendProtocolConfig => '当前发送协议暂无可配置项';
+  String get rProtocolLooseChannelSettings => '宽松通道设置';
+  String get rProtocolLooseChannelSettingsHelp =>
+      '开始绘图时自动移除地址中间或前面的空白槽位，将非空地址压紧到 Ch0 开始发送；如果全部为空仍会报错。';
   String get createConfig => '新建配置';
   String get editConfig => '编辑配置';
   String get createRProtocolConfig => '新建 r 协议配置';

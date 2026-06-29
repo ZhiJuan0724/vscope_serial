@@ -170,17 +170,15 @@ void main() {
     });
 
     test('固定帧r协议按固定通道数发送并保留0地址', () {
-      final addresses = PlotViewModel.validateRProtocolAddresses(
-        ['1', '0', '0x10'],
-        requiredCount: 3,
-        allowZeroValues: true,
-      );
+      final addresses = PlotViewModel.validateRProtocolAddresses([
+        '1',
+        '0',
+        '0x10',
+      ], requiredCount: 3);
 
       expect(addresses, ['1', '0', '0x10']);
       expect(
-        String.fromCharCodes(
-          PlotViewModel.buildRProtocolCommand(addresses, allowZeroValues: true),
-        ),
+        String.fromCharCodes(PlotViewModel.buildRProtocolCommand(addresses)),
         'r 1 0 0x10\n',
       );
     });

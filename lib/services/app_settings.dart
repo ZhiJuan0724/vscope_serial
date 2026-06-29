@@ -104,6 +104,9 @@ class AppSettings {
   /// r 协议通道地址文本。保留十进制或 0x 十六进制输入形式。
   List<String> rChannelAddresses = List.filled(16, '');
 
+  /// r 协议宽松通道设置：启动时将非空地址压紧到前面的槽位。
+  bool rProtocolLooseChannelSettings = false;
+
   /// JustFloat 通道数（0=自动识别）
   int justFloatChannelCount = 0;
 
@@ -230,6 +233,7 @@ class AppSettings {
     receiveCustomProtocolId = '';
     sendCustomProtocolId = '';
     rChannelAddresses = List.filled(16, '');
+    rProtocolLooseChannelSettings = false;
     justFloatChannelCount = 0;
     zobowProfileId = '';
     rProfileId = '';
@@ -318,6 +322,8 @@ class AppSettings {
           json['receiveCustomProtocolId'] as String? ?? '';
       sendCustomProtocolId = json['sendCustomProtocolId'] as String? ?? '';
       rChannelAddresses = _normalizeStringList(json['rChannelAddresses']);
+      rProtocolLooseChannelSettings =
+          json['rProtocolLooseChannelSettings'] as bool? ?? false;
       justFloatChannelCount =
           ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
               .clamp(0, 16)
@@ -408,6 +414,7 @@ class AppSettings {
       'receiveCustomProtocolId': receiveCustomProtocolId,
       'sendCustomProtocolId': sendCustomProtocolId,
       'rChannelAddresses': rChannelAddresses,
+      'rProtocolLooseChannelSettings': rProtocolLooseChannelSettings,
       'justFloatChannelCount': justFloatChannelCount,
       'zobowProfileId': zobowProfileId,
       'rProfileId': rProfileId,

@@ -53,6 +53,7 @@ void main() {
       settings.useRandomSource = false;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
+      settings.rProtocolLooseChannelSettings = false;
       settings.discardInitialPacketCount = 0;
       settings.rProfileId = '';
       settings.xMin = 0;
@@ -954,19 +955,21 @@ void main() {
 
     test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
       final bytes = PlotViewModel.buildRProtocolCommand([
+        '0',
         ' 12 ',
         '0x10',
         '0X2A',
       ]);
 
-      expect(utf8.decode(bytes), 'r 12 0x10 0X2A\n');
+      expect(utf8.decode(bytes), 'r 0 12 0x10 0X2A\n');
     });
 
-    test('r协议地址校验支持自动连续前缀和固定通道截断', () {
-      expect(
-        PlotViewModel.validateRProtocolAddresses(['1', '0x10', '20', '']),
-        ['1', '0x10', '20'],
-      );
+    test('r协议地址校验支持0地址、自动连续前缀和固定通道截断', () {
+      expect(PlotViewModel.validateRProtocolAddresses(['0', '0x0', '20', '']), [
+        '0',
+        '0x0',
+        '20',
+      ]);
       expect(
         PlotViewModel.validateRProtocolAddresses([
           '1',
@@ -977,9 +980,34 @@ void main() {
       );
     });
 
-    test('r协议地址校验拒绝空地址、固定通道不足和中间空洞', () {
+    test('r协议宽松通道设置会压紧非空地址并保留0地址', () {
       expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', '0']),
+        PlotViewModel.validateRProtocolAddresses([
+          '',
+          '0',
+          '',
+          '0x10',
+          ' 20 ',
+        ], loose: true),
+        ['0', '0x10', '20'],
+      );
+      expect(
+        PlotViewModel.validateRProtocolAddresses(
+          ['', '0', '', '0x10'],
+          requiredCount: 3,
+          loose: true,
+        ),
+        ['0', '0x10'],
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', ''], loose: true),
+        throwsFormatException,
+      );
+    });
+
+    test('r协议地址校验拒绝全空、固定通道不足和中间空洞', () {
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', '']),
         throwsFormatException,
       );
       expect(
@@ -987,7 +1015,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => PlotViewModel.validateRProtocolAddresses(['1', '', '2']),
+        () => PlotViewModel.validateRProtocolAddresses(['0', '', '2']),
         throwsFormatException,
       );
     });
@@ -1001,6 +1029,20 @@ void main() {
       vm.setParserType(ParserType.fireWater);
       vm.updateParserConfig(ParserConfig.fireWaterDefault());
       expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+    });
+
+    test('宽松通道设置下FireWater自动识别按非空r地址显示槽位', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(ParserConfig.fireWaterDefault());
+      vm.setPlottingForTest(true);
+
+      vm.setRChannelAddress(3, '0');
+      vm.setRChannelAddress(5, '0x10');
+      expect(vm.rAddressDisplayCount, 1);
+
+      vm.setRProtocolLooseChannelSettings(true);
+      expect(vm.rAddressDisplayCount, 3);
     });
 
     test('JustFloat自动识别运行时r协议按解析通道数显示', () {

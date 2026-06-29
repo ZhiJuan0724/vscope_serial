@@ -29,6 +29,7 @@ void main() {
             ..receiveCustomProtocolId = 'receive'
             ..sendCustomProtocolId = 'send'
             ..rChannelAddresses = List.filled(16, '0x10')
+            ..rProtocolLooseChannelSettings = true
             ..justFloatChannelCount = 8
             ..zobowProfileId = 'z-profile'
             ..rProfileId = 'r-profile'
@@ -75,6 +76,7 @@ void main() {
       expect(settings.receiveCustomProtocolId, isEmpty);
       expect(settings.sendCustomProtocolId, isEmpty);
       expect(settings.rChannelAddresses, List.filled(16, ''));
+      expect(settings.rProtocolLooseChannelSettings, isFalse);
       expect(settings.justFloatChannelCount, 0);
       expect(settings.zobowProfileId, isEmpty);
       expect(settings.rProfileId, isEmpty);

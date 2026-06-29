@@ -283,6 +283,7 @@ class PlotViewModel extends BaseViewModel {
   SendProtocolType _sendProtocolType = SendProtocolType.none;
 
   final SendProtocolConfig _sendProtocolConfig = SendProtocolConfig();
+  bool _rProtocolLooseChannelSettings = false;
 
   /// 解析器配置（FireWater 和固定帧共用）
   final ParserConfig _parserConfig = ParserConfig.fireWaterDefault();
@@ -339,6 +340,7 @@ class PlotViewModel extends BaseViewModel {
 
   /// 最近一次临时提示，保留给诊断和测试使用。
   String? _lastStatusMessage;
+  String? _protocolInitFailureMessage;
   bool _disposed = false;
 
   /// 定时刷新间隔（ms），无数据时保持 UI 响应
@@ -490,6 +492,7 @@ class PlotViewModel extends BaseViewModel {
               ? null
               : settings.sendCustomProtocolId
       ..rChannelAddresses = List.from(settings.rChannelAddresses);
+    _rProtocolLooseChannelSettings = settings.rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       _parserConfig.channelCount =
           settings.justFloatChannelCount.clamp(0, 16).toInt();
@@ -525,6 +528,7 @@ class PlotViewModel extends BaseViewModel {
     settings.rChannelAddresses = List.from(
       _sendProtocolConfig.rChannelAddresses,
     );
+    settings.rProtocolLooseChannelSettings = _rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       settings.justFloatChannelCount =
           _parserConfig.channelCount.clamp(0, 16).toInt();
@@ -676,6 +680,7 @@ class PlotViewModel extends BaseViewModel {
           : _sendProtocolType;
   List<String> get rChannelAddresses =>
       List.unmodifiable(_sendProtocolConfig.rChannelAddresses);
+  bool get rProtocolLooseChannelSettings => _rProtocolLooseChannelSettings;
   PlotLodIndex get lodIndex => _lodIndex;
   int get zobowRawFrameCount => _zobowRawFrames.packetCount;
 
@@ -1201,6 +1206,13 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setRProtocolLooseChannelSettings(bool value) {
+    if (_rProtocolLooseChannelSettings == value) return;
+    _rProtocolLooseChannelSettings = value;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   /// r 协议地址槽位在通道面板中的显示数量。
   ///
   /// 规则和接收协议绑定，而不是单纯按用户已填写的地址数量：
@@ -1222,7 +1234,10 @@ class PlotViewModel extends BaseViewModel {
     if (fixedCount != null) {
       return fixedCount.clamp(1, SendProtocolConfig.maxChannelCount);
     }
-    final configured = _rContinuousAddressCount(throwOnGap: false);
+    final configured =
+        _rProtocolLooseChannelSettings
+            ? _rConfiguredAddressCount()
+            : _rContinuousAddressCount(throwOnGap: false);
     return math.max(1, math.min(16, configured + 1));
   }
 
@@ -1432,13 +1447,14 @@ class PlotViewModel extends BaseViewModel {
 
     // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
     // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
+    _protocolInitFailureMessage = null;
     if (!_sendProtocolInitData()) {
       _parser?.dispose();
       _parser = null;
       _sourceConfig.useSerial = false;
       _sourceConfig.useRandom = false;
       serialService.isPlotting = false;
-      const message = '协议初始化发送失败，已停止绘图并断开串口';
+      final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
       Future.microtask(() => notifyListeners());
@@ -2022,17 +2038,19 @@ class PlotViewModel extends BaseViewModel {
 
   bool _sendRProtocolInitData() {
     if (!serialService.isConnected) {
-      AppLogger().debug('串口未连接，跳过 r 协议初始化数据发送', category: 'PLOT');
+      _protocolInitFailureMessage =
+          'r协议初始化失败：串口未连接，无法发送初始化命令。'
+          '已停止绘图，请重新连接串口后重试。';
+      AppLogger().debug(_protocolInitFailureMessage!, category: 'PLOT');
       return false;
     }
     try {
       final bytes = buildRProtocolCommand(
         validateRProtocolAddresses(
-          _sendProtocolConfig.rChannelAddresses,
+          _normalizedRProtocolAddressesForStartup(),
           requiredCount: _fixedReceiveChannelCount,
-          allowZeroValues: _parserType == ParserType.fixedFrame,
+          loose: _rProtocolLooseChannelSettings,
         ),
-        allowZeroValues: _parserType == ParserType.fixedFrame,
       );
       serialService.send(
         bytes,
@@ -2044,25 +2062,71 @@ class PlotViewModel extends BaseViewModel {
         category: 'PLOT',
       );
       return true;
+    } on FormatException catch (e) {
+      _protocolInitFailureMessage =
+          'r协议初始化失败：通道地址配置错误，${e.message}。'
+          '请检查地址是否从 Ch0 开始连续填写；空地址会中断发送，0 会按有效地址发送。';
+      AppLogger().error('r协议初始化数据配置错误: $e', category: 'PLOT');
+      return false;
+    } on StateError catch (e) {
+      _protocolInitFailureMessage =
+          'r协议初始化失败：串口发送失败，${e.message}。'
+          '已停止绘图并断开串口，请检查设备连接后重试。';
+      AppLogger().error('r协议初始化数据发送失败: $e', category: 'PLOT');
+      return false;
     } catch (e) {
-      showStatusMessage('$e');
+      _protocolInitFailureMessage =
+          'r协议初始化失败：初始化命令发送异常，$e。'
+          '已停止绘图，请检查串口连接和通道地址配置。';
       AppLogger().error('r协议初始化数据发送失败: $e', category: 'PLOT');
       return false;
     }
+  }
+
+  List<String> _normalizedRProtocolAddressesForStartup() {
+    if (!_rProtocolLooseChannelSettings) {
+      return _sendProtocolConfig.rChannelAddresses;
+    }
+    final compacted = compactRProtocolAddresses(
+      _sendProtocolConfig.rChannelAddresses,
+    );
+    var changed =
+        compacted.length != _sendProtocolConfig.rChannelAddresses.length;
+    if (!changed) {
+      for (var i = 0; i < compacted.length; i++) {
+        if (compacted[i] != _sendProtocolConfig.rChannelAddresses[i]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) {
+      _sendProtocolConfig.rChannelAddresses = compacted;
+      _markChannelConfigChanged();
+      _saveSettings();
+    }
+    return _sendProtocolConfig.rChannelAddresses;
   }
 
   int _rContinuousAddressCount({bool throwOnGap = true}) {
     int count = 0;
     bool foundEmpty = false;
     for (final text in _sendProtocolConfig.rChannelAddresses) {
-      final value = parseRProtocolAddress(text);
-      if (value == null || value == 0) {
+      final address = text.trim();
+      if (address.isEmpty) {
         foundEmpty = true;
         continue;
       }
+      final value = parseRProtocolAddress(address);
+      if (value == null || value < 0) {
+        if (throwOnGap) {
+          throw FormatException('r协议地址无效: $text');
+        }
+        break;
+      }
       if (foundEmpty) {
         if (throwOnGap) {
-          throw const FormatException('r协议地址必须从通道1开始连续填写，中间不能留空或填写0');
+          throw const FormatException('r协议地址必须从 Ch0 开始连续填写，中间不能留空');
         }
         break;
       }
@@ -2074,9 +2138,12 @@ class PlotViewModel extends BaseViewModel {
   static List<String> validateRProtocolAddresses(
     List<String> addresses, {
     int? requiredCount,
-    bool allowZeroValues = false,
+    bool loose = false,
   }) {
-    if (allowZeroValues && requiredCount != null) {
+    if (loose) {
+      return validateRProtocolAddresses(compactRProtocolAddresses(addresses));
+    }
+    if (requiredCount != null) {
       final requiredAddresses =
           addresses.take(requiredCount).map((address) {
             final text = address.trim();
@@ -2099,17 +2166,20 @@ class PlotViewModel extends BaseViewModel {
     for (final rawAddress in addresses) {
       final address = rawAddress.trim();
       final value = parseRProtocolAddress(address);
-      if (value == null || value == 0) {
+      if (address.isEmpty) {
         foundEmpty = true;
         continue;
       }
+      if (value == null || value < 0) {
+        throw FormatException('r协议地址无效: $rawAddress');
+      }
       if (foundEmpty) {
-        throw const FormatException('r协议地址必须从通道1开始连续填写，中间不能留空或填写0');
+        throw const FormatException('r协议地址必须从 Ch0 开始连续填写，中间不能留空');
       }
       continuousAddresses.add(address);
     }
     if (continuousAddresses.isEmpty) {
-      throw const FormatException('r协议至少需要填写一个非零通道地址');
+      throw const FormatException('r协议至少需要填写一个通道地址');
     }
     if (requiredCount != null && continuousAddresses.length < requiredCount) {
       throw FormatException(
@@ -2122,6 +2192,42 @@ class PlotViewModel extends BaseViewModel {
         .toList();
   }
 
+  int _rConfiguredAddressCount() {
+    var count = 0;
+    for (final text in _sendProtocolConfig.rChannelAddresses) {
+      final address = text.trim();
+      if (address.isEmpty) continue;
+      final value = parseRProtocolAddress(address);
+      if (value == null || value < 0) continue;
+      count++;
+    }
+    return count;
+  }
+
+  static List<String> compactRProtocolAddresses(List<String> addresses) {
+    final compacted = <String>[];
+    for (final rawAddress in addresses) {
+      final address = rawAddress.trim();
+      if (address.isEmpty) continue;
+      final value = parseRProtocolAddress(address);
+      if (value == null || value < 0) {
+        throw FormatException('r协议地址无效: $rawAddress');
+      }
+      compacted.add(address);
+    }
+    if (compacted.isEmpty) {
+      throw const FormatException('r协议至少需要填写一个通道地址');
+    }
+    final limited = compacted.take(SendProtocolConfig.maxChannelCount).toList();
+    return [
+      ...limited,
+      ...List.filled(
+        math.max(0, SendProtocolConfig.maxChannelCount - limited.length),
+        '',
+      ),
+    ];
+  }
+
   static int? parseRProtocolAddress(String text) {
     final value = text.trim();
     if (value.isEmpty) return null;
@@ -2132,10 +2238,7 @@ class PlotViewModel extends BaseViewModel {
     );
   }
 
-  static Uint8List buildRProtocolCommand(
-    List<String> addresses, {
-    bool allowZeroValues = false,
-  }) {
+  static Uint8List buildRProtocolCommand(List<String> addresses) {
     if (addresses.isEmpty) {
       throw ArgumentError.value(addresses, 'addresses', 'must not be empty');
     }
@@ -2143,7 +2246,7 @@ class PlotViewModel extends BaseViewModel {
     for (final address in addresses) {
       final text = address.trim();
       final value = parseRProtocolAddress(text);
-      if (value == null || value < 0 || (!allowZeroValues && value == 0)) {
+      if (value == null || value < 0) {
         throw FormatException('无效的 r 协议地址: $address');
       }
       normalized.add(text);
