@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
+import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
@@ -109,6 +111,24 @@ class AppSettings {
 
   /// JustFloat 通道数（0=自动识别）
   int justFloatChannelCount = 0;
+
+  /// 众邦电控通道地址，重启后恢复通道面板中的手动设置。
+  List<int> zobowChannelIds = List.generate(
+    ParserConfig.maxZobowChannelCount,
+    (i) => i + 1,
+  );
+
+  /// 众邦电控通道数据类型，默认 int16。
+  List<DataType> zobowChannelTypes = List.filled(
+    ParserConfig.maxZobowChannelCount,
+    DataType.int16,
+  );
+
+  /// 固定帧逐通道数据类型。
+  List<DataType> fixedFrameChannelTypes = List.filled(
+    SendProtocolConfig.maxChannelCount,
+    DataType.uint16,
+  );
 
   /// 当前选中的众邦电控配置文件ID（空字符串表示不使用）
   String zobowProfileId = '';
@@ -235,6 +255,18 @@ class AppSettings {
     rChannelAddresses = List.filled(16, '');
     rProtocolLooseChannelSettings = false;
     justFloatChannelCount = 0;
+    zobowChannelIds = List.generate(
+      ParserConfig.maxZobowChannelCount,
+      (i) => i + 1,
+    );
+    zobowChannelTypes = List.filled(
+      ParserConfig.maxZobowChannelCount,
+      DataType.int16,
+    );
+    fixedFrameChannelTypes = List.filled(
+      SendProtocolConfig.maxChannelCount,
+      DataType.uint16,
+    );
     zobowProfileId = '';
     rProfileId = '';
     zobowPresetViewMode = 'grid';
@@ -328,6 +360,18 @@ class AppSettings {
           ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
               .clamp(0, 16)
               .toInt();
+      zobowChannelIds = _normalizeZobowChannelIds(json['zobowChannelIds']);
+      zobowChannelTypes = _normalizeDataTypeList(
+        json['zobowChannelTypes'],
+        length: ParserConfig.maxZobowChannelCount,
+        fallback: DataType.int16,
+        allowed: const [DataType.uint16, DataType.int16],
+      );
+      fixedFrameChannelTypes = _normalizeDataTypeList(
+        json['fixedFrameChannelTypes'],
+        length: SendProtocolConfig.maxChannelCount,
+        fallback: DataType.uint16,
+      );
       zobowProfileId = json['zobowProfileId'] as String? ?? '';
       rProfileId = json['rProfileId'] as String? ?? '';
       zobowPresetViewMode =
@@ -416,6 +460,10 @@ class AppSettings {
       'rChannelAddresses': rChannelAddresses,
       'rProtocolLooseChannelSettings': rProtocolLooseChannelSettings,
       'justFloatChannelCount': justFloatChannelCount,
+      'zobowChannelIds': zobowChannelIds,
+      'zobowChannelTypes': zobowChannelTypes.map((type) => type.name).toList(),
+      'fixedFrameChannelTypes':
+          fixedFrameChannelTypes.map((type) => type.name).toList(),
       'zobowProfileId': zobowProfileId,
       'rProfileId': rProfileId,
       'zobowPresetViewMode': zobowPresetViewMode,
@@ -454,6 +502,49 @@ class AppSettings {
       values.add('');
     }
     return values.take(16).toList();
+  }
+
+  static List<int> _normalizeZobowChannelIds(Object? value) {
+    final values =
+        value is List
+            ? value
+                .whereType<num>()
+                .map((item) => item.toInt() & 0xFFFFFFFF)
+                .toList()
+            : <int>[];
+    while (values.length < ParserConfig.maxZobowChannelCount) {
+      values.add(values.length + 1);
+    }
+    return values.take(ParserConfig.maxZobowChannelCount).toList();
+  }
+
+  static List<DataType> _normalizeDataTypeList(
+    Object? value, {
+    required int length,
+    required DataType fallback,
+    List<DataType>? allowed,
+  }) {
+    final allowedSet = allowed?.toSet();
+    final values = <DataType>[];
+    if (value is List) {
+      for (final item in value) {
+        final name = item?.toString();
+        DataType? parsed;
+        for (final type in DataType.values) {
+          if (type.name == name) {
+            parsed = type;
+            break;
+          }
+        }
+        if (parsed == null) continue;
+        if (allowedSet != null && !allowedSet.contains(parsed)) continue;
+        values.add(parsed);
+      }
+    }
+    while (values.length < length) {
+      values.add(fallback);
+    }
+    return values.take(length).toList();
   }
 
   static String _normalizeTerminalFontFamily(Object? value) {

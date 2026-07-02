@@ -61,6 +61,8 @@ extension PlotViewModelProfiles on PlotViewModel {
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;
     }
+    _markChannelConfigChanged();
+    _saveSettings();
     _notifyLater();
   }
 

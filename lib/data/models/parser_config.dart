@@ -306,7 +306,7 @@ class ParserConfig {
       type: ParserType.zobow,
       channelCount: minZobowChannelCount,
       zobowChannelIds: List.generate(maxZobowChannelCount, (i) => i + 1),
-      zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.uint16),
+      zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.int16),
     );
   }
 
@@ -339,10 +339,10 @@ class ParserConfig {
 
   static List<DataType> _normalizeZobowChannelTypes(List<DataType>? types) {
     final values = List<DataType>.from(
-      types ?? List.filled(maxZobowChannelCount, DataType.uint16),
+      types ?? List.filled(maxZobowChannelCount, DataType.int16),
     );
     while (values.length < maxZobowChannelCount) {
-      values.add(DataType.uint16);
+      values.add(DataType.int16);
     }
     return values.take(maxZobowChannelCount).toList();
   }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
@@ -55,6 +56,18 @@ void main() {
       settings.rChannelAddresses = List.filled(16, '');
       settings.rProtocolLooseChannelSettings = false;
       settings.discardInitialPacketCount = 0;
+      settings.zobowChannelIds = List.generate(
+        ParserConfig.maxZobowChannelCount,
+        (i) => i + 1,
+      );
+      settings.zobowChannelTypes = List.filled(
+        ParserConfig.maxZobowChannelCount,
+        DataType.int16,
+      );
+      settings.fixedFrameChannelTypes = List.filled(
+        SendProtocolConfig.maxChannelCount,
+        DataType.uint16,
+      );
       settings.rProfileId = '';
       settings.xMin = 0;
       settings.xMax = 1000;
@@ -336,10 +349,10 @@ void main() {
       await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n');
       expect(await vm.importFromCsv(csv.path), isNull);
       vm.setParserType(ParserType.zobow);
-      vm.setChannelAlias(0, '主轴角度');
-      vm.setChannelAlias(1, '速度');
       vm.setZobowChannelId(0, 0x00000095);
       vm.setZobowChannelId(1, 0x12345678);
+      vm.setChannelAlias(0, '主轴角度');
+      vm.setChannelAlias(1, '速度');
 
       final binPath = '${dir.path}/plot.bin';
       expect(await vm.exportToBin(binPath), binPath);
@@ -353,6 +366,58 @@ void main() {
       expect(imported.channels[1].alias, '速度');
       expect(imported.parserConfig.zobowChannelIds[0], 0x00000095);
       expect(imported.parserConfig.zobowChannelIds[1], 0x12345678);
+    });
+
+    test('众邦通道地址和通道数据类型会写入设置并可重启恢复', () async {
+      vm.setParserType(ParserType.zobow);
+      vm.setZobowChannelId(0, 0x00000095);
+      expect(await vm.setZobowChannelType(1, DataType.uint16), true);
+
+      expect(AppSettings().zobowChannelIds[0], 0x00000095);
+      expect(AppSettings().zobowChannelTypes[1], DataType.uint16);
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+      restored.setParserType(ParserType.zobow);
+
+      expect(restored.parserConfig.zobowChannelIds[0], 0x00000095);
+      expect(restored.parserConfig.zobowChannelTypes[0], DataType.int16);
+      expect(restored.parserConfig.zobowChannelTypes[1], DataType.uint16);
+    });
+
+    test('手动修改众邦通道地址会清空快捷配置带入的通道名称', () {
+      vm.setParserType(ParserType.zobow);
+      vm.channels[0].alias = '主轴角度';
+
+      vm.setZobowChannelId(0, 0x00000096);
+
+      expect(vm.parserConfig.zobowChannelIds[0], 0x00000096);
+      expect(vm.channels[0].alias, isEmpty);
+    });
+
+    test('固定帧逐通道数据类型会写入设置并可重启恢复', () async {
+      vm.setParserType(ParserType.fixedFrame);
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(
+          type: ParserType.fixedFrame,
+          channelCount: 2,
+          fixedFrameUniformDataType: false,
+          fixedFrameChannelTypes: [
+            DataType.int16,
+            DataType.float,
+            ...List.filled(14, DataType.uint16),
+          ],
+        ),
+      );
+
+      expect(AppSettings().fixedFrameChannelTypes[0], DataType.int16);
+      expect(AppSettings().fixedFrameChannelTypes[1], DataType.float);
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+
+      expect(restored.parserConfig.fixedFrameChannelTypes[0], DataType.int16);
+      expect(restored.parserConfig.fixedFrameChannelTypes[1], DataType.float);
     });
 
     test('CSV 导入在众邦模式下也会重建绘图窗口', () async {

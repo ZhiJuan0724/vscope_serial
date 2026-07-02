@@ -482,7 +482,10 @@ class PlotViewModel extends BaseViewModel {
       ..customProtocolId =
           settings.receiveCustomProtocolId.isEmpty
               ? null
-              : settings.receiveCustomProtocolId;
+              : settings.receiveCustomProtocolId
+      ..zobowChannelIds = List.from(settings.zobowChannelIds)
+      ..zobowChannelTypes = List.from(settings.zobowChannelTypes)
+      ..fixedFrameChannelTypes = List.from(settings.fixedFrameChannelTypes);
     _sendProtocolType = _sendProtocolTypeFromString(settings.sendProtocolType);
     _sendProtocolConfig
       ..type = _sendProtocolType
@@ -536,6 +539,11 @@ class PlotViewModel extends BaseViewModel {
       settings.justFloatChannelCount =
           _parserConfig.channelCount.clamp(0, 16).toInt();
     }
+    settings.zobowChannelIds = List.from(_parserConfig.zobowChannelIds);
+    settings.zobowChannelTypes = List.from(_parserConfig.zobowChannelTypes);
+    settings.fixedFrameChannelTypes = List.from(
+      _parserConfig.fixedFrameChannelTypes,
+    );
     settings.zobowProfileId = _profileService.selectedProfileId;
     settings.rProfileId = _rProfileService.selectedProfileId;
     // vCursorEnabled 不持久化
@@ -1358,12 +1366,7 @@ class PlotViewModel extends BaseViewModel {
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
     _sourceManager.updateConfig(_sourceConfig);
-    if (_parserType == ParserType.justFloat) {
-      final settings = AppSettings();
-      settings.justFloatChannelCount =
-          _parserConfig.channelCount.clamp(0, 16).toInt();
-      settings.save();
-    }
+    _saveSettings();
     AppLogger().info(
       '解析器配置已更新：协议=${_parserConfig.type.label}，'
       '通道数=${_parserConfig.channelCount}，FireWater通道=${_parserConfig.fireWaterChannelCount}，'
@@ -2977,7 +2980,11 @@ class PlotViewModel extends BaseViewModel {
   void setZobowChannelId(int index, int channelId) {
     if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
     _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
+    if (index < channels.length) {
+      channels[index].alias = '';
+    }
     _markChannelConfigChanged();
+    _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3001,6 +3008,7 @@ class PlotViewModel extends BaseViewModel {
     if (_parserConfig.zobowChannelTypes[index] == type) return true;
 
     _parserConfig.zobowChannelTypes[index] = type;
+    _saveSettings();
 
     final total = _zobowRawFrames.packetCount;
     if (total > 0) {
@@ -3055,6 +3063,7 @@ class PlotViewModel extends BaseViewModel {
     if (_parserConfig.fixedFrameChannelTypes[index] == type) return true;
 
     _parserConfig.fixedFrameChannelTypes[index] = type;
+    _saveSettings();
     _resetFixedFrameRawFrameBuffer();
     clearData();
     Future.microtask(() => notifyListeners());
