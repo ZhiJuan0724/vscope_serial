@@ -2,8 +2,8 @@ part of '../plot_page.dart';
 
 /// 众邦电控通道预设选择弹窗，支持列表和网格两种展示模式。
 class _PresetSelectorDialog extends StatefulWidget {
-  final ZobowConfigProfile profile;
-  final ValueChanged<ZobowChannelPreset> onSelect;
+  final AddressConfigProfile profile;
+  final ValueChanged<AddressChannelPreset> onSelect;
 
   const _PresetSelectorDialog({required this.profile, required this.onSelect});
 
@@ -18,7 +18,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   late final TextEditingController _searchController;
   String _searchText = '';
 
-  List<ZobowChannelPreset> get _filteredPresets {
+  List<AddressChannelPreset> get _filteredPresets {
     final query = _searchText.trim().toLowerCase();
     if (query.isEmpty) return widget.profile.presets;
     return widget.profile.presets.where((preset) {
@@ -167,7 +167,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemCount: presets.length,
       itemBuilder: (context, index) {
         final preset = presets[index];
-        final hexAddr = _formatZobowAddress(preset.address, compact: true);
+        final displayAddress = preset.formatAddress(compactHex: true);
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
@@ -196,7 +196,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  hexAddr,
+                  displayAddress,
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xFF8888AA),
@@ -224,7 +224,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
       itemCount: presets.length,
       itemBuilder: (context, index) {
         final preset = presets[index];
-        final hexAddr = _formatZobowAddress(preset.address, compact: true);
+        final displayAddress = preset.formatAddress(compactHex: true);
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
@@ -252,7 +252,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  hexAddr,
+                  displayAddress,
                   style: const TextStyle(
                     fontSize: 10,
                     color: Color(0xFF8888AA),

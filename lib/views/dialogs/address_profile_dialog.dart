@@ -8,43 +8,163 @@ import 'package:flutter/services.dart';
 
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/file_name_sanitizer.dart';
-import '../../data/models/zobow_config_profile.dart';
+import '../../data/models/address_config_profile.dart';
 import '../../services/app_notifications.dart';
 import '../../services/address_profile_csv_importer.dart';
 import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
-/// 众邦电控配置文件编辑弹窗
-///
-/// 表格形式编辑配置文件：
-/// - 顶部：配置文件名称输入框
-/// - 中部：名称列 + 地址列的可编辑表格（支持拖动排序）
-/// - 底部：添加行 / 删除选中行 按钮
-class ZobowProfileDialog extends StatefulWidget {
+abstract class _AddressProfileBehavior {
+  const _AddressProfileBehavior();
+
+  AddressProfileProtocolType get protocolType;
+  bool get supportsCImport;
+  String get defaultAddressText;
+  String get addressHint;
+
+  String formatAddress(AddressChannelPreset preset);
+  AddressChannelPreset? parsePreset(String name, String text);
+  Future<AddressConfigProfile?> createProfile(PlotViewModel vm, String name);
+  Future<void> updateProfile(PlotViewModel vm, AddressConfigProfile profile);
+  Future<void> deleteProfile(PlotViewModel vm, String id);
+  void selectProfile(PlotViewModel vm, String id);
+}
+
+class _ZobowProfileBehavior extends _AddressProfileBehavior {
+  const _ZobowProfileBehavior();
+
+  @override
+  AddressProfileProtocolType get protocolType =>
+      AddressProfileProtocolType.zobow;
+  @override
+  bool get supportsCImport => true;
+  @override
+  String get defaultAddressText => '0x00000001';
+  @override
+  String get addressHint => '0x00000000';
+
+  @override
+  String formatAddress(AddressChannelPreset preset) {
+    final digits = (preset.address & 0xFFFFFFFF)
+        .toRadixString(16)
+        .toUpperCase()
+        .padLeft(8, '0');
+    return '0x$digits';
+  }
+
+  @override
+  AddressChannelPreset? parsePreset(String name, String text) {
+    return AddressChannelPreset.tryParseAddress(
+      name: name,
+      text: text,
+      protocolType: protocolType,
+    );
+  }
+
+  @override
+  Future<AddressConfigProfile?> createProfile(PlotViewModel vm, String name) =>
+      vm.createZobowProfile(name);
+  @override
+  Future<void> updateProfile(PlotViewModel vm, AddressConfigProfile profile) =>
+      vm.updateZobowProfile(profile);
+  @override
+  Future<void> deleteProfile(PlotViewModel vm, String id) =>
+      vm.deleteZobowProfile(id);
+  @override
+  void selectProfile(PlotViewModel vm, String id) => vm.selectZobowProfile(id);
+}
+
+class _RProtocolProfileBehavior extends _AddressProfileBehavior {
+  const _RProtocolProfileBehavior();
+
+  @override
+  AddressProfileProtocolType get protocolType =>
+      AddressProfileProtocolType.rProtocol;
+  @override
+  bool get supportsCImport => false;
+  @override
+  String get defaultAddressText => '1';
+  @override
+  String get addressHint => '1 或 0x1';
+
+  @override
+  String formatAddress(AddressChannelPreset preset) => preset.formatAddress();
+
+  @override
+  AddressChannelPreset? parsePreset(String name, String text) {
+    return AddressChannelPreset.tryParseAddress(
+      name: name,
+      text: text,
+      protocolType: protocolType,
+    );
+  }
+
+  @override
+  Future<AddressConfigProfile?> createProfile(PlotViewModel vm, String name) =>
+      vm.createRProfile(name);
+  @override
+  Future<void> updateProfile(PlotViewModel vm, AddressConfigProfile profile) =>
+      vm.updateRProfile(profile);
+  @override
+  Future<void> deleteProfile(PlotViewModel vm, String id) =>
+      vm.deleteRProfile(id);
+  @override
+  void selectProfile(PlotViewModel vm, String id) => vm.selectRProfile(id);
+}
+
+class ZobowProfileDialog extends StatelessWidget {
   final PlotViewModel vm;
-  final AddressProfileProtocolType protocolType;
+  final AddressConfigProfile? profile;
 
-  /// 为 null 时创建新配置，否则编辑现有配置
-  final ZobowConfigProfile? profile;
+  const ZobowProfileDialog({super.key, required this.vm, this.profile});
 
-  const ZobowProfileDialog({
-    super.key,
+  @override
+  Widget build(BuildContext context) {
+    return _AddressProfileDialog(
+      vm: vm,
+      profile: profile,
+      behavior: const _ZobowProfileBehavior(),
+    );
+  }
+}
+
+class RProtocolProfileDialog extends StatelessWidget {
+  final PlotViewModel vm;
+  final AddressConfigProfile? profile;
+
+  const RProtocolProfileDialog({super.key, required this.vm, this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    return _AddressProfileDialog(
+      vm: vm,
+      profile: profile,
+      behavior: const _RProtocolProfileBehavior(),
+    );
+  }
+}
+
+/// 地址配置的共同编辑界面；协议差异由 [_AddressProfileBehavior] 提供。
+class _AddressProfileDialog extends StatefulWidget {
+  final PlotViewModel vm;
+  final AddressConfigProfile? profile;
+  final _AddressProfileBehavior behavior;
+
+  const _AddressProfileDialog({
     required this.vm,
-    this.profile,
-    this.protocolType = AddressProfileProtocolType.zobow,
+    required this.profile,
+    required this.behavior,
   });
 
   @override
-  State<ZobowProfileDialog> createState() => _ZobowProfileDialogState();
+  State<_AddressProfileDialog> createState() => _AddressProfileDialogState();
 }
 
-class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
+class _AddressProfileDialogState extends State<_AddressProfileDialog> {
   late final TextEditingController _nameController;
   late final List<_PresetRow> _rows;
   int? _selectedRowIndex;
   bool _ignoreCImportComments = false;
-  bool get _isRProtocol =>
-      widget.protocolType == AddressProfileProtocolType.rProtocol;
 
   @override
   void initState() {
@@ -58,8 +178,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               (p) => _PresetRow(
                 nameController: TextEditingController(text: p.name),
                 addressController: TextEditingController(
-                  text:
-                      '0x${p.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+                  text: widget.behavior.formatAddress(p),
                 ),
               ),
             )
@@ -255,14 +374,14 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                                 fontSize: 12,
                                 fontFamily: 'SarasaUiSC',
                               ),
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
+                                contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 4,
                                   vertical: 4,
                                 ),
                                 border: InputBorder.none,
-                                hintText: '0x00000000',
+                                hintText: widget.behavior.addressHint,
                               ),
                               inputFormatters: [
                                 FilteringTextInputFormatter.allow(
@@ -398,11 +517,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     );
     if (confirmed != true || !mounted) return;
 
-    if (_isRProtocol) {
-      await widget.vm.deleteRProfile(profile.id);
-    } else {
-      await widget.vm.deleteZobowProfile(profile.id);
-    }
+    await widget.behavior.deleteProfile(widget.vm, profile.id);
     if (mounted) {
       Navigator.pop(context);
     }
@@ -425,7 +540,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (!_isRProtocol)
+                        if (widget.behavior.supportsCImport)
                           CheckboxListTile(
                             value: _ignoreCImportComments,
                             onChanged: (value) {
@@ -443,7 +558,8 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                             contentPadding: EdgeInsets.zero,
                             controlAffinity: ListTileControlAffinity.leading,
                           ),
-                        if (!_isRProtocol) const SizedBox(height: 8),
+                        if (widget.behavior.supportsCImport)
+                          const SizedBox(height: 8),
                         OutlinedButton.icon(
                           onPressed: () {
                             Navigator.pop(dialogContext);
@@ -464,8 +580,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                           icon: const Icon(Icons.table_chart, size: 16),
                           label: Text(AppStrings.profile.importCsv),
                         ),
-                        if (!_isRProtocol) const SizedBox(height: 8),
-                        if (!_isRProtocol)
+                        if (widget.behavior.supportsCImport)
+                          const SizedBox(height: 8),
+                        if (widget.behavior.supportsCImport)
                           OutlinedButton.icon(
                             onPressed: () {
                               Navigator.pop(dialogContext);
@@ -474,8 +591,9 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
                             icon: const Icon(Icons.code, size: 16),
                             label: Text(AppStrings.profile.importCFile),
                           ),
-                        if (!_isRProtocol) const SizedBox(height: 8),
-                        if (!_isRProtocol)
+                        if (widget.behavior.supportsCImport)
+                          const SizedBox(height: 8),
+                        if (widget.behavior.supportsCImport)
                           OutlinedButton.icon(
                             onPressed: () {
                               Navigator.pop(dialogContext);
@@ -513,7 +631,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       if (json is! Map<String, dynamic>) {
         throw FormatException(AppStrings.profile.invalidProfileFormat);
       }
-      final profile = ZobowConfigProfile.fromJson(json);
+      final profile = AddressConfigProfile.fromJson(json);
       if (profile.presets.isEmpty) {
         throw FormatException(AppStrings.profile.emptyProfilePresets);
       }
@@ -530,8 +648,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
               (preset) => _PresetRow(
                 nameController: TextEditingController(text: preset.name),
                 addressController: TextEditingController(
-                  text:
-                      '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+                  text: widget.behavior.formatAddress(preset),
                 ),
               ),
             ),
@@ -560,7 +677,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     try {
       final presets = AddressProfileCsvImporter.parse(
         await File(path).readAsString(),
-        protocolType: widget.protocolType,
+        protocolType: widget.behavior.protocolType,
       );
       _applyImportedPresets(presets, profileName: _fileBaseName(path));
     } catch (error) {
@@ -694,7 +811,7 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
   }
 
   void _applyImportedPresets(
-    List<ZobowChannelPreset> presets, {
+    List<AddressChannelPreset> presets, {
     String? profileName,
   }) {
     for (final row in _rows) {
@@ -722,19 +839,20 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
           nameController: TextEditingController(
             text: AppStrings.profile.presetName(_rows.length + 1),
           ),
-          addressController: TextEditingController(text: '0x00000001'),
+          addressController: TextEditingController(
+            text: widget.behavior.defaultAddressText,
+          ),
         ),
       );
       _selectedRowIndex = _rows.length - 1;
     });
   }
 
-  _PresetRow _rowFromPreset(ZobowChannelPreset preset) {
+  _PresetRow _rowFromPreset(AddressChannelPreset preset) {
     return _PresetRow(
       nameController: TextEditingController(text: preset.name),
       addressController: TextEditingController(
-        text:
-            '0x${preset.address.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+        text: widget.behavior.formatAddress(preset),
       ),
     );
   }
@@ -755,38 +873,34 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
     });
   }
 
-  ZobowConfigProfile? _buildProfileFromInput({required bool keepExistingId}) {
+  AddressConfigProfile? _buildProfileFromInput({required bool keepExistingId}) {
     final name = _nameController.text.trim();
     if (name.isEmpty) return null;
 
-    final presets = <ZobowChannelPreset>[];
+    final presets = <AddressChannelPreset>[];
     for (final row in _rows) {
       final presetName = row.nameController.text.trim();
-      final addrText = row.addressController.text.trim();
-      final hasHexPrefix =
-          addrText.startsWith('0x') || addrText.startsWith('0X');
-      final valueText = hasHexPrefix ? addrText.substring(2) : addrText;
-      final address =
-          int.tryParse(
-            valueText,
-            radix: _isRProtocol && !hasHexPrefix ? 10 : 16,
-          ) ??
-          0;
+      if (presetName.isEmpty) continue;
 
-      if (presetName.isNotEmpty) {
-        presets.add(
-          ZobowChannelPreset(name: presetName, address: address & 0xFFFFFFFF),
+      final addrText = row.addressController.text.trim();
+      final preset = widget.behavior.parsePreset(presetName, addrText);
+      if (preset == null) {
+        AppNotifications.show(
+          AppStrings.profile.invalidPresetAddress(presetName),
+          messenger: ScaffoldMessenger.of(context),
         );
+        return null;
       }
+      presets.add(preset);
     }
 
-    return ZobowConfigProfile(
+    return AddressConfigProfile(
       id:
           keepExistingId && widget.profile != null
               ? widget.profile!.id
               : sanitizeFileName(name, fallback: 'profile'),
       name: name,
-      protocolType: widget.protocolType,
+      protocolType: widget.behavior.protocolType,
       presets: presets,
     );
   }
@@ -863,23 +977,16 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
 
     if (widget.profile == null) {
       // 创建新配置
-      final create =
-          _isRProtocol
-              ? widget.vm.createRProfile(inputProfile.name)
-              : widget.vm.createZobowProfile(inputProfile.name);
+      final create = widget.behavior.createProfile(
+        widget.vm,
+        inputProfile.name,
+      );
       create.then((profile) {
         if (profile != null) {
           profile.presets = inputProfile.presets;
-          final update =
-              _isRProtocol
-                  ? widget.vm.updateRProfile(profile)
-                  : widget.vm.updateZobowProfile(profile);
+          final update = widget.behavior.updateProfile(widget.vm, profile);
           update.then((_) {
-            if (_isRProtocol) {
-              widget.vm.selectRProfile(profile.id);
-            } else {
-              widget.vm.selectZobowProfile(profile.id);
-            }
+            widget.behavior.selectProfile(widget.vm, profile.id);
             if (mounted) Navigator.pop(context);
           });
         }
@@ -888,13 +995,10 @@ class _ZobowProfileDialogState extends State<ZobowProfileDialog> {
       // 更新现有配置
       final updated = widget.profile!.copyWith(
         name: inputProfile.name,
-        protocolType: widget.protocolType,
+        protocolType: widget.behavior.protocolType,
         presets: inputProfile.presets,
       );
-      final update =
-          _isRProtocol
-              ? widget.vm.updateRProfile(updated)
-              : widget.vm.updateZobowProfile(updated);
+      final update = widget.behavior.updateProfile(widget.vm, updated);
       update.then((_) {
         if (mounted) Navigator.pop(context);
       });

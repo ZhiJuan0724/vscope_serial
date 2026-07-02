@@ -37,6 +37,32 @@ class _ZobowChannelIdInputFormatter extends TextInputFormatter {
   }
 }
 
+class _RProtocolAddressInputFormatter extends TextInputFormatter {
+  const _RProtocolAddressInputFormatter();
+
+  static final RegExp _decimalPattern = RegExp(r'^[0-9]+$');
+  static final RegExp _hexPattern = RegExp(r'^0[xX][0-9a-fA-F]*$');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+
+    final isHex = _hexPattern.hasMatch(text);
+    final isDecimal = _decimalPattern.hasMatch(text);
+    if (!isHex && !isDecimal) return oldValue;
+
+    final digits = isHex ? text.substring(2) : text;
+    if (digits.isEmpty) return newValue;
+    final value = int.tryParse(digits, radix: isHex ? 16 : 10);
+    if (value == null || value > 0xFFFFFFFF) return oldValue;
+    return newValue;
+  }
+}
+
 /// 绘图页面左侧通道列表、通道编辑弹窗和通道预设入口。
 class _ChannelItem extends StatefulWidget {
   final PlotViewModel vm;
@@ -107,7 +133,41 @@ class _ChannelItemState extends State<_ChannelItem> {
     });
   }
 
+  Widget _buildDisplayName(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final style = TextStyle(
+          fontSize: 14,
+          color: widget.ch.visible ? null : Colors.grey,
+          decoration: widget.ch.visible ? null : TextDecoration.lineThrough,
+        );
+        final text = Text(
+          _displayName,
+          style: style,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+        );
+        final textPainter = TextPainter(
+          text: TextSpan(text: _displayName, style: style),
+          maxLines: 1,
+          textDirection: Directionality.of(context),
+        )..layout();
+        final content = GestureDetector(
+          onDoubleTap: _startEditingName,
+          child: text,
+        );
+        if (textPainter.width <= constraints.maxWidth) return content;
+        return Tooltip(
+          message: _displayName,
+          waitDuration: const Duration(milliseconds: 500),
+          child: content,
+        );
+      },
+    );
+  }
+
   void _saveZobowId() {
+    if (widget.vm.isPlotting || widget.vm.isStopping) return;
     final text = _idController.text.trim();
     final hex = text.replaceAll('0x', '').replaceAll('0X', '');
     final id = int.tryParse(hex, radix: 16);
@@ -117,11 +177,15 @@ class _ChannelItemState extends State<_ChannelItem> {
   }
 
   void _saveRAddress() {
+    if (widget.vm.isPlotting || widget.vm.isStopping) return;
     final text = _idController.text.trim();
     final address = PlotViewModel.parseRProtocolAddress(text);
     if (text.isEmpty || (address != null && address >= 0)) {
       widget.vm.setRChannelAddress(widget.ch.index, text);
+      return;
     }
+    _idController.text = widget.vm.rChannelAddresses[widget.ch.index];
+    widget.vm.showStatusMessage(AppStrings.plot.invalidRProtocolAddress);
   }
 
   void _onAddressFocusChange(bool hasFocus) {
@@ -225,22 +289,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                               onTapOutside: (_) => _nameFocusNode.unfocus(),
                             ),
                           )
-                          : GestureDetector(
-                            onDoubleTap: _startEditingName,
-                            child: Text(
-                              _displayName,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: widget.ch.visible ? null : Colors.grey,
-                                decoration:
-                                    widget.ch.visible
-                                        ? null
-                                        : TextDecoration.lineThrough,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            ),
-                          ),
+                          : _buildDisplayName(context),
                 ),
                 // 众邦电控模式下显示地址，常驻可编辑 TextField
                 if (showsAddress) ...[
@@ -260,6 +309,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                       onFocusChange: _onAddressFocusChange,
                       child: TextField(
                         controller: _idController,
+                        enabled: !widget.vm.isPlotting && !widget.vm.isStopping,
                         style: TextStyle(
                           fontSize: 14,
                           fontFamily: 'SarasaUiSC',
@@ -297,9 +347,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                         ),
                         inputFormatters: [
                           if (isRProtocolMode)
-                            FilteringTextInputFormatter.allow(
-                              RegExp(r'[0-9a-fA-FxX]'),
-                            )
+                            const _RProtocolAddressInputFormatter()
                           else
                             const _ZobowChannelIdInputFormatter(),
                         ],
@@ -359,6 +407,7 @@ class _ChannelItemState extends State<_ChannelItem> {
 
   /// 构建预设选择按钮
   Widget _buildPresetButton(BuildContext context) {
+    final canEditAddress = !widget.vm.isPlotting && !widget.vm.isStopping;
     final isRProtocol =
         widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol;
     final profile =
@@ -372,7 +421,10 @@ class _ChannelItemState extends State<_ChannelItem> {
     return Tooltip(
       message: AppStrings.plot.selectAddress,
       child: InkWell(
-        onTap: () => _showPresetSelectorDialog(context, profile),
+        onTap:
+            canEditAddress
+                ? () => _showPresetSelectorDialog(context, profile)
+                : null,
         child: Container(
           width: 20,
           height: 20,
@@ -384,7 +436,10 @@ class _ChannelItemState extends State<_ChannelItem> {
           child: Icon(
             Icons.chevron_right,
             size: 14,
-            color: Theme.of(context).colorScheme.primary,
+            color:
+                canEditAddress
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).disabledColor,
           ),
         ),
       ),
@@ -394,7 +449,7 @@ class _ChannelItemState extends State<_ChannelItem> {
   /// 显示预设选择弹窗
   void _showPresetSelectorDialog(
     BuildContext context,
-    ZobowConfigProfile profile,
+    AddressConfigProfile profile,
   ) {
     showDialog(
       context: context,

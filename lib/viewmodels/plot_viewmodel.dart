@@ -25,11 +25,11 @@ import '../data/parser/fixed_frame_parser.dart';
 import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
 import '../data/source/data_source_manager.dart';
-import '../data/models/zobow_config_profile.dart';
+import '../data/models/address_config_profile.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
 import '../services/serial_service.dart';
-import '../services/zobow_profile_service.dart';
+import '../services/address_profile_service.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
@@ -326,25 +326,26 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 众邦电控配置文件 ==========
   /// 配置文件服务
-  final ZobowProfileService _profileService = ZobowProfileService();
-  final ZobowProfileService _rProfileService = ZobowProfileService(
+  final AddressProfileService _profileService = AddressProfileService();
+  final AddressProfileService _rProfileService = AddressProfileService(
     protocolType: AddressProfileProtocolType.rProtocol,
   );
   int _profileRevision = 0;
 
   /// 配置文件列表（供UI下拉框使用）
-  List<ZobowConfigProfile> get zobowProfiles => _profileService.profiles;
+  List<AddressConfigProfile> get zobowProfiles => _profileService.profiles;
   int get profileRevision => _profileRevision;
 
   /// 当前选中的配置文件
-  ZobowConfigProfile? get selectedZobowProfile =>
+  AddressConfigProfile? get selectedZobowProfile =>
       _profileService.selectedProfile;
 
   /// 当前选中的配置文件ID
   String get selectedZobowProfileId => _profileService.selectedProfileId;
 
-  List<ZobowConfigProfile> get rProfiles => _rProfileService.profiles;
-  ZobowConfigProfile? get selectedRProfile => _rProfileService.selectedProfile;
+  List<AddressConfigProfile> get rProfiles => _rProfileService.profiles;
+  AddressConfigProfile? get selectedRProfile =>
+      _rProfileService.selectedProfile;
   String get selectedRProfileId => _rProfileService.selectedProfileId;
 
   // ========== 定时刷新 ==========
@@ -407,7 +408,7 @@ class PlotViewModel extends BaseViewModel {
   PlotViewModel(super.serialService) {
     _sourceManager = DataSourceManager(serialService);
     _loadSettings();
-    _initZobowProfileService();
+    _initAddressProfileServices();
     _startRefreshTimer();
   }
 
@@ -420,7 +421,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 初始化Zobow配置文件服务
-  Future<void> _initZobowProfileService() async {
+  Future<void> _initAddressProfileServices() async {
     await _profileService.init();
     await _rProfileService.init();
     if (_disposed) return;
@@ -1260,6 +1261,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void setRChannelAddress(int index, String address) {
+    if (_isPlotting || _isStopping) return;
     if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
     final next = address.trim();
     if (_sendProtocolConfig.rChannelAddresses[index] == next) return;
@@ -2325,13 +2327,11 @@ class PlotViewModel extends BaseViewModel {
   }
 
   static int? parseRProtocolAddress(String text) {
-    final value = text.trim();
-    if (value.isEmpty) return null;
-    final isHex = value.startsWith('0x') || value.startsWith('0X');
-    return int.tryParse(
-      isHex ? value.substring(2) : value,
-      radix: isHex ? 16 : 10,
-    );
+    return AddressChannelPreset.tryParseAddress(
+      name: '',
+      text: text,
+      protocolType: AddressProfileProtocolType.rProtocol,
+    )?.address;
   }
 
   static Uint8List buildRProtocolCommand(List<String> addresses) {
@@ -2937,6 +2937,48 @@ class PlotViewModel extends BaseViewModel {
     disableMathChannel(index);
   }
 
+  bool resetAllChannels() {
+    if (_isPlotting || _isStopping) {
+      showStatusMessage('请停止绘图后再重置全部通道');
+      return false;
+    }
+
+    for (int i = 0; i < channels.length; i++) {
+      channels[i] = ChannelConfig(
+        index: i,
+        color: ChannelConfig.colorForIndex(i, _plotBackground),
+      );
+    }
+    for (int i = 0; i < mathChannels.length; i++) {
+      mathChannels[i] = MathChannelConfig(index: i);
+    }
+    _compiledMathExpressions.clear();
+    _sendProtocolConfig.rChannelAddresses = List.filled(
+      SendProtocolConfig.maxChannelCount,
+      '',
+    );
+    _parserConfig.zobowChannelIds = List.generate(
+      ParserConfig.maxZobowChannelCount,
+      (index) => index + 1,
+    );
+    _parserConfig.zobowChannelTypes = List.filled(
+      ParserConfig.maxZobowChannelCount,
+      DataType.int16,
+    );
+    _parserConfig.fixedFrameChannelTypes = List.filled(
+      SendProtocolConfig.maxChannelCount,
+      DataType.uint16,
+    );
+    _invalidateDisplayCaches();
+    _rebuildObservedRawValueMetadata();
+    _refreshSnapHighlightColors();
+    _markChannelConfigChanged();
+    _saveSettings();
+    AppLogger().info('已重置全部通道设置', category: 'PLOT');
+    Future.microtask(() => notifyListeners());
+    return true;
+  }
+
   /// 设置通道别名
   void setChannelAlias(int index, String alias) {
     if (index < 0 || index >= channels.length) return;
@@ -3001,6 +3043,7 @@ class PlotViewModel extends BaseViewModel {
 
   /// 设置 众邦电控的通道号
   void setZobowChannelId(int index, int channelId) {
+    if (_isPlotting || _isStopping) return;
     if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
     _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
     if (index < channels.length) {

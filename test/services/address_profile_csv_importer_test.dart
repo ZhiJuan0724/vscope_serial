@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/data/models/zobow_config_profile.dart';
+import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/services/address_profile_csv_importer.dart';
 
 void main() {
@@ -34,6 +34,14 @@ void main() {
       );
 
       expect(presets.map((preset) => preset.address), [16, 16]);
+      expect(presets.map((preset) => preset.addressFormat), [
+        AddressValueFormat.decimal,
+        AddressValueFormat.hexadecimal,
+      ]);
+      expect(presets.map((preset) => preset.formatAddress(compactHex: true)), [
+        '16',
+        '0x10',
+      ]);
     });
 
     test('支持带逗号的引号通道名', () {
@@ -54,6 +62,18 @@ void main() {
         ),
         throwsFormatException,
       );
+    });
+
+    test('r协议拒绝无0x前缀的十六进制和混合格式', () {
+      for (final address in ['FF', '12x3', '0xGG', '0x']) {
+        expect(
+          () => AddressProfileCsvImporter.parse(
+            'name,address\n通道1,$address\n',
+            protocolType: AddressProfileProtocolType.rProtocol,
+          ),
+          throwsFormatException,
+        );
+      }
     });
   });
 }

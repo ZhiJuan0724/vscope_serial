@@ -15,11 +15,11 @@ import '../../core/utils/plot_performance_metrics.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
-import '../../data/models/zobow_config_profile.dart';
+import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
-import '../dialogs/zobow_profile_dialog.dart';
+import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
@@ -1444,7 +1444,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     const menuWidth = 188.0;
     final menuHeight =
-        target.kind == _ChannelContextMenuTargetKind.math ? 118.0 : 82.0;
+        target.kind == _ChannelContextMenuTargetKind.raw ? 82.0 : 118.0;
     final screenSize = MediaQuery.sizeOf(context);
     final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
     final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
@@ -1469,6 +1469,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ? () {
                               _hideChannelContextMenu();
                               _addMathChannelFromContextMenu(menuContext, vm);
+                            }
+                            : null,
+                    onResetAllChannels:
+                        target.kind == _ChannelContextMenuTargetKind.blank &&
+                                !vm.isPlotting &&
+                                !vm.isStopping
+                            ? () {
+                              _hideChannelContextMenu();
+                              _confirmResetAllChannels(menuContext, vm);
                             }
                             : null,
                     onEditChannel:
@@ -1567,6 +1576,40 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       return;
     }
     _showMathChannelDialog(context, vm, channel);
+  }
+
+  Future<void> _confirmResetAllChannels(
+    BuildContext context,
+    PlotViewModel vm,
+  ) async {
+    if (vm.isPlotting || vm.isStopping) {
+      vm.showStatusMessage(AppStrings.plot.resetAllChannelsStoppedOnly);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.plot.resetAllChannelsTitle),
+            content: Text(AppStrings.plot.resetAllChannelsMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(AppStrings.common.confirm),
+              ),
+            ],
+          ),
+    );
+    if (confirmed == true) {
+      vm.resetAllChannels();
+    }
   }
 
   void _showChannelEditDialog(
@@ -3468,11 +3511,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _showCreateRProfileDialog(BuildContext context, PlotViewModel vm) {
     showDialog(
       context: context,
-      builder:
-          (context) => ZobowProfileDialog(
-            vm: vm,
-            protocolType: AddressProfileProtocolType.rProtocol,
-          ),
+      builder: (context) => RProtocolProfileDialog(vm: vm),
     );
   }
 
@@ -3484,12 +3523,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
     showDialog(
       context: context,
-      builder:
-          (context) => ZobowProfileDialog(
-            vm: vm,
-            profile: profile,
-            protocolType: AddressProfileProtocolType.rProtocol,
-          ),
+      builder: (context) => RProtocolProfileDialog(vm: vm, profile: profile),
     );
   }
 }
@@ -3498,12 +3532,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 class _ChannelContextMenu extends StatelessWidget {
   final _ChannelContextMenuTarget target;
   final VoidCallback? onAddMathChannel;
+  final VoidCallback? onResetAllChannels;
   final VoidCallback? onEditChannel;
   final VoidCallback? onDeleteMathChannel;
 
   const _ChannelContextMenu({
     required this.target,
     required this.onAddMathChannel,
+    required this.onResetAllChannels,
     required this.onEditChannel,
     required this.onDeleteMathChannel,
   });
@@ -3517,6 +3553,11 @@ class _ChannelContextMenu extends StatelessWidget {
           icon: Icons.functions,
           label: AppStrings.plot.addMathChannel,
           onTap: onAddMathChannel,
+        ),
+        _ChannelContextMenuItem(
+          icon: Icons.restart_alt,
+          label: AppStrings.plot.resetAllChannels,
+          onTap: onResetAllChannels,
         ),
       ],
       _ChannelContextMenuTargetKind.math => [

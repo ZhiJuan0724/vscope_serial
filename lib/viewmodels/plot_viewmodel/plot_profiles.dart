@@ -20,7 +20,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   /// 创建新配置文件
-  Future<ZobowConfigProfile?> createZobowProfile(String name) async {
+  Future<AddressConfigProfile?> createZobowProfile(String name) async {
     final profile = await _profileService.createProfile(name);
     _profileRevision++;
     AppLogger().info('新增Zobow配置：${profile.name}', category: 'PLOT');
@@ -29,7 +29,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   /// 更新配置文件
-  Future<void> updateZobowProfile(ZobowConfigProfile profile) async {
+  Future<void> updateZobowProfile(AddressConfigProfile profile) async {
     await _profileService.updateProfile(profile);
     _profileRevision++;
     AppLogger().info('更新Zobow配置：${profile.name}', category: 'PLOT');
@@ -52,7 +52,8 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   /// 应用预设到指定通道
-  void applyPresetToChannel(int channelIndex, ZobowChannelPreset preset) {
+  void applyPresetToChannel(int channelIndex, AddressChannelPreset preset) {
+    if (_isPlotting || _isStopping) return;
     if (channelIndex < 0 || channelIndex >= _parserConfig.zobowChannelCount) {
       return;
     }
@@ -88,7 +89,7 @@ extension PlotViewModelProfiles on PlotViewModel {
     _notifyLater();
   }
 
-  Future<ZobowConfigProfile?> createRProfile(String name) async {
+  Future<AddressConfigProfile?> createRProfile(String name) async {
     final profile = await _rProfileService.createProfile(name);
     _profileRevision++;
     AppLogger().info('新增r协议配置：${profile.name}', category: 'PLOT');
@@ -96,7 +97,7 @@ extension PlotViewModelProfiles on PlotViewModel {
     return profile;
   }
 
-  Future<void> updateRProfile(ZobowConfigProfile profile) async {
+  Future<void> updateRProfile(AddressConfigProfile profile) async {
     await _rProfileService.updateProfile(profile);
     _profileRevision++;
     AppLogger().info('更新r协议配置：${profile.name}', category: 'PLOT');
@@ -120,21 +121,20 @@ extension PlotViewModelProfiles on PlotViewModel {
 
   void applyRProtocolPresetToChannel(
     int channelIndex,
-    ZobowChannelPreset preset,
+    AddressChannelPreset preset,
   ) {
+    if (_isPlotting || _isStopping) return;
     if (channelIndex < 0 ||
         channelIndex >= SendProtocolConfig.maxChannelCount) {
       return;
     }
-    final previous = _sendProtocolConfig.rChannelAddresses[channelIndex];
-    final useHex = previous.trim().toLowerCase().startsWith('0x');
-    _sendProtocolConfig.rChannelAddresses[channelIndex] =
-        useHex
-            ? '0x${preset.address.toRadixString(16).toUpperCase()}'
-            : '${preset.address}';
+    _sendProtocolConfig.rChannelAddresses[channelIndex] = preset.formatAddress(
+      compactHex: true,
+    );
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;
     }
+    _markChannelConfigChanged();
     _saveSettings();
     _notifyLater();
   }

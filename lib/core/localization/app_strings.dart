@@ -86,6 +86,8 @@ final class _PlotStrings {
   String get rProtocolLooseChannelSettings => '宽松通道设置';
   String get rProtocolLooseChannelSettingsHelp =>
       '开始绘图时自动移除地址中间或前面的空白槽位，将非空地址压紧到 Ch0 开始发送；如果全部为空仍会报错。';
+  String get invalidRProtocolAddress =>
+      'R 协议地址仅支持十进制数字或带 0x 前缀的十六进制，范围 0~4294967295';
   String get createConfig => '新建配置';
   String get editConfig => '编辑配置';
   String get createRProtocolConfig => '新建 r 协议配置';
@@ -212,6 +214,11 @@ final class _PlotStrings {
   String get channelActions => '通道功能';
   String get noChannelAction => '暂无可用操作';
   String get addMathChannel => '添加数学通道';
+  String get resetAllChannels => '重置全部通道';
+  String get resetAllChannelsTitle => '重置全部通道';
+  String get resetAllChannelsMessage =>
+      '将恢复通道显示设置，清空数学通道和 r 协议地址，并恢复 Zobow 地址、数据类型及固定帧逐通道类型。配置文件不会删除。';
+  String get resetAllChannelsStoppedOnly => '请停止绘图后再重置全部通道';
   String get deleteMathChannel => '删除数学通道';
   String get editMathChannel => '编辑数学通道';
   String get resetMathChannel => '重置数学通道';
@@ -471,6 +478,7 @@ final class _ProfileStrings {
   String get exportProfileWriting => '正在写入配置文件...';
   String get invalidProfileFormat => '配置文件格式不正确';
   String get emptyProfilePresets => '配置文件没有可导入的地址预设';
+  String invalidPresetAddress(String name) => '“$name”的地址格式无效';
   String importProfileFailed(String error) => '导入配置失败: $error';
   String exportProfileFailed(String error) => '导出配置失败: $error';
   String exportProfileCompleted(String path) => '已导出配置: $path';

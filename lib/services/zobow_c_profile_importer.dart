@@ -4,10 +4,10 @@ import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
 
-import '../data/models/zobow_config_profile.dart';
+import '../data/models/address_config_profile.dart';
 
 class ZobowCProfileImportResult {
-  final List<ZobowChannelPreset> presets;
+  final List<AddressChannelPreset> presets;
   final int commentNameCount;
 
   const ZobowCProfileImportResult({
@@ -84,7 +84,7 @@ class ZobowCProfileImporter {
       return const ZobowCProfileImportResult(presets: [], commentNameCount: 0);
     }
 
-    final presets = <ZobowChannelPreset>[];
+    final presets = <AddressChannelPreset>[];
     final seenAddresses = <int>{};
     var commentNameCount = 0;
     // 匹配 switch case 地址，支持十六进制 0xNN 和十进制数字。
@@ -129,7 +129,7 @@ class ZobowCProfileImporter {
           _nameFromExpression(assignment.expression) ??
           _formatAddress(normalizedAddress);
 
-      presets.add(ZobowChannelPreset(name: name, address: normalizedAddress));
+      presets.add(AddressChannelPreset(name: name, address: normalizedAddress));
       seenAddresses.add(normalizedAddress);
       if (commentName != null) commentNameCount++;
     }

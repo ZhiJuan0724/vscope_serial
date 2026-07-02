@@ -1,16 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 
-import '../data/models/zobow_config_profile.dart';
+import '../data/models/address_config_profile.dart';
 
-/// 众邦电控配置文件服务
+/// Zobow/r 协议共用的地址配置文件服务。
 ///
 /// 配置文件存储在软件目录下的 `config/` 文件夹中，
 /// 每个配置文件为一个独立的 JSON 文件。
-class ZobowProfileService {
+class AddressProfileService {
   final AddressProfileProtocolType protocolType;
 
-  ZobowProfileService({this.protocolType = AddressProfileProtocolType.zobow});
+  AddressProfileService({this.protocolType = AddressProfileProtocolType.zobow});
 
   /// 配置文件目录名称
   static const String _configDirName = 'config';
@@ -22,7 +22,7 @@ class ZobowProfileService {
   Directory? _configDir;
 
   /// 内存缓存的配置文件列表
-  final List<ZobowConfigProfile> _profiles = [];
+  final List<AddressConfigProfile> _profiles = [];
 
   /// 当前选中的配置文件ID（空字符串表示"不使用"）
   String _selectedProfileId = '';
@@ -31,10 +31,10 @@ class ZobowProfileService {
   bool _initialized = false;
 
   /// 配置文件列表（只读）
-  List<ZobowConfigProfile> get profiles => List.unmodifiable(_profiles);
+  List<AddressConfigProfile> get profiles => List.unmodifiable(_profiles);
 
   /// 当前选中的配置文件
-  ZobowConfigProfile? get selectedProfile {
+  AddressConfigProfile? get selectedProfile {
     if (_selectedProfileId.isEmpty) return null;
     try {
       return _profiles.firstWhere((p) => p.id == _selectedProfileId);
@@ -75,7 +75,7 @@ class ZobowProfileService {
       try {
         final content = file.readAsStringSync();
         final json = jsonDecode(content) as Map<String, dynamic>;
-        final profile = ZobowConfigProfile.fromJson(json);
+        final profile = AddressConfigProfile.fromJson(json);
         if (profile.protocolType == protocolType) {
           _profiles.add(profile);
         }
@@ -89,9 +89,9 @@ class ZobowProfileService {
   }
 
   /// 创建新配置文件
-  Future<ZobowConfigProfile> createProfile(String name) async {
+  Future<AddressConfigProfile> createProfile(String name) async {
     final id = '${protocolType.id}_${DateTime.now().millisecondsSinceEpoch}';
-    final profile = ZobowConfigProfile.empty(
+    final profile = AddressConfigProfile.empty(
       id,
       name: name,
       protocolType: protocolType,
@@ -105,7 +105,7 @@ class ZobowProfileService {
   }
 
   /// 保存配置文件到磁盘
-  Future<void> _saveProfile(ZobowConfigProfile profile) async {
+  Future<void> _saveProfile(AddressConfigProfile profile) async {
     if (_configDir == null) return;
 
     final file = File('${_configDir!.path}/${profile.id}$_fileExtension');
@@ -113,7 +113,7 @@ class ZobowProfileService {
   }
 
   /// 更新并保存配置文件
-  Future<void> updateProfile(ZobowConfigProfile profile) async {
+  Future<void> updateProfile(AddressConfigProfile profile) async {
     final index = _profiles.indexWhere((p) => p.id == profile.id);
     if (index >= 0) {
       _profiles[index] = profile;

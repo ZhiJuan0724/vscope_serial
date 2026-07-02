@@ -9,6 +9,7 @@ import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -1125,6 +1126,87 @@ void main() {
       expect(utf8.decode(bytes), 'r 0 12 0x10 0X2A\n');
     });
 
+    test('r协议地址严格区分十进制和带0x前缀的十六进制', () {
+      expect(PlotViewModel.parseRProtocolAddress('16'), 16);
+      expect(PlotViewModel.parseRProtocolAddress('0x10'), 16);
+      expect(PlotViewModel.parseRProtocolAddress('FF'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('12x3'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('0xGG'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('4294967296'), isNull);
+    });
+
+    test('r协议预设应用到通道时保留配置进制', () {
+      final revisionBefore = vm.channelConfigRevision;
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '十进制',
+          address: 16,
+          addressFormat: AddressValueFormat.decimal,
+        ),
+      );
+      vm.applyRProtocolPresetToChannel(
+        1,
+        AddressChannelPreset(
+          name: '十六进制',
+          address: 16,
+          addressFormat: AddressValueFormat.hexadecimal,
+        ),
+      );
+
+      expect(vm.rChannelAddresses.take(2), ['16', '0x10']);
+      expect(vm.channels[0].alias, '十进制');
+      expect(vm.channelConfigRevision, greaterThan(revisionBefore));
+    });
+
+    test('绘图运行中锁定R和Zobow地址但允许修改名称', () {
+      vm.setRChannelAddress(0, '10');
+      vm.setZobowChannelId(0, 0x10);
+      vm.setPlottingForTest(true);
+
+      vm.setRChannelAddress(0, '20');
+      vm.setZobowChannelId(0, 0x20);
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '运行中预设',
+          address: 30,
+          addressFormat: AddressValueFormat.decimal,
+        ),
+      );
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '运行中Zobow', address: 0x30),
+      );
+      vm.setChannelAlias(0, '运行中名称');
+
+      expect(vm.rChannelAddresses[0], '10');
+      expect(vm.parserConfig.zobowChannelIds[0], 0x10);
+      expect(vm.channels[0].alias, '运行中名称');
+    });
+
+    test('停止时可重置全部通道且运行中拒绝重置', () {
+      vm.setRChannelAddress(0, '10');
+      vm.setZobowChannelId(0, 0x20);
+      vm.setChannelAlias(0, '自定义名称');
+      vm.setChannelVisible(0, false);
+      expect(vm.enableMathChannel(0, 'CH0 + CH1'), isTrue);
+
+      expect(vm.resetAllChannels(), isTrue);
+      expect(vm.rChannelAddresses.every((address) => address.isEmpty), isTrue);
+      expect(vm.parserConfig.zobowChannelIds.first, 1);
+      expect(vm.parserConfig.zobowChannelTypes.first, DataType.int16);
+      expect(vm.parserConfig.fixedFrameChannelTypes.first, DataType.uint16);
+      expect(vm.channels[0].alias, isEmpty);
+      expect(vm.channels[0].visible, isTrue);
+      expect(vm.mathChannels.every((channel) => !channel.enabled), isTrue);
+
+      vm.setChannelAlias(0, '运行中保留');
+      vm.setPlottingForTest(true);
+      expect(vm.resetAllChannels(), isFalse);
+      expect(vm.channels[0].alias, '运行中保留');
+    });
+
     test('r协议地址校验支持0地址、自动连续前缀和固定通道截断', () {
       expect(PlotViewModel.validateRProtocolAddresses(['0', '0x0', '20', '']), [
         '0',
@@ -1196,10 +1278,9 @@ void main() {
       vm.setSendProtocolType(SendProtocolType.rProtocol);
       vm.setParserType(ParserType.fireWater);
       vm.updateParserConfig(ParserConfig.fireWaterDefault());
-      vm.setPlottingForTest(true);
-
       vm.setRChannelAddress(3, '0');
       vm.setRChannelAddress(5, '0x10');
+      vm.setPlottingForTest(true);
       expect(vm.rAddressDisplayCount, 1);
 
       vm.setRProtocolLooseChannelSettings(true);

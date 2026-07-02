@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:vscope_serial/data/models/zobow_config_profile.dart';
+import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/services/zobow_c_profile_importer.dart';
 
 Future<void> main(List<String> args) async {
@@ -32,7 +32,7 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final profile = ZobowConfigProfile(
+  final profile = AddressConfigProfile(
     id: _fileBaseName(file.path),
     name: _fileBaseName(file.path),
     presets: result.presets,

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -114,6 +115,90 @@ void main() {
 
     expect(vm.channels[0].visible, isFalse);
     expect(find.byIcon(Icons.visibility_off_outlined), findsWidgets);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('长通道名称提供悬浮完整文本', (tester) async {
+    final vm = PlotViewModel(serialService);
+    const longName = '这是一个很长的通道名称';
+    vm.setChannelAlias(0, longName);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    expect(find.byTooltip(longName), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('JustFloat配合R协议选择预设后立即刷新名称和地址', (tester) async {
+    final vm = PlotViewModel(serialService);
+    vm.setParserType(ParserType.justFloat);
+    vm.updateParserConfig(ParserConfig.justFloatDefault());
+    vm.setSendProtocolType(SendProtocolType.rProtocol);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    vm.applyRProtocolPresetToChannel(
+      0,
+      AddressChannelPreset(
+        name: '电机反馈',
+        address: 16,
+        addressFormat: AddressValueFormat.decimal,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('电机反馈'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '16'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('通道列表空白处右键显示重置全部通道', (tester) async {
+    final vm = PlotViewModel(serialService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    final list = find.byType(ListView).first;
+    final blankPosition = tester.getBottomLeft(list) + const Offset(100, -16);
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.down(blankPosition);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.plot.resetAllChannels), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
