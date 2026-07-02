@@ -88,6 +88,9 @@ class PlotGestureHandler extends StatefulWidget {
   final List<CursorState> observations;
   final void Function(int index, double x)? onObservationDrag;
   final void Function(int index)? onObservationDelete;
+  final bool observationPlacementActive;
+  final void Function(double x)? onObservationPlacementHover;
+  final void Function(double x)? onObservationPlacementCommit;
 
   /// 通道配置列表（用于偏移标签拖动检测）
   final List<ChannelConfig> channels;
@@ -132,6 +135,9 @@ class PlotGestureHandler extends StatefulWidget {
     this.observations = const [],
     this.onObservationDrag,
     this.onObservationDelete,
+    this.observationPlacementActive = false,
+    this.onObservationPlacementHover,
+    this.onObservationPlacementCommit,
     required this.channels,
     int? activeChannelCount,
     this.onChannelOffsetDrag,
@@ -479,6 +485,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       size.height,
     );
 
+    if (widget.observationPlacementActive) {
+      widget.onObservationPlacementHover?.call(x);
+      return;
+    }
+
     // 单垂直光标优先（通过开关控制）
     if (widget.vCursorEnabled) {
       // 使用 WidgetsBinding 避免在指针事件回调中直接触发 setState
@@ -510,6 +521,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 只处理鼠标左键（kPrimaryButton）
     if (event.buttons != kPrimaryButton) return;
+
+    if (widget.observationPlacementActive) {
+      final size = context.size ?? Size.zero;
+      if (size.isEmpty) return;
+      final x = widget.viewport.screenToDataX(
+        event.localPosition.dx,
+        size.width,
+      );
+      widget.onObservationPlacementCommit?.call(x);
+      return;
+    }
 
     final observationHit = _hitTestObservation(event.localPosition);
     if (observationHit != null) {

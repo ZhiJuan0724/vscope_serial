@@ -184,12 +184,38 @@ void main() {
       }
       vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
       vm.updateFollowCursor(1000, 0, const Offset(50, 50));
+      vm.setObservationClickToPlace(false);
 
       vm.addObservation();
 
+      expect(vm.observationClickToPlace, isFalse);
       expect(vm.observations, hasLength(1));
       expect(vm.observations.first.x, inInclusiveRange(20, 40));
       expect(vm.observations.first.x, 40);
+    });
+
+    test('点击定位观察只在提交后新增观察', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
+      vm.setObservationClickToPlace(true);
+
+      vm.startObservationPlacement();
+      vm.updateObservationPlacement(31.6);
+
+      expect(vm.observationPlacementActive, isTrue);
+      expect(vm.observationPreview, isNotNull);
+      expect(vm.observationPreview!.x, 32);
+      expect(vm.observations, isEmpty);
+
+      vm.commitObservationPlacement(34.7);
+
+      expect(vm.observationPlacementActive, isFalse);
+      expect(vm.observationPreview, isNull);
+      expect(vm.observations.single.x, 35);
     });
 
     test('clearData清空数据', () {

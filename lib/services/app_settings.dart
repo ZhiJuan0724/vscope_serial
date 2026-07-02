@@ -81,6 +81,9 @@ class AppSettings {
   /// 绘图区悬浮窗不透明度，范围 0.0~1.0。
   double floatingPanelOpacity = 0.85;
 
+  /// 添加观察时是否先跟随鼠标，再由左键固定。
+  bool observationClickToPlace = false;
+
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
 
@@ -250,6 +253,7 @@ class AppSettings {
     gridDensity = 'normal';
     plotBackground = 'dark';
     floatingPanelOpacity = 0.85;
+    observationClickToPlace = false;
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
@@ -349,6 +353,8 @@ class AppSettings {
             0.0,
             1.0,
           );
+      observationClickToPlace =
+          json['observationClickToPlace'] as bool? ?? false;
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = ((json['randomFrequency'] as num?)?.toDouble() ??
               1000.0)
@@ -464,6 +470,7 @@ class AppSettings {
       'gridDensity': gridDensity,
       'plotBackground': plotBackground,
       'floatingPanelOpacity': floatingPanelOpacity,
+      'observationClickToPlace': observationClickToPlace,
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,

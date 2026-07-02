@@ -93,6 +93,7 @@ final class _PlotStrings {
   String get noConfig => '不使用配置';
   String get verticalCursor => '垂直光标';
   String get addObservation => '添加观察，右键标签删除';
+  String get placeObservation => '移动鼠标定位观察，左键固定';
   String get observation => '观察';
   String get measureXx => 'X测量';
   String get measureXxTooltip => 'Delta X 测量';
@@ -165,6 +166,8 @@ final class _PlotStrings {
   String get plotBackgroundDark => '暗色';
   String get plotBackgroundLight => '亮色';
   String get floatingPanelOpacity => '悬浮窗透明度';
+  String get observationClickToPlace => '点击定位观察';
+  String get observationClickToPlaceHelp => '开启后点击工具栏“观察”会先显示跟随鼠标的观察线，左键固定位置。';
   String get densitySparse => '稀疏';
   String get densityNormal => '普通';
   String get densityDense => '密集';

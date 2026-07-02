@@ -81,6 +81,7 @@ typedef _PlotToolbarSelection =
       double randomFrequency,
       bool canUndoZoom,
       bool vCursorEnabled,
+      bool observationPlacementActive,
       bool boxZoomEnabled,
       bool xMeasurementEnabled,
       bool yMeasurementEnabled,
@@ -234,6 +235,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       randomFrequency: vm.randomFrequency,
       canUndoZoom: vm.canUndoZoom,
       vCursorEnabled: vm.vCursorEnabled,
+      observationPlacementActive: vm.observationPlacementActive,
       boxZoomEnabled: vm.boxZoomEnabled,
       xMeasurementEnabled: vm.xMeasurementEnabled,
       yMeasurementEnabled: vm.yMeasurementEnabled,
@@ -864,20 +866,39 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ),
         ),
         Tooltip(
-          message: AppStrings.plot.addObservation,
+          message:
+              vm.observationPlacementActive
+                  ? AppStrings.plot.placeObservation
+                  : AppStrings.plot.addObservation,
           child: TextButton.icon(
             onPressed: () {
               if (vm.dataPoints.isEmpty) return;
-              vm.addObservation();
+              if (vm.observationClickToPlace) {
+                vm.startObservationPlacement();
+              } else {
+                vm.addObservation();
+              }
             },
-            icon: const Icon(Icons.add_location_alt, size: 18),
+            icon: Icon(
+              Icons.add_location_alt,
+              size: 18,
+              color: vm.observationPlacementActive ? Colors.amber : null,
+            ),
             label: Text(
               AppStrings.plot.observation,
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'SarasaUiSC',
+                color: vm.observationPlacementActive ? Colors.amber : null,
+              ),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
+              backgroundColor:
+                  vm.observationPlacementActive
+                      ? Colors.amber.withValues(alpha: 0.1)
+                      : null,
             ),
           ),
         ),
@@ -1678,6 +1699,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               observations: vm.observations,
               onObservationDrag: (index, x) => vm.updateObservation(index, x),
               onObservationDelete: (index) => vm.removeObservation(index),
+              observationPlacementActive: vm.observationPlacementActive,
+              onObservationPlacementHover: vm.updateObservationPlacement,
+              onObservationPlacementCommit: vm.commitObservationPlacement,
               onViewportChanged:
                   (viewport, {fromDrag = false}) =>
                       vm.updateViewport(viewport, fromDrag: fromDrag),
@@ -1831,6 +1855,55 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           child: _buildObservationTooltip(i, observation, vm),
         ),
       );
+    }
+
+    final preview = vm.observationPreview;
+    if (vm.observationPlacementActive && preview != null) {
+      final sx = viewport.dataToScreenX(preview.x, size.width);
+      if (sx >= plotLeft && sx <= plotRight) {
+        widgets.addAll([
+          Positioned(
+            left: sx - 5,
+            top: plotTop,
+            bottom: viewport.marginBottom,
+            child: IgnorePointer(
+              child: SizedBox(
+                width: 10,
+                child: Center(
+                  child: Container(
+                    width: 1,
+                    color: Colors.amber.withValues(alpha: 0.65),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: (sx - 22).clamp(plotLeft, plotRight - 44).toDouble(),
+            top: plotTop - 24,
+            child: IgnorePointer(
+              child: Container(
+                width: 44,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: Colors.black54, width: 0.5),
+                ),
+                child: Text(
+                  'O${vm.observations.length + 1}',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontSize: _plotFontSize(vm, 10),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ]);
+      }
     }
 
     return widgets;
@@ -2821,6 +2894,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 onPressed:
                                     () => applyFloatingPanelOpacity(setState),
                                 child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.observationClickToPlace,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    Text(
+                                      AppStrings
+                                          .plot
+                                          .observationClickToPlaceHelp,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.observationClickToPlace,
+                                onChanged: (value) {
+                                  vm.setObservationClickToPlace(value);
+                                  setState(() {});
+                                },
                               ),
                             ],
                           ),

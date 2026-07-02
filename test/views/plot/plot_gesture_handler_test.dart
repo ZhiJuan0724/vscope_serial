@@ -196,4 +196,54 @@ void main() {
     expect(viewport.xRange, lessThan(initialViewport.xRange));
     expect(viewport.yRange, lessThan(initialViewport.yRange));
   });
+
+  testWidgets('观察定位模式悬停预览并由左键提交', (tester) async {
+    double? hoverX;
+    double? commitX;
+    var viewportChanged = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {
+                viewportChanged = true;
+              },
+              onCursorChanged: (_) {},
+              observationPlacementActive: true,
+              onObservationPlacementHover: (x) => hoverX = x,
+              onObservationPlacementCommit: (x) => commitX = x,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final hoverPosition = topLeft + const Offset(320, 240);
+    final commitPosition = topLeft + const Offset(480, 240);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: hoverPosition);
+    await gesture.moveTo(hoverPosition + const Offset(1, 0));
+    await tester.pump();
+
+    expect(hoverX, isNotNull);
+    final initialHoverX = hoverX!;
+
+    await gesture.moveTo(commitPosition);
+    await gesture.down(commitPosition);
+    await gesture.up();
+    await tester.pump();
+
+    expect(commitX, isNotNull);
+    expect(commitX, greaterThan(initialHoverX));
+    expect(commitX, hoverX);
+    expect(viewportChanged, isFalse);
+  });
 }

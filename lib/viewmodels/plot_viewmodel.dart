@@ -240,6 +240,9 @@ class PlotViewModel extends BaseViewModel {
   /// 绘图区悬浮窗不透明度。
   double _floatingPanelOpacity = 0.85;
 
+  /// 添加观察时是否先跟随鼠标，再由左键固定。
+  bool _observationClickToPlace = false;
+
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
   bool _snapHighlightEnabled = true;
@@ -281,6 +284,8 @@ class PlotViewModel extends BaseViewModel {
   CursorState? _cursor;
 
   final List<CursorState> _observations = [];
+  bool _observationPlacementActive = false;
+  CursorState? _observationPreview;
 
   /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
@@ -451,6 +456,7 @@ class PlotViewModel extends BaseViewModel {
     _gridDensity = settings.gridDensity;
     _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
     _floatingPanelOpacity = settings.floatingPanelOpacity.clamp(0.0, 1.0);
+    _observationClickToPlace = settings.observationClickToPlace;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
@@ -529,6 +535,7 @@ class PlotViewModel extends BaseViewModel {
     settings.gridDensity = _gridDensity;
     settings.plotBackground = _plotBackground;
     settings.floatingPanelOpacity = _floatingPanelOpacity;
+    settings.observationClickToPlace = _observationClickToPlace;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -582,6 +589,7 @@ class PlotViewModel extends BaseViewModel {
   String get gridDensity => _gridDensity;
   String get plotBackground => _plotBackground;
   double get floatingPanelOpacity => _floatingPanelOpacity;
+  bool get observationClickToPlace => _observationClickToPlace;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
@@ -684,6 +692,8 @@ class PlotViewModel extends BaseViewModel {
   String get snapHighlightColorMode => _snapHighlightColorMode;
   CursorState? get cursor => _cursor;
   List<CursorState> get observations => List.unmodifiable(_observations);
+  bool get observationPlacementActive => _observationPlacementActive;
+  CursorState? get observationPreview => _observationPreview;
   List<SnapHighlightPoint> get snapHighlights {
     if (!_snapHighlightEnabled) return const [];
     return [
@@ -3217,6 +3227,18 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setObservationClickToPlace(bool value) {
+    if (_observationClickToPlace == value) return;
+    _observationClickToPlace = value;
+    if (!value) {
+      _observationPlacementActive = false;
+      _observationPreview = null;
+      _markOverlayChanged();
+    }
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   void _applyPlotBackgroundPalette() {
     for (final channel in channels) {
       channel.color = ChannelConfig.colorForBackground(
@@ -3363,6 +3385,30 @@ class PlotViewModel extends BaseViewModel {
             ? cursorX
             : viewport.xMin + viewport.xRange / 2;
     _observations.add(_buildCursorAtX(sourceX));
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void startObservationPlacement() {
+    if (displayDataPoints.isEmpty) return;
+    _observationPlacementActive = true;
+    _observationPreview = null;
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservationPlacement(double x) {
+    if (!_observationPlacementActive) return;
+    _observationPreview = _buildCursorAtX(x);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void commitObservationPlacement(double x) {
+    if (!_observationPlacementActive) return;
+    _observations.add(_buildCursorAtX(x));
+    _observationPlacementActive = false;
+    _observationPreview = null;
     _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
@@ -3562,6 +3608,8 @@ class PlotViewModel extends BaseViewModel {
   void _resetCursorPositions() {
     _cursor = null;
     _observations.clear();
+    _observationPlacementActive = false;
+    _observationPreview = null;
     _xMeasurementEnabled = false;
     _yMeasurementEnabled = false;
     _statsEnabled = false;
