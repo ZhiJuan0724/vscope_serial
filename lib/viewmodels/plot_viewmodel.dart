@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../core/utils/math_expression.dart';
@@ -197,6 +198,7 @@ class PlotViewModel extends BaseViewModel {
   final List<MathChannelConfig> mathChannels =
       MathChannelConfig.createDefaults();
   final Map<int, MathExpression> _compiledMathExpressions = {};
+  int _nextOffsetBindingGroupId = 1;
   List<PlotDataPoint>? _cachedDisplayDataPoints;
   String? _cachedDisplayDataKey;
   List<ChannelConfig>? _cachedDisplayChannels;
@@ -610,9 +612,9 @@ class PlotViewModel extends BaseViewModel {
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
     final key = [
       for (final channel in channels.take(rawCount))
-        '${channel.visible}:${channel.alias}:${channel.color.toARGB32()}:${channel.showLine}:${channel.pointSize}:${channel.lineWidth}:${channel.yOffset}:${channel.offsetEnabled}:${channel.yScale}',
+        '${channel.visible}:${channel.alias}:${channel.color.toARGB32()}:${channel.showLine}:${channel.pointSize}:${channel.lineWidth}:${channel.yOffset}:${channel.offsetEnabled}:${channel.yScale}:${channel.offsetBindingGroupId}',
       for (final channel in mathChannels)
-        '${channel.enabled}:${channel.expression}:${channel.display.visible}:${channel.display.color.toARGB32()}:${channel.display.showLine}:${channel.display.pointSize}:${channel.display.lineWidth}:${channel.display.yOffset}:${channel.display.offsetEnabled}:${channel.display.yScale}',
+        '${channel.enabled}:${channel.expression}:${channel.display.visible}:${channel.display.color.toARGB32()}:${channel.display.showLine}:${channel.display.pointSize}:${channel.display.lineWidth}:${channel.display.yOffset}:${channel.display.offsetEnabled}:${channel.display.yScale}:${channel.display.offsetBindingGroupId}',
     ].join('|');
     if (_cachedDisplayChannels != null && _cachedDisplayChannelKey == key) {
       return _cachedDisplayChannels!;
@@ -690,6 +692,52 @@ class PlotViewModel extends BaseViewModel {
   bool get antiAliasEnabled => _antiAliasEnabled;
   bool get snapHighlightEnabled => _snapHighlightEnabled;
   double get snapHighlightDiameter => _snapHighlightDiameter;
+
+  ChannelConfig? displayChannelByIndex(int index) {
+    for (final channel in displayChannels) {
+      if (channel.index == index) return channel;
+    }
+    return null;
+  }
+
+  String displayChannelName(int index) {
+    final channel = displayChannelByIndex(index);
+    if (channel == null) return 'Ch$index';
+    if (channel.alias.isNotEmpty) return channel.alias;
+    return index >= 16 ? 'Math${index - 15}' : 'Ch$index';
+  }
+
+  bool canConfigureOffsetBinding(int index) {
+    final channel = displayChannelByIndex(index);
+    return channel != null && channel.visible && channel.offsetEnabled;
+  }
+
+  List<ChannelConfig> offsetBindingCandidates(int index) {
+    return displayChannels
+        .where(
+          (channel) =>
+              channel.index != index &&
+              channel.visible &&
+              channel.offsetEnabled,
+        )
+        .toList(growable: false);
+  }
+
+  List<int> offsetBindingMemberIndices(int index) {
+    final channel = displayChannelByIndex(index);
+    final groupId = channel?.offsetBindingGroupId;
+    if (groupId == null) return const [];
+    return displayChannels
+        .where(
+          (member) =>
+              member.offsetBindingGroupId == groupId &&
+              member.visible &&
+              member.offsetEnabled,
+        )
+        .map((member) => member.index)
+        .toList(growable: false);
+  }
+
   String get snapHighlightColorMode => _snapHighlightColorMode;
   CursorState? get cursor => _cursor;
   List<CursorState> get observations => List.unmodifiable(_observations);
@@ -1138,11 +1186,10 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 数据源控制 ==========
   /// 切换随机数据源开关
-  ///
-  /// 如果正在绘图，会自动重启数据源以应用变更。
   /// 同时同步更新 serialService 的随机源状态。
   void setUseRandomSource(bool value) {
     if (_useRandomSource == value) return;
+    if (!_canModifyInputConfiguration()) return;
     _useRandomSource = value;
     _sourceConfig.useRandom = value && _parserType == ParserType.fireWater;
     _sourceConfig.useSerial = serialService.isConnected;
@@ -1166,10 +1213,6 @@ class PlotViewModel extends BaseViewModel {
       showStatusMessage(value ? '随机源已启用' : '随机源已关闭');
     }
 
-    // 如果正在绘图，重启数据源
-    if (_isPlotting) {
-      _restartPlotting();
-    }
     Future.microtask(() => notifyListeners());
   }
 
@@ -1197,11 +1240,11 @@ class PlotViewModel extends BaseViewModel {
   // ========== 解析器控制 ==========
   /// 切换解析器类型（FireWater / 固定帧 / 众邦电控）
   ///
-  /// 如果正在绘图，会自动重启以应用新解析器。
   /// 注意：随机数据源仅适用于 FireWater 协议，切换到其他解析器时保留开关
   /// 状态，但不会把随机源接入当前解析链。
   void setParserType(ParserType type) {
     if (_parserType == type) return;
+    if (!_canModifyInputConfiguration()) return;
     final oldType = _parserType;
     _parserType = type;
     _markChannelConfigChanged();
@@ -1236,15 +1279,13 @@ class PlotViewModel extends BaseViewModel {
     }
     settings.save();
 
-    if (_isPlotting) {
-      _restartPlotting();
-    }
     Future.microtask(() => notifyListeners());
   }
 
   void setSendProtocolType(SendProtocolType type) {
     if (type == SendProtocolType.zobowBuiltIn) return;
     if (_sendProtocolType == type) return;
+    if (!_canModifyInputConfiguration()) return;
     final oldType = _sendProtocolType;
     _sendProtocolType = type;
     _markChannelConfigChanged();
@@ -1277,6 +1318,7 @@ class PlotViewModel extends BaseViewModel {
 
   void setRProtocolLooseChannelSettings(bool value) {
     if (_rProtocolLooseChannelSettings == value) return;
+    if (!_canModifyInputConfiguration()) return;
     _rProtocolLooseChannelSettings = value;
     _saveSettings();
     AppLogger().info('r协议宽松通道设置${value ? '启用' : '关闭'}', category: 'PLOT');
@@ -1336,6 +1378,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 同时更新随机数据源的通道数以匹配 FireWater 配置。
   void updateParserConfig(ParserConfig config) {
+    if (!_canModifyInputConfiguration()) return;
     if (config.type == ParserType.fixedFrame) {
       final error = config.fixedFrameValidationError;
       if (error != null) {
@@ -1399,10 +1442,14 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    if (_isPlotting) {
-      _restartPlotting();
-    }
     Future.microtask(() => notifyListeners());
+  }
+
+  bool _canModifyInputConfiguration() {
+    if (!_isPlotting && !_isStopping) return true;
+    AppLogger().info('绘图运行中，已拦截输入与协议配置修改', category: 'PLOT');
+    showStatusMessage(AppStrings.plot.inputConfigurationDisabledWhilePlotting);
+    return false;
   }
 
   String _fixedFrameTypeLayoutKey(ParserConfig config) {
@@ -2735,7 +2782,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
-    final valuesByChannel = <int, (double, double)>{};
+    final valuesByTarget = <int, (double, double)>{};
+    final representativeByTarget = <int, int>{};
+    final groupIdByTarget = <int, int?>{};
     final currentChannels = displayChannels;
     final activeLimit = displayActiveChannelCount;
     for (final point in points) {
@@ -2750,11 +2799,15 @@ class PlotViewModel extends BaseViewModel {
         if (!channel.visible || !channel.offsetEnabled) continue;
         final value = point.values[i];
         if (!value.isFinite) continue;
-        final current = valuesByChannel[i];
+        final groupId = channel.offsetBindingGroupId;
+        final targetKey = groupId ?? (-channel.index - 1);
+        representativeByTarget.putIfAbsent(targetKey, () => i);
+        groupIdByTarget.putIfAbsent(targetKey, () => groupId);
+        final current = valuesByTarget[targetKey];
         if (current == null) {
-          valuesByChannel[i] = (value, value);
+          valuesByTarget[targetKey] = (value, value);
         } else {
-          valuesByChannel[i] = (
+          valuesByTarget[targetKey] = (
             value < current.$1 ? value : current.$1,
             value > current.$2 ? value : current.$2,
           );
@@ -2769,17 +2822,33 @@ class PlotViewModel extends BaseViewModel {
     final targetRange = targetMax - targetMin;
     if (targetRange <= 0) return false;
 
-    for (final entry in valuesByChannel.entries) {
+    for (final entry in valuesByTarget.entries) {
       final minY = entry.value.$1;
       final maxY = entry.value.$2;
-
-      final channel = currentChannels[entry.key];
+      final channelIndex = representativeByTarget[entry.key];
+      if (channelIndex == null || channelIndex >= currentChannels.length) {
+        continue;
+      }
+      final groupId = groupIdByTarget[entry.key];
+      final channel = currentChannels[channelIndex];
+      late final double nextScale;
+      late final double nextOffset;
       if (minY == maxY) {
-        channel.yScale = 1.0;
-        channel.yOffset = (targetMin + targetMax) / 2 - minY;
+        nextScale = 1.0;
+        nextOffset = (targetMin + targetMax) / 2 - minY;
       } else {
-        channel.yScale = targetRange / (maxY - minY);
-        channel.yOffset = targetMin - minY * channel.yScale;
+        nextScale = targetRange / (maxY - minY);
+        nextOffset = targetMin - minY * nextScale;
+      }
+      if (groupId == null) {
+        channel.yScale = nextScale;
+        channel.yOffset = nextOffset;
+      } else {
+        _setOffsetBindingGroupTransform(
+          groupId,
+          scale: nextScale,
+          offset: nextOffset,
+        );
       }
       changed = true;
     }
@@ -2809,10 +2878,114 @@ class PlotViewModel extends BaseViewModel {
   }
 
   // ========== 通道控制 ==========
+  void setOffsetBindingGroup(int index, Set<int> selectedIndices) {
+    final primary = displayChannelByIndex(index);
+    if (primary == null || !primary.visible || !primary.offsetEnabled) return;
+
+    final selected = <int>{index};
+    for (final candidate in offsetBindingCandidates(index)) {
+      if (selectedIndices.contains(candidate.index)) {
+        selected.add(candidate.index);
+      }
+    }
+
+    if (selected.length < 2) {
+      clearOffsetBinding(index);
+      return;
+    }
+
+    final oldPrimaryGroupId = primary.offsetBindingGroupId;
+    final newGroupId = oldPrimaryGroupId ?? _nextOffsetBindingGroupId++;
+    final primaryScale = primary.yScale;
+    final primaryOffset = primary.yOffset;
+
+    for (final channel in displayChannels) {
+      final wasInPrimaryGroup =
+          oldPrimaryGroupId != null &&
+          channel.offsetBindingGroupId == oldPrimaryGroupId;
+      if (selected.contains(channel.index)) {
+        channel.offsetBindingGroupId = newGroupId;
+        channel.yScale = primaryScale;
+        channel.yOffset = primaryOffset;
+      } else if (wasInPrimaryGroup) {
+        channel.offsetBindingGroupId = null;
+      }
+    }
+
+    _cleanupOffsetBindingGroups();
+    _markChannelConfigChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void clearOffsetBinding(int index) {
+    final channel = displayChannelByIndex(index);
+    final groupId = channel?.offsetBindingGroupId;
+    if (groupId == null) return;
+    for (final member in displayChannels) {
+      if (member.offsetBindingGroupId == groupId) {
+        member.offsetBindingGroupId = null;
+      }
+    }
+    _markChannelConfigChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _cleanupOffsetBindingGroups() {
+    final counts = <int, int>{};
+    for (final channel in displayChannels) {
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId == null) continue;
+      if (!channel.visible || !channel.offsetEnabled) {
+        channel.offsetBindingGroupId = null;
+        continue;
+      }
+      counts[groupId] = (counts[groupId] ?? 0) + 1;
+    }
+    for (final channel in displayChannels) {
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId != null && (counts[groupId] ?? 0) < 2) {
+        channel.offsetBindingGroupId = null;
+      }
+    }
+  }
+
+  void _setOffsetBindingGroupOffset(int groupId, double offset) {
+    for (final channel in displayChannels) {
+      if (channel.offsetBindingGroupId == groupId) {
+        channel.yOffset = offset;
+      }
+    }
+  }
+
+  void _setOffsetBindingGroupScale(int groupId, double scale) {
+    for (final channel in displayChannels) {
+      if (channel.offsetBindingGroupId == groupId) {
+        channel.yScale = scale;
+      }
+    }
+  }
+
+  void _setOffsetBindingGroupTransform(
+    int groupId, {
+    required double scale,
+    required double offset,
+  }) {
+    for (final channel in displayChannels) {
+      if (channel.offsetBindingGroupId == groupId) {
+        channel.yScale = scale;
+        channel.yOffset = offset;
+      }
+    }
+  }
+
   /// 设置通道可见性
   void setChannelVisible(int index, bool visible) {
     if (index < 0 || index >= channels.length) return;
     channels[index].visible = visible;
+    if (!visible) {
+      channels[index].offsetBindingGroupId = null;
+      _cleanupOffsetBindingGroups();
+    }
     _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -2853,10 +3026,13 @@ class PlotViewModel extends BaseViewModel {
   void setAllChannelsVisible(bool visible) {
     for (final ch in channels) {
       ch.visible = visible;
+      if (!visible) ch.offsetBindingGroupId = null;
     }
     for (final channel in mathChannels) {
       if (channel.enabled) channel.display.visible = visible;
+      if (!visible) channel.display.offsetBindingGroupId = null;
     }
+    if (!visible) _cleanupOffsetBindingGroups();
     _markChannelConfigChanged();
     _invalidateDisplayCaches();
     Future.microtask(() => notifyListeners());
@@ -2915,6 +3091,11 @@ class PlotViewModel extends BaseViewModel {
     mathChannels[index].display = display.copyWith(
       alias: mathChannels[index].name,
     );
+    if (!mathChannels[index].display.visible ||
+        !mathChannels[index].display.offsetEnabled) {
+      mathChannels[index].display.offsetBindingGroupId = null;
+      _cleanupOffsetBindingGroups();
+    }
     _invalidateDisplayChannelCaches();
     _markChannelConfigChanged();
     _saveSettings();
@@ -2924,7 +3105,9 @@ class PlotViewModel extends BaseViewModel {
   void disableMathChannel(int index) {
     if (index < 0 || index >= mathChannels.length) return;
     final old = mathChannels[index];
+    old.display.offsetBindingGroupId = null;
     mathChannels[index] = MathChannelConfig(index: old.index);
+    _cleanupOffsetBindingGroups();
     _compiledMathExpressions.remove(index);
     _invalidateDisplayCaches();
     _rebuildObservedRawValueMetadata();
@@ -2952,6 +3135,8 @@ class PlotViewModel extends BaseViewModel {
     for (int i = 0; i < mathChannels.length; i++) {
       mathChannels[i] = MathChannelConfig(index: i);
     }
+    _invalidateDisplayCaches();
+    _cleanupOffsetBindingGroups();
     _compiledMathExpressions.clear();
     _sendProtocolConfig.rChannelAddresses = List.filled(
       SendProtocolConfig.maxChannelCount,
@@ -2969,7 +3154,6 @@ class PlotViewModel extends BaseViewModel {
       SendProtocolConfig.maxChannelCount,
       DataType.uint16,
     );
-    _invalidateDisplayCaches();
     _rebuildObservedRawValueMetadata();
     _refreshSnapHighlightColors();
     _markChannelConfigChanged();
@@ -2991,14 +3175,24 @@ class PlotViewModel extends BaseViewModel {
   void setChannelYOffset(int index, double offset) {
     if (index >= 16 && index < 16 + mathChannels.length) {
       final mathChannel = mathChannels[index - 16];
-      mathChannel.display.yOffset = offset;
+      final groupId = mathChannel.display.offsetBindingGroupId;
+      if (groupId != null) {
+        _setOffsetBindingGroupOffset(groupId, offset);
+      } else {
+        mathChannel.display.yOffset = offset;
+      }
       _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
       Future.microtask(() => notifyListeners());
       return;
     }
     if (index < 0 || index >= channels.length) return;
-    channels[index].yOffset = offset;
+    final groupId = channels[index].offsetBindingGroupId;
+    if (groupId != null) {
+      _setOffsetBindingGroupOffset(groupId, offset);
+    } else {
+      channels[index].yOffset = offset;
+    }
     _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -3011,6 +3205,8 @@ class PlotViewModel extends BaseViewModel {
       // 关闭偏置时，偏移和缩放都归位
       channels[index].yOffset = 0;
       channels[index].yScale = 1.0;
+      channels[index].offsetBindingGroupId = null;
+      _cleanupOffsetBindingGroups();
     }
     _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
@@ -3019,7 +3215,12 @@ class PlotViewModel extends BaseViewModel {
   /// 设置通道 Y 轴缩放
   void setChannelYScale(int index, double scale) {
     if (index < 0 || index >= channels.length) return;
-    channels[index].yScale = scale;
+    final groupId = channels[index].offsetBindingGroupId;
+    if (groupId != null) {
+      _setOffsetBindingGroupScale(groupId, scale);
+    } else {
+      channels[index].yScale = scale;
+    }
     _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -3028,7 +3229,13 @@ class PlotViewModel extends BaseViewModel {
   void zoomChannelYScale(int index, double scaleDelta) {
     if (index >= 16 && index < 16 + mathChannels.length) {
       final display = mathChannels[index - 16].display;
-      display.yScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
+      final newScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
+      final groupId = display.offsetBindingGroupId;
+      if (groupId != null) {
+        _setOffsetBindingGroupScale(groupId, newScale);
+      } else {
+        display.yScale = newScale;
+      }
       _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
       Future.microtask(() => notifyListeners());
@@ -3036,7 +3243,12 @@ class PlotViewModel extends BaseViewModel {
     }
     if (index < 0 || index >= channels.length) return;
     final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
-    channels[index].yScale = newScale;
+    final groupId = channels[index].offsetBindingGroupId;
+    if (groupId != null) {
+      _setOffsetBindingGroupScale(groupId, newScale);
+    } else {
+      channels[index].yScale = newScale;
+    }
     _markChannelConfigChanged();
     Future.microtask(() => notifyListeners());
   }

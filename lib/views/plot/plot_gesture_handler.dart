@@ -791,9 +791,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final left = PlotViewport().marginLeft;
 
-    for (final ch in widget.channels.take(widget.activeChannelCount)) {
-      if (!ch.visible || !ch.offsetEnabled) continue;
-
+    for (final ch in _visibleOffsetAxisChannels()) {
       // 计算标签位置（与 PlotLayerPainter 中一致）
       final zeroDataY = 0.0 * ch.yScale + ch.yOffset;
       final zeroY = widget.viewport.dataToScreenY(zeroDataY, size.height);
@@ -804,7 +802,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         continue;
       }
 
-      final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+      final displayName = _offsetAxisLabel(ch);
       final textPainter = TextPainter(
         text: TextSpan(
           text: displayName,
@@ -846,13 +844,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final left = PlotViewport().marginLeft;
     final right = left + plotW;
 
-    // 收集可见且开启偏移的通道
-    final offsetChannels = <ChannelConfig>[];
-    for (final ch in widget.channels.take(widget.activeChannelCount)) {
-      if (ch.visible && ch.offsetEnabled) {
-        offsetChannels.add(ch);
-      }
-    }
+    // 收集可见且开启偏移的通道。绑定组只命中一列。
+    final offsetChannels = _visibleOffsetAxisChannels();
 
     var axisX = right;
     final widths = widget.viewport.offsetAxisColumnWidths;
@@ -874,6 +867,41 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     }
 
     return null;
+  }
+
+  List<ChannelConfig> _visibleOffsetAxisChannels() {
+    final result = <ChannelConfig>[];
+    final seenGroups = <int>{};
+    for (final channel in widget.channels.take(widget.activeChannelCount)) {
+      if (!channel.visible || !channel.offsetEnabled) continue;
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId != null && !seenGroups.add(groupId)) continue;
+      result.add(channel);
+    }
+    return result;
+  }
+
+  String _offsetAxisLabel(ChannelConfig channel) {
+    final groupId = channel.offsetBindingGroupId;
+    if (groupId == null) return _shortChannelName(channel);
+    final names = widget.channels
+        .take(widget.activeChannelCount)
+        .where(
+          (member) =>
+              member.visible &&
+              member.offsetEnabled &&
+              member.offsetBindingGroupId == groupId,
+        )
+        .map(_shortChannelName)
+        .toList(growable: false);
+    if (names.isEmpty) return _shortChannelName(channel);
+    return names.join('+');
+  }
+
+  String _shortChannelName(ChannelConfig channel) {
+    return channel.index >= 16
+        ? 'Math${channel.index - 15}'
+        : 'Ch${channel.index}';
   }
 
   /// 处理指针移动（拖拽平移、框选、测量线拖动）

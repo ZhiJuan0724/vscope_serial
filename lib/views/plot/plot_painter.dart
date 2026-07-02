@@ -279,9 +279,7 @@ class PlotLayerPainter extends CustomPainter {
     final zeroTextStyle = textStyle.copyWith(fontWeight: FontWeight.bold);
     final widths = <double>[];
 
-    for (final ch in channels.take(activeChannelCount)) {
-      if (!ch.visible || !ch.offsetEnabled) continue;
-
+    for (final ch in _visibleOffsetAxisChannels(channels, activeChannelCount)) {
       var maxTextWidth = 0.0;
       final startValue = (viewport.yMin / step).floor() * step;
       final drawnValues = <double>{};
@@ -326,6 +324,23 @@ class PlotLayerPainter extends CustomPainter {
     }
 
     return widths;
+  }
+
+  static List<ChannelConfig> _visibleOffsetAxisChannels(
+    List<ChannelConfig> channels,
+    int activeChannelCount,
+  ) {
+    final result = <ChannelConfig>[];
+    final seenGroups = <int>{};
+    for (final channel in channels.take(activeChannelCount)) {
+      if (!channel.visible || !channel.offsetEnabled) continue;
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId != null) {
+        if (!seenGroups.add(groupId)) continue;
+      }
+      result.add(channel);
+    }
+    return result;
   }
 
   /// 判断两个视口是否相等（用于重绘判断）
@@ -1198,13 +1213,11 @@ class PlotLayerPainter extends CustomPainter {
     final left = PlotViewport().marginLeft;
     final right = left + plotW;
 
-    // 收集所有可见且开启偏移的通道，分配列索引
-    final offsetChannels = <ChannelConfig>[];
-    for (final ch in channels.take(activeChannelCount)) {
-      if (ch.visible && ch.offsetEnabled) {
-        offsetChannels.add(ch);
-      }
-    }
+    // 收集所有可见且开启偏移的通道，分配列索引。绑定组只占用一列。
+    final offsetChannels = _visibleOffsetAxisChannels(
+      channels,
+      activeChannelCount,
+    );
 
     var axisX = right;
     for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
@@ -1236,8 +1249,8 @@ class PlotLayerPainter extends CustomPainter {
           x += dashLen + gapLen;
         }
 
-        // 绘制左侧标签。完整通道名称放到图例中，这里只保留短编号。
-        final displayName = 'Ch${ch.index}';
+        // 绘制左侧标签。绑定组显示组名，完整通道名称放到图例中。
+        final displayName = _offsetAxisLabel(ch);
         final labelStyle = TextStyle(
           color:
               channelColor.computeLuminance() > 0.5
@@ -1280,6 +1293,29 @@ class PlotLayerPainter extends CustomPainter {
       _drawChannelYAxis(canvas, size, ch, axisX);
       axisX += _offsetAxisColumnWidth(colIndex);
     }
+  }
+
+  String _offsetAxisLabel(ChannelConfig channel) {
+    final groupId = channel.offsetBindingGroupId;
+    if (groupId == null) return _shortChannelName(channel);
+    final names = channels
+        .take(activeChannelCount)
+        .where(
+          (member) =>
+              member.visible &&
+              member.offsetEnabled &&
+              member.offsetBindingGroupId == groupId,
+        )
+        .map(_shortChannelName)
+        .toList(growable: false);
+    if (names.isEmpty) return _shortChannelName(channel);
+    return names.join('+');
+  }
+
+  String _shortChannelName(ChannelConfig channel) {
+    return channel.index >= 16
+        ? 'Math${channel.index - 15}'
+        : 'Ch${channel.index}';
   }
 
   double _offsetAxisColumnWidth(int colIndex) {
@@ -1445,7 +1481,8 @@ class PlotLayerPainter extends CustomPainter {
         rows.add(
           _CursorValueRow(
             index: i,
-            text: '$displayName: ${formatPlotValue(values[i])}',
+            name: displayName,
+            value: formatPlotValue(values[i]),
           ),
         );
       }
@@ -1457,10 +1494,23 @@ class PlotLayerPainter extends CustomPainter {
     final lineHeight = _fontSize(12) + 8;
     final headerHeight = _fontSize(12) + 10;
     const padding = 8.0;
-    final maxLabelWidth = rows.fold<double>(120, (width, row) {
-      return math.max(width, _measureTextWidth(row.text, valueStyle));
+    const markerAndGapWidth = 12.0;
+    final separatorWidth = _measureRawTextWidth(': ', valueStyle);
+    final maxValueWidth = rows.fold<double>(0, (width, row) {
+      return math.max(width, _measureRawTextWidth(row.value, valueStyle));
     });
-    final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
+    final maxNameWidth = rows.fold<double>(0, (width, row) {
+      return math.max(width, _measureRawTextWidth(row.name, valueStyle));
+    });
+    final desiredContentWidth =
+        markerAndGapWidth + maxNameWidth + separatorWidth + maxValueWidth;
+    final tooltipWidth =
+        math
+            .min(
+              size.width - 10,
+              math.max(120, desiredContentWidth + padding * 2),
+            )
+            .toDouble();
     final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
     // 提示框位置（默认在鼠标右侧，超出边界时放到左侧）。
@@ -1547,11 +1597,40 @@ class PlotLayerPainter extends CustomPainter {
         fontSize: _fontSize(12),
         fontFamily: 'SarasaUiSC',
       );
-      _drawText(
+      final valuePainter = TextPainter(
+        text: TextSpan(text: rowValue.value, style: rowStyle),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+
+      final separatorPainter = TextPainter(
+        text: TextSpan(text: ': ', style: rowStyle),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+
+      final nameX = tooltipX + padding + markerAndGapWidth;
+      final rowRight = tooltipX + tooltipWidth - padding;
+      final availableNameWidth = math.max(
+        0.0,
+        rowRight - nameX - separatorPainter.width - valuePainter.width,
+      );
+      var paintedNameWidth = 0.0;
+      if (availableNameWidth > 0) {
+        final namePainter = TextPainter(
+          text: TextSpan(text: rowValue.name, style: rowStyle),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+          ellipsis: '...',
+        )..layout(maxWidth: availableNameWidth);
+        namePainter.paint(canvas, Offset(nameX, y));
+        paintedNameWidth = namePainter.width;
+      }
+      final separatorX = nameX + paintedNameWidth;
+      separatorPainter.paint(canvas, Offset(separatorX, y));
+      valuePainter.paint(
         canvas,
-        rowValue.text,
-        Offset(tooltipX + padding + 12, y),
-        rowStyle,
+        Offset(separatorX + separatorPainter.width, y),
       );
 
       row++;
@@ -1610,14 +1689,6 @@ class PlotLayerPainter extends CustomPainter {
       canvas,
       Offset(axisX + tickLength + textGap, y - textPainter.height / 2),
     );
-  }
-
-  double _measureTextWidth(String text, TextStyle style) {
-    final textPainter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return textPainter.width + 12;
   }
 
   static double _measureRawTextWidth(String text, TextStyle style) {
@@ -2102,7 +2173,12 @@ class _BucketPoint {
 
 class _CursorValueRow {
   final int index;
-  final String text;
+  final String name;
+  final String value;
 
-  const _CursorValueRow({required this.index, required this.text});
+  const _CursorValueRow({
+    required this.index,
+    required this.name,
+    required this.value,
+  });
 }

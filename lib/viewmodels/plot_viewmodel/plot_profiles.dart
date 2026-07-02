@@ -6,6 +6,7 @@ extension PlotViewModelProfiles on PlotViewModel {
 
   /// 选择配置文件
   void selectZobowProfile(String? profileId) {
+    if (!_canModifyInputConfiguration()) return;
     _profileService.selectProfile(profileId);
     _profileRevision++;
     // 保存到设置
@@ -21,6 +22,7 @@ extension PlotViewModelProfiles on PlotViewModel {
 
   /// 创建新配置文件
   Future<AddressConfigProfile?> createZobowProfile(String name) async {
+    if (!_canModifyInputConfiguration()) return null;
     final profile = await _profileService.createProfile(name);
     _profileRevision++;
     AppLogger().info('新增Zobow配置：${profile.name}', category: 'PLOT');
@@ -30,6 +32,7 @@ extension PlotViewModelProfiles on PlotViewModel {
 
   /// 更新配置文件
   Future<void> updateZobowProfile(AddressConfigProfile profile) async {
+    if (!_canModifyInputConfiguration()) return;
     await _profileService.updateProfile(profile);
     _profileRevision++;
     AppLogger().info('更新Zobow配置：${profile.name}', category: 'PLOT');
@@ -38,6 +41,7 @@ extension PlotViewModelProfiles on PlotViewModel {
 
   /// 删除配置文件
   Future<void> deleteZobowProfile(String id) async {
+    if (!_canModifyInputConfiguration()) return;
     String? name;
     for (final profile in _profileService.profiles) {
       if (profile.id == id) {
@@ -79,6 +83,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   void selectRProfile(String? profileId) {
+    if (!_canModifyInputConfiguration()) return;
     _rProfileService.selectProfile(profileId);
     _profileRevision++;
     _saveSettings();
@@ -90,6 +95,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   Future<AddressConfigProfile?> createRProfile(String name) async {
+    if (!_canModifyInputConfiguration()) return null;
     final profile = await _rProfileService.createProfile(name);
     _profileRevision++;
     AppLogger().info('新增r协议配置：${profile.name}', category: 'PLOT');
@@ -98,6 +104,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   Future<void> updateRProfile(AddressConfigProfile profile) async {
+    if (!_canModifyInputConfiguration()) return;
     await _rProfileService.updateProfile(profile);
     _profileRevision++;
     AppLogger().info('更新r协议配置：${profile.name}', category: 'PLOT');
@@ -105,6 +112,7 @@ extension PlotViewModelProfiles on PlotViewModel {
   }
 
   Future<void> deleteRProfile(String id) async {
+    if (!_canModifyInputConfiguration()) return;
     String? name;
     for (final profile in _rProfileService.profiles) {
       if (profile.id == id) {

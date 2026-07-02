@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+const Object _unset = Object();
+
 /// 数据类型枚举
 enum DataType {
   uint8('uint8', 1),
@@ -56,6 +58,11 @@ class ChannelConfig {
   /// Y 轴缩放
   double yScale;
 
+  /// 偏置绑定组 ID。
+  ///
+  /// 该字段只用于运行期显示联动，不持久化到设置文件。
+  int? offsetBindingGroupId;
+
   /// 数据类型
   DataType dataType;
 
@@ -70,6 +77,7 @@ class ChannelConfig {
     this.yOffset = 0.0,
     this.offsetEnabled = false,
     this.yScale = 1.0,
+    this.offsetBindingGroupId,
     this.dataType = DataType.double,
   });
 
@@ -83,6 +91,7 @@ class ChannelConfig {
     double? yOffset,
     bool? offsetEnabled,
     double? yScale,
+    Object? offsetBindingGroupId = _unset,
     DataType? dataType,
   }) {
     return ChannelConfig(
@@ -96,6 +105,10 @@ class ChannelConfig {
       yOffset: yOffset ?? this.yOffset,
       offsetEnabled: offsetEnabled ?? this.offsetEnabled,
       yScale: yScale ?? this.yScale,
+      offsetBindingGroupId:
+          identical(offsetBindingGroupId, _unset)
+              ? this.offsetBindingGroupId
+              : offsetBindingGroupId as int?,
       dataType: dataType ?? this.dataType,
     );
   }

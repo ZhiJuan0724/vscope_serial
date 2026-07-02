@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
@@ -739,6 +741,95 @@ void main() {
       expect(fittedValues[1], lessThan(vm.viewport.yMax));
     });
 
+    test('绑定偏置支持多组且组内同步偏移和缩放', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      for (int i = 0; i < 4; i++) {
+        vm.setChannelOffsetEnabled(i, true);
+      }
+
+      vm.setChannelYOffset(0, 100);
+      vm.zoomChannelYScale(0, 2);
+      vm.setChannelYOffset(2, 200);
+      vm.zoomChannelYScale(2, 3);
+
+      vm.setOffsetBindingGroup(0, {1});
+      vm.setOffsetBindingGroup(2, {3});
+
+      expect(vm.offsetBindingMemberIndices(0), [0, 1]);
+      expect(vm.offsetBindingMemberIndices(2), [2, 3]);
+      expect(vm.channels[1].yOffset, vm.channels[0].yOffset);
+      expect(vm.channels[1].yScale, vm.channels[0].yScale);
+      expect(vm.channels[3].yOffset, vm.channels[2].yOffset);
+      expect(vm.channels[3].yScale, vm.channels[2].yScale);
+
+      vm.setChannelYOffset(1, 320);
+      vm.zoomChannelYScale(3, 0.5);
+
+      expect(vm.channels[0].yOffset, 320);
+      expect(vm.channels[1].yOffset, 320);
+      expect(vm.channels[2].yScale, vm.channels[3].yScale);
+      expect(vm.channels[0].offsetBindingGroupId, isNotNull);
+      expect(vm.channels[2].offsetBindingGroupId, isNotNull);
+      expect(
+        vm.channels[0].offsetBindingGroupId,
+        isNot(vm.channels[2].offsetBindingGroupId),
+      );
+    });
+
+    test('绑定偏置Y自适应按组内所有通道合并计算', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+      vm.setChannelOffsetEnabled(1, true);
+      vm.setOffsetBindingGroup(0, {1});
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([0.0, 100.0], bytesConsumed: 8),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([10.0, 200.0], bytesConsumed: 8),
+      );
+
+      vm.fitYAxis();
+
+      expect(vm.channels[0].yScale, vm.channels[1].yScale);
+      expect(vm.channels[0].yOffset, vm.channels[1].yOffset);
+      final values = <double>[0, 10, 100, 200];
+      final fitted =
+          values
+              .map(
+                (value) =>
+                    value * vm.channels[0].yScale + vm.channels[0].yOffset,
+              )
+              .toList();
+      expect(fitted.reduce(math.min), greaterThan(vm.viewport.yMin));
+      expect(fitted.reduce(math.max), lessThan(vm.viewport.yMax));
+    });
+
+    test('关闭偏置会移出绑定组并在组不足两通道时解散', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+      vm.setChannelOffsetEnabled(1, true);
+      vm.setChannelOffsetEnabled(2, true);
+      vm.setOffsetBindingGroup(0, {1, 2});
+
+      vm.setChannelOffsetEnabled(1, false);
+
+      expect(vm.channels[1].offsetBindingGroupId, isNull);
+      expect(vm.channels[0].offsetBindingGroupId, isNotNull);
+      expect(
+        vm.channels[2].offsetBindingGroupId,
+        vm.channels[0].offsetBindingGroupId,
+      );
+
+      vm.setChannelOffsetEnabled(2, false);
+
+      expect(vm.channels[0].offsetBindingGroupId, isNull);
+      expect(vm.channels[2].offsetBindingGroupId, isNull);
+    });
+
     test('导入常量偏置通道时全自适应会将通道居中', () async {
       final dir = await Directory.systemTemp.createTemp(
         'vscope_const_bin_test_',
@@ -1280,10 +1371,8 @@ void main() {
       vm.updateParserConfig(ParserConfig.fireWaterDefault());
       vm.setRChannelAddress(3, '0');
       vm.setRChannelAddress(5, '0x10');
-      vm.setPlottingForTest(true);
-      expect(vm.rAddressDisplayCount, 1);
-
       vm.setRProtocolLooseChannelSettings(true);
+      vm.setPlottingForTest(true);
       expect(vm.rAddressDisplayCount, 3);
     });
 
@@ -1338,6 +1427,38 @@ void main() {
 
       vm.setParserType(ParserType.fireWater);
       expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+    });
+
+    test('绘图运行时拒绝修改随机源、协议、解析器和配置文件', () {
+      final originalParser = vm.parserType;
+      final originalSendProtocol = vm.sendProtocolType;
+      final originalRandomSource = vm.useRandomSource;
+      final originalChannelCount = vm.parserConfig.channelCount;
+      final originalLooseSettings = vm.rProtocolLooseChannelSettings;
+      final originalProfileRevision = vm.profileRevision;
+
+      vm.setPlottingForTest(true);
+      vm.setUseRandomSource(!originalRandomSource);
+      vm.setParserType(ParserType.zobow);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setRProtocolLooseChannelSettings(!vm.rProtocolLooseChannelSettings);
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(channelCount: originalChannelCount + 1),
+      );
+      vm.selectRProfile(null);
+
+      expect(vm.useRandomSource, originalRandomSource);
+      expect(vm.parserType, originalParser);
+      expect(vm.sendProtocolType, originalSendProtocol);
+      expect(vm.parserConfig.channelCount, originalChannelCount);
+      expect(vm.rProtocolLooseChannelSettings, originalLooseSettings);
+      expect(vm.profileRevision, originalProfileRevision);
+      expect(
+        vm.lastStatusMessage,
+        AppStrings.plot.inputConfigurationDisabledWhilePlotting,
+      );
+
+      vm.setPlottingForTest(false);
     });
 
     test('随机源无串口时自动将r协议切回无并继续绘图', () async {

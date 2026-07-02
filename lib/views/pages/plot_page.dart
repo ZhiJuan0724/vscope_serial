@@ -569,12 +569,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 随机数据源 + 频率设置
   Widget _buildRandomSourceToggle(BuildContext context, PlotViewModel vm) {
+    final canChangeSource = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Checkbox(
+          key: const ValueKey('plot-random-source-checkbox'),
           value: vm.useRandomSource,
-          onChanged: (value) => vm.setUseRandomSource(value!),
+          onChanged:
+              canChangeSource ? (value) => vm.setUseRandomSource(value!) : null,
         ),
         Text(
           AppStrings.plot.randomSource,
@@ -585,6 +588,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             vm.randomFrequency,
           ),
           child: InkWell(
+            key: const ValueKey('plot-random-frequency-button'),
             onTap: () => _showRandomFreqDialog(context, vm),
             child: Padding(
               padding: const EdgeInsets.all(4),
@@ -605,12 +609,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 收发协议选择 + 配置按钮 + 地址配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: 120,
           child: NoAnimDropdown<ParserType>(
+            key: const ValueKey('plot-parser-selector'),
             value: vm.parserType,
             hint: AppStrings.plot.receiveProtocolHint,
             decoration: const InputDecoration(
@@ -631,14 +637,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     ),
                   );
                 }).toList(),
-            onChanged: (value) {
-              if (value != null) vm.setParserType(value);
-            },
+            onChanged:
+                canChangeConfiguration
+                    ? (value) {
+                      if (value != null) vm.setParserType(value);
+                    }
+                    : null,
           ),
         ),
         const SizedBox(width: 8),
         IconButton(
-          onPressed: () => _showParserConfigDialog(context, vm),
+          key: const ValueKey('plot-parser-config-button'),
+          onPressed:
+              canChangeConfiguration
+                  ? () => _showParserConfigDialog(context, vm)
+                  : null,
           icon: const Icon(Icons.settings, size: 18),
           tooltip: AppStrings.plot.parserConfig,
           padding: EdgeInsets.zero,
@@ -648,6 +661,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         SizedBox(
           width: 112,
           child: NoAnimDropdown<SendProtocolType>(
+            key: const ValueKey('plot-send-protocol-selector'),
             value:
                 vm.parserType == ParserType.zobow
                     ? vm.effectiveSendProtocolType
@@ -679,7 +693,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     )
                     .toList(),
             onChanged:
-                vm.parserType == ParserType.zobow
+                !canChangeConfiguration || vm.parserType == ParserType.zobow
                     ? null
                     : (value) {
                       if (value != null) vm.setSendProtocolType(value);
@@ -689,7 +703,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         IconButton(
           key: const ValueKey('send-protocol-config-button'),
           onPressed:
-              vm.effectiveSendProtocolType == SendProtocolType.rProtocol
+              canChangeConfiguration &&
+                      vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                   ? () => _showSendProtocolConfigDialog(context, vm)
                   : null,
           icon: const Icon(Icons.settings, size: 18),
@@ -705,11 +720,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Tooltip(
             message: AppStrings.plot.createConfig,
             child: InkWell(
-              onTap: () => _showCreateZobowProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-create-zobow-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showCreateZobowProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.add, size: 16),
+                child: Icon(
+                  Icons.add,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
@@ -717,11 +743,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Tooltip(
             message: AppStrings.plot.editConfig,
             child: InkWell(
-              onTap: () => _showEditZobowProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-edit-zobow-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showEditZobowProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.edit, size: 16),
+                child: Icon(
+                  Icons.edit,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
@@ -731,22 +768,44 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Tooltip(
             message: AppStrings.plot.createRProtocolConfig,
             child: InkWell(
-              onTap: () => _showCreateRProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-create-r-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showCreateRProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.add, size: 16),
+                child: Icon(
+                  Icons.add,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
           Tooltip(
             message: AppStrings.plot.editRProtocolConfig,
             child: InkWell(
-              onTap: () => _showEditRProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-edit-r-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showEditRProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.edit, size: 16),
+                child: Icon(
+                  Icons.edit,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
@@ -756,9 +815,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildRProfileSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return SizedBox(
       width: 140,
       child: NoAnimDropdown<String?>(
+        key: const ValueKey('plot-r-profile-selector'),
         value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
         hint: AppStrings.plot.noConfig,
         decoration: const InputDecoration(
@@ -784,16 +845,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ],
-        onChanged: vm.selectRProfile,
+        onChanged: canChangeConfiguration ? vm.selectRProfile : null,
       ),
     );
   }
 
   /// Zobow配置文件选择器
   Widget _buildZobowProfileSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return SizedBox(
       width: 140,
       child: NoAnimDropdown<String?>(
+        key: const ValueKey('plot-zobow-profile-selector'),
         value:
             vm.selectedZobowProfileId.isEmpty
                 ? null
@@ -824,13 +887,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             );
           }),
         ],
-        onChanged: (value) {
-          if (value == null) {
-            vm.selectZobowProfile(null);
-          } else {
-            vm.selectZobowProfile(value);
-          }
-        },
+        onChanged:
+            canChangeConfiguration
+                ? (value) {
+                  if (value == null) {
+                    vm.selectZobowProfile(null);
+                  } else {
+                    vm.selectZobowProfile(value);
+                  }
+                }
+                : null,
       ),
     );
   }
@@ -1171,13 +1237,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 顺序：导入数据 | 导出数据
   Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
+    final fileOperationsEnabled = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: _withToolbarSpacing([
         Tooltip(
           message: AppStrings.plot.importDataTooltip,
           child: IconButton(
-            onPressed: () => _importPlotData(context, vm),
+            key: const ValueKey('plot-import-data-button'),
+            onPressed:
+                fileOperationsEnabled
+                    ? () => _importPlotData(context, vm)
+                    : null,
             icon: const AppIcon(AppIcons.plotImport),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -1186,8 +1257,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Tooltip(
           message: AppStrings.plot.exportDataTooltip,
           child: IconButton(
+            key: const ValueKey('plot-export-data-button'),
             onPressed:
-                vm.dataPoints.isEmpty
+                !fileOperationsEnabled || vm.dataPoints.isEmpty
                     ? null
                     : () => _exportPlotData(context, vm),
             icon: const Icon(Icons.save, size: 18),
@@ -1447,8 +1519,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
 
     const menuWidth = 188.0;
-    final menuHeight =
-        target.kind == _ChannelContextMenuTargetKind.raw ? 82.0 : 118.0;
+    final itemCount = switch (target.kind) {
+      _ChannelContextMenuTargetKind.blank => 2,
+      _ChannelContextMenuTargetKind.raw =>
+        target.channel?.offsetEnabled == true ? 2 : 1,
+      _ChannelContextMenuTargetKind.math =>
+        target.channel?.offsetEnabled == true ? 3 : 2,
+    };
+    final menuHeight = 34.0 + itemCount * 40.0;
     final screenSize = MediaQuery.sizeOf(context);
     final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
     final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
@@ -1501,6 +1579,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 menuContext,
                                 vm,
                                 target.mathChannel!,
+                              );
+                            }
+                            : null,
+                    onOffsetBinding:
+                        target.channel?.offsetEnabled == true
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showOffsetBindingDialog(
+                                menuContext,
+                                vm,
+                                target.channel!.index,
                               );
                             }
                             : null,
@@ -1630,6 +1719,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
+  void _showOffsetBindingDialog(
+    BuildContext context,
+    PlotViewModel vm,
+    int channelIndex,
+  ) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => _OffsetBindingDialog(vm: vm, channelIndex: channelIndex),
+    );
+  }
+
   // ========== 绘图区域 ==========
   /// 构建右侧绘图区域
   ///
@@ -1642,30 +1743,32 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       PlotPerformanceMetric.plotAreaBuild,
     );
     if (vm.dataPoints.isEmpty) {
-      return Stack(
-        children: [
-          Positioned.fill(
-            child: ColoredBox(color: _plotBackgroundColor(vm.plotBackground)),
-          ),
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.show_chart, size: 48, color: Colors.grey),
-                const SizedBox(height: 8),
-                Text(
-                  AppStrings.plot.noData,
-                  style: const TextStyle(color: Colors.grey),
-                ),
-                Text(
-                  AppStrings.plot.startPlotHint,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
+      return ColoredBox(
+        key: const ValueKey('plot-empty-background'),
+        color: _plotBackgroundColor(vm.plotBackground),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.show_chart, size: 48, color: Colors.grey),
+                  const SizedBox(height: 8),
+                  Text(
+                    AppStrings.plot.noData,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  Text(
+                    AppStrings.plot.startPlotHint,
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (_liveValuesVisible) _buildLiveValuesBox(vm),
-        ],
+            if (_liveValuesVisible) _buildLiveValuesBox(vm),
+          ],
+        ),
       );
     }
 
@@ -2006,13 +2109,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         final name =
             channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
         rows.add(
-          Text(
-            '$name: ${formatPlotValue(values[i])}',
-            style: TextStyle(
-              color: channel.color,
-              fontSize: _plotFontSize(vm, 12),
-              fontFamily: 'SarasaUiSC',
-            ),
+          _buildFloatingChannelValueRow(
+            vm: vm,
+            name: name,
+            value: formatPlotValue(values[i]),
+            color: channel.color,
           ),
         );
       }
@@ -2037,7 +2138,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildLiveValuesBox(PlotViewModel vm) {
     final latestPoint =
         vm.displayDataPoints.isEmpty ? null : vm.displayDataPoints.last;
+    if (latestPoint == null) return const SizedBox.shrink();
+
     final displayChannels = vm.displayChannels;
+    final fontSize = _plotFontSize(vm, 12);
+    var contentWidth = _measureFloatingTextWidth(
+      AppStrings.plot.liveValues,
+      fontSize: fontSize,
+      fontWeight: FontWeight.bold,
+    );
     final rows = <Widget>[
       Text(
         AppStrings.plot.liveValues,
@@ -2050,10 +2159,53 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       const SizedBox(height: 6),
     ];
 
-    if (latestPoint == null) {
+    for (
+      int i = 0;
+      i < latestPoint.values.length && i < displayChannels.length;
+      i++
+    ) {
+      final channel = displayChannels[i];
+      if (!channel.visible) continue;
+      final name =
+          channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
+      final value = formatPlotValue(latestPoint.values[i]);
+      contentWidth = math.max(
+        contentWidth,
+        14 + _measureFloatingTextWidth('$name: $value', fontSize: fontSize),
+      );
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: channel.color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                fit: FlexFit.loose,
+                child: _buildFloatingChannelValueRow(
+                  vm: vm,
+                  name: name,
+                  value: value,
+                  color: channel.color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (rows.length == 2) {
       rows.add(
         Text(
-          '暂无数据',
+          '无显示通道',
           style: TextStyle(
             color: _floatingSubtleTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
@@ -2061,59 +2213,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ),
         ),
       );
-    } else {
-      for (
-        int i = 0;
-        i < latestPoint.values.length && i < displayChannels.length;
-        i++
-      ) {
-        final channel = displayChannels[i];
-        if (!channel.visible) continue;
-        final name =
-            channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
-        rows.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 1),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: channel.color,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    '$name: ${formatPlotValue(latestPoint.values[i])}',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: channel.color,
-                      fontSize: _plotFontSize(vm, 12),
-                      fontFamily: 'SarasaUiSC',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }
-      if (rows.length == 2) {
-        rows.add(
-          Text(
-            '无显示通道',
-            style: TextStyle(
-              color: _floatingSubtleTextColor(vm),
-              fontSize: _plotFontSize(vm, 12),
-              fontFamily: 'SarasaUiSC',
-            ),
-          ),
-        );
-      }
     }
 
     return _DraggableInfoBox(
@@ -2123,15 +2222,67 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: rows,
+        child: SizedBox(
+          key: const ValueKey('plot-live-values-content'),
+          width: contentWidth.clamp(120, 240),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: rows,
+            ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildFloatingChannelValueRow({
+    required PlotViewModel vm,
+    required String name,
+    required String value,
+    required Color color,
+  }) {
+    final style = TextStyle(
+      color: color,
+      fontSize: _plotFontSize(vm, 12),
+      fontFamily: 'SarasaUiSC',
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          fit: FlexFit.loose,
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        Text(': $value', maxLines: 1, style: style),
+      ],
+    );
+  }
+
+  double _measureFloatingTextWidth(
+    String text, {
+    required double fontSize,
+    FontWeight? fontWeight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          fontFamily: 'SarasaUiSC',
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    return painter.width;
   }
 
   Widget _buildLegendBox(PlotViewModel vm) {
@@ -2234,6 +2385,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   // ========== 对话框 ==========
   /// 显示解析器配置对话框
   void _showParserConfigDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder: (context) => _ParserConfigDialog(vm: vm),
@@ -2241,6 +2393,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _showSendProtocolConfigDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder:
@@ -2369,11 +2522,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportPlotData(BuildContext context, PlotViewModel vm) async {
+    if (!_canUsePlotFileOperations(vm)) return;
     final format = await _choosePlotFileFormat(
       context,
       AppStrings.plot.chooseExportFormat,
     );
-    if (format == null || !context.mounted) return;
+    if (format == null || !context.mounted || !_canUsePlotFileOperations(vm)) {
+      return;
+    }
     switch (format) {
       case _PlotFileFormat.csv:
         _exportCsv(context, vm);
@@ -2417,12 +2573,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
+    if (!_canUsePlotFileOperations(vm)) return;
     final format = await _choosePlotFileFormat(
       context,
       AppStrings.plot.chooseImportFormat,
       includeLegacyDat: true,
     );
-    if (format == null || !context.mounted) return;
+    if (format == null || !context.mounted || !_canUsePlotFileOperations(vm)) {
+      return;
+    }
     switch (format) {
       case _PlotFileFormat.csv:
         _importCsv(context, vm);
@@ -2434,6 +2593,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         _importLegacyDat(context, vm);
         break;
     }
+  }
+
+  bool _canUsePlotFileOperations(PlotViewModel vm) {
+    if (!vm.isPlotting && !vm.isStopping) return true;
+    vm.showStatusMessage(AppStrings.plot.fileOperationDisabledWhilePlotting);
+    return false;
   }
 
   void _importCsv(BuildContext context, PlotViewModel vm) async {
@@ -3496,6 +3661,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 显示新建Zobow配置文件对话框
   void _showCreateZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder: (context) => ZobowProfileDialog(vm: vm),
@@ -3504,6 +3670,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 显示编辑Zobow配置文件对话框
   void _showEditZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     final profile = vm.selectedZobowProfile;
     if (profile == null) {
       vm.showStatusMessage(AppStrings.plot.selectConfigFirst);
@@ -3516,6 +3683,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _showCreateRProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder: (context) => RProtocolProfileDialog(vm: vm),
@@ -3523,6 +3691,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _showEditRProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     final profile = vm.selectedRProfile;
     if (profile == null) {
       vm.showStatusMessage(AppStrings.plot.selectRProtocolConfigFirst);
@@ -3533,6 +3702,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       builder: (context) => RProtocolProfileDialog(vm: vm, profile: profile),
     );
   }
+
+  bool _canOpenInputConfiguration(PlotViewModel vm) {
+    if (!vm.isPlotting && !vm.isStopping) return true;
+    vm.showStatusMessage(
+      AppStrings.plot.inputConfigurationDisabledWhilePlotting,
+    );
+    return false;
+  }
 }
 
 /// 通道面板使用自绘右键菜单，避免 [showMenu] 默认动画偏慢且样式过重。
@@ -3541,6 +3718,7 @@ class _ChannelContextMenu extends StatelessWidget {
   final VoidCallback? onAddMathChannel;
   final VoidCallback? onResetAllChannels;
   final VoidCallback? onEditChannel;
+  final VoidCallback? onOffsetBinding;
   final VoidCallback? onDeleteMathChannel;
 
   const _ChannelContextMenu({
@@ -3548,6 +3726,7 @@ class _ChannelContextMenu extends StatelessWidget {
     required this.onAddMathChannel,
     required this.onResetAllChannels,
     required this.onEditChannel,
+    required this.onOffsetBinding,
     required this.onDeleteMathChannel,
   });
 
@@ -3573,6 +3752,12 @@ class _ChannelContextMenu extends StatelessWidget {
           label: AppStrings.plot.editMathChannel,
           onTap: onEditChannel,
         ),
+        if (target.channel?.offsetEnabled == true)
+          _ChannelContextMenuItem(
+            icon: Icons.link,
+            label: AppStrings.plot.offsetBinding,
+            onTap: onOffsetBinding,
+          ),
         _ChannelContextMenuItem(
           icon: Icons.delete_outline,
           label: AppStrings.plot.deleteMathChannel,
@@ -3585,6 +3770,12 @@ class _ChannelContextMenu extends StatelessWidget {
           label: AppStrings.plot.editChannel,
           onTap: onEditChannel,
         ),
+        if (target.channel?.offsetEnabled == true)
+          _ChannelContextMenuItem(
+            icon: Icons.link,
+            label: AppStrings.plot.offsetBinding,
+            onTap: onOffsetBinding,
+          ),
       ],
     };
     return Material(
@@ -3678,6 +3869,14 @@ class _ChannelContextMenuTarget {
     : kind = _ChannelContextMenuTargetKind.math,
       rawChannel = null;
 
+  ChannelConfig? get channel {
+    return switch (kind) {
+      _ChannelContextMenuTargetKind.raw => rawChannel,
+      _ChannelContextMenuTargetKind.math => mathChannel?.display,
+      _ChannelContextMenuTargetKind.blank => null,
+    };
+  }
+
   String get title {
     return switch (kind) {
       _ChannelContextMenuTargetKind.blank => AppStrings.plot.channelActions,
@@ -3688,5 +3887,119 @@ class _ChannelContextMenuTarget {
       _ChannelContextMenuTargetKind.math =>
         mathChannel?.name ?? AppStrings.plot.channelActions,
     };
+  }
+}
+
+class _OffsetBindingDialog extends StatefulWidget {
+  final PlotViewModel vm;
+  final int channelIndex;
+
+  const _OffsetBindingDialog({required this.vm, required this.channelIndex});
+
+  @override
+  State<_OffsetBindingDialog> createState() => _OffsetBindingDialogState();
+}
+
+class _OffsetBindingDialogState extends State<_OffsetBindingDialog> {
+  late Set<int> _selectedIndices;
+
+  @override
+  void initState() {
+    super.initState();
+    final members = widget.vm.offsetBindingMemberIndices(widget.channelIndex);
+    _selectedIndices =
+        members.where((index) => index != widget.channelIndex).toSet();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = widget.vm.offsetBindingCandidates(widget.channelIndex);
+    final currentName = widget.vm.displayChannelName(widget.channelIndex);
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: Text('${AppStrings.plot.offsetBindingTitle} - $currentName'),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.plot.offsetBindingHelp,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            if (candidates.isEmpty)
+              Text(
+                AppStrings.plot.offsetBindingNoCandidates,
+                style: Theme.of(context).textTheme.bodyMedium,
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: candidates.length,
+                  itemBuilder: (context, index) {
+                    final channel = candidates[index];
+                    final name = widget.vm.displayChannelName(channel.index);
+                    return CheckboxListTile(
+                      value: _selectedIndices.contains(channel.index),
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(name, overflow: TextOverflow.ellipsis),
+                      secondary: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: channel.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedIndices.add(channel.index);
+                          } else {
+                            _selectedIndices.remove(channel.index);
+                          }
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            widget.vm.clearOffsetBinding(widget.channelIndex);
+            Navigator.pop(context);
+          },
+          child: Text(AppStrings.plot.closeOffsetBinding),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(AppStrings.common.cancel),
+        ),
+        ElevatedButton(
+          onPressed:
+              candidates.isEmpty
+                  ? null
+                  : () {
+                    widget.vm.setOffsetBindingGroup(
+                      widget.channelIndex,
+                      _selectedIndices,
+                    );
+                    Navigator.pop(context);
+                  },
+          child: Text(AppStrings.common.confirm),
+        ),
+      ],
+    );
   }
 }

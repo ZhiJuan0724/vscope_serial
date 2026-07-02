@@ -158,6 +158,64 @@ void main() {
     expect(offset!, greaterThan(30));
   });
 
+  testWidgets('offset binding group shares one Y axis column', (tester) async {
+    final viewport = initialViewport.copy();
+    viewport.setOffsetAxisColumnWidths(const [42]);
+    int? draggedIndex;
+    double? offset;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: viewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              channels: [
+                ChannelConfig(
+                  index: 0,
+                  color: Colors.red,
+                  offsetEnabled: true,
+                  yOffset: 30,
+                  offsetBindingGroupId: 1,
+                ),
+                ChannelConfig(
+                  index: 1,
+                  color: Colors.green,
+                  offsetEnabled: true,
+                  yOffset: 30,
+                  offsetBindingGroupId: 1,
+                ),
+              ],
+              activeChannelCount: 2,
+              onChannelOffsetDrag: (index, yOffset) {
+                draggedIndex = index;
+                offset = yOffset;
+              },
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final start = topLeft + const Offset(750, 300);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: start);
+    await gesture.down(start);
+    await gesture.moveTo(start + const Offset(0, -80));
+    await gesture.up();
+    await tester.pump();
+
+    expect(draggedIndex, 0);
+    expect(offset, isNotNull);
+    expect(offset!, greaterThan(30));
+  });
+
   testWidgets('Shift + wheel keeps its existing X and Y zoom behavior', (
     tester,
   ) async {

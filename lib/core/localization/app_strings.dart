@@ -121,6 +121,9 @@ final class _PlotStrings {
   String get zoomYOut => 'Y 轴缩小';
   String get importDataTooltip => '导入 CSV/BIN/旧版 DAT';
   String get exportDataTooltip => '导出 CSV/BIN';
+  String get fileOperationDisabledWhilePlotting => '请先停止绘图，再导入或导出数据';
+  String get inputConfigurationDisabledWhilePlotting =>
+      '请先停止绘图，再修改随机源、解析器、发送协议或配置文件';
   String get fitYTooltip => 'Y轴自适应';
   String get fitY => 'Y自适应';
   String get fitXTooltip => 'X轴自适应';
@@ -221,6 +224,11 @@ final class _PlotStrings {
   String get resetAllChannelsStoppedOnly => '请停止绘图后再重置全部通道';
   String get deleteMathChannel => '删除数学通道';
   String get editMathChannel => '编辑数学通道';
+  String get offsetBinding => '绑定偏置';
+  String get offsetBindingTitle => '绑定偏置';
+  String get offsetBindingHelp => '绑定通道将共用同一个偏置位置、缩放倍率和右侧 Y 轴。';
+  String get offsetBindingNoCandidates => '没有其他已开启偏置的通道';
+  String get closeOffsetBinding => '解除绑定';
   String get resetMathChannel => '重置数学通道';
   String get mathExpression => '表达式';
   String get mathExpressionHint => '例如: CH0-CH1';
