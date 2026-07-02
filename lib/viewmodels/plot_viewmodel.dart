@@ -237,6 +237,9 @@ class PlotViewModel extends BaseViewModel {
   /// 绘图背景: 'dark'(黑底), 'light'(白底)
   String _plotBackground = 'dark';
 
+  /// 绘图区悬浮窗不透明度。
+  double _floatingPanelOpacity = 0.85;
+
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
   bool _snapHighlightEnabled = true;
@@ -447,6 +450,7 @@ class PlotViewModel extends BaseViewModel {
     _showGrid = settings.showGrid;
     _gridDensity = settings.gridDensity;
     _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
+    _floatingPanelOpacity = settings.floatingPanelOpacity.clamp(0.0, 1.0);
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
@@ -524,6 +528,7 @@ class PlotViewModel extends BaseViewModel {
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.plotBackground = _plotBackground;
+    settings.floatingPanelOpacity = _floatingPanelOpacity;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -576,6 +581,7 @@ class PlotViewModel extends BaseViewModel {
   int get plotFontSizeDelta => _plotFontSizeDelta;
   String get gridDensity => _gridDensity;
   String get plotBackground => _plotBackground;
+  double get floatingPanelOpacity => _floatingPanelOpacity;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
@@ -3198,6 +3204,15 @@ class PlotViewModel extends BaseViewModel {
     _plotBackground = next;
     _applyPlotBackgroundPalette();
     _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setFloatingPanelOpacity(double opacity) {
+    final next = opacity.clamp(0.0, 1.0);
+    if ((_floatingPanelOpacity - next).abs() < 0.0001) return;
+    _floatingPanelOpacity = next;
+    _markOverlayChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

@@ -69,6 +69,8 @@ class _PlotPalette {
   final Color tooltipBorder;
   final Color tooltipText;
   final Color tooltipSubtleText;
+  final Color measurementPrimary;
+  final Color measurementSecondary;
 
   const _PlotPalette({
     required this.background,
@@ -79,6 +81,8 @@ class _PlotPalette {
     required this.tooltipBorder,
     required this.tooltipText,
     required this.tooltipSubtleText,
+    required this.measurementPrimary,
+    required this.measurementSecondary,
   });
 }
 
@@ -120,6 +124,9 @@ class PlotLayerPainter extends CustomPainter {
 
   /// 绘图区背景风格
   final PlotBackgroundStyle backgroundStyle;
+
+  /// 绘图区悬浮窗不透明度。
+  final double floatingPanelOpacity;
 
   /// 垂直光标状态（鼠标悬停跟随）
   final CursorState? cursor;
@@ -174,6 +181,7 @@ class PlotLayerPainter extends CustomPainter {
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
     this.backgroundStyle = PlotBackgroundStyle.dark,
+    this.floatingPanelOpacity = 0.85,
     this.cursor,
     this.xCursor1,
     this.xCursor2,
@@ -207,20 +215,24 @@ class PlotLayerPainter extends CustomPainter {
         grid: Color(0xFF2D2D44),
         axis: Color(0xFF8888AA),
         axisStrong: Color(0xFFCCCCDD),
-        tooltipBackground: Color(0xEE1A1A2E),
+        tooltipBackground: Color(0xFF1A1A2E),
         tooltipBorder: Color(0xFF8888AA),
         tooltipText: Colors.white,
         tooltipSubtleText: Colors.white70,
+        measurementPrimary: Colors.cyan,
+        measurementSecondary: Colors.yellow,
       ),
       PlotBackgroundStyle.light => const _PlotPalette(
         background: Color(0xFFF8FAFC),
         grid: Color(0xFFDDE3EA),
         axis: Color(0xFF64748B),
         axisStrong: Color(0xFF334155),
-        tooltipBackground: Color(0xF8FFFFFF),
+        tooltipBackground: Colors.white,
         tooltipBorder: Color(0xFF94A3B8),
         tooltipText: Color(0xFF0F172A),
         tooltipSubtleText: Color(0xFF475569),
+        measurementPrimary: Color(0xFF0369A1),
+        measurementSecondary: Color(0xFFB45309),
       ),
     };
   }
@@ -247,13 +259,17 @@ class PlotLayerPainter extends CustomPainter {
     required double canvasHeight,
     required GridDensity gridDensity,
     required double plotFontSizeDelta,
+    required bool yValuesAreInteger,
   }) {
     final plotH = viewport.plotHeight(canvasHeight);
     if (plotH <= 0) return const [];
 
-    final yGridCount = _calculateGridCountFor(plotH, 60, gridDensity);
-    final roughStep = viewport.yRange / yGridCount;
-    final step = _niceNumberFor(roughStep, true);
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
     if (step <= 0) return const [];
 
     final textStyle = TextStyle(
@@ -431,18 +447,18 @@ class PlotLayerPainter extends CustomPainter {
 
   List<double> _xTickRatios(Size size) {
     final plotW = viewport.plotWidth(size.width);
-    final xGridCount = _calculateGridCount(plotW, 80);
+    final xGridCount = _calculateGridCountFor(plotW, GridDensity.normal);
     return List<double>.generate(xGridCount + 1, (i) => i / xGridCount);
   }
 
   List<double> _yTickValues(Size size, {required bool includeZero}) {
     final plotH = viewport.plotHeight(size.height);
     if (plotH <= 0 || viewport.yRange <= 0) return const [];
-    final yGridCount = _calculateGridCount(plotH, 60);
-    final roughStep = viewport.yRange / yGridCount;
-    final step = _niceNumber(
-      yValuesAreInteger ? math.max(1.0, roughStep) : roughStep,
-      true,
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
     );
     if (step <= 0) return const [];
 
@@ -472,27 +488,7 @@ class PlotLayerPainter extends CustomPainter {
     return result;
   }
 
-  /// 根据网格密度计算网格间距（像素）
-  double _getGridSpacing() {
-    return switch (gridDensity) {
-      GridDensity.sparse => 160, // 稀疏: 每160px一条线
-      GridDensity.normal => 80, // 普通: 每80px一条线
-      GridDensity.dense => 40, // 密集: 每40px一条线
-    };
-  }
-
-  int _calculateGridCount(double length, double minSpacing) {
-    final densitySpacing = _getGridSpacing();
-    final effectiveSpacing =
-        minSpacing > densitySpacing ? minSpacing : densitySpacing;
-    return _calculateGridCountWithSpacing(length, effectiveSpacing);
-  }
-
-  static int _calculateGridCountFor(
-    double length,
-    double minSpacing,
-    GridDensity gridDensity,
-  ) {
+  static int _calculateGridCountFor(double length, GridDensity gridDensity) {
     final densitySpacing = switch (gridDensity) {
       GridDensity.sparse => 160.0,
       GridDensity.normal => 80.0,
@@ -501,8 +497,45 @@ class PlotLayerPainter extends CustomPainter {
     return _calculateGridCountWithSpacing(length, densitySpacing);
   }
 
-  static int debugGridCountFor(double length, GridDensity gridDensity) {
-    return _calculateGridCountFor(length, 0, gridDensity);
+  static int debugXGridCountFor(double length) {
+    return _calculateGridCountFor(length, GridDensity.normal);
+  }
+
+  static double debugYTickStepFor(
+    double yRange,
+    double plotHeight,
+    GridDensity gridDensity, {
+    bool yValuesAreInteger = false,
+  }) {
+    return _calculateYTickStepFor(
+      yRange,
+      plotHeight,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
+  }
+
+  static double _calculateYTickStepFor(
+    double yRange,
+    double plotHeight,
+    GridDensity gridDensity, {
+    required bool yValuesAreInteger,
+  }) {
+    if (yRange <= 0 || plotHeight <= 0) return 0;
+
+    final normalCount = _calculateGridCountFor(plotHeight, GridDensity.normal);
+    final normalRoughStep = yRange / normalCount;
+    final normalStep = _niceNumberFor(
+      yValuesAreInteger ? math.max(1.0, normalRoughStep) : normalRoughStep,
+      true,
+    );
+    final factor = switch (gridDensity) {
+      GridDensity.sparse => 2.0,
+      GridDensity.normal => 1.0,
+      GridDensity.dense => 0.5,
+    };
+    final step = _niceNumberFor(normalStep * factor, true);
+    return yValuesAreInteger ? math.max(1.0, step) : step;
   }
 
   static int _calculateGridCountWithSpacing(
@@ -1272,10 +1305,12 @@ class PlotLayerPainter extends CustomPainter {
     final bottom = top + plotH;
 
     // 计算 nice number 步长
-    final yRange = viewport.yRange;
-    final yGridCount = _calculateGridCount(plotH, 60);
-    final roughStep = yRange / yGridCount;
-    final step = _niceNumber(roughStep, true);
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
     if (step <= 0) return;
     final channelColor = _plotChannelColor(ch.color);
 
@@ -1451,7 +1486,9 @@ class PlotLayerPainter extends CustomPainter {
     canvas.drawRRect(
       bgRect,
       Paint()
-        ..color = palette.tooltipBackground
+        ..color = palette.tooltipBackground.withValues(
+          alpha: floatingPanelOpacity,
+        )
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
@@ -1592,10 +1629,6 @@ class PlotLayerPainter extends CustomPainter {
   }
 
   /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
-  double _niceNumber(double value, bool round) {
-    return _niceNumberFor(value, round);
-  }
-
   static double _niceNumberFor(double value, bool round) {
     if (value <= 0) return 0;
     final exponent = (math.log(value) / math.ln10).floor();
@@ -1673,12 +1706,12 @@ class PlotLayerPainter extends CustomPainter {
 
     final line1Paint =
         Paint()
-          ..color = Colors.cyan
+          ..color = _palette.measurementPrimary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = Colors.yellow
+          ..color = _palette.measurementSecondary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1697,7 +1730,7 @@ class PlotLayerPainter extends CustomPainter {
           'X1',
           sx1,
           PlotViewport().marginTop + 12,
-          Colors.cyan,
+          _palette.measurementPrimary,
         );
       }
     }
@@ -1717,7 +1750,7 @@ class PlotLayerPainter extends CustomPainter {
           'X2',
           sx2,
           PlotViewport().marginTop + 12,
-          Colors.yellow,
+          _palette.measurementSecondary,
         );
       }
     }
@@ -1735,12 +1768,12 @@ class PlotLayerPainter extends CustomPainter {
 
     final line1Paint =
         Paint()
-          ..color = Colors.cyan
+          ..color = _palette.measurementPrimary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = Colors.yellow
+          ..color = _palette.measurementSecondary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1759,7 +1792,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y1',
           PlotViewport().marginLeft - 18,
           sy1,
-          Colors.cyan,
+          _palette.measurementPrimary,
         );
       }
     }
@@ -1779,7 +1812,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y2',
           PlotViewport().marginLeft - 18,
           sy2,
-          Colors.yellow,
+          _palette.measurementSecondary,
         );
       }
     }
@@ -1819,7 +1852,9 @@ class PlotLayerPainter extends CustomPainter {
     canvas.drawRRect(
       bgRect,
       Paint()
-        ..color = const Color(0xDD1A1A2E)
+        ..color = _palette.tooltipBackground.withValues(
+          alpha: floatingPanelOpacity,
+        )
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
@@ -2042,6 +2077,7 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.overlayRevision != overlayRevision ||
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.backgroundStyle != backgroundStyle ||
+            oldDelegate.floatingPanelOpacity != floatingPanelOpacity ||
             oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
     };
   }

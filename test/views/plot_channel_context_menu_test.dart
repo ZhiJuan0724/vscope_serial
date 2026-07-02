@@ -170,6 +170,23 @@ void main() {
     expect(find.text(AppStrings.plot.liveValues), findsNWidgets(2));
     expect(find.text('暂无数据').evaluate().length, emptyTextCountBefore + 1);
 
+    vm.setPlotBackground('light');
+    await tester.pumpAndSettle();
+
+    final liveValueTitle = find.text(AppStrings.plot.liveValues).last;
+    final liveValueContainers = tester.widgetList<Container>(
+      find.ancestor(of: liveValueTitle, matching: find.byType(Container)),
+    );
+    expect(
+      liveValueContainers.any(
+        (container) =>
+            container.decoration is BoxDecoration &&
+            (container.decoration! as BoxDecoration).color ==
+                Colors.white.withValues(alpha: vm.floatingPanelOpacity),
+      ),
+      isTrue,
+    );
+
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
     await tester.pump(const Duration(milliseconds: 100));

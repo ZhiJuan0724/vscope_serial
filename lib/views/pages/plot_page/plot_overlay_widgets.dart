@@ -4,12 +4,14 @@ part of '../plot_page.dart';
 class _DraggableInfoBox extends StatefulWidget {
   final double initialRight;
   final double initialTop;
+  final Color backgroundColor;
   final Color borderColor;
   final Widget child;
 
   const _DraggableInfoBox({
     required this.initialRight,
     required this.initialTop,
+    required this.backgroundColor,
     required this.borderColor,
     required this.child,
   });
@@ -125,7 +127,7 @@ class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: const Color(0xDD1A1A2E),
+            color: widget.backgroundColor,
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: widget.borderColor),
           ),

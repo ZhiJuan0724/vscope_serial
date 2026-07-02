@@ -117,6 +117,7 @@ typedef _PlotAreaSelection =
       int viewportRevision,
       int overlayRevision,
       String plotBackground,
+      double floatingPanelOpacity,
     });
 
 int? _parseCompactCount(String input) {
@@ -271,6 +272,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       viewportRevision: vm.viewportRevision,
       overlayRevision: vm.overlayRevision,
       plotBackground: vm.plotBackground,
+      floatingPanelOpacity: vm.floatingPanelOpacity,
     );
   }
 
@@ -1612,6 +1614,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
               plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+              yValuesAreInteger: vm.displayYValuesAreInteger,
             );
         final renderViewport =
             vm.viewport.copy()
@@ -1632,6 +1635,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             showGrid: vm.showGrid,
             gridDensity: gridDensity,
             backgroundStyle: plotBackground,
+            floatingPanelOpacity: vm.floatingPanelOpacity,
             cursor: vm.cursor,
             xCursor1: vm.xCursor1,
             xCursor2: vm.xCursor2,
@@ -1862,7 +1866,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Text(
             'X: ${observation.x.toInt()}',
             style: TextStyle(
-              color: Colors.white,
+              color: _floatingTextColor(vm),
               fontSize: _plotFontSize(vm, 12),
               fontWeight: FontWeight.bold,
               fontFamily: 'SarasaUiSC',
@@ -1895,8 +1899,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       constraints: const BoxConstraints(maxWidth: 240),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xEE1A1A2E),
-        border: Border.all(color: const Color(0xFF8888AA), width: 1),
+        color: _floatingBoxBackgroundColor(vm),
+        border: Border.all(color: _floatingBoxBorderColor(vm), width: 1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
@@ -1915,7 +1919,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       Text(
         AppStrings.plot.liveValues,
         style: TextStyle(
-          color: Colors.white,
+          color: _floatingTextColor(vm),
           fontSize: _plotFontSize(vm, 12),
           fontWeight: FontWeight.bold,
         ),
@@ -1928,7 +1932,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Text(
           '暂无数据',
           style: TextStyle(
-            color: Colors.white70,
+            color: _floatingSubtleTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
             fontFamily: 'SarasaUiSC',
           ),
@@ -1980,7 +1984,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Text(
             '无显示通道',
             style: TextStyle(
-              color: Colors.white70,
+              color: _floatingSubtleTextColor(vm),
               fontSize: _plotFontSize(vm, 12),
               fontFamily: 'SarasaUiSC',
             ),
@@ -1992,6 +1996,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return _DraggableInfoBox(
       initialRight: 16,
       initialTop: _legendVisible ? 240 : 96,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
@@ -2018,6 +2023,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return _DraggableInfoBox(
       initialRight: 16,
       initialTop: 96,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.teal.withValues(alpha: 0.55),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
@@ -2029,7 +2035,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               Text(
                 '图例',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: _floatingTextColor(vm),
                   fontSize: _plotFontSize(vm, 12),
                   fontWeight: FontWeight.bold,
                 ),
@@ -2059,7 +2065,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           name,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white,
+                            color: _floatingTextColor(vm),
                             fontSize: _plotFontSize(vm, 12),
                           ),
                         ),
@@ -2456,6 +2462,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     };
   }
 
+  bool _usesLightPlotBackground(PlotViewModel vm) {
+    return vm.plotBackground == 'light';
+  }
+
+  Color _floatingBoxBackgroundColor(PlotViewModel vm) {
+    final color =
+        _usesLightPlotBackground(vm) ? Colors.white : const Color(0xFF1A1A2E);
+    return color.withValues(alpha: vm.floatingPanelOpacity);
+  }
+
+  Color _floatingBoxBorderColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF8888AA);
+  }
+
+  Color _floatingTextColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF0F172A)
+        : Colors.white;
+  }
+
+  Color _floatingSubtleTextColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF475569)
+        : Colors.white70;
+  }
+
   /// 构建网格密度选择按钮
   Widget _buildDensityButton(
     String label,
@@ -2529,7 +2563,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Text(
           vm.measurementText!,
           style: TextStyle(
-            color: Colors.white,
+            color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
             fontFamily: 'SarasaUiSC',
             height: 1.5,
@@ -2545,7 +2579,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: 1,
           margin: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFF8888AA).withValues(alpha: 0.5),
+            color: _floatingBoxBorderColor(vm).withValues(alpha: 0.5),
             borderRadius: BorderRadius.circular(0.5),
           ),
         ),
@@ -2560,10 +2594,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return _DraggableInfoBox(
       initialRight: 16,
       initialTop: 16,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor:
           vm.statsText != null
               ? Colors.green.withValues(alpha: 0.5)
-              : const Color(0xFF8888AA),
+              : _floatingBoxBorderColor(vm),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2605,7 +2640,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       return Text(
         text,
         style: TextStyle(
-          color: Colors.white,
+          color: _floatingTextColor(vm),
           fontSize: _plotFontSize(vm, 11),
           fontFamily: 'SarasaUiSC',
           height: 1.5,
@@ -2635,7 +2670,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Text(
           colText.toString().trim(),
           style: TextStyle(
-            color: Colors.white,
+            color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 11),
             fontFamily: 'SarasaUiSC',
             height: 1.5,
@@ -2677,7 +2712,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final yFitDisplayRatioController = TextEditingController(
       text: (vm.yFitDisplayRatio * 100).round().toString(),
     );
+    final floatingPanelOpacityController = TextEditingController(
+      text: (vm.floatingPanelOpacity * 100).round().toString(),
+    );
     final advancedSettingsScrollController = ScrollController();
+
+    void applyFloatingPanelOpacity(StateSetter setDialogState) {
+      final percent = double.tryParse(
+        floatingPanelOpacityController.text.trim(),
+      );
+      if (percent != null) {
+        vm.setFloatingPanelOpacity(percent / 100);
+      }
+      floatingPanelOpacityController.text =
+          (vm.floatingPanelOpacity * 100).round().toString();
+      setDialogState(() {});
+    }
 
     void applyFollowPosition(StateSetter setDialogState) {
       final percent = double.tryParse(followPositionController.text.trim());
@@ -2739,6 +2789,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 'light',
                                 vm,
                                 setState,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                AppStrings.plot.floatingPanelOpacity,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              const Spacer(),
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: floatingPanelOpacityController,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted:
+                                      (_) =>
+                                          applyFloatingPanelOpacity(setState),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed:
+                                    () => applyFloatingPanelOpacity(setState),
+                                child: Text(AppStrings.common.apply),
                               ),
                             ],
                           ),

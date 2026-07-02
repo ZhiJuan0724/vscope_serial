@@ -25,6 +25,7 @@ void main() {
         canvasHeight: 600,
         gridDensity: GridDensity.normal,
         plotFontSizeDelta: 0,
+        yValuesAreInteger: true,
       );
 
       expect(widths, hasLength(1));
@@ -118,6 +119,32 @@ void main() {
       expect(nextOverlayPainter.shouldRepaint(overlayPainter), true);
     });
 
+    test('悬浮窗透明度变化只要求覆盖层重绘', () {
+      final channels = [ChannelConfig(index: 0, color: Colors.red)];
+
+      for (final layer in PlotPaintLayer.values) {
+        final oldPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          floatingPanelOpacity: 0.7,
+        );
+        final newPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          floatingPanelOpacity: 0.9,
+        );
+
+        expect(
+          newPainter.shouldRepaint(oldPainter),
+          layer == PlotPaintLayer.overlay,
+        );
+      }
+    });
+
     test('动态偏置轴宽度变化会触发重绘', () {
       final oldViewport = PlotViewport()..setOffsetAxisColumnWidths([42]);
       final newViewport = PlotViewport()..setOffsetAxisColumnWidths([96]);
@@ -164,19 +191,27 @@ void main() {
       }
     });
 
-    test('网格密度会改变实际网格数量', () {
-      final sparse = PlotLayerPainter.debugGridCountFor(
-        800,
+    test('网格密度只改变Y刻度步长且不会被nice number合并', () {
+      final xGridCount = PlotLayerPainter.debugXGridCountFor(800);
+      final sparse = PlotLayerPainter.debugYTickStepFor(
+        32768,
+        510,
         GridDensity.sparse,
       );
-      final normal = PlotLayerPainter.debugGridCountFor(
-        800,
+      final normal = PlotLayerPainter.debugYTickStepFor(
+        32768,
+        510,
         GridDensity.normal,
       );
-      final dense = PlotLayerPainter.debugGridCountFor(800, GridDensity.dense);
+      final dense = PlotLayerPainter.debugYTickStepFor(
+        32768,
+        510,
+        GridDensity.dense,
+      );
 
-      expect(sparse, lessThan(normal));
-      expect(normal, lessThan(dense));
+      expect(sparse, greaterThan(normal));
+      expect(normal, greaterThan(dense));
+      expect(xGridCount, 10);
     });
   });
 }

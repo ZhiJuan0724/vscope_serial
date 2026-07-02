@@ -119,6 +119,20 @@ void main() {
       expect(vm.channels[1].color, customColor);
     });
 
+    test('悬浮窗透明度限制在有效范围内', () {
+      vm.setFloatingPanelOpacity(0.75);
+      expect(vm.floatingPanelOpacity, 0.75);
+
+      vm.setFloatingPanelOpacity(0.1);
+      expect(vm.floatingPanelOpacity, 0.1);
+
+      vm.setFloatingPanelOpacity(-1);
+      expect(vm.floatingPanelOpacity, 0);
+
+      vm.setFloatingPanelOpacity(2);
+      expect(vm.floatingPanelOpacity, 1);
+    });
+
     test('视口默认范围', () {
       expect(vm.viewport.xMin, 0.0);
       expect(vm.viewport.xMax, 1000.0);

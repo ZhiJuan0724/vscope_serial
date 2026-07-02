@@ -78,6 +78,9 @@ class AppSettings {
   /// 绘图背景: 'dark'(黑底), 'light'(白底)
   String plotBackground = 'dark';
 
+  /// 绘图区悬浮窗不透明度，范围 0.0~1.0。
+  double floatingPanelOpacity = 0.85;
+
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
 
@@ -246,6 +249,7 @@ class AppSettings {
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
+    floatingPanelOpacity = 0.85;
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
@@ -340,6 +344,11 @@ class AppSettings {
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       final background = json['plotBackground'] as String?;
       plotBackground = background == 'light' ? 'light' : 'dark';
+      floatingPanelOpacity =
+          ((json['floatingPanelOpacity'] as num?)?.toDouble() ?? 0.85).clamp(
+            0.0,
+            1.0,
+          );
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = ((json['randomFrequency'] as num?)?.toDouble() ??
               1000.0)
@@ -454,6 +463,7 @@ class AppSettings {
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'plotBackground': plotBackground,
+      'floatingPanelOpacity': floatingPanelOpacity,
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,
