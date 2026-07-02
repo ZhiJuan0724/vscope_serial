@@ -171,7 +171,10 @@ class _ChannelItemState extends State<_ChannelItem> {
 
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kChannelPanelHorizontalPadding,
+        vertical: 4,
+      ),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
@@ -341,23 +344,13 @@ class _ChannelItemState extends State<_ChannelItem> {
           ),
           const SizedBox(width: 5),
           // 绘图开关
-          Tooltip(
-            message:
-                widget.ch.visible
-                    ? AppStrings.plot.hideChannel
-                    : AppStrings.plot.showChannel,
-            child: SizedBox(
-              width: 20,
-              height: 24,
-              child: Checkbox(
-                value: widget.ch.visible,
-                onChanged:
-                    (value) =>
-                        widget.vm.setChannelVisible(widget.ch.index, value!),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
+          _ChannelVisibilityButton(
+            visible: widget.ch.visible,
+            onToggle:
+                () => widget.vm.setChannelVisible(
+                  widget.ch.index,
+                  !widget.ch.visible,
+                ),
           ),
         ],
       ),
@@ -433,7 +426,10 @@ class _MathChannelItem extends StatelessWidget {
     final display = channel.display;
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: kChannelPanelHorizontalPadding,
+        vertical: 4,
+      ),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
@@ -491,27 +487,58 @@ class _MathChannelItem extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 5),
-          Tooltip(
-            message:
-                display.visible
-                    ? AppStrings.plot.hideChannel
-                    : AppStrings.plot.showChannel,
-            child: SizedBox(
-              width: 20,
-              height: 24,
-              child: Checkbox(
-                value: display.visible,
-                onChanged:
-                    (value) => vm.updateMathChannelDisplay(
-                      channel.index,
-                      display.copyWith(visible: value ?? true),
-                    ),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
+          _ChannelVisibilityButton(
+            visible: display.visible,
+            onToggle:
+                () => vm.updateMathChannelDisplay(
+                  channel.index,
+                  display.copyWith(visible: !display.visible),
+                ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ChannelVisibilityButton extends StatelessWidget {
+  final bool visible;
+  final String? tooltip;
+  final VoidCallback onToggle;
+
+  const _ChannelVisibilityButton({
+    required this.visible,
+    this.tooltip,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message:
+          tooltip ??
+          (visible ? AppStrings.plot.hideChannel : AppStrings.plot.showChannel),
+      child: SizedBox(
+        width: 22,
+        height: 24,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(4),
+            onTap: onToggle,
+            child: Icon(
+              visible
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              size: 18,
+              color:
+                  visible
+                      ? colorScheme.onSurface.withValues(alpha: 0.82)
+                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
       ),
     );
   }

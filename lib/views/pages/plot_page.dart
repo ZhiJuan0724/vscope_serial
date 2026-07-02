@@ -68,6 +68,8 @@ const double kCollapsedPanelWidth = 26;
 const double kRProtocolAddressWidth = 108;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
+const double kChannelPanelHorizontalPadding = 6;
+const double kChannelPanelListRightPadding = 12;
 
 typedef _PlotToolbarSelection =
     ({
@@ -157,6 +159,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 是否显示悬浮图例
   bool _legendVisible = false;
+
+  /// 是否显示最新通道值浮窗
+  bool _liveValuesVisible = false;
 
   OverlayEntry? _channelContextMenuEntry;
   Rect? _channelContextMenuRect;
@@ -1026,6 +1031,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
+        Tooltip(
+          message: AppStrings.plot.liveValues,
+          child: TextButton.icon(
+            onPressed:
+                () => setState(() => _liveValuesVisible = !_liveValuesVisible),
+            icon: Icon(
+              Icons.format_list_numbered,
+              size: 18,
+              color: _liveValuesVisible ? Colors.lightBlue : null,
+            ),
+            label: Text(
+              AppStrings.plot.liveValues,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'SarasaUiSC',
+                color: _liveValuesVisible ? Colors.lightBlue : null,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor:
+                  _liveValuesVisible
+                      ? Colors.lightBlue.withValues(alpha: 0.12)
+                      : null,
+            ),
+          ),
+        ),
       ]),
     );
   }
@@ -1227,7 +1260,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: [
           Container(
             height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.only(
+              left: kChannelPanelHorizontalPadding,
+              right:
+                  kChannelPanelHorizontalPadding +
+                  kChannelPanelListRightPadding,
+            ),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               border: Border(
@@ -1255,49 +1293,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 const Spacer(),
                 Tooltip(
                   message: AppStrings.plot.offsetToggle,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(width: 20),
-                      Text(
+                  child: SizedBox(
+                    width: 20,
+                    child: Center(
+                      child: Text(
                         AppStrings.plot.offset,
                         style: const TextStyle(fontSize: 10),
                       ),
-                    ],
+                    ),
                   ),
                 ),
                 const SizedBox(width: 5),
-                // 全选/全不选勾选框
-                Tooltip(
-                  message:
-                      vm.channels.every((ch) => ch.visible)
+                // 全显/全隐按钮
+                _ChannelVisibilityButton(
+                  visible: vm.displayChannels.any((ch) => ch.visible),
+                  tooltip:
+                      vm.displayChannels.any((ch) => ch.visible)
                           ? AppStrings.plot.hideAllChannels
                           : AppStrings.plot.showAllChannels,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 22,
-                        child: Checkbox(
-                          value: vm.channels.every((ch) => ch.visible),
-                          tristate: true,
-                          onChanged: (_) {
-                            // 点击时切换：如果当前全显则全隐，否则全显
-                            final allVisible = vm.channels.every(
-                              (ch) => ch.visible,
-                            );
-                            vm.setAllChannelsVisible(!allVisible);
-                          },
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                      Text(
-                        AppStrings.plot.plotVisible,
-                        style: const TextStyle(fontSize: 10),
-                      ),
-                    ],
-                  ),
+                  onToggle: () {
+                    // 只要还有任一通道显示，点击表头就隐藏全部；全部隐藏时再点击才显示全部。
+                    final anyVisible = vm.displayChannels.any(
+                      (ch) => ch.visible,
+                    );
+                    vm.setAllChannelsVisible(!anyVisible);
+                  },
                 ),
               ],
             ),
@@ -1319,7 +1339,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 }
               },
               child: ListView.builder(
-                padding: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.only(
+                  right: kChannelPanelListRightPadding,
+                ),
                 itemCount: displayCount + 1,
                 itemBuilder: (context, index) {
                   if (index == displayCount) {
@@ -1545,22 +1567,27 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       PlotPerformanceMetric.plotAreaBuild,
     );
     if (vm.dataPoints.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.show_chart, size: 48, color: Colors.grey),
-            const SizedBox(height: 8),
-            Text(
-              AppStrings.plot.noData,
-              style: const TextStyle(color: Colors.grey),
+      return Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.show_chart, size: 48, color: Colors.grey),
+                const SizedBox(height: 8),
+                Text(
+                  AppStrings.plot.noData,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+                Text(
+                  AppStrings.plot.startPlotHint,
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
             ),
-            Text(
-              AppStrings.plot.startPlotHint,
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
-        ),
+          ),
+          if (_liveValuesVisible) _buildLiveValuesBox(vm),
+        ],
       );
     }
 
@@ -1712,6 +1739,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             if (vm.measurementText != null || vm.statsText != null)
               _buildCombinedInfoBox(context, vm),
             if (_legendVisible) _buildLegendBox(vm),
+            if (_liveValuesVisible) _buildLiveValuesBox(vm),
           ],
         );
       },
@@ -1868,6 +1896,105 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: rows,
+      ),
+    );
+  }
+
+  Widget _buildLiveValuesBox(PlotViewModel vm) {
+    final latestPoint =
+        vm.displayDataPoints.isEmpty ? null : vm.displayDataPoints.last;
+    final displayChannels = vm.displayChannels;
+    final rows = <Widget>[
+      Text(
+        AppStrings.plot.liveValues,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: _plotFontSize(vm, 12),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      const SizedBox(height: 6),
+    ];
+
+    if (latestPoint == null) {
+      rows.add(
+        Text(
+          '暂无数据',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: _plotFontSize(vm, 12),
+            fontFamily: 'SarasaUiSC',
+          ),
+        ),
+      );
+    } else {
+      for (
+        int i = 0;
+        i < latestPoint.values.length && i < displayChannels.length;
+        i++
+      ) {
+        final channel = displayChannels[i];
+        if (!channel.visible) continue;
+        final name =
+            channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: channel.color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '$name: ${formatPlotValue(latestPoint.values[i])}',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: channel.color,
+                      fontSize: _plotFontSize(vm, 12),
+                      fontFamily: 'SarasaUiSC',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      if (rows.length == 2) {
+        rows.add(
+          Text(
+            '无显示通道',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: _plotFontSize(vm, 12),
+              fontFamily: 'SarasaUiSC',
+            ),
+          ),
+        );
+      }
+    }
+
+    return _DraggableInfoBox(
+      initialRight: 16,
+      initialTop: _legendVisible ? 240 : 96,
+      borderColor: Colors.lightBlue.withValues(alpha: 0.55),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: rows,
+          ),
+        ),
       ),
     );
   }

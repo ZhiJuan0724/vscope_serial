@@ -93,4 +93,85 @@ void main() {
     vm.dispose();
     await tester.pump(const Duration(milliseconds: 100));
   });
+
+  testWidgets('通道显示开关使用眼睛图标并可切换显示状态', (tester) async {
+    final vm = PlotViewModel(serialService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    expect(vm.channels[0].visible, isTrue);
+    expect(find.byIcon(Icons.visibility_outlined), findsWidgets);
+
+    await tester.tap(find.byTooltip(AppStrings.plot.hideChannel).first);
+    await tester.pumpAndSettle();
+
+    expect(vm.channels[0].visible, isFalse);
+    expect(find.byIcon(Icons.visibility_off_outlined), findsWidgets);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('表头显示图标在全部通道隐藏后才变为闭眼', (tester) async {
+    final vm = PlotViewModel(serialService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip(AppStrings.plot.hideChannel).first);
+    await tester.pumpAndSettle();
+
+    expect(vm.channels[0].visible, isFalse);
+    expect(find.byTooltip(AppStrings.plot.hideAllChannels), findsOneWidget);
+
+    await tester.tap(find.byTooltip(AppStrings.plot.hideAllChannels));
+    await tester.pumpAndSettle();
+
+    expect(vm.channels.every((channel) => !channel.visible), isTrue);
+    expect(find.byTooltip(AppStrings.plot.showAllChannels), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('实时值按钮可打开最新值浮窗', (tester) async {
+    final vm = PlotViewModel(serialService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    expect(find.text(AppStrings.plot.liveValues), findsOneWidget);
+    final emptyTextCountBefore = find.text('暂无数据').evaluate().length;
+
+    await tester.tap(find.byTooltip(AppStrings.plot.liveValues));
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.plot.liveValues), findsNWidgets(2));
+    expect(find.text('暂无数据').evaluate().length, emptyTextCountBefore + 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
 }

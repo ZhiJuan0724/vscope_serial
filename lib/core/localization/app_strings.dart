@@ -109,6 +109,7 @@ final class _PlotStrings {
   String get yFitDisplayRatio => 'Y自适应占比';
   String get yFitDisplayRatioHelp => 'Y 自适应后数据占绘图区高度的比例';
   String get legend => '图例';
+  String get liveValues => '实时值';
   String get undoZoom => '撤回缩放';
   String get boxZoom => '框选放大';
   String get zoomXIn => 'X 轴放大';
