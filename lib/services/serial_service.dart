@@ -231,6 +231,9 @@ class SerialService extends ChangeNotifier {
   Timer? _portChangeDebounce;
   bool _portDiscoveryStarted = false;
   bool _disposed = false;
+  Map<String, String> _portFriendlyNames = const {};
+  Future<bool>? _pendingPortDetailsRefresh;
+  bool _isRefreshingPortDetails = false;
 
   // Windows 原生串口读取器
   NativeSerialReader? _nativeReader;
@@ -242,6 +245,9 @@ class SerialService extends ChangeNotifier {
   /// 仅测试使用：替换原生串口枚举。
   Future<List<String>> Function()? debugPortEnumerator;
 
+  /// 仅测试使用：替换原生串口详细信息枚举。
+  Future<List<NativeSerialPortDetail>> Function()? debugPortDetailsEnumerator;
+
   /// 仅测试使用：替换原生连接健康检查。
   Future<bool> Function()? debugConnectionHealthChecker;
 
@@ -249,7 +255,15 @@ class SerialService extends ChangeNotifier {
   bool? debugNativePortOpen;
 
   List<String> get availablePorts => _portCatalog.ports;
-  bool get isRefreshingPorts => _portCatalog.isRefreshing;
+  bool get isRefreshingPorts =>
+      _portCatalog.isRefreshing || _isRefreshingPortDetails;
+
+  String portDisplayLabel(String port, {required bool showDetails}) {
+    if (!showDetails) return port;
+    final name = _portFriendlyNames[port];
+    return name == null || name.isEmpty ? port : '$port: $name';
+  }
+
   String? get portRefreshError => _portCatalog.lastError;
   Duration? get lastPortRefreshDuration => _portCatalog.lastDuration;
 
@@ -431,6 +445,94 @@ class SerialService extends ChangeNotifier {
     Duration waitTimeout = const Duration(seconds: 2),
   }) {
     return _portCatalog.refresh(reason: reason, waitTimeout: waitTimeout);
+  }
+
+  /// 用户主动开启详细信息后刷新端口及友好名称。
+  ///
+  /// 自动刷新始终只调用 [refreshPorts]，不会读取可能缓慢的设备名称。
+  Future<bool> refreshPortsWithDetails({
+    String reason = '用户手动刷新详细串口信息',
+    Duration waitTimeout = const Duration(seconds: 2),
+  }) async {
+    final existing = _pendingPortDetailsRefresh;
+    if (existing != null) {
+      return existing.timeout(waitTimeout, onTimeout: () => false);
+    }
+
+    final portsRefreshed = await refreshPorts(
+      reason: reason,
+      waitTimeout: waitTimeout,
+    );
+    if (!portsRefreshed && _portCatalog.isRefreshing) {
+      return false;
+    }
+
+    _isRefreshingPortDetails = true;
+    notifyListeners();
+    final stopwatch = Stopwatch()..start();
+    late final Future<bool> operation;
+    operation = Future<List<NativeSerialPortDetail>>.sync(() {
+          final debugEnumerator = debugPortDetailsEnumerator;
+          return debugEnumerator != null
+              ? debugEnumerator()
+              : NativeSerialReader.listPortDetailsInBackground();
+        })
+        .then((details) {
+          _portFriendlyNames = Map.unmodifiable({
+            for (final detail in details)
+              if (_normalizePortFriendlyName(detail).isNotEmpty)
+                detail.port: _normalizePortFriendlyName(detail),
+          });
+          AppLogger().info(
+            '串口详细信息刷新完成：耗时=${stopwatch.elapsedMilliseconds}ms，'
+            '名称数量=${_portFriendlyNames.length}',
+            category: 'SERIAL',
+          );
+          return true;
+        })
+        .catchError((Object error, StackTrace stack) {
+          AppLogger().warning(
+            '刷新串口详细信息失败：耗时=${stopwatch.elapsedMilliseconds}ms，错误=$error',
+            category: 'SERIAL',
+          );
+          return false;
+        })
+        .whenComplete(() {
+          stopwatch.stop();
+          if (identical(_pendingPortDetailsRefresh, operation)) {
+            _pendingPortDetailsRefresh = null;
+            _isRefreshingPortDetails = false;
+            if (!_disposed) notifyListeners();
+          }
+        });
+    _pendingPortDetailsRefresh = operation;
+
+    try {
+      return await operation.timeout(waitTimeout);
+    } on TimeoutException {
+      _isRefreshingPortDetails = false;
+      if (!_disposed) notifyListeners();
+      AppLogger().warning(
+        '等待串口详细信息超时：等待=${waitTimeout.inMilliseconds}ms；'
+        '后台读取将继续，界面保持响应',
+        category: 'SERIAL',
+      );
+      return false;
+    }
+  }
+
+  String _normalizePortFriendlyName(NativeSerialPortDetail detail) {
+    final trimmed = detail.name.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed
+        .replaceFirst(
+          RegExp(
+            '\\s*\\(${RegExp.escape(detail.port)}\\)\\s*\$',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
   }
 
   /// 校验已有原生连接是否仍然有效。

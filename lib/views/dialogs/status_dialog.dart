@@ -17,6 +17,8 @@ class StatusDialog extends StatefulWidget {
 }
 
 class _StatusDialogState extends State<StatusDialog> {
+  bool _showPortDetails = false;
+
   @override
   void initState() {
     super.initState();
@@ -41,7 +43,7 @@ class _StatusDialogState extends State<StatusDialog> {
           title: Text(AppStrings.serial.connectionTitle),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(
-            width: 400,
+            width: 520,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -64,7 +66,12 @@ class _StatusDialogState extends State<StatusDialog> {
                             displayedPorts.map((port) {
                               return DropdownMenuItem(
                                 value: port,
-                                child: Text(port),
+                                child: Text(
+                                  service.portDisplayLabel(
+                                    port,
+                                    showDetails: _showPortDetails,
+                                  ),
+                                ),
                               );
                             }).toList(),
                         onChanged:
@@ -83,7 +90,9 @@ class _StatusDialogState extends State<StatusDialog> {
                           service.isRefreshingPorts
                               ? null
                               : () => unawaited(
-                                service.refreshPorts(reason: '用户手动刷新'),
+                                _showPortDetails
+                                    ? service.refreshPortsWithDetails()
+                                    : service.refreshPorts(reason: '用户手动刷新'),
                               ),
                       icon:
                           service.isRefreshingPorts
@@ -95,6 +104,24 @@ class _StatusDialogState extends State<StatusDialog> {
                               )
                               : const Icon(Icons.refresh, size: 18),
                       label: Text(AppStrings.common.refresh),
+                    ),
+                    const SizedBox(width: 8),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          key: const ValueKey('show-port-details-checkbox'),
+                          value: _showPortDetails,
+                          visualDensity: VisualDensity.compact,
+                          onChanged: (value) {
+                            setState(() => _showPortDetails = value ?? false);
+                          },
+                        ),
+                        Text(
+                          AppStrings.serial.showPortDetails,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
                     ),
                   ],
                 ),

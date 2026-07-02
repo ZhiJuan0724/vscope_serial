@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cwctype>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -71,7 +72,48 @@ static std::wstring normalize_port_name(std::wstring value) {
     return value;
 }
 
-static void append_setupapi_ports(std::set<std::wstring>& ports) {
+struct SerialPortDetail {
+    std::wstring port;
+    std::wstring name;
+};
+
+static std::wstring read_device_property(
+    HDEVINFO devices,
+    SP_DEVINFO_DATA* deviceData,
+    DWORD property) {
+    wchar_t value[1024] = {};
+    DWORD valueType = 0;
+    DWORD requiredSize = 0;
+    if (!SetupDiGetDeviceRegistryPropertyW(
+            devices,
+            deviceData,
+            property,
+            &valueType,
+            reinterpret_cast<PBYTE>(value),
+            sizeof(value),
+            &requiredSize)) {
+        return std::wstring();
+    }
+    if (valueType != REG_SZ && valueType != REG_EXPAND_SZ) {
+        return std::wstring();
+    }
+    return std::wstring(value);
+}
+
+static std::wstring normalize_device_name(std::wstring value) {
+    while (!value.empty() && iswspace(value.back())) value.pop_back();
+    size_t start = 0;
+    while (start < value.size() && iswspace(value[start])) start++;
+    value.erase(0, start);
+    std::replace(value.begin(), value.end(), L'\t', L' ');
+    std::replace(value.begin(), value.end(), L'\r', L' ');
+    std::replace(value.begin(), value.end(), L'\n', L' ');
+    return value;
+}
+
+static void append_setupapi_ports(
+    std::map<std::wstring, std::wstring>& ports,
+    bool includeNames) {
     HDEVINFO devices = SetupDiGetClassDevsW(
         &kComPortInterfaceGuid,
         NULL,
@@ -122,14 +164,26 @@ static void append_setupapi_ports(std::set<std::wstring>& ports) {
         if (queryResult == ERROR_SUCCESS &&
             (valueType == REG_SZ || valueType == REG_EXPAND_SZ)) {
             std::wstring normalized = normalize_port_name(portName);
-            if (is_com_port_name(normalized)) ports.insert(normalized);
+            if (is_com_port_name(normalized)) {
+                std::wstring friendlyName;
+                if (includeNames) {
+                    friendlyName = read_device_property(
+                        devices, &deviceData, SPDRP_FRIENDLYNAME);
+                    if (friendlyName.empty()) {
+                        friendlyName = read_device_property(
+                            devices, &deviceData, SPDRP_DEVICEDESC);
+                    }
+                }
+                ports[normalized] = normalize_device_name(friendlyName);
+            }
         }
     }
 
     SetupDiDestroyDeviceInfoList(devices);
 }
 
-static void append_registry_ports(std::set<std::wstring>& ports) {
+static void append_registry_ports(
+    std::map<std::wstring, std::wstring>& ports) {
     HKEY key = NULL;
     if (RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
@@ -156,7 +210,10 @@ static void append_registry_ports(std::set<std::wstring>& ports) {
         }
 
         std::wstring normalized = normalize_port_name(valueData);
-        if (is_com_port_name(normalized)) ports.insert(normalized);
+        if (is_com_port_name(normalized) &&
+            ports.find(normalized) == ports.end()) {
+            ports[normalized] = std::wstring();
+        }
     }
 
     RegCloseKey(key);
@@ -171,20 +228,36 @@ static int port_number(const std::wstring& value) {
     }
 }
 
-static std::vector<std::wstring> enumerate_ports() {
-    std::set<std::wstring> uniquePorts;
-    append_setupapi_ports(uniquePorts);
+static std::vector<SerialPortDetail> enumerate_port_details(
+    bool includeNames) {
+    std::map<std::wstring, std::wstring> uniquePorts;
+    append_setupapi_ports(uniquePorts, includeNames);
     append_registry_ports(uniquePorts);
 
-    std::vector<std::wstring> ports(uniquePorts.begin(), uniquePorts.end());
+    std::vector<SerialPortDetail> ports;
+    ports.reserve(uniquePorts.size());
+    for (const auto& entry : uniquePorts) {
+        ports.push_back({entry.first, entry.second});
+    }
     std::sort(
         ports.begin(), ports.end(),
-        [](const std::wstring& left, const std::wstring& right) {
-            int leftNumber = port_number(left);
-            int rightNumber = port_number(right);
+        [](const SerialPortDetail& left, const SerialPortDetail& right) {
+            int leftNumber = port_number(left.port);
+            int rightNumber = port_number(right.port);
             if (leftNumber != rightNumber) return leftNumber < rightNumber;
-            return left < right;
+            return left.port < right.port;
         });
+    return ports;
+}
+
+static std::vector<std::wstring> enumerate_ports() {
+    const std::vector<SerialPortDetail> details =
+        enumerate_port_details(false);
+    std::vector<std::wstring> ports;
+    ports.reserve(details.size());
+    for (const SerialPortDetail& detail : details) {
+        ports.push_back(detail.port);
+    }
     return ports;
 }
 
@@ -490,6 +563,31 @@ int nsr_list_ports(char* buffer, int capacity) {
             multiString.push_back('\0');
         }
         // MultiSZ 即使为空也必须以双 NUL 结束。
+        if (multiString.empty()) multiString.push_back('\0');
+        multiString.push_back('\0');
+
+        const int required = static_cast<int>(multiString.size());
+        if (buffer == NULL || capacity < required) return required;
+        memcpy(buffer, multiString.data(), multiString.size());
+        return required;
+    } catch (...) {
+        return -1;
+    }
+}
+
+int nsr_list_port_details(char* buffer, int capacity) {
+    try {
+        const std::vector<SerialPortDetail> ports =
+            enumerate_port_details(true);
+        std::vector<char> multiString;
+        for (const SerialPortDetail& detail : ports) {
+            std::string entry = wide_to_utf8(detail.port);
+            entry.push_back('\t');
+            entry.append(wide_to_utf8(detail.name));
+            multiString.insert(
+                multiString.end(), entry.begin(), entry.end());
+            multiString.push_back('\0');
+        }
         if (multiString.empty()) multiString.push_back('\0');
         multiString.push_back('\0');
 

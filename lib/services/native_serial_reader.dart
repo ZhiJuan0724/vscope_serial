@@ -71,6 +71,11 @@ typedef NsrIsConnectionHealthyDart = int Function();
 typedef NsrListPortsC = Int32 Function(Pointer<Uint8> buffer, Int32 capacity);
 typedef NsrListPortsDart = int Function(Pointer<Uint8> buffer, int capacity);
 
+typedef NsrListPortDetailsC =
+    Int32 Function(Pointer<Uint8> buffer, Int32 capacity);
+typedef NsrListPortDetailsDart =
+    int Function(Pointer<Uint8> buffer, int capacity);
+
 typedef NsrStartPortMonitorC = Int32 Function(Int64 dartPort);
 typedef NsrStartPortMonitorDart = int Function(int dartPort);
 
@@ -110,6 +115,10 @@ final _nsrIsConnectionHealthy = _dll
 final _nsrListPorts = _dll.lookupFunction<NsrListPortsC, NsrListPortsDart>(
   'nsr_list_ports',
 );
+final _nsrListPortDetails = _dll
+    .lookupFunction<NsrListPortDetailsC, NsrListPortDetailsDart>(
+      'nsr_list_port_details',
+    );
 final _nsrStartPortMonitor = _dll
     .lookupFunction<NsrStartPortMonitorC, NsrStartPortMonitorDart>(
       'nsr_start_port_monitor',
@@ -152,7 +161,52 @@ List<String> _listNativePorts() {
   }
 }
 
+List<NativeSerialPortDetail> _listNativePortDetails() {
+  final required = _nsrListPortDetails(nullptr, 0);
+  if (required < 0) {
+    throw StateError('Windows 串口详细信息枚举失败: $required');
+  }
+  if (required < 2) return const [];
+
+  final buffer = calloc<Uint8>(required);
+  try {
+    final written = _nsrListPortDetails(buffer, required);
+    if (written < 0) {
+      throw StateError('Windows 串口详细信息枚举失败: $written');
+    }
+    if (written > required) {
+      return _listNativePortDetails();
+    }
+
+    final bytes = buffer.asTypedList(written);
+    final details = <NativeSerialPortDetail>[];
+    var start = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != 0) continue;
+      if (i == start) break;
+      final entry = utf8.decode(bytes.sublist(start, i));
+      final separator = entry.indexOf('\t');
+      final port = separator < 0 ? entry : entry.substring(0, separator);
+      final name = separator < 0 ? '' : entry.substring(separator + 1);
+      if (port.isNotEmpty) {
+        details.add(NativeSerialPortDetail(port: port, name: name));
+      }
+      start = i + 1;
+    }
+    return details;
+  } finally {
+    calloc.free(buffer);
+  }
+}
+
 bool _checkNativeConnectionHealth() => _nsrIsConnectionHealthy() == 1;
+
+class NativeSerialPortDetail {
+  final String port;
+  final String name;
+
+  const NativeSerialPortDetail({required this.port, required this.name});
+}
 
 /// Windows 原生串口读取器
 class NativeSerialReader {
@@ -280,6 +334,11 @@ class NativeSerialReader {
   /// 在后台 isolate 中枚举串口，避免异常驱动阻塞 Flutter UI。
   static Future<List<String>> listPortsInBackground() {
     return Isolate.run(_listNativePorts);
+  }
+
+  /// 在后台 isolate 中读取串口友好名称，仅供用户主动开启详细信息时调用。
+  static Future<List<NativeSerialPortDetail>> listPortDetailsInBackground() {
+    return Isolate.run(_listNativePortDetails);
   }
 
   /// 在后台 isolate 中检查句柄，驱动异常时不阻塞 Flutter UI。

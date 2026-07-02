@@ -53,6 +53,7 @@ final class _SerialStrings {
   const _SerialStrings();
 
   String get connectionTitle => '串口连接';
+  String get showPortDetails => '显示详细信息';
   String get selectPortHint => '选择串口';
   String get port => '串口';
   String get baudRate => '波特率';
