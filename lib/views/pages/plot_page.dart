@@ -66,6 +66,8 @@ const double kMaxChannelPanelWidth = 400;
 const double kDefaultChannelPanelWidth = 260;
 const double kCollapsedPanelWidth = 26;
 const double kRProtocolAddressWidth = 108;
+const double kRProtocolAddressMinWidth = 54;
+const double kRProtocolAddressMaxWidth = 112;
 const double kFixedFrameConfigLabelWidth = 72;
 const double kDataTypeDropdownWidth = 148;
 const double kChannelPanelHorizontalPadding = 6;
@@ -106,6 +108,7 @@ typedef _PlotChannelPanelSelection =
       int activeChannelCount,
       int rawDisplayChannelCount,
       SendProtocolType effectiveSendProtocolType,
+      int profileRevision,
       String selectedZobowProfileId,
       String selectedRProfileId,
     });
@@ -261,6 +264,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       activeChannelCount: vm.activeChannelCount,
       rawDisplayChannelCount: vm.rawDisplayChannelCount,
       effectiveSendProtocolType: vm.effectiveSendProtocolType,
+      profileRevision: vm.profileRevision,
       selectedZobowProfileId: vm.selectedZobowProfileId,
       selectedRProfileId: vm.selectedRProfileId,
     );
@@ -394,7 +398,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   double _minimumChannelPanelWidth(PlotViewModel vm) {
     if (vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
-      return kMinChannelPanelWidth;
+      return kCompactChannelPanelWidth;
     }
     if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
     final channelCount = vm.parserConfig.zobowChannelCount;
@@ -1594,7 +1598,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               borderRadius: BorderRadius.circular(4),
             ),
             title: Text(AppStrings.plot.resetAllChannelsTitle),
-            content: Text(AppStrings.plot.resetAllChannelsMessage),
+            content: SizedBox(
+              width: 420,
+              child: Text(AppStrings.plot.resetAllChannelsMessage),
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),

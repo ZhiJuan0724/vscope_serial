@@ -205,7 +205,7 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
             : AppStrings.profile.editProfile,
       ),
       content: SizedBox(
-        width: 400,
+        width: 520,
         height: 400,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -258,7 +258,6 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                   ),
                   const SizedBox(width: 32),
                   Expanded(
-                    flex: 2,
                     child: Text(
                       AppStrings.profile.nameColumn,
                       style: const TextStyle(
@@ -267,8 +266,8 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                       ),
                     ),
                   ),
-                  Expanded(
-                    flex: 2,
+                  SizedBox(
+                    width: 150,
                     child: Text(
                       AppStrings.profile.addressColumn,
                       style: const TextStyle(
@@ -352,22 +351,26 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                             ),
                           ),
                           Expanded(
-                            flex: 2,
-                            child: TextField(
-                              controller: _rows[index].nameController,
-                              style: const TextStyle(fontSize: 12),
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                  vertical: 4,
+                            child: Tooltip(
+                              message: _rows[index].nameController.text,
+                              waitDuration: const Duration(milliseconds: 500),
+                              child: TextField(
+                                controller: _rows[index].nameController,
+                                style: const TextStyle(fontSize: 12),
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 4,
+                                  ),
+                                  border: InputBorder.none,
                                 ),
-                                border: InputBorder.none,
+                                onChanged: (_) => setState(() {}),
                               ),
                             ),
                           ),
-                          Expanded(
-                            flex: 2,
+                          SizedBox(
+                            width: 150,
                             child: TextField(
                               controller: _rows[index].addressController,
                               style: const TextStyle(

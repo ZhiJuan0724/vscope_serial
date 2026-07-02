@@ -217,7 +217,7 @@ final class _PlotStrings {
   String get resetAllChannels => '重置全部通道';
   String get resetAllChannelsTitle => '重置全部通道';
   String get resetAllChannelsMessage =>
-      '将恢复通道显示设置，清空数学通道和 r 协议地址，并恢复 Zobow 地址、数据类型及固定帧逐通道类型。配置文件不会删除。';
+      '将重置当前所有通道的地址、名称、显示、颜色、偏置、数据类型等通道设置，并清空数学通道。已保存的配置文件不会删除。';
   String get resetAllChannelsStoppedOnly => '请停止绘图后再重置全部通道';
   String get deleteMathChannel => '删除数学通道';
   String get editMathChannel => '编辑数学通道';

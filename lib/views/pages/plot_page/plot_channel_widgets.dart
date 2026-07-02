@@ -205,6 +205,22 @@ class _ChannelItemState extends State<_ChannelItem> {
     }
   }
 
+  double _rProtocolAddressWidth(BuildContext context, String text) {
+    final displayText = text.trim().isEmpty ? '0' : text.trim();
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: displayText,
+        style: const TextStyle(fontSize: 14, fontFamily: 'SarasaUiSC'),
+      ),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+    )..layout();
+    return (textPainter.width + 14).clamp(
+      kRProtocolAddressMinWidth,
+      kRProtocolAddressMaxWidth,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isZobowMode =
@@ -297,7 +313,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                   Container(
                     width:
                         isRProtocolMode
-                            ? kRProtocolAddressWidth
+                            ? _rProtocolAddressWidth(context, addressText)
                             : usesShortZobowAddress &&
                                 !_addressFocusNode.hasFocus
                             ? 58
@@ -351,6 +367,12 @@ class _ChannelItemState extends State<_ChannelItem> {
                           else
                             const _ZobowChannelIdInputFormatter(),
                         ],
+                        onChanged:
+                            isRProtocolMode
+                                ? (_) {
+                                  if (mounted) setState(() {});
+                                }
+                                : null,
                         onSubmitted:
                             (_) =>
                                 isRProtocolMode
@@ -365,7 +387,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                   _buildPresetButton(context),
                 ] else if (reservesRAddressSpace) ...[
                   const SizedBox(width: 6),
-                  const SizedBox(width: kRProtocolAddressWidth, height: 26),
+                  const SizedBox(width: kRProtocolAddressMinWidth, height: 26),
                 ],
               ],
             ),

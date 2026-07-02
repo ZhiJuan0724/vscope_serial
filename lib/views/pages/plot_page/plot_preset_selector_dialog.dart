@@ -95,7 +95,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         ],
       ),
       content: SizedBox(
-        width: _viewMode == _PresetViewMode.list ? 320 : 540,
+        width: _viewMode == _PresetViewMode.list ? 420 : 620,
         height: 360,
         child: Column(
           children: [
@@ -185,22 +185,31 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    preset.name,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF333344),
+                  child: Tooltip(
+                    message: preset.name,
+                    waitDuration: const Duration(milliseconds: 500),
+                    child: Text(
+                      preset.name,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF333344),
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  displayAddress,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF8888AA),
-                    fontFamily: 'SarasaUiSC',
+                SizedBox(
+                  width: 112,
+                  child: Text(
+                    displayAddress,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF8888AA),
+                      fontFamily: 'SarasaUiSC',
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
@@ -241,14 +250,18 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  preset.name,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF333344),
+                Tooltip(
+                  message: preset.name,
+                  waitDuration: const Duration(milliseconds: 500),
+                  child: Text(
+                    preset.name,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF333344),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
                 ),
                 const SizedBox(height: 2),
                 Text(
