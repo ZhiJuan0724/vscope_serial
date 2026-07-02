@@ -511,7 +511,7 @@ class UpdateService {
     _downloadClient = client;
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'VScope Serial Updater');
+      request.headers.set(HttpHeaders.userAgentHeader, 'SerialTools Updater');
       final response = await request.close().timeout(
         const Duration(seconds: 15),
       );
@@ -711,10 +711,7 @@ class UpdateService {
           HttpClient()..connectionTimeout = const Duration(seconds: 8);
       try {
         final request = await client.getUrl(uri);
-        request.headers.set(
-          HttpHeaders.userAgentHeader,
-          'VScope Serial Updater',
-        );
+        request.headers.set(HttpHeaders.userAgentHeader, 'SerialTools Updater');
         final response = await request.close().timeout(
           const Duration(seconds: 15),
         );

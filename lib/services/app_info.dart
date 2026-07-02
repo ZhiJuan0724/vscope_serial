@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 class AppInfo {
   AppInfo._();
 
-  static const name = 'VScope Serial';
+  static const name = 'SerialTools';
   static const _buildTimeValue = String.fromEnvironment('BUILD_TIME');
   static String? _cachedVersion;
 

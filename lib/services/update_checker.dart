@@ -357,7 +357,7 @@ class UpdateChecker {
       final request = await client.getUrl(uri);
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/json')
-        ..set(HttpHeaders.userAgentHeader, 'VScope Serial/$currentVersion');
+        ..set(HttpHeaders.userAgentHeader, 'SerialTools/$currentVersion');
       final response = await request.close().timeout(
         const Duration(seconds: 8),
       );

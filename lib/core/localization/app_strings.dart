@@ -4,7 +4,7 @@
 /// 用户可见的固定界面文本应尽量放在这里；运行时数据、协议名称、
 /// 日志消息和文件格式常量在完整多语言支持前可以继续靠近各自逻辑。
 abstract final class AppStrings {
-  static const appName = 'VScope Serial';
+  static const appName = 'SerialTools';
 
   static const nav = _NavStrings();
   static const common = _CommonStrings();
