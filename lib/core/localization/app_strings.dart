@@ -161,6 +161,9 @@ final class _PlotStrings {
   String get advancedSettings => '高级设置';
   String get showGrid => '显示网格';
   String get gridDensity => '网格密度';
+  String get plotBackground => '绘图背景';
+  String get plotBackgroundDark => '黑底';
+  String get plotBackgroundLight => '白底';
   String get densitySparse => '稀疏';
   String get densityNormal => '普通';
   String get densityDense => '密集';

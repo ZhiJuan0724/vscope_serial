@@ -102,6 +102,23 @@ void main() {
       expect(vm.profileRevision, before + 1);
     });
 
+    test('背景切换会映射预设通道颜色但保留自定义颜色', () {
+      const customColor = Color(0xFF123456);
+      vm.setChannelColor(0, ChannelConfig.darkPresetColors.first);
+      vm.setChannelColor(1, customColor);
+
+      vm.setPlotBackground('light');
+
+      expect(vm.plotBackground, 'light');
+      expect(vm.channels[0].color, ChannelConfig.lightPresetColors.first);
+      expect(vm.channels[1].color, customColor);
+
+      vm.setPlotBackground('dark');
+
+      expect(vm.channels[0].color, ChannelConfig.darkPresetColors.first);
+      expect(vm.channels[1].color, customColor);
+    });
+
     test('视口默认范围', () {
       expect(vm.viewport.xMin, 0.0);
       expect(vm.viewport.xMax, 1000.0);

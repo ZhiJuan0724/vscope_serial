@@ -116,6 +116,7 @@ typedef _PlotAreaSelection =
       int channelConfigRevision,
       int viewportRevision,
       int overlayRevision,
+      String plotBackground,
     });
 
 int? _parseCompactCount(String input) {
@@ -269,6 +270,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       channelConfigRevision: vm.channelConfigRevision,
       viewportRevision: vm.viewportRevision,
       overlayRevision: vm.overlayRevision,
+      plotBackground: vm.plotBackground,
     );
   }
 
@@ -1569,6 +1571,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (vm.dataPoints.isEmpty) {
       return Stack(
         children: [
+          Positioned.fill(
+            child: ColoredBox(color: _plotBackgroundColor(vm.plotBackground)),
+          ),
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1598,6 +1603,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
+        final plotBackground = _parsePlotBackground(vm.plotBackground);
         final offsetAxisColumnWidths =
             PlotLayerPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
@@ -1625,6 +1631,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             activeChannelCount: activeChannelCount,
             showGrid: vm.showGrid,
             gridDensity: gridDensity,
+            backgroundStyle: plotBackground,
             cursor: vm.cursor,
             xCursor1: vm.xCursor1,
             xCursor2: vm.xCursor2,
@@ -2435,6 +2442,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     };
   }
 
+  PlotBackgroundStyle _parsePlotBackground(String background) {
+    return switch (background) {
+      'light' => PlotBackgroundStyle.light,
+      _ => PlotBackgroundStyle.dark,
+    };
+  }
+
+  Color _plotBackgroundColor(String background) {
+    return switch (background) {
+      'light' => const Color(0xFFF8FAFC),
+      _ => const Color(0xFF1A1A2E),
+    };
+  }
+
   /// 构建网格密度选择按钮
   Widget _buildDensityButton(
     String label,
@@ -2447,6 +2468,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       child: TextButton(
         onPressed: () {
           vm.setGridDensity(density);
+          setState(() {});
+        },
+        style: TextButton.styleFrom(
+          backgroundColor:
+              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: const Size(0, 32),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: isSelected ? Colors.blue : null,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackgroundButton(
+    String label,
+    String background,
+    PlotViewModel vm,
+    StateSetter setState,
+  ) {
+    final isSelected = vm.plotBackground == background;
+    return Expanded(
+      child: TextButton(
+        onPressed: () {
+          vm.setPlotBackground(background);
           setState(() {});
         },
         style: TextButton.styleFrom(
@@ -2668,6 +2720,29 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Text(
+                            AppStrings.plot.plotBackground,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              _buildBackgroundButton(
+                                AppStrings.plot.plotBackgroundDark,
+                                'dark',
+                                vm,
+                                setState,
+                              ),
+                              const SizedBox(width: 8),
+                              _buildBackgroundButton(
+                                AppStrings.plot.plotBackgroundLight,
+                                'light',
+                                vm,
+                                setState,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
                           // 网格开关
                           Row(
                             children: [

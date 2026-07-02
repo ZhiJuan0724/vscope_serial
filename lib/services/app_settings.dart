@@ -75,6 +75,9 @@ class AppSettings {
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String gridDensity = 'normal';
 
+  /// 绘图背景: 'dark'(黑底), 'light'(白底)
+  String plotBackground = 'dark';
+
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
 
@@ -242,6 +245,7 @@ class AppSettings {
     statsToolbarEnabled = false;
     showGrid = true;
     gridDensity = 'normal';
+    plotBackground = 'dark';
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
@@ -334,6 +338,8 @@ class AppSettings {
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
+      final background = json['plotBackground'] as String?;
+      plotBackground = background == 'light' ? 'light' : 'dark';
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = ((json['randomFrequency'] as num?)?.toDouble() ??
               1000.0)
@@ -447,6 +453,7 @@ class AppSettings {
       'statsToolbarEnabled': statsToolbarEnabled,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
+      'plotBackground': plotBackground,
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
       'followEnabled': followEnabled,

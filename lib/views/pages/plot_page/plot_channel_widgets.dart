@@ -570,6 +570,10 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
       text: widget.channel.expression,
     );
     _selectedColor = display.color;
+    _selectedColor = ChannelConfig.colorForBackground(
+      _selectedColor,
+      widget.vm.plotBackground,
+    );
     _showLine = display.showLine;
     _pointSize = display.pointSize;
     _lineWidth = display.lineWidth;
@@ -743,76 +747,73 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   }
 
   Widget _buildColorPicker() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        ..._channelPresetColors.map((color) {
-          final selected = color.toARGB32() == _selectedColor.toARGB32();
-          return InkWell(
-            onTap: () => setState(() => _selectedColor = color),
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(4),
-                border:
-                    selected ? Border.all(color: Colors.white, width: 2) : null,
-                boxShadow:
-                    selected
-                        ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 4,
-                          ),
-                        ]
-                        : null,
-              ),
-              child:
+    final presetColors = _channelPresetColors(widget.vm.plotBackground);
+    return _buildTwoRowColorSwatches([
+      ...presetColors.map((color) {
+        final selected = color.toARGB32() == _selectedColor.toARGB32();
+        return InkWell(
+          onTap: () => setState(() => _selectedColor = color),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(4),
+              border:
+                  selected ? Border.all(color: Colors.white, width: 2) : null,
+              boxShadow:
                   selected
-                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      ? [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                        ),
+                      ]
                       : null,
             ),
-          );
-        }),
-        Tooltip(
-          message: AppStrings.plot.customColor,
-          child: InkWell(
-            onTap: _showCustomColorPicker,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: _usesCustomColor ? _selectedColor : Colors.white,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color:
-                      _usesCustomColor
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey.shade400,
-                  width: _usesCustomColor ? 2 : 1,
-                ),
-              ),
-              child: Icon(
-                Icons.palette_outlined,
-                size: 18,
+            child:
+                selected
+                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    : null,
+          ),
+        );
+      }),
+      Tooltip(
+        message: AppStrings.plot.customColor,
+        child: InkWell(
+          onTap: _showCustomColorPicker,
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: _usesCustomColor ? _selectedColor : Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
                 color:
                     _usesCustomColor
-                        ? _foregroundForColor(_selectedColor)
-                        : Colors.grey.shade700,
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey.shade400,
+                width: _usesCustomColor ? 2 : 1,
               ),
+            ),
+            child: Icon(
+              Icons.palette_outlined,
+              size: 18,
+              color:
+                  _usesCustomColor
+                      ? _foregroundForColor(_selectedColor)
+                      : Colors.grey.shade700,
             ),
           ),
         ),
-      ],
-    );
+      ),
+    ]);
   }
 
   bool get _usesCustomColor =>
-      !_channelPresetColors.any(
-        (color) => color.toARGB32() == _selectedColor.toARGB32(),
-      );
+      !_channelPresetColors(
+        widget.vm.plotBackground,
+      ).any((color) => color.toARGB32() == _selectedColor.toARGB32());
 
   Future<void> _showCustomColorPicker() async {
     final selectedColor = await _showChannelCustomColorPicker(
@@ -852,8 +853,32 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   }
 }
 
-final List<Color> _channelPresetColors =
-    ChannelConfig.defaultColors.take(23).toList();
+List<Color> _channelPresetColors(String background) =>
+    ChannelConfig.presetColorsForBackground(background);
+
+Widget _buildTwoRowColorSwatches(List<Widget> swatches) {
+  Widget row(List<Widget> children) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < children.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          children[i],
+        ],
+      ],
+    );
+  }
+
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      row(swatches.take(8).toList(growable: false)),
+      const SizedBox(height: 8),
+      row(swatches.skip(8).take(8).toList(growable: false)),
+    ],
+  );
+}
 
 /// 通道编辑对话框
 ///
@@ -883,7 +908,10 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   @override
   void initState() {
     super.initState();
-    _selectedColor = widget.ch.color;
+    _selectedColor = ChannelConfig.colorForBackground(
+      widget.ch.color,
+      widget.vm.plotBackground,
+    );
     _alias = widget.ch.alias;
     _showLine = widget.ch.showLine;
     _pointSize = widget.ch.pointSize;
@@ -1159,9 +1187,10 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
 
   void _resetLocalChannel() {
     if (_isClosing) return;
-    final defaultColor =
-        ChannelConfig.defaultColors[widget.ch.index %
-            ChannelConfig.defaultColors.length];
+    final defaultColor = ChannelConfig.colorForIndex(
+      widget.ch.index,
+      widget.vm.plotBackground,
+    );
     setState(() {
       _selectedColor = defaultColor;
       _alias = '';
@@ -1241,79 +1270,73 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     progressNotifier.dispose();
   }
 
-  /// 构建颜色选择器（23 个黑底可识别预设色 + 自选色入口）
+  /// 构建颜色选择器（15 个当前背景预设色 + 自选色入口）
   Widget _buildColorPicker() {
-    final presetColors = _channelPresetColors;
+    final presetColors = _channelPresetColors(widget.vm.plotBackground);
     final usesCustomColor =
         !presetColors.any(
           (color) => color.toARGB32() == _selectedColor.toARGB32(),
         );
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        ...presetColors.map((color) {
-          final isSelected = color.toARGB32() == _selectedColor.toARGB32();
-          return InkWell(
-            onTap: () => setState(() => _selectedColor = color),
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(4),
-                border:
-                    isSelected
-                        ? Border.all(color: Colors.white, width: 2)
-                        : null,
-                boxShadow:
-                    isSelected
-                        ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 4,
-                          ),
-                        ]
-                        : null,
-              ),
-              child:
+    return _buildTwoRowColorSwatches([
+      ...presetColors.map((color) {
+        final isSelected = color.toARGB32() == _selectedColor.toARGB32();
+        return InkWell(
+          onTap: () => setState(() => _selectedColor = color),
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(4),
+              border:
+                  isSelected ? Border.all(color: Colors.white, width: 2) : null,
+              boxShadow:
                   isSelected
-                      ? const Icon(Icons.check, size: 16, color: Colors.white)
+                      ? [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 4,
+                        ),
+                      ]
                       : null,
             ),
-          );
-        }),
-        Tooltip(
-          message: AppStrings.plot.customColor,
-          child: InkWell(
-            onTap: _showCustomColorPicker,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: usesCustomColor ? _selectedColor : Colors.white,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color:
-                      usesCustomColor
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey.shade400,
-                  width: usesCustomColor ? 2 : 1,
-                ),
-              ),
-              child: Icon(
-                Icons.palette_outlined,
-                size: 18,
+            child:
+                isSelected
+                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    : null,
+          ),
+        );
+      }),
+      Tooltip(
+        message: AppStrings.plot.customColor,
+        child: InkWell(
+          onTap: _showCustomColorPicker,
+          child: Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: usesCustomColor ? _selectedColor : Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
                 color:
                     usesCustomColor
-                        ? _foregroundForColor(_selectedColor)
-                        : Colors.grey.shade700,
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey.shade400,
+                width: usesCustomColor ? 2 : 1,
               ),
+            ),
+            child: Icon(
+              Icons.palette_outlined,
+              size: 18,
+              color:
+                  usesCustomColor
+                      ? _foregroundForColor(_selectedColor)
+                      : Colors.grey.shade700,
             ),
           ),
         ),
-      ],
-    );
+      ),
+    ]);
   }
 
   Future<void> _showCustomColorPicker() async {

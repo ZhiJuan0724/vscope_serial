@@ -19,6 +19,7 @@ void main() {
             ..statsToolbarEnabled = true
             ..showGrid = false
             ..gridDensity = 'dense'
+            ..plotBackground = 'light'
             ..useRandomSource = true
             ..randomFrequency = 500
             ..followEnabled = true
@@ -66,6 +67,7 @@ void main() {
       expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
+      expect(settings.plotBackground, 'dark');
       expect(settings.useRandomSource, isFalse);
       expect(settings.randomFrequency, 1000);
       expect(settings.followEnabled, isFalse);

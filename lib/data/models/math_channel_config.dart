@@ -19,9 +19,7 @@ class MathChannelConfig {
            display ??
            ChannelConfig(
              index: 16 + index,
-             color:
-                 ChannelConfig.defaultColors[(12 + index) %
-                     ChannelConfig.defaultColors.length],
+             color: ChannelConfig.colorForIndex(16 + index, 'dark'),
              alias: 'Math${index + 1}',
            );
 
@@ -47,9 +45,7 @@ class MathChannelConfig {
     );
     final colorValue =
         (json['color'] as num?)?.toInt() ??
-        ChannelConfig
-            .defaultColors[(12 + index) % ChannelConfig.defaultColors.length]
-            .toARGB32();
+        ChannelConfig.colorForIndex(16 + index, 'dark').toARGB32();
     return MathChannelConfig(
       index: index,
       enabled: json['enabled'] as bool? ?? false,

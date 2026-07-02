@@ -137,5 +137,46 @@ void main() {
 
       expect(newPainter.shouldRepaint(oldPainter), true);
     });
+
+    test('背景模式变化会触发各绘图层重绘', () {
+      final channels = [ChannelConfig(index: 0, color: Colors.yellow)];
+      final data = [
+        PlotDataPoint(index: 0, timestamp: 0, values: [1]),
+      ];
+
+      for (final layer in PlotPaintLayer.values) {
+        final oldPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: data,
+          channels: channels,
+          backgroundStyle: PlotBackgroundStyle.dark,
+        );
+        final newPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: data,
+          channels: channels,
+          backgroundStyle: PlotBackgroundStyle.light,
+        );
+
+        expect(newPainter.shouldRepaint(oldPainter), true);
+      }
+    });
+
+    test('网格密度会改变实际网格数量', () {
+      final sparse = PlotLayerPainter.debugGridCountFor(
+        800,
+        GridDensity.sparse,
+      );
+      final normal = PlotLayerPainter.debugGridCountFor(
+        800,
+        GridDensity.normal,
+      );
+      final dense = PlotLayerPainter.debugGridCountFor(800, GridDensity.dense);
+
+      expect(sparse, lessThan(normal));
+      expect(normal, lessThan(dense));
+    });
   });
 }

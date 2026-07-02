@@ -234,6 +234,9 @@ class PlotViewModel extends BaseViewModel {
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
 
+  /// 绘图背景: 'dark'(黑底), 'light'(白底)
+  String _plotBackground = 'dark';
+
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
   bool _snapHighlightEnabled = true;
@@ -443,6 +446,7 @@ class PlotViewModel extends BaseViewModel {
     );
     _showGrid = settings.showGrid;
     _gridDensity = settings.gridDensity;
+    _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
@@ -452,6 +456,7 @@ class PlotViewModel extends BaseViewModel {
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
     _yFitDisplayRatio = settings.yFitDisplayRatio.clamp(0.5, 0.95);
     _replaceMathChannels(settings.mathChannels, save: false);
+    _applyPlotBackgroundPalette();
     _sourceConfig.randomFrequencyHz = settings.randomFrequency.clamp(
       1.0,
       100000.0,
@@ -518,6 +523,7 @@ class PlotViewModel extends BaseViewModel {
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
+    settings.plotBackground = _plotBackground;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -569,6 +575,7 @@ class PlotViewModel extends BaseViewModel {
   bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
   String get gridDensity => _gridDensity;
+  String get plotBackground => _plotBackground;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
@@ -3183,6 +3190,33 @@ class PlotViewModel extends BaseViewModel {
       _saveSettings();
       Future.microtask(() => notifyListeners());
     }
+  }
+
+  void setPlotBackground(String background) {
+    final next = background == 'light' ? 'light' : 'dark';
+    if (_plotBackground == next) return;
+    _plotBackground = next;
+    _applyPlotBackgroundPalette();
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _applyPlotBackgroundPalette() {
+    for (final channel in channels) {
+      channel.color = ChannelConfig.colorForBackground(
+        channel.color,
+        _plotBackground,
+      );
+    }
+    for (final channel in mathChannels) {
+      channel.display.color = ChannelConfig.colorForBackground(
+        channel.display.color,
+        _plotBackground,
+      );
+    }
+    _invalidateDisplayChannelCaches();
+    _refreshSnapHighlightColors();
   }
 
   /// 切换 X-X 测量开关
