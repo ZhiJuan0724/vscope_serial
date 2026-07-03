@@ -166,6 +166,17 @@ void main() {
     test(
       'changing channel type rebuilds exact window and LOD values',
       () async {
+        vm.updateParserConfig(
+          vm.parserConfig.copyWith(
+            zobowChannelTypes: [
+              DataType.uint16,
+              ...List.filled(
+                ParserConfig.maxZobowChannelCount - 1,
+                DataType.int16,
+              ),
+            ],
+          ),
+        );
         for (int i = 0; i < 128; i++) {
           final frame = _zobowFrameWithValues([0xFFFF, 2, 3, 4]);
           vm.ingestParsedResultForTest(

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
+import '../../data/models/parser_config.dart';
 import '../../services/serial_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/app_info_dialog.dart';
@@ -47,10 +49,10 @@ class StatusBar extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       service.isConnected
-                          ? '已连接'
+                          ? AppStrings.status.connected
                           : service.isConnecting
-                          ? '连接中...'
-                          : '未连接',
+                          ? AppStrings.status.connecting
+                          : AppStrings.status.disconnected,
                       style: const TextStyle(fontSize: 12),
                     ),
                     if (service.isConnected && service.config.port != null) ...[
@@ -63,7 +65,8 @@ class StatusBar extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (plotVm.useRandomSource) ...[
+                    if (plotVm.useRandomSource &&
+                        plotVm.parserType == ParserType.fireWater) ...[
                       const SizedBox(width: 8),
                       Icon(
                         Icons.auto_graph,
@@ -72,7 +75,7 @@ class StatusBar extends StatelessWidget {
                       ),
                       const SizedBox(width: 3),
                       Text(
-                        '随机源',
+                        AppStrings.status.randomSource,
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.primary,
@@ -90,7 +93,7 @@ class StatusBar extends StatelessWidget {
               ),
               const Spacer(),
               Tooltip(
-                message: '应用信息',
+                message: AppStrings.status.appInfo,
                 child: IconButton(
                   onPressed: () => showAppInfoDialog(context),
                   icon: const Icon(Icons.info_outline, size: 16),

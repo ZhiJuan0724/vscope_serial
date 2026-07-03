@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -31,7 +32,7 @@ DynamicLibrary _loadDll() {
   return DynamicLibrary.open('native_serial_reader.dll');
 }
 
-// Dart API DL initialization
+// Dart API DL 初始化
 typedef NsrInitDartApiC = Int32 Function(Pointer<Void> data);
 typedef NsrInitDartApiDart = int Function(Pointer<Void> data);
 
@@ -67,6 +68,20 @@ typedef NsrIsOpenDart = int Function();
 typedef NsrIsConnectionHealthyC = Int32 Function();
 typedef NsrIsConnectionHealthyDart = int Function();
 
+typedef NsrListPortsC = Int32 Function(Pointer<Uint8> buffer, Int32 capacity);
+typedef NsrListPortsDart = int Function(Pointer<Uint8> buffer, int capacity);
+
+typedef NsrListPortDetailsC =
+    Int32 Function(Pointer<Uint8> buffer, Int32 capacity);
+typedef NsrListPortDetailsDart =
+    int Function(Pointer<Uint8> buffer, int capacity);
+
+typedef NsrStartPortMonitorC = Int32 Function(Int64 dartPort);
+typedef NsrStartPortMonitorDart = int Function(int dartPort);
+
+typedef NsrStopPortMonitorC = Void Function();
+typedef NsrStopPortMonitorDart = void Function();
+
 // 获取函数指针
 final _nsrInitDartApi = _dll
     .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
@@ -97,6 +112,101 @@ final _nsrIsConnectionHealthy = _dll
     .lookupFunction<NsrIsConnectionHealthyC, NsrIsConnectionHealthyDart>(
       'nsr_is_connection_healthy',
     );
+final _nsrListPorts = _dll.lookupFunction<NsrListPortsC, NsrListPortsDart>(
+  'nsr_list_ports',
+);
+final _nsrListPortDetails = _dll
+    .lookupFunction<NsrListPortDetailsC, NsrListPortDetailsDart>(
+      'nsr_list_port_details',
+    );
+final _nsrStartPortMonitor = _dll
+    .lookupFunction<NsrStartPortMonitorC, NsrStartPortMonitorDart>(
+      'nsr_start_port_monitor',
+    );
+final _nsrStopPortMonitor = _dll
+    .lookupFunction<NsrStopPortMonitorC, NsrStopPortMonitorDart>(
+      'nsr_stop_port_monitor',
+    );
+
+List<String> _listNativePorts() {
+  final required = _nsrListPorts(nullptr, 0);
+  if (required < 0) {
+    throw StateError('Windows 串口枚举失败: $required');
+  }
+  if (required < 2) return const [];
+
+  final buffer = calloc<Uint8>(required);
+  try {
+    final written = _nsrListPorts(buffer, required);
+    if (written < 0) {
+      throw StateError('Windows 串口枚举失败: $written');
+    }
+    if (written > required) {
+      // 插拔可能导致两次调用之间的列表长度发生变化，重新读取即可。
+      return _listNativePorts();
+    }
+
+    final bytes = buffer.asTypedList(written);
+    final ports = <String>[];
+    var start = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != 0) continue;
+      if (i == start) break;
+      ports.add(utf8.decode(bytes.sublist(start, i)));
+      start = i + 1;
+    }
+    return ports;
+  } finally {
+    calloc.free(buffer);
+  }
+}
+
+List<NativeSerialPortDetail> _listNativePortDetails() {
+  final required = _nsrListPortDetails(nullptr, 0);
+  if (required < 0) {
+    throw StateError('Windows 串口详细信息枚举失败: $required');
+  }
+  if (required < 2) return const [];
+
+  final buffer = calloc<Uint8>(required);
+  try {
+    final written = _nsrListPortDetails(buffer, required);
+    if (written < 0) {
+      throw StateError('Windows 串口详细信息枚举失败: $written');
+    }
+    if (written > required) {
+      return _listNativePortDetails();
+    }
+
+    final bytes = buffer.asTypedList(written);
+    final details = <NativeSerialPortDetail>[];
+    var start = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != 0) continue;
+      if (i == start) break;
+      final entry = utf8.decode(bytes.sublist(start, i));
+      final separator = entry.indexOf('\t');
+      final port = separator < 0 ? entry : entry.substring(0, separator);
+      final name = separator < 0 ? '' : entry.substring(separator + 1);
+      if (port.isNotEmpty) {
+        details.add(NativeSerialPortDetail(port: port, name: name));
+      }
+      start = i + 1;
+    }
+    return details;
+  } finally {
+    calloc.free(buffer);
+  }
+}
+
+bool _checkNativeConnectionHealth() => _nsrIsConnectionHealthy() == 1;
+
+class NativeSerialPortDetail {
+  final String port;
+  final String name;
+
+  const NativeSerialPortDetail({required this.port, required this.name});
+}
 
 /// Windows 原生串口读取器
 class NativeSerialReader {
@@ -107,10 +217,10 @@ class NativeSerialReader {
   bool _isOpen = false;
   bool _dartApiInitialized = false;
 
-  /// Initialize Dart API (must be called before any other operation)
+  /// 初始化 Dart API（必须在其它操作前调用）。
   ///
-  /// This must be called with [NativeApi.initializeApiDLData] from dart:ffi.
-  /// Example: initDartApi(NativeApi.initializeApiDLData);
+  /// 调用方需要传入 dart:ffi 的 [NativeApi.initializeApiDLData]。
+  /// 示例：initDartApi(NativeApi.initializeApiDLData)。
   bool initDartApi(Pointer<Void> initData) {
     if (_dartApiInitialized) return true;
     if (initData == nullptr) return false;
@@ -123,9 +233,9 @@ class NativeSerialReader {
   /// 打开串口
   ///
   /// [initData] should be [NativeApi.initializeApiDLData] from dart:ffi.
-  /// If not provided, the caller must call [initDartApi] before [startReading].
+  /// 如果没有提供，调用方必须在 [startReading] 前先调用 [initDartApi]。
   bool open(String portName, int baudRate, {Pointer<Void>? initData}) {
-    // Ensure Dart API is initialized if initData is provided
+    // 如果提供了 initData，则确保 Dart API 已初始化。
     if (initData != null && !_dartApiInitialized) {
       initDartApi(initData);
     }
@@ -140,16 +250,15 @@ class NativeSerialReader {
     }
   }
 
-  /// Open the native handle outside the UI isolate.
+  /// 在 UI isolate 之外打开原生句柄。
   ///
-  /// The Windows CreateFile call can block for an unavailable serial port.
-  /// Native DLL state is process-wide, so the UI isolate can attach to the
-  /// handle after this background operation completes.
+  /// Windows CreateFile 在端口不可用时可能阻塞。
+  /// 原生 DLL 状态是进程级的，后台操作完成后 UI isolate 可以挂接该句柄。
   static Future<bool> openInBackground(String portName, int baudRate) {
     return Isolate.run(() => _openNativePort(portName, baudRate));
   }
 
-  /// Attach this reader instance to a handle opened by [openInBackground].
+  /// 将当前读取器实例挂接到 [openInBackground] 打开的句柄。
   bool attachToOpenPort() {
     _isOpen = _nsrIsOpen() == 1;
     return _isOpen;
@@ -200,7 +309,7 @@ class NativeSerialReader {
   /// 停止读取
   void stopReading() {
     _nsrStopReading();
-    // Native thread is stopped first so no more messages are posted.
+    // 先停止原生线程，确保不会再投递消息。
     _receivePort?.close();
     _receivePort = null;
   }
@@ -219,8 +328,23 @@ class NativeSerialReader {
   /// 是否打开
   bool get isOpen => _nsrIsOpen() == 1;
 
-  /// Whether the open handle still responds after an external disconnect.
+  /// 外部断开后，已打开句柄是否仍有响应。
   bool get isConnectionHealthy => _nsrIsConnectionHealthy() == 1;
+
+  /// 在后台 isolate 中枚举串口，避免异常驱动阻塞 Flutter UI。
+  static Future<List<String>> listPortsInBackground() {
+    return Isolate.run(_listNativePorts);
+  }
+
+  /// 在后台 isolate 中读取串口友好名称，仅供用户主动开启详细信息时调用。
+  static Future<List<NativeSerialPortDetail>> listPortDetailsInBackground() {
+    return Isolate.run(_listNativePortDetails);
+  }
+
+  /// 在后台 isolate 中检查句柄，驱动异常时不阻塞 Flutter UI。
+  static Future<bool> checkConnectionHealthInBackground() {
+    return Isolate.run(_checkNativeConnectionHealth);
+  }
 
   void _onDataReceived(dynamic message) {
     if (message is! Uint8List) {
@@ -231,7 +355,7 @@ class NativeSerialReader {
       return;
     }
 
-    // C++ 发送的数据格式: [8 bytes timestamp_us][N bytes data]
+    // C++ 发送的数据格式：[8 字节 timestamp_us][N 字节 data]。
     if (message.length < 8) {
       AppLogger().debug(
         '[NativeSerialReader] Message too short: ${message.length} bytes',
@@ -249,13 +373,44 @@ class NativeSerialReader {
   }
 
   void dispose() {
-    // Stop native thread first, then close ReceivePort and stream controller.
+    // 先停止原生线程，再关闭 ReceivePort 和 stream controller。
     _nsrStopReading();
     _receivePort?.close();
     _receivePort = null;
     _nsrClosePort();
     _isOpen = false;
     _dataController.close();
+  }
+}
+
+/// Windows 串口设备到达/移除监听器。
+///
+/// 原生回调只发送变化信号，实际枚举由上层做防抖和并发合并。
+class NativeSerialPortMonitor {
+  final _changesController = StreamController<void>.broadcast();
+  ReceivePort? _receivePort;
+
+  Stream<void> get changes => _changesController.stream;
+
+  bool start() {
+    if (_receivePort != null) return true;
+    if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+
+    final receivePort = ReceivePort();
+    receivePort.listen((_) => _changesController.add(null));
+    if (_nsrStartPortMonitor(receivePort.sendPort.nativePort) != 0) {
+      receivePort.close();
+      return false;
+    }
+    _receivePort = receivePort;
+    return true;
+  }
+
+  void dispose() {
+    _nsrStopPortMonitor();
+    _receivePort?.close();
+    _receivePort = null;
+    _changesController.close();
   }
 }
 

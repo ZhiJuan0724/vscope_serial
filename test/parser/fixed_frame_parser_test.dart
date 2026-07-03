@@ -145,6 +145,24 @@ void main() {
       expect(config.fixedFrameValidationError, isNotNull);
     });
 
+    test('启用帧头后不能为空', () {
+      final config =
+          ParserConfig.fixedFrameDefault()
+            ..frameHeader = []
+            ..frameHeaderLength = 0;
+
+      expect(config.fixedFrameValidationError, '启用帧头后至少需要填写一个字节');
+    });
+
+    test('启用帧尾后不能为空', () {
+      final config =
+          ParserConfig.fixedFrameDefault()
+            ..hasFrameTail = true
+            ..frameTail = [];
+
+      expect(config.fixedFrameValidationError, '启用帧尾后至少需要填写一个字节');
+    });
+
     test('固定帧通道数不能为0', () {
       final config = ParserConfig.fixedFrameDefault()..channelCount = 0;
 
@@ -152,17 +170,15 @@ void main() {
     });
 
     test('固定帧r协议按固定通道数发送并保留0地址', () {
-      final addresses = PlotViewModel.validateRProtocolAddresses(
-        ['1', '0', '0x10'],
-        requiredCount: 3,
-        allowZeroValues: true,
-      );
+      final addresses = PlotViewModel.validateRProtocolAddresses([
+        '1',
+        '0',
+        '0x10',
+      ], requiredCount: 3);
 
       expect(addresses, ['1', '0', '0x10']);
       expect(
-        String.fromCharCodes(
-          PlotViewModel.buildRProtocolCommand(addresses, allowZeroValues: true),
-        ),
+        String.fromCharCodes(PlotViewModel.buildRProtocolCommand(addresses)),
         'r 1 0 0x10\n',
       );
     });

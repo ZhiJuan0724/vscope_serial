@@ -1,9 +1,9 @@
-import '../data/models/zobow_config_profile.dart';
+import '../data/models/address_config_profile.dart';
 
 class AddressProfileCsvImporter {
   AddressProfileCsvImporter._();
 
-  static List<ZobowChannelPreset> parse(
+  static List<AddressChannelPreset> parse(
     String source, {
     required AddressProfileProtocolType protocolType,
   }) {
@@ -13,11 +13,11 @@ class AddressProfileCsvImporter {
     }
 
     var startIndex = 0;
-    if (_addressFromRow(rows.first, protocolType) == null) {
+    if (_presetFromRow(rows.first, protocolType) == null) {
       startIndex = 1;
     }
 
-    final presets = <ZobowChannelPreset>[];
+    final presets = <AddressChannelPreset>[];
     for (var i = startIndex; i < rows.length; i++) {
       final row = rows[i];
       if (row.every((cell) => cell.trim().isEmpty)) continue;
@@ -26,14 +26,14 @@ class AddressProfileCsvImporter {
       }
 
       final name = row[0].trim();
-      final address = _addressFromRow(row, protocolType);
+      final preset = _presetFromRow(row, protocolType);
       if (name.isEmpty) {
         throw FormatException('第 ${i + 1} 行通道名称为空');
       }
-      if (address == null) {
+      if (preset == null) {
         throw FormatException('第 ${i + 1} 行通道地址格式错误');
       }
-      presets.add(ZobowChannelPreset(name: name, address: address));
+      presets.add(preset);
     }
 
     if (presets.isEmpty) {
@@ -42,35 +42,16 @@ class AddressProfileCsvImporter {
     return presets;
   }
 
-  static int? _addressFromRow(
+  static AddressChannelPreset? _presetFromRow(
     List<String> row,
     AddressProfileProtocolType protocolType,
   ) {
     if (row.length < 2) return null;
-    return _parseAddress(row[1], protocolType: protocolType);
-  }
-
-  static int? _parseAddress(
-    String text, {
-    required AddressProfileProtocolType protocolType,
-  }) {
-    final value = text.trim();
-    if (value.isEmpty) return null;
-    final hasHexPrefix = value.startsWith('0x') || value.startsWith('0X');
-    final digits = hasHexPrefix ? value.substring(2) : value;
-    if (digits.isEmpty) return null;
-
-    final radix =
-        protocolType == AddressProfileProtocolType.rProtocol && !hasHexPrefix
-            ? 10
-            : 16;
-    final pattern =
-        radix == 10 ? RegExp(r'^[0-9]+$') : RegExp(r'^[0-9a-fA-F]+$');
-    if (!pattern.hasMatch(digits)) return null;
-
-    final address = int.tryParse(digits, radix: radix);
-    if (address == null || address < 0 || address > 0xFFFFFFFF) return null;
-    return address & 0xFFFFFFFF;
+    return AddressChannelPreset.tryParseAddress(
+      name: row[0].trim(),
+      text: row[1],
+      protocolType: protocolType,
+    );
   }
 
   static List<List<String>> _parseCsv(String source) {

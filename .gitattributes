@@ -1,0 +1,2 @@
+# Match Flutter's generator output to avoid false modifications on Windows.
+windows/flutter/generated_plugins.cmake text eol=lf

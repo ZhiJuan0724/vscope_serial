@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -86,6 +88,9 @@ class PlotGestureHandler extends StatefulWidget {
   final List<CursorState> observations;
   final void Function(int index, double x)? onObservationDrag;
   final void Function(int index)? onObservationDelete;
+  final bool observationPlacementActive;
+  final void Function(double x)? onObservationPlacementHover;
+  final void Function(double x)? onObservationPlacementCommit;
 
   /// 通道配置列表（用于偏移标签拖动检测）
   final List<ChannelConfig> channels;
@@ -130,6 +135,9 @@ class PlotGestureHandler extends StatefulWidget {
     this.observations = const [],
     this.onObservationDrag,
     this.onObservationDelete,
+    this.observationPlacementActive = false,
+    this.onObservationPlacementHover,
+    this.onObservationPlacementCommit,
     required this.channels,
     int? activeChannelCount,
     this.onChannelOffsetDrag,
@@ -160,6 +168,8 @@ enum _DragTarget {
   observation,
 }
 
+enum _ShiftZoomAxis { none, pending, x, y, channelY }
+
 /// [PlotGestureHandler] 的状态类
 ///
 /// 管理拖动状态、框选状态、测量线拖动目标等。
@@ -171,6 +181,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   /// 是否正在框选
   bool _isBoxSelecting = false;
+
+  /// Shift + 拖动时锁定的缩放轴。
+  ///
+  /// 按下时根据鼠标所在区域识别一次，后续即使斜向拖动也只缩放该轴。
+  _ShiftZoomAxis _shiftZoomAxis = _ShiftZoomAxis.none;
 
   /// 上次指针位置（用于计算拖拽 delta）
   Offset? _lastPosition;
@@ -188,6 +203,20 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   ///
   /// 避免在快速拖动时依赖 widget.viewport 的实时更新。
   PlotViewport? _dragViewport;
+
+  /// Shift 拖动开始时鼠标对应的 X 轴数据坐标
+  double? _shiftZoomCenterX;
+
+  /// Shift 拖动开始时鼠标对应的 Y 轴数据坐标
+  double? _shiftZoomCenterY;
+
+  /// Shift 拖动偏置 Y 轴时命中的通道。
+  int? _shiftZoomChannelIndex;
+
+  /// 右侧偏置 Y 轴列拖动时使用相对位移，不把鼠标位置直接当作 0 点。
+  bool _offsetDragUsesDelta = false;
+  double? _offsetDragStartDataY;
+  double _offsetDragStartYOffset = 0;
 
   /// 上次通知 UI 重绘的视口（用于节流）
   PlotViewport? _lastNotifiedViewport;
@@ -338,7 +367,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     }
   }
 
-  /// 标签尺寸（与 PlotPainter 中一致，用于命中检测）
+  /// 标签尺寸（与 PlotLayerPainter 中一致，用于命中检测）
   static const double _labelWidth = 28;
   static const double _labelHeight = 20;
 
@@ -456,6 +485,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       size.height,
     );
 
+    if (widget.observationPlacementActive) {
+      widget.onObservationPlacementHover?.call(x);
+      return;
+    }
+
     // 单垂直光标优先（通过开关控制）
     if (widget.vCursorEnabled) {
       // 使用 WidgetsBinding 避免在指针事件回调中直接触发 setState
@@ -488,6 +522,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     // 只处理鼠标左键（kPrimaryButton）
     if (event.buttons != kPrimaryButton) return;
 
+    if (widget.observationPlacementActive) {
+      final size = context.size ?? Size.zero;
+      if (size.isEmpty) return;
+      final x = widget.viewport.screenToDataX(
+        event.localPosition.dx,
+        size.width,
+      );
+      widget.onObservationPlacementCommit?.call(x);
+      return;
+    }
+
     final observationHit = _hitTestObservation(event.localPosition);
     if (observationHit != null) {
       _dragTarget = _DragTarget.observation;
@@ -506,10 +551,37 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (offsetHit != null) {
       _dragTarget = _DragTarget.channelOffset;
       _offsetChannelIndex = offsetHit;
+      _offsetDragUsesDelta = false;
       _isDragging = true;
       _lastPosition = event.localPosition;
       AppLogger().trace(
         '偏移拖动开始: channel=$_offsetChannelIndex, pos=${event.localPosition}',
+        category: 'GESTURE',
+      );
+      return;
+    }
+
+    final size = context.size ?? Size.zero;
+    if (size.isEmpty) return;
+
+    // 右侧偏置 Y 轴列也可直接上下拖动 offset。
+    final offsetAxisHit = _hitTestOffsetAxisColumn(event.localPosition, size);
+    if (offsetAxisHit != null && !HardwareKeyboard.instance.isShiftPressed) {
+      _dragTarget = _DragTarget.channelOffset;
+      _offsetChannelIndex = offsetAxisHit;
+      _offsetDragUsesDelta = true;
+      _offsetDragStartDataY = widget.viewport.screenToDataY(
+        event.localPosition.dy.clamp(
+          PlotViewport().marginTop,
+          size.height - PlotViewport().marginBottom,
+        ),
+        size.height,
+      );
+      _offsetDragStartYOffset = _channelYOffset(offsetAxisHit);
+      _isDragging = true;
+      _lastPosition = event.localPosition;
+      AppLogger().trace(
+        '偏置Y轴拖动开始: channel=$_offsetChannelIndex, pos=${event.localPosition}',
         category: 'GESTURE',
       );
       return;
@@ -528,7 +600,12 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       return;
     }
 
-    if (widget.boxZoomEnabled) {
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      _isDragging = true;
+      _lastPosition = event.localPosition;
+      _initializeShiftZoom(event.localPosition, size, offsetAxisHit);
+      _initializeDragViewport();
+    } else if (widget.boxZoomEnabled) {
       _isBoxSelecting = true;
       _boxStart = event.localPosition;
       _boxEnd = event.localPosition;
@@ -539,15 +616,56 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     } else {
       _isDragging = true;
       _lastPosition = event.localPosition;
-      _dragViewport = widget.viewport.copy();
-      _lastNotifiedViewport = _dragViewport!.copy();
-      _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-      _targetFps = widget.refreshFps.clamp(30, 60);
+      _initializeDragViewport();
       AppLogger().trace(
         '平移拖动开始: pos=${event.localPosition}, viewport xMin=${_dragViewport!.xMin}, targetFps=$_targetFps',
         category: 'GESTURE',
       );
     }
+  }
+
+  void _initializeShiftZoom(Offset position, Size size, int? offsetAxisHit) {
+    final centerScreenX = position.dx.clamp(
+      widget.viewport.marginLeft,
+      size.width - widget.viewport.marginRight,
+    );
+    final centerScreenY = position.dy.clamp(
+      PlotViewport().marginTop,
+      size.height - PlotViewport().marginBottom,
+    );
+    _shiftZoomCenterX = widget.viewport.screenToDataX(
+      centerScreenX,
+      size.width,
+    );
+    _shiftZoomCenterY = widget.viewport.screenToDataY(
+      centerScreenY,
+      size.height,
+    );
+
+    final inYAxisArea = position.dx < widget.viewport.marginLeft;
+    final inXAxisArea =
+        position.dy > size.height - widget.viewport.marginBottom;
+    if (offsetAxisHit != null && widget.onChannelYScaleZoom != null) {
+      _shiftZoomAxis = _ShiftZoomAxis.channelY;
+      _shiftZoomChannelIndex = offsetAxisHit;
+    } else if (inYAxisArea && !inXAxisArea) {
+      _shiftZoomAxis = _ShiftZoomAxis.y;
+    } else if (inXAxisArea) {
+      _shiftZoomAxis = _ShiftZoomAxis.x;
+    } else {
+      _shiftZoomAxis = _ShiftZoomAxis.pending;
+    }
+    AppLogger().trace(
+      'Shift缩放开始: axis=$_shiftZoomAxis, channel=$_shiftZoomChannelIndex, pos=$position',
+      category: 'GESTURE',
+    );
+  }
+
+  void _initializeDragViewport() {
+    _dragViewport = widget.viewport.copy();
+    _lastNotifiedViewport = _dragViewport!.copy();
+    _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
+    _targetFps = widget.refreshFps.clamp(30, 60);
   }
 
   /// 检测点击位置是否在测量标签上
@@ -559,9 +677,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return _DragTarget.none;
 
-    // X-X 测量：检测 X1/X2 标签（标签在测量线顶部）
+    // X-X 测量：检测 X1/X2 标签（标签在绘图区顶部内侧）
     if (widget.xCursor1 != null || widget.xCursor2 != null) {
-      final topY = PlotViewport().marginTop - 12;
+      final topY = PlotViewport().marginTop + 12;
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
         if (widget.xCursor1 != null) {
           final sx1 = widget.viewport.dataToScreenX(
@@ -673,10 +791,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final left = PlotViewport().marginLeft;
 
-    for (final ch in widget.channels.take(widget.activeChannelCount)) {
-      if (!ch.visible || !ch.offsetEnabled) continue;
-
-      // 计算标签位置（与 PlotPainter 中一致）
+    for (final ch in _visibleOffsetAxisChannels()) {
+      // 计算标签位置（与 PlotLayerPainter 中一致）
       final zeroDataY = 0.0 * ch.yScale + ch.yOffset;
       final zeroY = widget.viewport.dataToScreenY(zeroDataY, size.height);
       final plotH = widget.viewport.plotHeight(size.height);
@@ -686,7 +802,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         continue;
       }
 
-      final displayName = ch.alias.isNotEmpty ? ch.alias : 'Ch${ch.index}';
+      final displayName = _offsetAxisLabel(ch);
       final textPainter = TextPainter(
         text: TextSpan(
           text: displayName,
@@ -728,13 +844,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final left = PlotViewport().marginLeft;
     final right = left + plotW;
 
-    // 收集可见且开启偏移的通道
-    final offsetChannels = <ChannelConfig>[];
-    for (final ch in widget.channels.take(widget.activeChannelCount)) {
-      if (ch.visible && ch.offsetEnabled) {
-        offsetChannels.add(ch);
-      }
-    }
+    // 收集可见且开启偏移的通道。绑定组只命中一列。
+    final offsetChannels = _visibleOffsetAxisChannels();
 
     var axisX = right;
     final widths = widget.viewport.offsetAxisColumnWidths;
@@ -758,6 +869,41 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     return null;
   }
 
+  List<ChannelConfig> _visibleOffsetAxisChannels() {
+    final result = <ChannelConfig>[];
+    final seenGroups = <int>{};
+    for (final channel in widget.channels.take(widget.activeChannelCount)) {
+      if (!channel.visible || !channel.offsetEnabled) continue;
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId != null && !seenGroups.add(groupId)) continue;
+      result.add(channel);
+    }
+    return result;
+  }
+
+  String _offsetAxisLabel(ChannelConfig channel) {
+    final groupId = channel.offsetBindingGroupId;
+    if (groupId == null) return _shortChannelName(channel);
+    final names = widget.channels
+        .take(widget.activeChannelCount)
+        .where(
+          (member) =>
+              member.visible &&
+              member.offsetEnabled &&
+              member.offsetBindingGroupId == groupId,
+        )
+        .map(_shortChannelName)
+        .toList(growable: false);
+    if (names.isEmpty) return _shortChannelName(channel);
+    return names.join('+');
+  }
+
+  String _shortChannelName(ChannelConfig channel) {
+    return channel.index >= 16
+        ? 'Math${channel.index - 15}'
+        : 'Ch${channel.index}';
+  }
+
   /// 处理指针移动（拖拽平移、框选、测量线拖动）
   void _handlePointerMove(PointerMoveEvent event) {
     final size = context.size ?? Size.zero;
@@ -778,9 +924,16 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final dy = event.localPosition.dy - _lastPosition!.dy;
       _lastPosition = event.localPosition;
 
-      // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
-      _dragViewport = _dragViewport!.panX(dx, size.width);
-      _dragViewport = _dragViewport!.panY(dy, size.height);
+      if (_shiftZoomAxis != _ShiftZoomAxis.none) {
+        _handleShiftZoomDrag(dx, dy);
+        if (_shiftZoomAxis == _ShiftZoomAxis.channelY) {
+          return;
+        }
+      } else {
+        // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
+        _dragViewport = _dragViewport!.panX(dx, size.width);
+        _dragViewport = _dragViewport!.panY(dy, size.height);
+      }
 
       // 节流：根据目标帧率计算间隔，与高级设置同步
       final notifyIntervalMs = (1000 / _targetFps).round();
@@ -797,6 +950,45 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         widget.onViewportChanged(_dragViewport!, fromDrag: true);
       }
     }
+  }
+
+  void _handleShiftZoomDrag(double dx, double dy) {
+    const zoomSensitivity = 240.0;
+    if (_shiftZoomAxis == _ShiftZoomAxis.pending) {
+      if (dx.abs() < 2 && dy.abs() < 2) return;
+      _shiftZoomAxis =
+          dy.abs() > dx.abs() ? _ShiftZoomAxis.y : _ShiftZoomAxis.x;
+      AppLogger().trace('Shift缩放锁定: axis=$_shiftZoomAxis', category: 'GESTURE');
+    }
+    switch (_shiftZoomAxis) {
+      case _ShiftZoomAxis.x:
+        // 右拖时 factor < 1（放大），左拖时 factor > 1（缩小）。
+        final factor = math.exp(-dx / zoomSensitivity);
+        _dragViewport = _dragViewport!.zoomX(factor, _shiftZoomCenterX!);
+        break;
+      case _ShiftZoomAxis.y:
+        // 上拖时 factor < 1（放大），下拖时 factor > 1（缩小）。
+        final factor = math.exp(dy / zoomSensitivity);
+        _dragViewport = _dragViewport!.zoomY(factor, _shiftZoomCenterY!);
+        break;
+      case _ShiftZoomAxis.channelY:
+        final channelIndex = _shiftZoomChannelIndex;
+        if (channelIndex == null || widget.onChannelYScaleZoom == null) return;
+        // 上拖增大通道比例，下拖减小通道比例。
+        final scaleDelta = math.exp(-dy / zoomSensitivity);
+        widget.onChannelYScaleZoom!(channelIndex, scaleDelta);
+        break;
+      case _ShiftZoomAxis.none:
+      case _ShiftZoomAxis.pending:
+        break;
+    }
+  }
+
+  double _channelYOffset(int channelIndex) {
+    for (final channel in widget.channels) {
+      if (channel.index == channelIndex) return channel.yOffset;
+    }
+    return 0;
   }
 
   /// 处理测量线拖动，根据 [_dragTarget] 将屏幕坐标转换为数据坐标并回调
@@ -871,8 +1063,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.height,
           );
-          // yOffset = 数据Y - 0 * yScale = 数据Y
-          widget.onChannelOffsetDrag!(_offsetChannelIndex, y);
+          final yOffset =
+              _offsetDragUsesDelta && _offsetDragStartDataY != null
+                  ? _offsetDragStartYOffset + (y - _offsetDragStartDataY!)
+                  : y;
+          widget.onChannelOffsetDrag!(_offsetChannelIndex, yOffset);
         }
         break;
       case _DragTarget.observation:
@@ -907,6 +1102,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     // 偏移拖动结束，清空状态
     if (_dragTarget == _DragTarget.channelOffset) {
       _offsetChannelIndex = -1;
+      _offsetDragUsesDelta = false;
+      _offsetDragStartDataY = null;
+      _offsetDragStartYOffset = 0;
     }
     if (_dragTarget == _DragTarget.observation) {
       _observationIndex = -1;
@@ -959,18 +1157,23 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     if (_isDragging &&
         _dragTarget == _DragTarget.none &&
-        _dragViewport != null) {
+        _dragViewport != null &&
+        _shiftZoomAxis != _ShiftZoomAxis.channelY) {
       // 平移拖动结束，确保最终视口被应用并保存
       widget.onViewportChanged(_dragViewport!, fromDrag: true);
       widget.onDragEnd?.call();
     }
     _isDragging = false;
     _isBoxSelecting = false;
+    _shiftZoomAxis = _ShiftZoomAxis.none;
     _lastPosition = null;
     _boxStart = null;
     _boxEnd = null;
     _dragTarget = _DragTarget.none;
     _dragViewport = null;
+    _shiftZoomCenterX = null;
+    _shiftZoomCenterY = null;
+    _shiftZoomChannelIndex = null;
     _lastNotifiedViewport = null;
     if (mounted) setState(() {});
   }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_settings.dart';
 
-/// Application-wide transient notifications.
+/// 应用级临时提示。
 class AppNotifications {
   AppNotifications._();
 
@@ -33,6 +33,10 @@ class AppNotifications {
     _lastShownAt = now;
 
     final isWarning = _isWarning(message);
+    final screenWidth = MediaQuery.maybeSizeOf(state.context)?.width;
+    final availableWidth = screenWidth == null ? 420.0 : screenWidth - 32;
+    final snackBarWidth =
+        availableWidth < 280 ? null : availableWidth.clamp(280.0, 420.0);
     state
       ..clearSnackBars()
       ..showSnackBar(
@@ -50,6 +54,7 @@ class AppNotifications {
           duration:
               duration > Duration.zero ? duration : const Duration(days: 1),
           behavior: SnackBarBehavior.floating,
+          width: snackBarWidth?.toDouble(),
           backgroundColor: isWarning ? Colors.orange.shade800 : null,
         ),
       );

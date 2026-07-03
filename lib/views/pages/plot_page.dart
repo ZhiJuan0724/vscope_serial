@@ -3,23 +3,35 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/utils/crc.dart';
+import '../../core/utils/plot_value_formatter.dart';
+import '../../core/utils/plot_performance_metrics.dart';
+import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
-import '../../data/models/zobow_config_profile.dart';
+import '../../data/models/math_channel_config.dart';
+import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
-import '../dialogs/zobow_profile_dialog.dart';
+import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
+import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/plot_status_bar.dart';
+
+part 'plot_page/plot_file_widgets.dart';
+part 'plot_page/plot_channel_widgets.dart';
+part 'plot_page/plot_parser_config_dialog.dart';
+part 'plot_page/plot_overlay_widgets.dart';
+part 'plot_page/plot_preset_selector_dialog.dart';
 
 /// 绘图页面入口
 ///
@@ -48,13 +60,98 @@ class _PlotPageContent extends StatefulWidget {
 }
 
 /// 通道面板尺寸常量
-const double kMinChannelPanelWidth = 240;
+const double kMinChannelPanelWidth = 260;
 const double kCompactChannelPanelWidth = 212;
 const double kMaxChannelPanelWidth = 400;
-const double kDefaultChannelPanelWidth = 240;
+const double kDefaultChannelPanelWidth = 260;
 const double kCollapsedPanelWidth = 26;
-const double kRProtocolAddressWidth = 86;
+const double kRProtocolAddressWidth = 108;
+const double kRProtocolAddressMinWidth = 54;
+const double kRProtocolAddressMaxWidth = 112;
 const double kFixedFrameConfigLabelWidth = 72;
+const double kDataTypeDropdownWidth = 148;
+const double kChannelPanelHorizontalPadding = 6;
+const double kChannelPanelListRightPadding = 12;
+
+typedef _PlotToolbarSelection =
+    ({
+      bool isPlotting,
+      bool isStopping,
+      bool hasData,
+      ParserType parserType,
+      bool useRandomSource,
+      double randomFrequency,
+      bool canUndoZoom,
+      bool vCursorEnabled,
+      bool observationPlacementActive,
+      bool boxZoomEnabled,
+      bool xMeasurementEnabled,
+      bool yMeasurementEnabled,
+      bool statsToolbarEnabled,
+      bool statsEnabled,
+      bool statsRangeEnabled,
+      bool followEnabled,
+      bool showGrid,
+      String gridDensity,
+      SendProtocolType sendProtocolType,
+      int profileRevision,
+      String selectedZobowProfileId,
+      String selectedRProfileId,
+    });
+
+typedef _PlotChannelPanelSelection =
+    ({
+      int channelConfigRevision,
+      bool isPlotting,
+      bool isStopping,
+      ParserType parserType,
+      int activeChannelCount,
+      int rawDisplayChannelCount,
+      SendProtocolType effectiveSendProtocolType,
+      int profileRevision,
+      String selectedZobowProfileId,
+      String selectedRProfileId,
+    });
+
+typedef _PlotAreaSelection =
+    ({
+      bool hasData,
+      int dataRevision,
+      int channelConfigRevision,
+      int viewportRevision,
+      int overlayRevision,
+      String plotBackground,
+      double floatingPanelOpacity,
+    });
+
+int? _parseCompactCount(String input) {
+  final text = input.trim();
+  if (text.isEmpty) return null;
+  final match = RegExp(r'^(\d+(?:\.\d+)?)([kKmM]?)$').firstMatch(text);
+  if (match == null) return null;
+
+  final value = double.tryParse(match.group(1)!);
+  if (value == null) return null;
+  final multiplier = switch (match.group(2)!.toUpperCase()) {
+    'K' => 1000,
+    'M' => 1000000,
+    _ => 1,
+  };
+  return (value * multiplier).round();
+}
+
+String _formatCompactCount(int value) {
+  if (value == 0) return '0';
+  if (value % 1000000 == 0) return '${value ~/ 1000000}M';
+  if (value >= 1000000) {
+    return '${(value / 1000000).toStringAsFixed(1)}M';
+  }
+  if (value % 1000 == 0) return '${value ~/ 1000}K';
+  if (value >= 1000) {
+    return '${(value / 1000).toStringAsFixed(1)}K';
+  }
+  return value.toString();
+}
 
 class _PlotPageContentState extends State<_PlotPageContent> {
   /// 面板是否折叠
@@ -69,37 +166,127 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 是否显示悬浮图例
   bool _legendVisible = false;
 
+  /// 是否显示最新通道值浮窗
+  bool _liveValuesVisible = false;
+
+  OverlayEntry? _channelContextMenuEntry;
+  Rect? _channelContextMenuRect;
+  bool _channelContextMenuRouteAttached = false;
+  Duration? _channelContextMenuHandledPointerTime;
+
+  @override
+  void dispose() {
+    _hideChannelContextMenu();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Consumer<PlotViewModel>(
-      builder: (context, vm, child) {
-        return Column(
-          children: [
-            // 第一栏工具栏
-            _buildPrimaryToolbar(context, vm),
-            // 第二栏工具栏（光标+缩放）
-            _buildSecondaryToolbar(context, vm),
-            // 主区域
-            Expanded(
-              child: Row(
-                children: [
-                  // 通道设置面板（可折叠/可拉伸）
-                  _buildChannelPanelArea(context, vm),
-                  // 绘图区域
-                  Expanded(child: _buildPlotArea(context, vm)),
-                ],
+    PlotPerformanceMetrics.instance.increment(PlotPerformanceMetric.pageBuild);
+    return Column(
+      children: [
+        Selector<PlotViewModel, _PlotToolbarSelection>(
+          selector: (_, vm) => _selectToolbar(vm),
+          builder:
+              (context, _, _) =>
+                  _buildPrimaryToolbar(context, context.read<PlotViewModel>()),
+        ),
+        Selector<PlotViewModel, _PlotToolbarSelection>(
+          selector: (_, vm) => _selectToolbar(vm),
+          builder:
+              (context, _, _) => _buildSecondaryToolbar(
+                context,
+                context.read<PlotViewModel>(),
               ),
-            ),
-            // 状态栏
-            const PlotStatusBar(),
-          ],
-        );
-      },
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Selector<PlotViewModel, _PlotChannelPanelSelection>(
+                selector: (_, vm) => _selectChannelPanel(vm),
+                builder:
+                    (context, _, _) => _buildChannelPanelArea(
+                      context,
+                      context.read<PlotViewModel>(),
+                    ),
+              ),
+              Expanded(
+                child: Selector<PlotViewModel, _PlotAreaSelection>(
+                  selector: (_, vm) => _selectPlotArea(vm),
+                  builder:
+                      (context, _, _) => _buildPlotArea(
+                        context,
+                        context.read<PlotViewModel>(),
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const PlotStatusBar(),
+      ],
+    );
+  }
+
+  _PlotToolbarSelection _selectToolbar(PlotViewModel vm) {
+    return (
+      isPlotting: vm.isPlotting,
+      isStopping: vm.isStopping,
+      hasData: vm.dataPoints.isNotEmpty,
+      parserType: vm.parserType,
+      useRandomSource: vm.useRandomSource,
+      randomFrequency: vm.randomFrequency,
+      canUndoZoom: vm.canUndoZoom,
+      vCursorEnabled: vm.vCursorEnabled,
+      observationPlacementActive: vm.observationPlacementActive,
+      boxZoomEnabled: vm.boxZoomEnabled,
+      xMeasurementEnabled: vm.xMeasurementEnabled,
+      yMeasurementEnabled: vm.yMeasurementEnabled,
+      statsToolbarEnabled: vm.statsToolbarEnabled,
+      statsEnabled: vm.statsEnabled,
+      statsRangeEnabled: vm.statsRangeEnabled,
+      followEnabled: vm.followEnabled,
+      showGrid: vm.showGrid,
+      gridDensity: vm.gridDensity,
+      sendProtocolType: vm.sendProtocolType,
+      profileRevision: vm.profileRevision,
+      selectedZobowProfileId: vm.selectedZobowProfileId,
+      selectedRProfileId: vm.selectedRProfileId,
+    );
+  }
+
+  _PlotChannelPanelSelection _selectChannelPanel(PlotViewModel vm) {
+    return (
+      channelConfigRevision: vm.channelConfigRevision,
+      isPlotting: vm.isPlotting,
+      isStopping: vm.isStopping,
+      parserType: vm.parserType,
+      activeChannelCount: vm.activeChannelCount,
+      rawDisplayChannelCount: vm.rawDisplayChannelCount,
+      effectiveSendProtocolType: vm.effectiveSendProtocolType,
+      profileRevision: vm.profileRevision,
+      selectedZobowProfileId: vm.selectedZobowProfileId,
+      selectedRProfileId: vm.selectedRProfileId,
+    );
+  }
+
+  _PlotAreaSelection _selectPlotArea(PlotViewModel vm) {
+    return (
+      hasData: vm.dataPoints.isNotEmpty,
+      dataRevision: vm.dataRevision,
+      channelConfigRevision: vm.channelConfigRevision,
+      viewportRevision: vm.viewportRevision,
+      overlayRevision: vm.overlayRevision,
+      plotBackground: vm.plotBackground,
+      floatingPanelOpacity: vm.floatingPanelOpacity,
     );
   }
 
   /// 构建通道面板区域（折叠状态或展开状态）
   Widget _buildChannelPanelArea(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.channelPanelBuild,
+    );
     if (_isPanelCollapsed) {
       return _buildCollapsedPanel(context);
     }
@@ -119,7 +306,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: [
           // 展开按钮（使用 InkWell 替代 IconButton，避免大圆阴影）
           Tooltip(
-            message: '展开通道面板',
+            message: AppStrings.plot.expandChannelPanel,
             child: InkWell(
               onTap: () => setState(() => _isPanelCollapsed = false),
               child: const SizedBox(
@@ -135,7 +322,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               child: RotatedBox(
                 quarterTurns: 1,
                 child: Text(
-                  '通道',
+                  AppStrings.plot.channel,
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -211,7 +398,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   double _minimumChannelPanelWidth(PlotViewModel vm) {
     if (vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
-      return kMinChannelPanelWidth;
+      return kCompactChannelPanelWidth;
     }
     if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
     final channelCount = vm.parserConfig.zobowChannelCount;
@@ -230,10 +417,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 显示顺序：光标 | 缩放 | 自适应 | 文件 | 清空+设置
   /// 折叠顺序：清空+设置 → 文件 → 自适应 → 缩放 → 光标
   // ========== 工具栏 ==========
+  List<Widget> _withToolbarSpacing(List<Widget> children) {
+    return [
+      for (var i = 0; i < children.length; i++) ...[
+        if (i > 0) const SizedBox(width: 8),
+        children[i],
+      ],
+    ];
+  }
+
   /// 构建第一栏工具栏
   ///
-  /// 包含：开始/停止、数据源设置、解析器、自适应、文件、清空+设置
+  /// 包含：开始/停止、数据源设置、解析器、文件、清空+设置
   Widget _buildPrimaryToolbar(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.primaryToolbarBuild,
+    );
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -265,16 +464,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     constraints: BoxConstraints(minWidth: constraints.maxWidth),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        // 自适应工具组
-                        _buildFitTools(context, vm),
-                        const SizedBox(width: 8),
+                      children: _withToolbarSpacing([
                         // 文件工具组
                         _buildFileTools(context, vm),
-                        const SizedBox(width: 8),
                         // 清空 + 高级设置
                         _buildClearAndSettings(context, vm),
-                      ],
+                      ]),
                     ),
                   ),
                 );
@@ -288,6 +483,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 构建第二栏工具栏（光标+缩放）
   Widget _buildSecondaryToolbar(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.secondaryToolbarBuild,
+    );
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -309,8 +507,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   // 光标和测量工具组
                   _buildCursorTools(context, vm),
                   const SizedBox(width: 12),
-                  // 缩放和框选工具组
-                  _buildZoomTools(context, vm),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: _withToolbarSpacing([
+                      // 缩放和框选工具组
+                      _buildZoomTools(context, vm),
+                      // 自适应工具组
+                      _buildFitTools(context, vm),
+                    ]),
+                  ),
                 ],
               ),
             ),
@@ -342,10 +547,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
       label: Text(
         vm.isStopping
-            ? '停止中'
+            ? AppStrings.plot.stopping
             : vm.isPlotting
-            ? '停止'
-            : '开始',
+            ? AppStrings.plot.stop
+            : AppStrings.plot.start,
         style: const TextStyle(fontFamily: 'SarasaUiSC'),
       ),
       style: ElevatedButton.styleFrom(
@@ -364,20 +569,26 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 随机数据源 + 频率设置
   Widget _buildRandomSourceToggle(BuildContext context, PlotViewModel vm) {
+    final canChangeSource = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Checkbox(
+          key: const ValueKey('plot-random-source-checkbox'),
           value: vm.useRandomSource,
-          onChanged: (value) => vm.setUseRandomSource(value!),
+          onChanged:
+              canChangeSource ? (value) => vm.setUseRandomSource(value!) : null,
         ),
-        const Text(
-          '随机源',
-          style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+        Text(
+          AppStrings.plot.randomSource,
+          style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
         ),
         Tooltip(
-          message: '设置随机源频率: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+          message: AppStrings.plot.randomSourceFrequencyTooltip(
+            vm.randomFrequency,
+          ),
           child: InkWell(
+            key: const ValueKey('plot-random-frequency-button'),
             onTap: () => _showRandomFreqDialog(context, vm),
             child: Padding(
               padding: const EdgeInsets.all(4),
@@ -398,14 +609,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 收发协议选择 + 配置按钮 + 地址配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: 120,
           child: NoAnimDropdown<ParserType>(
+            key: const ValueKey('plot-parser-selector'),
             value: vm.parserType,
-            hint: '接收协议',
+            hint: AppStrings.plot.receiveProtocolHint,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -424,16 +637,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     ),
                   );
                 }).toList(),
-            onChanged: (value) {
-              if (value != null) vm.setParserType(value);
-            },
+            onChanged:
+                canChangeConfiguration
+                    ? (value) {
+                      if (value != null) vm.setParserType(value);
+                    }
+                    : null,
           ),
         ),
         const SizedBox(width: 8),
         IconButton(
-          onPressed: () => _showParserConfigDialog(context, vm),
+          key: const ValueKey('plot-parser-config-button'),
+          onPressed:
+              canChangeConfiguration
+                  ? () => _showParserConfigDialog(context, vm)
+                  : null,
           icon: const Icon(Icons.settings, size: 18),
-          tooltip: '解析器配置',
+          tooltip: AppStrings.plot.parserConfig,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
@@ -441,8 +661,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         SizedBox(
           width: 112,
           child: NoAnimDropdown<SendProtocolType>(
-            value: vm.effectiveSendProtocolType,
-            hint: '发送协议',
+            key: const ValueKey('plot-send-protocol-selector'),
+            value:
+                vm.parserType == ParserType.zobow
+                    ? vm.effectiveSendProtocolType
+                    : vm.sendProtocolType,
+            hint: AppStrings.plot.sendProtocolHint,
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -469,12 +693,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     )
                     .toList(),
             onChanged:
-                vm.parserType == ParserType.zobow
+                !canChangeConfiguration || vm.parserType == ParserType.zobow
                     ? null
                     : (value) {
                       if (value != null) vm.setSendProtocolType(value);
                     },
           ),
+        ),
+        IconButton(
+          key: const ValueKey('send-protocol-config-button'),
+          onPressed:
+              canChangeConfiguration &&
+                      vm.effectiveSendProtocolType == SendProtocolType.rProtocol
+                  ? () => _showSendProtocolConfigDialog(context, vm)
+                  : null,
+          icon: const Icon(Icons.settings, size: 18),
+          tooltip: AppStrings.plot.sendProtocolConfig,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
         // Zobow模式下显示配置文件下拉框
         if (vm.parserType == ParserType.zobow) ...[
@@ -482,25 +718,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           _buildZobowProfileSelector(context, vm),
           // 新建配置按钮
           Tooltip(
-            message: '新建配置',
+            message: AppStrings.plot.createConfig,
             child: InkWell(
-              onTap: () => _showCreateZobowProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-create-zobow-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showCreateZobowProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.add, size: 16),
+                child: Icon(
+                  Icons.add,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
           // 编辑配置按钮
           Tooltip(
-            message: '编辑配置',
+            message: AppStrings.plot.editConfig,
             child: InkWell(
-              onTap: () => _showEditZobowProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-edit-zobow-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showEditZobowProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.edit, size: 16),
+                child: Icon(
+                  Icons.edit,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
@@ -508,24 +766,46 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           const SizedBox(width: 8),
           _buildRProfileSelector(context, vm),
           Tooltip(
-            message: '新建 r 协议配置',
+            message: AppStrings.plot.createRProtocolConfig,
             child: InkWell(
-              onTap: () => _showCreateRProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-create-r-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showCreateRProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.add, size: 16),
+                child: Icon(
+                  Icons.add,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
           Tooltip(
-            message: '编辑 r 协议配置',
+            message: AppStrings.plot.editRProtocolConfig,
             child: InkWell(
-              onTap: () => _showEditRProfileDialog(context, vm),
-              child: const SizedBox(
+              key: const ValueKey('plot-edit-r-profile-button'),
+              onTap:
+                  canChangeConfiguration
+                      ? () => _showEditRProfileDialog(context, vm)
+                      : null,
+              child: SizedBox(
                 width: 28,
                 height: 28,
-                child: Icon(Icons.edit, size: 16),
+                child: Icon(
+                  Icons.edit,
+                  size: 16,
+                  color:
+                      canChangeConfiguration
+                          ? null
+                          : Theme.of(context).disabledColor,
+                ),
               ),
             ),
           ),
@@ -535,22 +815,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildRProfileSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return SizedBox(
       width: 140,
       child: NoAnimDropdown<String?>(
+        key: const ValueKey('plot-r-profile-selector'),
         value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
-        hint: '不使用配置',
+        hint: AppStrings.plot.noConfig,
         decoration: const InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           border: OutlineInputBorder(),
         ),
         items: [
-          const DropdownMenuItem<String?>(
+          DropdownMenuItem<String?>(
             value: null,
             child: Text(
-              '不使用配置',
-              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              AppStrings.plot.noConfig,
+              style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
           ),
           ...vm.rProfiles.map(
@@ -563,21 +845,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ],
-        onChanged: vm.selectRProfile,
+        onChanged: canChangeConfiguration ? vm.selectRProfile : null,
       ),
     );
   }
 
   /// Zobow配置文件选择器
   Widget _buildZobowProfileSelector(BuildContext context, PlotViewModel vm) {
+    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
     return SizedBox(
       width: 140,
       child: NoAnimDropdown<String?>(
+        key: const ValueKey('plot-zobow-profile-selector'),
         value:
             vm.selectedZobowProfileId.isEmpty
                 ? null
                 : vm.selectedZobowProfileId,
-        hint: '不使用配置',
+        hint: AppStrings.plot.noConfig,
         decoration: const InputDecoration(
           isDense: true,
           contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -585,11 +869,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
         items: [
           // "不使用"选项
-          const DropdownMenuItem<String?>(
+          DropdownMenuItem<String?>(
             value: null,
             child: Text(
-              '不使用配置',
-              style: TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+              AppStrings.plot.noConfig,
+              style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
           ),
           // 所有配置文件
@@ -603,36 +887,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             );
           }),
         ],
-        onChanged: (value) {
-          if (value == null) {
-            vm.selectZobowProfile(null);
-          } else {
-            vm.selectZobowProfile(value);
-          }
-        },
+        onChanged:
+            canChangeConfiguration
+                ? (value) {
+                  if (value == null) {
+                    vm.selectZobowProfile(null);
+                  } else {
+                    vm.selectZobowProfile(value);
+                  }
+                }
+                : null,
       ),
     );
   }
 
   /// 光标和测量工具组
   ///
-  /// 顺序：垂直光标 | X-X | Y-Y | 统计 | 范围 | 跟随
+  /// 顺序：垂直光标 | X-X | Y-Y | 跟随
   Widget _buildCursorTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         // 垂直光标开关
         Tooltip(
-          message: '垂直光标',
+          message: AppStrings.plot.verticalCursor,
           child: TextButton.icon(
             onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-            icon: Icon(
-              Icons.vertical_align_center,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotCursor,
               color: vm.vCursorEnabled ? Colors.orange : null,
             ),
             label: Text(
-              '光标',
+              AppStrings.plot.cursor,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -649,35 +935,54 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
         Tooltip(
-          message: '添加观察',
+          message:
+              vm.observationPlacementActive
+                  ? AppStrings.plot.placeObservation
+                  : AppStrings.plot.addObservation,
           child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.addObservation(),
-            icon: const Icon(Icons.add_location_alt, size: 16),
-            label: const Text(
-              '观察',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              if (vm.observationClickToPlace) {
+                vm.startObservationPlacement();
+              } else {
+                vm.addObservation();
+              }
+            },
+            icon: Icon(
+              Icons.add_location_alt,
+              size: 18,
+              color: vm.observationPlacementActive ? Colors.amber : null,
+            ),
+            label: Text(
+              AppStrings.plot.observation,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'SarasaUiSC',
+                color: vm.observationPlacementActive ? Colors.amber : null,
+              ),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
+              backgroundColor:
+                  vm.observationPlacementActive
+                      ? Colors.amber.withValues(alpha: 0.1)
+                      : null,
             ),
           ),
         ),
-        const SizedBox(width: 8),
         // X-X 测量
         Tooltip(
-          message: 'X-X 测量',
+          message: AppStrings.plot.measureXxTooltip,
           child: TextButton.icon(
             onPressed: () => vm.toggleXMeasurement(),
-            icon: Icon(
-              Icons.vertical_align_center,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotMeasureXx,
               color: vm.xMeasurementEnabled ? Colors.blue : null,
             ),
             label: Text(
-              'X-X',
+              AppStrings.plot.measureXx,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -696,16 +1001,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
         // Y-Y 测量
         Tooltip(
-          message: 'Y-Y 测量',
+          message: AppStrings.plot.measureYyTooltip,
           child: TextButton.icon(
             onPressed: () => vm.toggleYMeasurement(),
-            icon: Icon(
-              Icons.horizontal_rule,
-              size: 16,
+            icon: AppIcon(
+              AppIcons.plotMeasureYy,
               color: vm.yMeasurementEnabled ? Colors.blue : null,
             ),
             label: Text(
-              'Y-Y',
+              AppStrings.plot.measureYy,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -722,100 +1026,92 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-        const SizedBox(width: 4),
-        // 统计测量
-        Tooltip(
-          message: '统计测量（Max/Min/Avg）',
-          child: TextButton.icon(
-            onPressed: () => vm.toggleStats(),
-            icon: Icon(
-              Icons.analytics,
-              size: 16,
-              color: vm.statsEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              '统计',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
+        if (vm.statsToolbarEnabled || vm.statsEnabled) ...[
+          Tooltip(
+            message: AppStrings.plot.statsTooltip,
+            child: TextButton.icon(
+              onPressed: () => vm.toggleStats(),
+              icon: Icon(
+                Icons.query_stats,
+                size: 18,
                 color: vm.statsEnabled ? Colors.blue : null,
               ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.statsEnabled ? Colors.blue.withValues(alpha: 0.15) : null,
+              label: Text(
+                AppStrings.plot.stats,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: vm.statsEnabled ? Colors.blue : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    vm.statsEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
             ),
           ),
-        ),
-        // 统计范围
+          Tooltip(
+            message: AppStrings.plot.statsRangeTooltip,
+            child: IconButton(
+              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
+              icon: Icon(
+                Icons.swap_horiz,
+                size: 18,
+                color: vm.statsRangeEnabled ? Colors.blue : null,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              style: IconButton.styleFrom(
+                backgroundColor:
+                    vm.statsRangeEnabled
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : null,
+              ),
+            ),
+          ),
+        ],
+        // 最新点跟随
         Tooltip(
-          message: '统计范围',
+          message: AppStrings.plot.followTooltip,
           child: TextButton.icon(
-            onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
-            icon: Icon(
-              Icons.straighten,
-              size: 16,
-              color: vm.statsRangeEnabled ? Colors.blue : null,
+            onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
+            icon: AppIcon(
+              AppIcons.plotFollow,
+              color: vm.followEnabled ? Colors.orange : null,
             ),
             label: Text(
-              '范围',
+              AppStrings.plot.follow,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
-                color: vm.statsRangeEnabled ? Colors.blue : null,
+                color: vm.followEnabled ? Colors.orange : null,
               ),
             ),
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: const Size(0, 28),
               backgroundColor:
-                  vm.statsRangeEnabled
-                      ? Colors.blue.withValues(alpha: 0.15)
+                  vm.followEnabled
+                      ? Colors.orange.withValues(alpha: 0.1)
                       : null,
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        // 最新点跟随
         Tooltip(
-          message: '最新点跟随在 3/4 宽度处',
-          child: TextButton.icon(
-            onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
-            icon: Icon(
-              Icons.trending_flat,
-              size: 16,
-              color: vm.followEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              '跟随',
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.followEnabled ? Colors.blue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.followEnabled ? Colors.blue.withValues(alpha: 0.1) : null,
-            ),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Tooltip(
-          message: '图例',
+          message: AppStrings.plot.legend,
           child: TextButton.icon(
             onPressed: () => setState(() => _legendVisible = !_legendVisible),
             icon: Icon(
               Icons.list_alt,
-              size: 16,
+              size: 18,
               color: _legendVisible ? Colors.teal : null,
             ),
             label: Text(
-              '图例',
+              AppStrings.plot.legend,
               style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'SarasaUiSC',
@@ -830,20 +1126,48 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
-      ],
+        Tooltip(
+          message: AppStrings.plot.liveValues,
+          child: TextButton.icon(
+            onPressed:
+                () => setState(() => _liveValuesVisible = !_liveValuesVisible),
+            icon: Icon(
+              Icons.format_list_numbered,
+              size: 18,
+              color: _liveValuesVisible ? Colors.lightBlue : null,
+            ),
+            label: Text(
+              AppStrings.plot.liveValues,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'SarasaUiSC',
+                color: _liveValuesVisible ? Colors.lightBlue : null,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(0, 28),
+              backgroundColor:
+                  _liveValuesVisible
+                      ? Colors.lightBlue.withValues(alpha: 0.12)
+                      : null,
+            ),
+          ),
+        ),
+      ]),
     );
   }
 
   /// 缩放和框选工具组
   ///
-  /// 顺序：撤回缩放 | 框选 | X缩 | X放 | Y缩 | Y放
+  /// 顺序：撤回缩放 | 框选 | X放 | X缩 | Y放 | Y缩
   Widget _buildZoomTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         // 撤回缩放
         Tooltip(
-          message: '撤回缩放',
+          message: AppStrings.plot.undoZoom,
           child: IconButton(
             onPressed: vm.canUndoZoom ? () => vm.undoZoom() : null,
             icon: const Icon(Icons.undo, size: 18),
@@ -851,10 +1175,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        const SizedBox(width: 4),
         // 框选放大
         Tooltip(
-          message: '框选放大',
+          message: AppStrings.plot.boxZoom,
           child: IconButton(
             onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
             icon: Icon(
@@ -866,48 +1189,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        const SizedBox(width: 4),
-        // X 轴缩小
-        Tooltip(
-          message: 'X 轴缩小',
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
-            icon: const Icon(Icons.zoom_out, size: 18),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
         // X 轴放大
         Tooltip(
-          message: 'X 轴放大',
+          message: AppStrings.plot.zoomXIn,
           child: IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXIn(),
-            icon: const Icon(Icons.zoom_in, size: 18),
+            icon: const AppIcon(AppIcons.plotZoomXIn),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-        // Y 轴缩小
+        // X 轴缩小
         Tooltip(
-          message: 'Y 轴缩小',
+          message: AppStrings.plot.zoomXOut,
           child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
-            icon: const Icon(Icons.vertical_align_bottom, size: 18),
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
+            icon: const AppIcon(AppIcons.plotZoomXOut),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         // Y 轴放大
         Tooltip(
-          message: 'Y 轴放大',
+          message: AppStrings.plot.zoomYIn,
           child: IconButton(
             onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYIn(),
-            icon: const Icon(Icons.vertical_align_top, size: 18),
+            icon: const AppIcon(AppIcons.plotZoomYIn),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+        // Y 轴缩小
+        Tooltip(
+          message: AppStrings.plot.zoomYOut,
+          child: IconButton(
+            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
+            icon: const AppIcon(AppIcons.plotZoomYOut),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -915,23 +1237,29 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 顺序：导入数据 | 导出数据
   Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
+    final fileOperationsEnabled = !vm.isPlotting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         Tooltip(
-          message: '导入 CSV/BIN/旧版 DAT',
+          message: AppStrings.plot.importDataTooltip,
           child: IconButton(
-            onPressed: () => _importPlotData(context, vm),
-            icon: const Icon(Icons.file_upload, size: 18),
+            key: const ValueKey('plot-import-data-button'),
+            onPressed:
+                fileOperationsEnabled
+                    ? () => _importPlotData(context, vm)
+                    : null,
+            icon: const AppIcon(AppIcons.plotImport),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: '导出 CSV/BIN',
+          message: AppStrings.plot.exportDataTooltip,
           child: IconButton(
+            key: const ValueKey('plot-export-data-button'),
             onPressed:
-                vm.dataPoints.isEmpty
+                !fileOperationsEnabled || vm.dataPoints.isEmpty
                     ? null
                     : () => _exportPlotData(context, vm),
             icon: const Icon(Icons.save, size: 18),
@@ -939,7 +1267,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -949,53 +1277,44 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildFitTools(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         Tooltip(
-          message: 'Y轴自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitYAxis(),
-            icon: const Icon(Icons.vertical_align_center, size: 16),
-            label: const Text(
-              'Y自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitYTooltip,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitYAxis();
+            },
+            icon: const AppIcon(AppIcons.plotFitY),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: 'X轴自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitXAxis(),
-            icon: const Icon(Icons.horizontal_rule, size: 16),
-            label: const Text(
-              'X自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitXTooltip,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitXAxis();
+            },
+            icon: const AppIcon(AppIcons.plotFitX),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
         Tooltip(
-          message: '全自适应',
-          child: TextButton.icon(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.fitAll(),
-            icon: const Icon(Icons.fit_screen, size: 16),
-            label: const Text(
-              '全自适应',
-              style: TextStyle(fontSize: 11, fontFamily: 'SarasaUiSC'),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              minimumSize: const Size(0, 28),
-            ),
+          message: AppStrings.plot.fitAll,
+          child: IconButton(
+            onPressed: () {
+              if (vm.dataPoints.isEmpty) return;
+              vm.fitAll();
+            },
+            icon: const AppIcon(AppIcons.plotFitAll),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -1003,42 +1322,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: _withToolbarSpacing([
         IconButton(
           onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
           icon: const Icon(Icons.clear, size: 18),
-          tooltip: '清空数据',
+          tooltip: AppStrings.plot.clearData,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
-        const SizedBox(width: 8),
         Tooltip(
-          message: '高级设置',
+          message: AppStrings.common.advancedSettings,
           child: IconButton(
             onPressed: () => _showAdvancedSettingsDialog(context, vm),
             icon: const Icon(Icons.tune, size: 18),
-            tooltip: '高级设置',
+            tooltip: AppStrings.common.advancedSettings,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ),
-      ],
+      ]),
     );
   }
 
   /// 通道面板内容（展开状态）
   Widget _buildChannelPanelContent(BuildContext context, PlotViewModel vm) {
     // 只显示实际有数据的通道
-    final activeCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
-    final displayCount =
-        vm.parserType == ParserType.zobow
-            ? vm.parserConfig.zobowChannelCount
-            : vm.parserType == ParserType.fixedFrame
-            ? vm.parserConfig.channelCount
-            : vm.effectiveSendProtocolType == SendProtocolType.rProtocol
-            ? math.max(vm.activeChannelCount, vm.rAddressDisplayCount)
-            : activeCount;
+    final rawDisplayCount = vm.rawDisplayChannelCount;
+    final enabledMathChannels = vm.enabledMathChannels;
+    final displayCount = rawDisplayCount + enabledMathChannels.length;
 
     return Container(
       decoration: BoxDecoration(
@@ -1050,7 +1361,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         children: [
           Container(
             height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.only(
+              left: kChannelPanelHorizontalPadding,
+              right:
+                  kChannelPanelHorizontalPadding +
+                  kChannelPanelListRightPadding,
+            ),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               border: Border(
@@ -1060,7 +1376,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             child: Row(
               children: [
                 Tooltip(
-                  message: '收起通道面板',
+                  message: AppStrings.plot.collapseChannelPanel,
                   child: InkWell(
                     onTap: () => setState(() => _isPanelCollapsed = true),
                     child: const SizedBox(
@@ -1071,69 +1387,347 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  '通道',
+                Text(
+                  AppStrings.plot.channel,
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                 ),
                 const Spacer(),
                 Tooltip(
-                  message: '偏置功能开关',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      SizedBox(width: 20),
-                      Text('偏置', style: TextStyle(fontSize: 10)),
-                    ],
+                  message: AppStrings.plot.offsetToggle,
+                  child: SizedBox(
+                    width: 20,
+                    child: Center(
+                      child: Text(
+                        AppStrings.plot.offset,
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 5),
-                // 全选/全不选勾选框
-                Tooltip(
-                  message:
-                      vm.channels.every((ch) => ch.visible)
-                          ? '点击隐藏全部'
-                          : '点击显示全部',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 22,
-                        child: Checkbox(
-                          value: vm.channels.every((ch) => ch.visible),
-                          tristate: true,
-                          onChanged: (_) {
-                            // 点击时切换：如果当前全显则全隐，否则全显
-                            final allVisible = vm.channels.every(
-                              (ch) => ch.visible,
-                            );
-                            vm.setAllChannelsVisible(!allVisible);
-                          },
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        ),
-                      ),
-                      const Text('绘图', style: TextStyle(fontSize: 10)),
-                    ],
-                  ),
+                // 全显/全隐按钮
+                _ChannelVisibilityButton(
+                  visible: vm.displayChannels.any((ch) => ch.visible),
+                  tooltip:
+                      vm.displayChannels.any((ch) => ch.visible)
+                          ? AppStrings.plot.hideAllChannels
+                          : AppStrings.plot.showAllChannels,
+                  onToggle: () {
+                    // 只要还有任一通道显示，点击表头就隐藏全部；全部隐藏时再点击才显示全部。
+                    final anyVisible = vm.displayChannels.any(
+                      (ch) => ch.visible,
+                    );
+                    vm.setAllChannelsVisible(!anyVisible);
+                  },
                 ),
               ],
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: displayCount,
-              itemBuilder: (context, index) {
-                final ch = vm.channels[index];
-                return _ChannelItem(
-                  key: ValueKey('ch_${ch.index}'),
-                  vm: vm,
-                  ch: ch,
-                );
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (event) {
+                if (event.kind != PointerDeviceKind.mouse) return;
+                if (event.buttons == kPrimaryMouseButton) {
+                  _hideChannelContextMenu();
+                } else if (event.buttons == kSecondaryMouseButton) {
+                  _showBlankChannelContextMenu(
+                    context,
+                    vm,
+                    event.position,
+                    event.timeStamp,
+                  );
+                }
               },
+              child: ListView.builder(
+                padding: const EdgeInsets.only(
+                  right: kChannelPanelListRightPadding,
+                ),
+                itemCount: displayCount + 1,
+                itemBuilder: (context, index) {
+                  if (index == displayCount) {
+                    return const SizedBox(height: 88);
+                  }
+                  if (index >= rawDisplayCount) {
+                    final mathChannel =
+                        enabledMathChannels[index - rawDisplayCount];
+                    return Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: (event) {
+                        if (event.kind == PointerDeviceKind.mouse &&
+                            event.buttons == kSecondaryMouseButton) {
+                          _channelContextMenuHandledPointerTime =
+                              event.timeStamp;
+                          _showChannelContextMenu(
+                            context,
+                            vm,
+                            event.position,
+                            target: _ChannelContextMenuTarget.math(mathChannel),
+                          );
+                        }
+                      },
+                      child: _MathChannelItem(
+                        key: ValueKey('math_${mathChannel.index}'),
+                        vm: vm,
+                        channel: mathChannel,
+                      ),
+                    );
+                  }
+                  final ch = vm.channels[index];
+                  return Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: (event) {
+                      if (event.kind == PointerDeviceKind.mouse &&
+                          event.buttons == kSecondaryMouseButton) {
+                        _channelContextMenuHandledPointerTime = event.timeStamp;
+                        _showChannelContextMenu(
+                          context,
+                          vm,
+                          event.position,
+                          target: _ChannelContextMenuTarget.raw(ch),
+                        );
+                      }
+                    },
+                    child: _ChannelItem(
+                      key: ValueKey('ch_${ch.index}'),
+                      vm: vm,
+                      ch: ch,
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  void _showChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position, {
+    _ChannelContextMenuTarget target = const _ChannelContextMenuTarget.blank(),
+  }) {
+    _hideChannelContextMenu();
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final menuContext = context;
+    final capturedThemes = InheritedTheme.capture(
+      from: context,
+      to: overlay.context,
+    );
+
+    const menuWidth = 188.0;
+    final itemCount = switch (target.kind) {
+      _ChannelContextMenuTargetKind.blank => 2,
+      _ChannelContextMenuTargetKind.raw =>
+        target.channel?.offsetEnabled == true ? 2 : 1,
+      _ChannelContextMenuTargetKind.math =>
+        target.channel?.offsetEnabled == true ? 3 : 2,
+    };
+    final menuHeight = 34.0 + itemCount * 40.0;
+    final screenSize = MediaQuery.sizeOf(context);
+    final maxLeft = math.max(8.0, screenSize.width - menuWidth - 8.0);
+    final maxTop = math.max(8.0, screenSize.height - menuHeight - 8.0);
+    final left = position.dx.clamp(8.0, maxLeft);
+    final top = position.dy.clamp(8.0, maxTop);
+    _channelContextMenuRect = Rect.fromLTWH(left, top, menuWidth, menuHeight);
+    _attachChannelContextMenuGlobalRoute();
+
+    _channelContextMenuEntry = OverlayEntry(
+      builder:
+          (context) => capturedThemes.wrap(
+            Stack(
+              children: [
+                Positioned(
+                  left: left,
+                  top: top,
+                  width: menuWidth,
+                  child: _ChannelContextMenu(
+                    target: target,
+                    onAddMathChannel:
+                        target.kind == _ChannelContextMenuTargetKind.blank
+                            ? () {
+                              _hideChannelContextMenu();
+                              _addMathChannelFromContextMenu(menuContext, vm);
+                            }
+                            : null,
+                    onResetAllChannels:
+                        target.kind == _ChannelContextMenuTargetKind.blank &&
+                                !vm.isPlotting &&
+                                !vm.isStopping
+                            ? () {
+                              _hideChannelContextMenu();
+                              _confirmResetAllChannels(menuContext, vm);
+                            }
+                            : null,
+                    onEditChannel:
+                        target.kind == _ChannelContextMenuTargetKind.raw
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showChannelEditDialog(
+                                menuContext,
+                                vm,
+                                target.rawChannel!,
+                              );
+                            }
+                            : target.kind == _ChannelContextMenuTargetKind.math
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showMathChannelDialog(
+                                menuContext,
+                                vm,
+                                target.mathChannel!,
+                              );
+                            }
+                            : null,
+                    onOffsetBinding:
+                        target.channel?.offsetEnabled == true
+                            ? () {
+                              _hideChannelContextMenu();
+                              _showOffsetBindingDialog(
+                                menuContext,
+                                vm,
+                                target.channel!.index,
+                              );
+                            }
+                            : null,
+                    onDeleteMathChannel:
+                        target.mathChannel == null
+                            ? null
+                            : () {
+                              _hideChannelContextMenu();
+                              vm.disableMathChannel(target.mathChannel!.index);
+                            },
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    overlay.insert(_channelContextMenuEntry!);
+  }
+
+  void _showBlankChannelContextMenu(
+    BuildContext context,
+    PlotViewModel vm,
+    Offset position,
+    Duration pointerTime,
+  ) {
+    Future.microtask(() {
+      if (!mounted || !context.mounted) {
+        return;
+      }
+      if (_channelContextMenuHandledPointerTime == pointerTime) return;
+      _showChannelContextMenu(context, vm, position);
+    });
+  }
+
+  void _hideChannelContextMenu() {
+    final entry = _channelContextMenuEntry;
+    _channelContextMenuEntry = null;
+    _channelContextMenuRect = null;
+    _detachChannelContextMenuGlobalRoute();
+    if (entry == null) return;
+    entry
+      ..remove()
+      ..dispose();
+  }
+
+  void _attachChannelContextMenuGlobalRoute() {
+    if (_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.addGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
+    );
+    _channelContextMenuRouteAttached = true;
+  }
+
+  void _detachChannelContextMenuGlobalRoute() {
+    if (!_channelContextMenuRouteAttached) return;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(
+      _handleChannelContextMenuPointerEvent,
+    );
+    _channelContextMenuRouteAttached = false;
+  }
+
+  void _handleChannelContextMenuPointerEvent(PointerEvent event) {
+    if (event is! PointerDownEvent) return;
+    final rect = _channelContextMenuRect;
+    if (rect != null && rect.contains(event.position)) return;
+    final entry = _channelContextMenuEntry;
+    Future.microtask(() {
+      if (!mounted || _channelContextMenuEntry != entry) return;
+      _hideChannelContextMenu();
+    });
+  }
+
+  void _addMathChannelFromContextMenu(BuildContext context, PlotViewModel vm) {
+    final channel = vm.firstAvailableMathChannel();
+    if (channel == null) {
+      vm.showStatusMessage(AppStrings.plot.noAvailableMathChannel);
+      return;
+    }
+    _showMathChannelDialog(context, vm, channel);
+  }
+
+  Future<void> _confirmResetAllChannels(
+    BuildContext context,
+    PlotViewModel vm,
+  ) async {
+    if (vm.isPlotting || vm.isStopping) {
+      vm.showStatusMessage(AppStrings.plot.resetAllChannelsStoppedOnly);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.plot.resetAllChannelsTitle),
+            content: SizedBox(
+              width: 420,
+              child: Text(AppStrings.plot.resetAllChannelsMessage),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(AppStrings.common.confirm),
+              ),
+            ],
+          ),
+    );
+    if (confirmed == true) {
+      vm.resetAllChannels();
+    }
+  }
+
+  void _showChannelEditDialog(
+    BuildContext context,
+    PlotViewModel vm,
+    ChannelConfig channel,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => _ChannelEditDialog(vm: vm, ch: channel),
+    );
+  }
+
+  void _showOffsetBindingDialog(
+    BuildContext context,
+    PlotViewModel vm,
+    int channelIndex,
+  ) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => _OffsetBindingDialog(vm: vm, channelIndex: channelIndex),
     );
   }
 
@@ -1142,44 +1736,107 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 无数据时显示提示，有数据时显示：
   /// - [PlotGestureHandler]：处理手势交互
-  /// - [PlotPainter]：绘制波形
+  /// - [PlotLayerPainter]：分层绘制波形
   /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.plotAreaBuild,
+    );
     if (vm.dataPoints.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      return ColoredBox(
+        key: const ValueKey('plot-empty-background'),
+        color: _plotBackgroundColor(vm.plotBackground),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Icon(Icons.show_chart, size: 48, color: Colors.grey),
-            SizedBox(height: 8),
-            Text('暂无数据', style: TextStyle(color: Colors.grey)),
-            Text(
-              '点击"开始"按钮开始绘图',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.show_chart, size: 48, color: Colors.grey),
+                  const SizedBox(height: 8),
+                  Text(
+                    AppStrings.plot.noData,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  Text(
+                    AppStrings.plot.startPlotHint,
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
+            if (_liveValuesVisible) _buildLiveValuesBox(vm),
           ],
         ),
       );
     }
 
     // 计算可见的偏移通道数量，同步到视口以动态调整右边距
-    final activeChannelCount =
-        vm.activeChannelCount > 0 ? vm.activeChannelCount : vm.channels.length;
+    final displayChannels = vm.displayChannels;
+    final displayDataPoints = vm.displayDataPoints;
+    final activeChannelCount = vm.displayActiveChannelCount;
     return LayoutBuilder(
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
+        final plotBackground = _parsePlotBackground(vm.plotBackground);
         final offsetAxisColumnWidths =
-            PlotPainter.calculateOffsetAxisColumnWidths(
+            PlotLayerPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
               plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+              yValuesAreInteger: vm.displayYValuesAreInteger,
             );
         final renderViewport =
             vm.viewport.copy()
               ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+
+        PlotLayerPainter createPainter(PlotPaintLayer layer) {
+          return PlotLayerPainter(
+            layer: layer,
+            viewport: renderViewport,
+            data: displayDataPoints,
+            dataRevision: vm.dataRevision,
+            channelConfigRevision: vm.channelConfigRevision,
+            viewportRevision: vm.viewportRevision,
+            overlayRevision: vm.overlayRevision,
+            lodIndex: vm.lodIndex,
+            channels: displayChannels,
+            activeChannelCount: activeChannelCount,
+            showGrid: vm.showGrid,
+            gridDensity: gridDensity,
+            backgroundStyle: plotBackground,
+            floatingPanelOpacity: vm.floatingPanelOpacity,
+            cursor: vm.cursor,
+            xCursor1: vm.xCursor1,
+            xCursor2: vm.xCursor2,
+            yCursor1: vm.yCursor1,
+            yCursor2: vm.yCursor2,
+            statsEnabled: vm.statsEnabled,
+            statsRangeEnabled: vm.statsRangeEnabled,
+            statsX1: vm.statsX1,
+            statsX2: vm.statsX2,
+            snapHighlights: vm.snapHighlights,
+            snapHighlightEnabled: vm.snapHighlightEnabled,
+            snapHighlightDiameter: vm.snapHighlightDiameter,
+            antiAliasEnabled: vm.antiAliasEnabled,
+            yValuesAreInteger: vm.displayYValuesAreInteger,
+            plotFontSizeDelta: vm.plotFontSizeDelta,
+          );
+        }
+
+        Widget buildLayer(PlotPaintLayer layer) {
+          return RepaintBoundary(
+            key: ValueKey<String>('plot-layer-${layer.name}'),
+            child: CustomPaint(
+              painter: createPainter(layer),
+              size: Size.infinite,
+            ),
+          );
+        }
 
         return Stack(
           children: [
@@ -1187,14 +1844,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               viewport: renderViewport,
               vCursorEnabled: vm.vCursorEnabled,
               boxZoomEnabled: vm.boxZoomEnabled,
-              refreshFps: vm.refreshFps,
+              refreshFps: vm.effectiveRefreshFps,
               plotFontSizeDelta: vm.plotFontSizeDelta,
-              channels: vm.channels,
+              channels: displayChannels,
               activeChannelCount: activeChannelCount,
-              data: vm.dataPoints,
+              data: displayDataPoints,
               observations: vm.observations,
               onObservationDrag: (index, x) => vm.updateObservation(index, x),
               onObservationDelete: (index) => vm.removeObservation(index),
+              observationPlacementActive: vm.observationPlacementActive,
+              onObservationPlacementHover: vm.updateObservationPlacement,
+              onObservationPlacementCommit: vm.commitObservationPlacement,
               onViewportChanged:
                   (viewport, {fromDrag = false}) =>
                       vm.updateViewport(viewport, fromDrag: fromDrag),
@@ -1239,32 +1899,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               onChannelYScaleZoom:
                   (index, scaleDelta) =>
                       vm.zoomChannelYScale(index, scaleDelta),
-              child: CustomPaint(
-                painter: PlotPainter(
-                  viewport: renderViewport,
-                  data: vm.dataPoints,
-                  dataRevision: vm.dataRevision,
-                  lodIndex: vm.lodIndex,
-                  channels: vm.channels,
-                  activeChannelCount: activeChannelCount,
-                  showGrid: vm.showGrid,
-                  gridDensity: gridDensity,
-                  cursor: vm.cursor,
-                  xCursor1: vm.xCursor1,
-                  xCursor2: vm.xCursor2,
-                  yCursor1: vm.yCursor1,
-                  yCursor2: vm.yCursor2,
-                  statsEnabled: vm.statsEnabled,
-                  statsRangeEnabled: vm.statsRangeEnabled,
-                  statsX1: vm.statsX1,
-                  statsX2: vm.statsX2,
-                  snapHighlights: vm.snapHighlights,
-                  snapHighlightEnabled: vm.snapHighlightEnabled,
-                  snapHighlightDiameter: vm.snapHighlightDiameter,
-                  antiAliasEnabled: vm.antiAliasEnabled,
-                  plotFontSizeDelta: vm.plotFontSizeDelta,
-                ),
-                size: Size.infinite,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  buildLayer(PlotPaintLayer.background),
+                  buildLayer(PlotPaintLayer.data),
+                  buildLayer(PlotPaintLayer.axis),
+                  buildLayer(PlotPaintLayer.overlay),
+                ],
               ),
             ),
             Positioned.fill(
@@ -1285,6 +1927,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             if (vm.measurementText != null || vm.statsText != null)
               _buildCombinedInfoBox(context, vm),
             if (_legendVisible) _buildLegendBox(vm),
+            if (_liveValuesVisible) _buildLiveValuesBox(vm),
           ],
         );
       },
@@ -1367,6 +2010,55 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       );
     }
 
+    final preview = vm.observationPreview;
+    if (vm.observationPlacementActive && preview != null) {
+      final sx = viewport.dataToScreenX(preview.x, size.width);
+      if (sx >= plotLeft && sx <= plotRight) {
+        widgets.addAll([
+          Positioned(
+            left: sx - 5,
+            top: plotTop,
+            bottom: viewport.marginBottom,
+            child: IgnorePointer(
+              child: SizedBox(
+                width: 10,
+                child: Center(
+                  child: Container(
+                    width: 1,
+                    color: Colors.amber.withValues(alpha: 0.65),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: (sx - 22).clamp(plotLeft, plotRight - 44).toDouble(),
+            top: plotTop - 24,
+            child: IgnorePointer(
+              child: Container(
+                width: 44,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: Colors.black54, width: 0.5),
+                ),
+                child: Text(
+                  'O${vm.observations.length + 1}',
+                  style: TextStyle(
+                    color: Colors.black,
+                    fontSize: _plotFontSize(vm, 10),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ]);
+      }
+    }
+
     return widgets;
   }
 
@@ -1400,7 +2092,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Text(
             'X: ${observation.x.toInt()}',
             style: TextStyle(
-              color: Colors.white,
+              color: _floatingTextColor(vm),
               fontSize: _plotFontSize(vm, 12),
               fontWeight: FontWeight.bold,
               fontFamily: 'SarasaUiSC',
@@ -1410,18 +2102,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
     ];
     if (observation.hasData && values != null) {
-      for (int i = 0; i < values.length && i < vm.channels.length; i++) {
-        final channel = vm.channels[i];
+      final currentChannels = vm.displayChannels;
+      for (int i = 0; i < values.length && i < currentChannels.length; i++) {
+        final channel = currentChannels[i];
         if (!channel.visible) continue;
-        final name = channel.alias.isNotEmpty ? channel.alias : 'Ch$i';
+        final name =
+            channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
         rows.add(
-          Text(
-            '$name: ${_formatExactNumber(values[i])}',
-            style: TextStyle(
-              color: channel.color,
-              fontSize: _plotFontSize(vm, 12),
-              fontFamily: 'SarasaUiSC',
-            ),
+          _buildFloatingChannelValueRow(
+            vm: vm,
+            name: name,
+            value: formatPlotValue(values[i]),
+            color: channel.color,
           ),
         );
       }
@@ -1431,8 +2123,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       constraints: const BoxConstraints(maxWidth: 240),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: const Color(0xEE1A1A2E),
-        border: Border.all(color: const Color(0xFF8888AA), width: 1),
+        color: _floatingBoxBackgroundColor(vm),
+        border: Border.all(color: _floatingBoxBorderColor(vm), width: 1),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
@@ -1443,10 +2135,154 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
+  Widget _buildLiveValuesBox(PlotViewModel vm) {
+    final latestPoint =
+        vm.displayDataPoints.isEmpty ? null : vm.displayDataPoints.last;
+    if (latestPoint == null) return const SizedBox.shrink();
+
+    final displayChannels = vm.displayChannels;
+    final fontSize = _plotFontSize(vm, 12);
+    var contentWidth = _measureFloatingTextWidth(
+      AppStrings.plot.liveValues,
+      fontSize: fontSize,
+      fontWeight: FontWeight.bold,
+    );
+    final rows = <Widget>[
+      Text(
+        AppStrings.plot.liveValues,
+        style: TextStyle(
+          color: _floatingTextColor(vm),
+          fontSize: _plotFontSize(vm, 12),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      const SizedBox(height: 6),
+    ];
+
+    for (
+      int i = 0;
+      i < latestPoint.values.length && i < displayChannels.length;
+      i++
+    ) {
+      final channel = displayChannels[i];
+      if (!channel.visible) continue;
+      final name =
+          channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}';
+      final value = formatPlotValue(latestPoint.values[i]);
+      contentWidth = math.max(
+        contentWidth,
+        14 + _measureFloatingTextWidth('$name: $value', fontSize: fontSize),
+      );
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: channel.color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                fit: FlexFit.loose,
+                child: _buildFloatingChannelValueRow(
+                  vm: vm,
+                  name: name,
+                  value: value,
+                  color: channel.color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    if (rows.length == 2) {
+      rows.add(
+        Text(
+          '无显示通道',
+          style: TextStyle(
+            color: _floatingSubtleTextColor(vm),
+            fontSize: _plotFontSize(vm, 12),
+            fontFamily: 'SarasaUiSC',
+          ),
+        ),
+      );
+    }
+
+    return _DraggableInfoBox(
+      initialRight: 16,
+      initialTop: _legendVisible ? 240 : 96,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
+      borderColor: Colors.lightBlue.withValues(alpha: 0.55),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
+        child: SizedBox(
+          key: const ValueKey('plot-live-values-content'),
+          width: contentWidth.clamp(120, 240),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: rows,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFloatingChannelValueRow({
+    required PlotViewModel vm,
+    required String name,
+    required String value,
+    required Color color,
+  }) {
+    final style = TextStyle(
+      color: color,
+      fontSize: _plotFontSize(vm, 12),
+      fontFamily: 'SarasaUiSC',
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          fit: FlexFit.loose,
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+        Text(': $value', maxLines: 1, style: style),
+      ],
+    );
+  }
+
+  double _measureFloatingTextWidth(
+    String text, {
+    required double fontSize,
+    FontWeight? fontWeight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          fontFamily: 'SarasaUiSC',
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    return painter.width;
   }
 
   Widget _buildLegendBox(PlotViewModel vm) {
@@ -1461,6 +2297,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return _DraggableInfoBox(
       initialRight: 16,
       initialTop: 96,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.teal.withValues(alpha: 0.55),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
@@ -1472,7 +2309,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               Text(
                 '图例',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: _floatingTextColor(vm),
                   fontSize: _plotFontSize(vm, 12),
                   fontWeight: FontWeight.bold,
                 ),
@@ -1502,7 +2339,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           name,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: Colors.white,
+                            color: _floatingTextColor(vm),
                             fontSize: _plotFontSize(vm, 12),
                           ),
                         ),
@@ -1548,16 +2385,62 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   // ========== 对话框 ==========
   /// 显示解析器配置对话框
   void _showParserConfigDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder: (context) => _ParserConfigDialog(vm: vm),
     );
   }
 
+  void _showSendProtocolConfigDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.plot.sendProtocolConfig),
+            content: SizedBox(
+              width: 360,
+              child:
+                  vm.effectiveSendProtocolType == SendProtocolType.rProtocol
+                      ? StatefulBuilder(
+                        builder:
+                            (context, setDialogState) => SwitchListTile(
+                              value: vm.rProtocolLooseChannelSettings,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                AppStrings.plot.rProtocolLooseChannelSettings,
+                              ),
+                              subtitle: Text(
+                                AppStrings
+                                    .plot
+                                    .rProtocolLooseChannelSettingsHelp,
+                              ),
+                              onChanged: (value) {
+                                vm.setRProtocolLooseChannelSettings(value);
+                                setDialogState(() {});
+                              },
+                            ),
+                      )
+                      : Text(AppStrings.plot.noSendProtocolConfig),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(AppStrings.common.close),
+              ),
+            ],
+          ),
+    );
+  }
+
   /// 显示随机源频率设置对话框
   void _showRandomFreqDialog(BuildContext context, PlotViewModel vm) {
     final controller = TextEditingController(
-      text: vm.randomFrequency.toStringAsFixed(1),
+      text: vm.randomFrequency.round().toString(),
     );
     showDialog(
       context: context,
@@ -1566,23 +2449,24 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('随机源频率'),
+            title: Text(AppStrings.plot.randomSourceFrequency),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '频率 (Hz)',
-                    hintText: '1 ~ 10000',
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(
+                    labelText: AppStrings.plot.frequencyHz,
+                    hintText: '1 ~ 100000',
                     suffixText: 'Hz',
                   ),
                   autofocus: true,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '当前: ${vm.randomFrequency.toStringAsFixed(1)} Hz',
+                  AppStrings.plot.currentFrequency(vm.randomFrequency),
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
@@ -1590,17 +2474,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               TextButton(
                 onPressed: () {
-                  final hz = double.tryParse(controller.text);
+                  final hz = int.tryParse(controller.text);
                   if (hz != null) {
-                    vm.setRandomFrequency(hz);
+                    vm.setRandomFrequency(hz.toDouble());
                   }
                   Navigator.pop(context);
                 },
-                child: const Text('确定'),
+                child: Text(AppStrings.common.confirm),
               ),
             ],
           ),
@@ -1620,17 +2504,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             children: [
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, _PlotFileFormat.csv),
-                child: const Text('CSV 文本'),
+                child: Text(AppStrings.plot.csvText),
               ),
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, _PlotFileFormat.bin),
-                child: const Text('BIN 二进制'),
+                child: Text(AppStrings.plot.binBinary),
               ),
               if (includeLegacyDat)
                 SimpleDialogOption(
                   onPressed:
                       () => Navigator.pop(context, _PlotFileFormat.legacyDat),
-                  child: const Text('旧版虚拟示波器 DAT'),
+                  child: Text(AppStrings.plot.legacyDat),
                 ),
             ],
           ),
@@ -1638,8 +2522,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportPlotData(BuildContext context, PlotViewModel vm) async {
-    final format = await _choosePlotFileFormat(context, '选择导出格式');
-    if (format == null || !context.mounted) return;
+    if (!_canUsePlotFileOperations(vm)) return;
+    final format = await _choosePlotFileFormat(
+      context,
+      AppStrings.plot.chooseExportFormat,
+    );
+    if (format == null || !context.mounted || !_canUsePlotFileOperations(vm)) {
+      return;
+    }
     switch (format) {
       case _PlotFileFormat.csv:
         _exportCsv(context, vm);
@@ -1654,7 +2544,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.saveFile(
-      dialogTitle: '保存 CSV 文件',
+      dialogTitle: AppStrings.plot.saveCsvFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.csv',
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -1663,13 +2553,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final path = await vm.exportToCsv(result);
     if (path != null && context.mounted) {
-      vm.showStatusMessage('已导出: $path');
+      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
     }
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.saveFile(
-      dialogTitle: '保存 BIN 文件',
+      dialogTitle: AppStrings.plot.saveBinFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.bin',
       type: FileType.custom,
       allowedExtensions: ['bin'],
@@ -1678,17 +2568,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final path = await vm.exportToBin(result);
     if (path != null && context.mounted) {
-      vm.showStatusMessage('已导出: $path');
+      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
     }
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
+    if (!_canUsePlotFileOperations(vm)) return;
     final format = await _choosePlotFileFormat(
       context,
-      '选择导入格式',
+      AppStrings.plot.chooseImportFormat,
       includeLegacyDat: true,
     );
-    if (format == null || !context.mounted) return;
+    if (format == null || !context.mounted || !_canUsePlotFileOperations(vm)) {
+      return;
+    }
     switch (format) {
       case _PlotFileFormat.csv:
         _importCsv(context, vm);
@@ -1702,9 +2595,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
   }
 
+  bool _canUsePlotFileOperations(PlotViewModel vm) {
+    if (!vm.isPlotting && !vm.isStopping) return true;
+    vm.showStatusMessage(AppStrings.plot.fileOperationDisabledWhilePlotting);
+    return false;
+  }
+
   void _importCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择 CSV 文件',
+      dialogTitle: AppStrings.plot.chooseCsvFile,
       type: FileType.custom,
       allowedExtensions: ['csv'],
       allowMultiple: false,
@@ -1719,15 +2618,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入 CSV',
+      title: AppStrings.plot.importCsvTitle,
       importFile: vm.importFromCsv,
-      successMessage: 'CSV 导入成功',
+      successMessage: AppStrings.plot.importCsvSuccess,
     );
   }
 
   void _importBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择 BIN 文件',
+      dialogTitle: AppStrings.plot.chooseBinFile,
       type: FileType.custom,
       allowedExtensions: ['bin'],
       allowMultiple: false,
@@ -1742,15 +2641,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入 BIN',
+      title: AppStrings.plot.importBinTitle,
       importFile: vm.importFromBin,
-      successMessage: 'BIN 导入成功',
+      successMessage: AppStrings.plot.importBinSuccess,
     );
   }
 
   void _importLegacyDat(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
-      dialogTitle: '选择旧版虚拟示波器 DAT 文件',
+      dialogTitle: AppStrings.plot.chooseLegacyDatFile,
       type: FileType.custom,
       allowedExtensions: ['dat'],
       allowMultiple: false,
@@ -1764,9 +2663,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       vm: vm,
       filePath: filePath,
-      title: '导入旧版 DAT',
+      title: AppStrings.plot.importLegacyDatTitle,
       importFile: vm.importFromLegacyDat,
-      successMessage: '旧版 DAT 导入成功',
+      successMessage: AppStrings.plot.importLegacyDatSuccess,
     );
   }
 
@@ -1783,7 +2682,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     required String successMessage,
   }) async {
     final progressNotifier = ValueNotifier<PlotImportProgress>(
-      const PlotImportProgress(stage: '准备导入', current: 0, total: 0),
+      PlotImportProgress(
+        stage: AppStrings.plot.importPreparing,
+        current: 0,
+        total: 0,
+      ),
     );
     var dialogClosed = false;
 
@@ -1814,7 +2717,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (error == null) {
       vm.showStatusMessage(successMessage);
     } else {
-      vm.showStatusMessage('导入失败: $error');
+      vm.showStatusMessage(AppStrings.plot.importFailed(error));
     }
   }
 
@@ -1831,6 +2734,48 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       'dense' => GridDensity.dense,
       _ => GridDensity.normal,
     };
+  }
+
+  PlotBackgroundStyle _parsePlotBackground(String background) {
+    return switch (background) {
+      'light' => PlotBackgroundStyle.light,
+      _ => PlotBackgroundStyle.dark,
+    };
+  }
+
+  Color _plotBackgroundColor(String background) {
+    return switch (background) {
+      'light' => const Color(0xFFF8FAFC),
+      _ => const Color(0xFF1A1A2E),
+    };
+  }
+
+  bool _usesLightPlotBackground(PlotViewModel vm) {
+    return vm.plotBackground == 'light';
+  }
+
+  Color _floatingBoxBackgroundColor(PlotViewModel vm) {
+    final color =
+        _usesLightPlotBackground(vm) ? Colors.white : const Color(0xFF1A1A2E);
+    return color.withValues(alpha: vm.floatingPanelOpacity);
+  }
+
+  Color _floatingBoxBorderColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF8888AA);
+  }
+
+  Color _floatingTextColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF0F172A)
+        : Colors.white;
+  }
+
+  Color _floatingSubtleTextColor(PlotViewModel vm) {
+    return _usesLightPlotBackground(vm)
+        ? const Color(0xFF475569)
+        : Colors.white70;
   }
 
   /// 构建网格密度选择按钮
@@ -1865,6 +2810,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
+  Widget _buildBackgroundButton(
+    String label,
+    String background,
+    PlotViewModel vm,
+    StateSetter setState,
+  ) {
+    final isSelected = vm.plotBackground == background;
+    return Expanded(
+      child: TextButton(
+        onPressed: () {
+          vm.setPlotBackground(background);
+          setState(() {});
+        },
+        style: TextButton.styleFrom(
+          backgroundColor:
+              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: const Size(0, 32),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: isSelected ? Colors.blue : null,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 构建合并的信息框（X-X/Y-Y + 统计信息在同一框内，从左到右排列）
   Widget _buildCombinedInfoBox(BuildContext context, PlotViewModel vm) {
     final children = <Widget>[];
@@ -1875,7 +2851,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Text(
           vm.measurementText!,
           style: TextStyle(
-            color: Colors.white,
+            color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
             fontFamily: 'SarasaUiSC',
             height: 1.5,
@@ -1891,7 +2867,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           width: 1,
           margin: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFF8888AA).withValues(alpha: 0.5),
+            color: _floatingBoxBorderColor(vm).withValues(alpha: 0.5),
             borderRadius: BorderRadius.circular(0.5),
           ),
         ),
@@ -1906,10 +2882,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return _DraggableInfoBox(
       initialRight: 16,
       initialTop: 16,
+      backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor:
           vm.statsText != null
               ? Colors.green.withValues(alpha: 0.5)
-              : const Color(0xFF8888AA),
+              : _floatingBoxBorderColor(vm),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1951,7 +2928,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       return Text(
         text,
         style: TextStyle(
-          color: Colors.white,
+          color: _floatingTextColor(vm),
           fontSize: _plotFontSize(vm, 11),
           fontFamily: 'SarasaUiSC',
           height: 1.5,
@@ -1981,7 +2958,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         Text(
           colText.toString().trim(),
           style: TextStyle(
-            color: Colors.white,
+            color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 11),
             fontFamily: 'SarasaUiSC',
             height: 1.5,
@@ -2012,8 +2989,54 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       text: vm.snapHighlightDiameter.toStringAsFixed(0),
     );
     final maxVisibleController = TextEditingController(
-      text: vm.maxVisiblePoints.toString(),
+      text: _formatCompactCount(vm.maxVisiblePoints),
     );
+    final discardInitialPacketController = TextEditingController(
+      text: _formatCompactCount(vm.discardInitialPacketCount),
+    );
+    final followPositionController = TextEditingController(
+      text: (vm.followPositionRatio * 100).round().toString(),
+    );
+    final yFitDisplayRatioController = TextEditingController(
+      text: (vm.yFitDisplayRatio * 100).round().toString(),
+    );
+    final floatingPanelOpacityController = TextEditingController(
+      text: (vm.floatingPanelOpacity * 100).round().toString(),
+    );
+    final advancedSettingsScrollController = ScrollController();
+
+    void applyFloatingPanelOpacity(StateSetter setDialogState) {
+      final percent = double.tryParse(
+        floatingPanelOpacityController.text.trim(),
+      );
+      if (percent != null) {
+        vm.setFloatingPanelOpacity(percent / 100);
+      }
+      floatingPanelOpacityController.text =
+          (vm.floatingPanelOpacity * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    void applyFollowPosition(StateSetter setDialogState) {
+      final percent = double.tryParse(followPositionController.text.trim());
+      if (percent != null) {
+        vm.setFollowPositionRatio(percent / 100);
+      }
+      followPositionController.text =
+          (vm.followPositionRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    void applyYFitRatio(StateSetter setDialogState) {
+      final percent = double.tryParse(yFitDisplayRatioController.text.trim());
+      if (percent != null) {
+        vm.setYFitDisplayRatio(percent / 100);
+      }
+      yFitDisplayRatioController.text =
+          (vm.yFitDisplayRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
     showDialog(
       context: context,
       builder:
@@ -2021,67 +3044,191 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(4),
             ),
-            title: const Text('高级设置'),
+            title: Text(AppStrings.plot.advancedSettings),
             content: SizedBox(
-              width: 300,
+              width: 420,
               child: StatefulBuilder(
                 builder: (context, setState) {
-                  return SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // 网格开关
-                        Row(
-                          children: [
-                            const Text('显示网格', style: TextStyle(fontSize: 14)),
-                            const Spacer(),
-                            Switch(
-                              value: vm.showGrid,
-                              onChanged: (value) {
-                                vm.setShowGrid(value);
-                                setState(() {}); // 刷新对话框内部状态
-                              },
-                            ),
-                          ],
-                        ),
-                        // 网格密度
-                        if (vm.showGrid) ...[
-                          const SizedBox(height: 8),
-                          const Text('网格密度', style: TextStyle(fontSize: 14)),
+                  return Scrollbar(
+                    controller: advancedSettingsScrollController,
+                    child: SingleChildScrollView(
+                      controller: advancedSettingsScrollController,
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            AppStrings.plot.plotBackground,
+                            style: const TextStyle(fontSize: 14),
+                          ),
                           const SizedBox(height: 4),
                           Row(
                             children: [
-                              _buildDensityButton('稀疏', 'sparse', vm, setState),
+                              _buildBackgroundButton(
+                                AppStrings.plot.plotBackgroundDark,
+                                'dark',
+                                vm,
+                                setState,
+                              ),
                               const SizedBox(width: 8),
-                              _buildDensityButton('普通', 'normal', vm, setState),
-                              const SizedBox(width: 8),
-                              _buildDensityButton('密集', 'dense', vm, setState),
+                              _buildBackgroundButton(
+                                AppStrings.plot.plotBackgroundLight,
+                                'light',
+                                vm,
+                                setState,
+                              ),
                             ],
                           ),
-                        ],
-                        const Divider(),
-                        // 刷新帧率
-                        const Text('绘图刷新帧率', style: TextStyle(fontSize: 14)),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 110,
-                              child: TextField(
-                                controller: refreshFpsController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: 'fps',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                AppStrings.plot.floatingPanelOpacity,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              const Spacer(),
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: floatingPanelOpacityController,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
                                   ),
+                                  onSubmitted:
+                                      (_) =>
+                                          applyFloatingPanelOpacity(setState),
                                 ),
-                                onSubmitted: (value) {
-                                  final fps = int.tryParse(value);
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed:
+                                    () => applyFloatingPanelOpacity(setState),
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.observationClickToPlace,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    Text(
+                                      AppStrings
+                                          .plot
+                                          .observationClickToPlaceHelp,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.observationClickToPlace,
+                                onChanged: (value) {
+                                  vm.setObservationClickToPlace(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // 网格开关
+                          Row(
+                            children: [
+                              Text(
+                                AppStrings.plot.showGrid,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              const Spacer(),
+                              Switch(
+                                value: vm.showGrid,
+                                onChanged: (value) {
+                                  vm.setShowGrid(value);
+                                  setState(() {}); // 刷新对话框内部状态
+                                },
+                              ),
+                            ],
+                          ),
+                          // 网格密度
+                          if (vm.showGrid) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              AppStrings.plot.gridDensity,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                _buildDensityButton(
+                                  AppStrings.plot.densitySparse,
+                                  'sparse',
+                                  vm,
+                                  setState,
+                                ),
+                                const SizedBox(width: 8),
+                                _buildDensityButton(
+                                  AppStrings.plot.densityNormal,
+                                  'normal',
+                                  vm,
+                                  setState,
+                                ),
+                                const SizedBox(width: 8),
+                                _buildDensityButton(
+                                  AppStrings.plot.densityDense,
+                                  'dense',
+                                  vm,
+                                  setState,
+                                ),
+                              ],
+                            ),
+                          ],
+                          const Divider(),
+                          // 刷新帧率
+                          Text(
+                            AppStrings.plot.refreshFps,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: refreshFpsController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitFps,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final fps = int.tryParse(value);
+                                    if (fps != null) {
+                                      vm.setRefreshFps(fps);
+                                      refreshFpsController.text =
+                                          vm.refreshFps.toString();
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final fps = int.tryParse(
+                                    refreshFpsController.text,
+                                  );
                                   if (fps != null) {
                                     vm.setRefreshFps(fps);
                                     refreshFpsController.text =
@@ -2089,214 +3236,406 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                     setState(() {});
                                   }
                                 },
+                                child: Text(AppStrings.common.apply),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () {
-                                final fps = int.tryParse(
-                                  refreshFpsController.text,
-                                );
-                                if (fps != null) {
-                                  vm.setRefreshFps(fps);
-                                  refreshFpsController.text =
-                                      vm.refreshFps.toString();
-                                  setState(() {});
-                                }
-                              },
-                              child: const Text('应用'),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${(1000 / vm.refreshFps).round()}ms',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        const Text('绘图字体大小', style: TextStyle(fontSize: 14)),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Text(
-                              vm.plotFontSizeDelta == 0
-                                  ? '默认'
-                                  : vm.plotFontSizeDelta > 0
-                                  ? '+${vm.plotFontSizeDelta}'
-                                  : '${vm.plotFontSizeDelta}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '基于默认字号',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Slider(
-                          value: vm.plotFontSizeDelta.toDouble(),
-                          min: -3,
-                          max: 6,
-                          divisions: 9,
-                          label:
-                              vm.plotFontSizeDelta == 0
-                                  ? '默认'
-                                  : vm.plotFontSizeDelta > 0
-                                  ? '+${vm.plotFontSizeDelta}'
-                                  : '${vm.plotFontSizeDelta}',
-                          onChanged: (value) {
-                            vm.setPlotFontSizeDelta(value.round());
-                            setState(() {});
-                          },
-                        ),
-                        const Text(
-                          '范围: -3~+6，影响绘图区坐标轴、光标、观察、测量和统计文本',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        // 窗口点数上限
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                '吸附点高亮',
-                                style: TextStyle(fontSize: 14),
-                              ),
-                            ),
-                            Switch(
-                              value: vm.snapHighlightEnabled,
-                              onChanged: (value) {
-                                vm.setSnapHighlightEnabled(value);
-                                setState(() {});
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 110,
-                              child: TextField(
-                                controller: snapDiameterController,
-                                keyboardType: TextInputType.number,
-                                enabled: vm.snapHighlightEnabled,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: 'px',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '${(1000 / vm.refreshFps).round()}ms',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
                                 ),
-                                onSubmitted: (value) {
-                                  final diameter = double.tryParse(value);
-                                  if (diameter != null) {
-                                    vm.setSnapHighlightDiameter(diameter);
-                                    snapDiameterController.text = vm
-                                        .snapHighlightDiameter
-                                        .toStringAsFixed(0);
-                                    setState(() {});
-                                  }
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.refreshFpsHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.plotFontSize,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                vm.plotFontSizeDelta == 0
+                                    ? AppStrings.plot.defaultValue
+                                    : vm.plotFontSizeDelta > 0
+                                    ? '+${vm.plotFontSizeDelta}'
+                                    : '${vm.plotFontSizeDelta}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                AppStrings.plot.fontPreview,
+                                style: TextStyle(
+                                  fontSize: _plotFontSize(vm, 14),
+                                  fontFamily: 'SarasaUiSC',
+                                  color:
+                                      Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          Slider(
+                            value: vm.plotFontSizeDelta.toDouble(),
+                            min: -3,
+                            max: 6,
+                            divisions: 9,
+                            label:
+                                vm.plotFontSizeDelta == 0
+                                    ? AppStrings.plot.defaultValue
+                                    : vm.plotFontSizeDelta > 0
+                                    ? '+${vm.plotFontSizeDelta}'
+                                    : '${vm.plotFontSizeDelta}',
+                            onChanged: (value) {
+                              vm.setPlotFontSizeDelta(value.round());
+                              setState(() {});
+                            },
+                          ),
+                          Text(
+                            AppStrings.plot.plotFontSizeHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.followPosition,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: followPositionController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted:
+                                      (_) => applyFollowPosition(setState),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyFollowPosition(setState),
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.followPositionHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            AppStrings.plot.yFitDisplayRatio,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: yFitDisplayRatioController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: '%',
+                                  ),
+                                  onSubmitted: (_) => applyYFitRatio(setState),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () => applyYFitRatio(setState),
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.yFitDisplayRatioHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.statsFeatureToggle,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.statsFeatureHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.statsToolbarEnabled,
+                                onChanged: (value) {
+                                  vm.setStatsToolbarEnabled(value);
+                                  setState(() {});
                                 },
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed:
-                                  vm.snapHighlightEnabled
-                                      ? () {
-                                        final diameter = double.tryParse(
-                                          snapDiameterController.text,
-                                        );
-                                        if (diameter != null) {
-                                          vm.setSnapHighlightDiameter(diameter);
-                                          snapDiameterController.text = vm
-                                              .snapHighlightDiameter
-                                              .toStringAsFixed(0);
-                                          setState(() {});
-                                        }
-                                      }
-                                      : null,
-                              child: const Text('应用'),
-                            ),
-                          ],
-                        ),
-                        const Text(
-                          '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                        const Divider(),
-                        const Text('绘图窗口上限', style: TextStyle(fontSize: 14)),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 140,
-                              child: TextField(
-                                controller: maxVisibleController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  suffixText: '包',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 8,
-                                  ),
+                            ],
+                          ),
+                          const Divider(),
+                          // 吸附点高亮
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  AppStrings.plot.snapHighlight,
+                                  style: const TextStyle(fontSize: 14),
                                 ),
-                                onSubmitted: (value) {
-                                  final points = int.tryParse(value);
+                              ),
+                              Switch(
+                                value: vm.snapHighlightEnabled,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onChanged: (value) {
+                                  vm.setSnapHighlightEnabled(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: snapDiameterController,
+                                  keyboardType: TextInputType.number,
+                                  enabled: vm.snapHighlightEnabled,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPixel,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final diameter = double.tryParse(value);
+                                    if (diameter != null) {
+                                      vm.setSnapHighlightDiameter(diameter);
+                                      snapDiameterController.text = vm
+                                          .snapHighlightDiameter
+                                          .toStringAsFixed(0);
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed:
+                                    vm.snapHighlightEnabled
+                                        ? () {
+                                          final diameter = double.tryParse(
+                                            snapDiameterController.text,
+                                          );
+                                          if (diameter != null) {
+                                            vm.setSnapHighlightDiameter(
+                                              diameter,
+                                            );
+                                            snapDiameterController.text = vm
+                                                .snapHighlightDiameter
+                                                .toStringAsFixed(0);
+                                            setState(() {});
+                                          }
+                                        }
+                                        : null,
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.snapHighlightHelp,
+                            style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            AppStrings.plot.snapHighlightColorMode,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SegmentedButton<String>(
+                            segments: [
+                              ButtonSegment<String>(
+                                value: 'cursor',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorCursor,
+                                ),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'channel',
+                                label: Text(
+                                  AppStrings.plot.snapHighlightColorChannel,
+                                ),
+                              ),
+                            ],
+                            selected: {vm.snapHighlightColorMode},
+                            onSelectionChanged:
+                                vm.snapHighlightEnabled
+                                    ? (values) {
+                                      vm.setSnapHighlightColorMode(
+                                        values.first,
+                                      );
+                                      setState(() {});
+                                    }
+                                    : null,
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.plotWindowLimit,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: maxVisibleController,
+                                  keyboardType: TextInputType.text,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPacket,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final points = _parseCompactCount(value);
+                                    if (points != null) {
+                                      vm.setMaxVisiblePoints(points);
+                                      maxVisibleController
+                                          .text = _formatCompactCount(
+                                        vm.maxVisiblePoints,
+                                      );
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final points = _parseCompactCount(
+                                    maxVisibleController.text,
+                                  );
                                   if (points != null) {
                                     vm.setMaxVisiblePoints(points);
-                                    maxVisibleController.text =
-                                        vm.maxVisiblePoints.toString();
+                                    maxVisibleController
+                                        .text = _formatCompactCount(
+                                      vm.maxVisiblePoints,
+                                    );
                                     setState(() {});
                                   }
                                 },
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.plotWindowLimitHelp(
+                              min: _formatCompactCount(
+                                PlotViewModel.minVisiblePoints,
+                              ),
+                              max: _formatCompactCount(
+                                PlotViewModel.maxVisiblePointsLimit,
+                              ),
+                              defaultValue: _formatCompactCount(
+                                PlotViewModel.defaultVisiblePoints,
+                              ),
+                              current: _formatCompactCount(
+                                vm.visiblePointCount,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              onPressed: () {
-                                final points = int.tryParse(
-                                  maxVisibleController.text,
-                                );
-                                if (points != null) {
-                                  vm.setMaxVisiblePoints(points);
-                                  maxVisibleController.text =
-                                      vm.maxVisiblePoints.toString();
-                                  setState(() {});
-                                }
-                              },
-                              child: const Text('应用'),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '范围: ${PlotViewModel.minVisiblePoints}~${PlotViewModel.maxVisiblePointsLimit} 包，默认 ${PlotViewModel.defaultVisiblePoints} 包。当前窗口: ${vm.visiblePointCount} 包',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey,
                           ),
-                        ),
-                      ],
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.droppedPackets,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextField(
+                                  controller: discardInitialPacketController,
+                                  keyboardType: TextInputType.text,
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: AppStrings.plot.unitPacket,
+                                  ),
+                                  onSubmitted: (value) {
+                                    final count = _parseCompactCount(value);
+                                    if (count != null) {
+                                      vm.setDiscardInitialPacketCount(count);
+                                      discardInitialPacketController
+                                          .text = _formatCompactCount(
+                                        vm.discardInitialPacketCount,
+                                      );
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: () {
+                                  final count = _parseCompactCount(
+                                    discardInitialPacketController.text,
+                                  );
+                                  if (count != null) {
+                                    vm.setDiscardInitialPacketCount(count);
+                                    discardInitialPacketController
+                                        .text = _formatCompactCount(
+                                      vm.discardInitialPacketCount,
+                                    );
+                                    setState(() {});
+                                  }
+                                },
+                                child: Text(AppStrings.common.apply),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.droppedPacketsHelp(
+                              max: _formatCompactCount(
+                                PlotViewModel.maxDiscardInitialPacketCount,
+                              ),
+                            ),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -2305,7 +3644,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('关闭'),
+                child: Text(AppStrings.common.close),
               ),
             ],
           ),
@@ -2313,11 +3652,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       refreshFpsController.dispose();
       snapDiameterController.dispose();
       maxVisibleController.dispose();
+      discardInitialPacketController.dispose();
+      followPositionController.dispose();
+      yFitDisplayRatioController.dispose();
+      advancedSettingsScrollController.dispose();
     });
   }
 
   /// 显示新建Zobow配置文件对话框
   void _showCreateZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
       builder: (context) => ZobowProfileDialog(vm: vm),
@@ -2326,9 +3670,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 显示编辑Zobow配置文件对话框
   void _showEditZobowProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     final profile = vm.selectedZobowProfile;
     if (profile == null) {
-      vm.showStatusMessage('请先选择一个配置文件');
+      vm.showStatusMessage(AppStrings.plot.selectConfigFirst);
       return;
     }
     showDialog(
@@ -2338,2133 +3683,323 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _showCreateRProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     showDialog(
       context: context,
-      builder:
-          (context) => ZobowProfileDialog(
-            vm: vm,
-            protocolType: AddressProfileProtocolType.rProtocol,
-          ),
+      builder: (context) => RProtocolProfileDialog(vm: vm),
     );
   }
 
   void _showEditRProfileDialog(BuildContext context, PlotViewModel vm) {
+    if (!_canOpenInputConfiguration(vm)) return;
     final profile = vm.selectedRProfile;
     if (profile == null) {
-      vm.showStatusMessage('请先选择一个 r 协议配置文件');
+      vm.showStatusMessage(AppStrings.plot.selectRProtocolConfigFirst);
       return;
     }
     showDialog(
       context: context,
-      builder:
-          (context) => ZobowProfileDialog(
-            vm: vm,
-            profile: profile,
-            protocolType: AddressProfileProtocolType.rProtocol,
-          ),
+      builder: (context) => RProtocolProfileDialog(vm: vm, profile: profile),
     );
+  }
+
+  bool _canOpenInputConfiguration(PlotViewModel vm) {
+    if (!vm.isPlotting && !vm.isStopping) return true;
+    vm.showStatusMessage(
+      AppStrings.plot.inputConfigurationDisabledWhilePlotting,
+    );
+    return false;
   }
 }
 
-enum _PlotFileFormat { csv, bin, legacyDat }
+/// 通道面板使用自绘右键菜单，避免 [showMenu] 默认动画偏慢且样式过重。
+class _ChannelContextMenu extends StatelessWidget {
+  final _ChannelContextMenuTarget target;
+  final VoidCallback? onAddMathChannel;
+  final VoidCallback? onResetAllChannels;
+  final VoidCallback? onEditChannel;
+  final VoidCallback? onOffsetBinding;
+  final VoidCallback? onDeleteMathChannel;
 
-class _PlotImportProgressDialog extends StatelessWidget {
-  final String title;
-  final ValueListenable<PlotImportProgress> progressListenable;
-
-  const _PlotImportProgressDialog({
-    required this.title,
-    required this.progressListenable,
+  const _ChannelContextMenu({
+    required this.target,
+    required this.onAddMathChannel,
+    required this.onResetAllChannels,
+    required this.onEditChannel,
+    required this.onOffsetBinding,
+    required this.onDeleteMathChannel,
   });
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      child: AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: 360,
-          child: ValueListenableBuilder<PlotImportProgress>(
-            valueListenable: progressListenable,
-            builder: (context, progress, _) {
-              final fraction = progress.fraction;
-              final percent =
-                  fraction == null ? null : (fraction * 100).clamp(0, 100);
-              final countText =
-                  progress.total <= 0
-                      ? ''
-                      : '${progress.current}/${progress.total}';
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LinearProgressIndicator(value: fraction),
-                  const SizedBox(height: 12),
-                  Text(
-                    progress.stage,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    [
-                      if (percent != null) '${percent.toStringAsFixed(1)}%',
-                      if (countText.isNotEmpty) countText,
-                      if (progress.detail != null) progress.detail!,
-                    ].join('  '),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+    final colorScheme = Theme.of(context).colorScheme;
+    final children = switch (target.kind) {
+      _ChannelContextMenuTargetKind.blank => [
+        _ChannelContextMenuItem(
+          icon: Icons.functions,
+          label: AppStrings.plot.addMathChannel,
+          onTap: onAddMathChannel,
         ),
-      ),
-    );
-  }
-}
-
-String _formatZobowAddress(int address, {bool compact = false}) {
-  final value = address & 0xFFFFFFFF;
-  final width = compact && (value & 0xFFFF0000) == 0 ? 4 : 8;
-  return '0x${value.toRadixString(16).toUpperCase().padLeft(width, '0')}';
-}
-
-/// 通道列表项
-///
-/// 显示单个通道的颜色、名称/别名、绘图开关和编辑按钮。
-/// 支持双击通道名直接编辑别名，众邦电控模式下支持直接编辑ID。
-class _ChannelItem extends StatefulWidget {
-  final PlotViewModel vm;
-  final ChannelConfig ch;
-
-  const _ChannelItem({super.key, required this.vm, required this.ch});
-
-  @override
-  State<_ChannelItem> createState() => _ChannelItemState();
-}
-
-class _ChannelItemState extends State<_ChannelItem> {
-  bool _isEditingName = false;
-  late final TextEditingController _nameController;
-  late final TextEditingController _idController;
-  late final FocusNode _nameFocusNode;
-  late final FocusNode _addressFocusNode;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController();
-    _idController = TextEditingController();
-    _nameFocusNode = FocusNode()..addListener(_handleNameFocusChange);
-    _addressFocusNode = FocusNode();
-  }
-
-  @override
-  void dispose() {
-    _nameFocusNode.dispose();
-    _addressFocusNode.dispose();
-    _nameController.dispose();
-    _idController.dispose();
-    super.dispose();
-  }
-
-  /// 获取显示名称（别名优先，空则回退到 ChN）
-  String get _displayName =>
-      widget.ch.alias.isNotEmpty ? widget.ch.alias : 'Ch${widget.ch.index}';
-
-  void _saveAlias() {
-    final text = _nameController.text.trim();
-    // 空输入则恢复默认名称（清空别名）
-    widget.vm.setChannelAlias(widget.ch.index, text);
-    if (mounted) {
-      setState(() => _isEditingName = false);
-    }
-  }
-
-  void _handleNameFocusChange() {
-    if (!_nameFocusNode.hasFocus && _isEditingName) {
-      _saveAlias();
-    }
-  }
-
-  void _startEditingName() {
-    setState(() {
-      _isEditingName = true;
-      _nameController.text = _displayName;
-      _nameController.selection = TextSelection(
-        baseOffset: 0,
-        extentOffset: _nameController.text.length,
-      );
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_isEditingName) return;
-      _nameFocusNode.requestFocus();
-    });
-  }
-
-  void _saveZobowId() {
-    final text = _idController.text.trim();
-    final hex = text.replaceAll('0x', '').replaceAll('0X', '');
-    final id = int.tryParse(hex, radix: 16);
-    if (id != null && id >= 0 && id <= 0xFFFFFFFF) {
-      widget.vm.setZobowChannelId(widget.ch.index, id);
-    }
-  }
-
-  void _saveRAddress() {
-    final text = _idController.text.trim();
-    final address = PlotViewModel.parseRProtocolAddress(text);
-    if (text.isEmpty || (address != null && address >= 0)) {
-      widget.vm.setRChannelAddress(widget.ch.index, text);
-    }
-  }
-
-  void _onAddressFocusChange(bool hasFocus) {
-    if (!hasFocus) {
-      // 失去焦点时取消文本选择
-      _idController.selection = TextSelection.collapsed(
-        offset: _idController.text.length,
-      );
-      if (widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
-        _saveRAddress();
-      } else {
-        _saveZobowId();
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isZobowMode =
-        widget.vm.parserType == ParserType.zobow &&
-        widget.ch.index < widget.vm.parserConfig.zobowChannelCount;
-    final isRProtocolMode =
-        widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol &&
-        widget.ch.index < SendProtocolConfig.maxChannelCount;
-    final showsAddress = isZobowMode || isRProtocolMode;
-    final zobowAddress =
-        isZobowMode
-            ? widget.vm.parserConfig.zobowChannelIds[widget.ch.index]
-            : 0;
-    final usesShortZobowAddress =
-        isZobowMode && (zobowAddress & 0xFFFF0000) == 0;
-    final rAddress =
-        isRProtocolMode ? widget.vm.rChannelAddresses[widget.ch.index] : '';
-    final reservesRAddressSpace =
-        !showsAddress &&
-        widget.vm.effectiveSendProtocolType == SendProtocolType.none;
-    final addressText =
-        isRProtocolMode
-            ? rAddress
-            : _formatZobowAddress(zobowAddress, compact: usesShortZobowAddress);
-    if (!_addressFocusNode.hasFocus && _idController.text != addressText) {
-      _idController.text = addressText;
-    }
-
-    return Container(
-      constraints: const BoxConstraints(minHeight: 40),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          // 颜色指示器（点击打开编辑弹窗）
-          InkWell(
-            onTap: () => _showChannelEditDialog(context),
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: widget.ch.color,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          // 通道名/别名（双击编辑）+ 众邦电控ID（直接编辑）并排显示
-          Expanded(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 通道名称：双击进入编辑模式
-                Flexible(
-                  child:
-                      _isEditingName
-                          ? SizedBox(
-                            height: 24,
-                            child: TextField(
-                              controller: _nameController,
-                              focusNode: _nameFocusNode,
-                              autofocus: true,
-                              maxLength: 8,
-                              style: const TextStyle(fontSize: 14),
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 2,
-                                  vertical: 0,
-                                ),
-                                border: UnderlineInputBorder(),
-                                counterText: '',
-                              ),
-                              onSubmitted: (_) => _saveAlias(),
-                              onEditingComplete: _saveAlias,
-                              onTapOutside: (_) => _nameFocusNode.unfocus(),
-                            ),
-                          )
-                          : GestureDetector(
-                            onDoubleTap: _startEditingName,
-                            child: Text(
-                              _displayName,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: widget.ch.visible ? null : Colors.grey,
-                                decoration:
-                                    widget.ch.visible
-                                        ? null
-                                        : TextDecoration.lineThrough,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            ),
-                          ),
-                ),
-                // 众邦电控模式下显示地址，常驻可编辑 TextField
-                if (showsAddress) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    width:
-                        isRProtocolMode
-                            ? kRProtocolAddressWidth
-                            : usesShortZobowAddress
-                            ? 58
-                            : kRProtocolAddressWidth,
-                    height: 26,
-                    alignment: Alignment.centerLeft,
-                    child: Focus(
-                      focusNode: _addressFocusNode,
-                      onFocusChange: _onAddressFocusChange,
-                      child: TextField(
-                        controller: _idController,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Theme.of(context).colorScheme.onSurface,
-                          height: 1.15,
-                        ),
-                        textAlignVertical: TextAlignVertical.center,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 2,
-                            vertical: 2,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade400,
-                              width: 1,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade400,
-                              width: 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Theme.of(context).colorScheme.primary,
-                              width: 1,
-                            ),
-                          ),
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9a-fA-FxX]'),
-                          ),
-                        ],
-                        onSubmitted:
-                            (_) =>
-                                isRProtocolMode
-                                    ? _saveRAddress()
-                                    : _saveZobowId(),
-                        onEditingComplete:
-                            isRProtocolMode ? _saveRAddress : _saveZobowId,
-                      ),
-                    ),
-                  ),
-                  // 预设选择按钮
-                  _buildPresetButton(context),
-                ] else if (reservesRAddressSpace) ...[
-                  const SizedBox(width: 6),
-                  const SizedBox(width: kRProtocolAddressWidth, height: 26),
-                ],
-              ],
-            ),
-          ),
-          Tooltip(
-            message: widget.ch.offsetEnabled ? '关闭偏置' : '开启偏置',
-            child: SizedBox(
-              width: 20,
-              height: 24,
-              child: Checkbox(
-                value: widget.ch.offsetEnabled,
-                onChanged:
-                    (value) => widget.vm.setChannelOffsetEnabled(
-                      widget.ch.index,
-                      value!,
-                    ),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-          ),
-          const SizedBox(width: 5),
-          // 绘图开关
-          Tooltip(
-            message: widget.ch.visible ? '点击隐藏通道' : '点击显示通道',
-            child: SizedBox(
-              width: 20,
-              height: 24,
-              child: Checkbox(
-                value: widget.ch.visible,
-                onChanged:
-                    (value) =>
-                        widget.vm.setChannelVisible(widget.ch.index, value!),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              ),
-            ),
-          ),
-          // 编辑按钮
-          Tooltip(
-            message: '编辑通道',
-            child: InkWell(
-              onTap: () => _showChannelEditDialog(context),
-              child: const SizedBox(
-                width: 20,
-                height: 24,
-                child: Icon(Icons.settings, size: 14),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 显示通道编辑弹窗
-  void _showChannelEditDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => _ChannelEditDialog(vm: widget.vm, ch: widget.ch),
-    );
-  }
-
-  /// 构建预设选择按钮
-  Widget _buildPresetButton(BuildContext context) {
-    final isRProtocol =
-        widget.vm.effectiveSendProtocolType == SendProtocolType.rProtocol;
-    final profile =
-        isRProtocol
-            ? widget.vm.selectedRProfile
-            : widget.vm.selectedZobowProfile;
-    if (profile == null || profile.presets.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Tooltip(
-      message: '选择地址',
-      child: InkWell(
-        onTap: () => _showPresetSelectorDialog(context, profile),
-        child: Container(
-          width: 20,
-          height: 20,
-          margin: const EdgeInsets.only(left: 2),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(2),
-          ),
-          child: Icon(
-            Icons.chevron_right,
-            size: 14,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 显示预设选择弹窗
-  void _showPresetSelectorDialog(
-    BuildContext context,
-    ZobowConfigProfile profile,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return _PresetSelectorDialog(
-          profile: profile,
-          onSelect: (preset) {
-            if (widget.vm.effectiveSendProtocolType ==
-                SendProtocolType.rProtocol) {
-              widget.vm.applyRProtocolPresetToChannel(widget.ch.index, preset);
-            } else {
-              widget.vm.applyPresetToChannel(widget.ch.index, preset);
-            }
-          },
-        );
-      },
-    );
-  }
-}
-
-/// 通道编辑对话框
-///
-/// 可修改通道颜色、别名、连线开关。
-class _ChannelEditDialog extends StatefulWidget {
-  final PlotViewModel vm;
-  final ChannelConfig ch;
-
-  const _ChannelEditDialog({required this.vm, required this.ch});
-
-  @override
-  State<_ChannelEditDialog> createState() => _ChannelEditDialogState();
-}
-
-class _ChannelEditDialogState extends State<_ChannelEditDialog> {
-  static const int _progressDialogFrameThreshold = 50000;
-
-  late Color _selectedColor;
-  late String _alias;
-  late bool _showLine;
-  late double _pointSize;
-  late double _lineWidth;
-  late bool _offsetEnabled;
-  late DataType _zobowDataType;
-  late final TextEditingController _aliasController;
-  bool _isClosing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedColor = widget.ch.color;
-    _alias = widget.ch.alias;
-    _showLine = widget.ch.showLine;
-    _pointSize = widget.ch.pointSize;
-    _lineWidth = widget.ch.lineWidth;
-    _offsetEnabled = widget.ch.offsetEnabled;
-    final parserConfig = widget.vm.parserConfig;
-    if (widget.vm.parserType == ParserType.zobow &&
-        widget.ch.index < parserConfig.zobowChannelCount) {
-      final zobowType = parserConfig.zobowChannelTypes[widget.ch.index];
-      _zobowDataType =
-          zobowType == DataType.int16 ? DataType.int16 : DataType.uint16;
-    } else if (widget.vm.parserType == ParserType.fixedFrame &&
-        widget.ch.index < parserConfig.channelCount) {
-      _zobowDataType = parserConfig.fixedFrameChannelTypes[widget.ch.index];
-    } else {
-      _zobowDataType = widget.ch.dataType;
-    }
-    _aliasController = TextEditingController(text: _alias);
-  }
-
-  @override
-  void dispose() {
-    _aliasController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final contentMaxHeight =
-        (MediaQuery.sizeOf(context).height - 220)
-            .clamp(240.0, 540.0)
-            .toDouble();
-
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: Text('编辑 Ch${widget.ch.index}'),
-      content: SizedBox(
-        width: 280,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: contentMaxHeight),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 颜色选择
-                const Text(
-                  '颜色',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                _buildColorPicker(),
-                const SizedBox(height: 14),
-                // 别名输入
-                const Text(
-                  '别名',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _aliasController,
-                  maxLength: 16,
-                  decoration: const InputDecoration(
-                    hintText: '输入通道别名',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
-                    counterText: '',
-                  ),
-                  style: const TextStyle(fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                // 连线开关
-                Row(
-                  children: [
-                    const Text(
-                      '连线显示',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    Switch(
-                      value: _showLine,
-                      onChanged: (value) => setState(() => _showLine = value),
-                    ),
-                  ],
-                ),
-                if (_showLine) ...[
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      const Text('线宽', style: TextStyle(fontSize: 13)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Slider(
-                          value: _lineWidth,
-                          min: 0.5,
-                          max: 8.0,
-                          divisions: 15,
-                          label: _lineWidth.toStringAsFixed(1),
-                          onChanged:
-                              (value) => setState(() => _lineWidth = value),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 34,
-                        child: Text(
-                          _lineWidth.toStringAsFixed(1),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Text('点半径', style: TextStyle(fontSize: 13)),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Slider(
-                        value: _pointSize,
-                        min: 0.5,
-                        max: 12.0,
-                        divisions: 23,
-                        label: _pointSize.toStringAsFixed(1),
-                        onChanged:
-                            (value) => setState(() => _pointSize = value),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 34,
-                      child: Text(
-                        _pointSize.toStringAsFixed(1),
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-                // 偏移开关
-                Row(
-                  children: [
-                    const Text(
-                      '偏移显示',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    Switch(
-                      value: _offsetEnabled,
-                      onChanged:
-                          (value) => setState(() => _offsetEnabled = value),
-                    ),
-                  ],
-                ),
-                if (_offsetEnabled) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    '提示：开启后可在绘图区拖动通道标签调整偏移位置',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                  ),
-                ],
-                // 众邦电控模式下显示数据类型选择
-                if (widget.vm.parserType == ParserType.zobow &&
-                    widget.ch.index <
-                        widget.vm.parserConfig.zobowChannelCount) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    '数据类型',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    '仅在众邦电控协议停止绘图后可修改',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: NoAnimDropdown<DataType>(
-                          value: _zobowDataType,
-                          hint: '类型',
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                          ),
-                          items:
-                              [DataType.uint16, DataType.int16].map((type) {
-                                return DropdownMenuItem(
-                                  value: type,
-                                  child: Text(
-                                    type.label,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                );
-                              }).toList(),
-                          onChanged:
-                              widget.vm.isPlotting
-                                  ? null
-                                  : (value) {
-                                    if (value != null) {
-                                      setState(() => _zobowDataType = value);
-                                    }
-                                  },
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-                if (widget.vm.parserType == ParserType.fixedFrame &&
-                    !widget.vm.parserConfig.fixedFrameUniformDataType &&
-                    widget.ch.index < widget.vm.parserConfig.channelCount) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    '数据类型',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    '固定帧类型不一致时，按当前通道类型解析',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-                  NoAnimDropdown<DataType>(
-                    value: _zobowDataType,
-                    hint: '类型',
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    items:
-                        DataType.values
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type.label),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        widget.vm.isPlotting
-                            ? null
-                            : (value) {
-                              if (value != null) {
-                                setState(() => _zobowDataType = value);
-                              }
-                            },
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isClosing ? null : _closeDialog,
-          child: const Text('取消'),
-        ),
-        TextButton(onPressed: _resetLocalChannel, child: const Text('重置')),
-        ElevatedButton(
-          onPressed: _isClosing ? null : _saveChannel,
-          child: const Text('确定'),
+        _ChannelContextMenuItem(
+          icon: Icons.restart_alt,
+          label: AppStrings.plot.resetAllChannels,
+          onTap: onResetAllChannels,
         ),
       ],
-    );
-  }
-
-  void _closeDialog() {
-    if (_isClosing) return;
-    _isClosing = true;
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
-  }
-
-  void _resetLocalChannel() {
-    if (_isClosing) return;
-    final defaultColor =
-        ChannelConfig.defaultColors[widget.ch.index %
-            ChannelConfig.defaultColors.length];
-    setState(() {
-      _selectedColor = defaultColor;
-      _alias = '';
-      _aliasController.text = '';
-      _showLine = true;
-      _pointSize = 3.0;
-      _lineWidth = 1.5;
-      _offsetEnabled = false;
-      _zobowDataType = DataType.uint16;
-    });
-  }
-
-  Future<void> _saveChannel() async {
-    if (_isClosing) return;
-    _isClosing = true;
-    widget.vm.setChannelColor(widget.ch.index, _selectedColor);
-    widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
-    widget.vm.setChannelShowLine(widget.ch.index, _showLine);
-    widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
-    widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
-    widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
-
-    if (widget.vm.parserType == ParserType.zobow &&
-        widget.ch.index < widget.vm.parserConfig.zobowChannelCount &&
-        _zobowDataType !=
-            widget.vm.parserConfig.zobowChannelTypes[widget.ch.index]) {
-      await _applyZobowDataType();
-    }
-    if (widget.vm.parserType == ParserType.fixedFrame &&
-        !widget.vm.parserConfig.fixedFrameUniformDataType &&
-        widget.ch.index < widget.vm.parserConfig.channelCount &&
-        _zobowDataType !=
-            widget.vm.parserConfig.fixedFrameChannelTypes[widget.ch.index]) {
-      await widget.vm.setFixedFrameChannelType(widget.ch.index, _zobowDataType);
-    }
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
-  }
-
-  Future<void> _applyZobowDataType() async {
-    final showProgress =
-        widget.vm.zobowRawFrameCount >= _progressDialogFrameThreshold;
-    final progressNotifier = ValueNotifier<PlotImportProgress>(
-      PlotImportProgress(
-        stage: '准备重新解释众邦数据',
-        current: 0,
-        total: widget.vm.zobowRawFrameCount,
-      ),
-    );
-    var dialogClosed = false;
-
-    if (showProgress) {
-      unawaited(
-        showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder:
-              (dialogContext) => _PlotImportProgressDialog(
-                title: '更新通道数据类型',
-                progressListenable: progressNotifier,
-              ),
-        ).whenComplete(() => dialogClosed = true),
-      );
-      await SchedulerBinding.instance.endOfFrame;
-      await Future<void>.delayed(const Duration(milliseconds: 220));
-      await SchedulerBinding.instance.endOfFrame;
-    }
-
-    await widget.vm.setZobowChannelType(
-      widget.ch.index,
-      _zobowDataType,
-      onProgress: (progress) => progressNotifier.value = progress,
-    );
-
-    if (mounted && showProgress && !dialogClosed) {
-      Navigator.of(context, rootNavigator: true).pop();
-    }
-    progressNotifier.dispose();
-  }
-
-  /// 构建颜色选择器（15 个黑底可识别预设色 + 自选色入口）
-  Widget _buildColorPicker() {
-    final presetColors = ChannelConfig.defaultColors.take(15).toList();
-    final usesCustomColor =
-        !presetColors.any(
-          (color) => color.toARGB32() == _selectedColor.toARGB32(),
-        );
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        ...presetColors.map((color) {
-          final isSelected = color.toARGB32() == _selectedColor.toARGB32();
-          return InkWell(
-            onTap: () => setState(() => _selectedColor = color),
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(4),
-                border:
-                    isSelected
-                        ? Border.all(color: Colors.white, width: 2)
-                        : null,
-                boxShadow:
-                    isSelected
-                        ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 4,
-                          ),
-                        ]
-                        : null,
-              ),
-              child:
-                  isSelected
-                      ? const Icon(Icons.check, size: 16, color: Colors.white)
-                      : null,
-            ),
-          );
-        }),
-        Tooltip(
-          message: '自定义颜色',
-          child: InkWell(
-            onTap: _showCustomColorPicker,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: usesCustomColor ? _selectedColor : Colors.white,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color:
-                      usesCustomColor
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey.shade400,
-                  width: usesCustomColor ? 2 : 1,
-                ),
-              ),
-              child: Icon(
-                Icons.palette_outlined,
-                size: 18,
-                color:
-                    usesCustomColor
-                        ? _foregroundForColor(_selectedColor)
-                        : Colors.grey.shade700,
-              ),
-            ),
+      _ChannelContextMenuTargetKind.math => [
+        _ChannelContextMenuItem(
+          icon: Icons.settings_outlined,
+          label: AppStrings.plot.editMathChannel,
+          onTap: onEditChannel,
+        ),
+        if (target.channel?.offsetEnabled == true)
+          _ChannelContextMenuItem(
+            icon: Icons.link,
+            label: AppStrings.plot.offsetBinding,
+            onTap: onOffsetBinding,
           ),
+        _ChannelContextMenuItem(
+          icon: Icons.delete_outline,
+          label: AppStrings.plot.deleteMathChannel,
+          onTap: onDeleteMathChannel,
         ),
       ],
-    );
-  }
-
-  Future<void> _showCustomColorPicker() async {
-    var selectedHsv = HSVColor.fromColor(_selectedColor);
-    final selectedColor = await showDialog<Color>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final color = selectedHsv.toColor();
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
-              title: const Text('自定义颜色'),
-              content: SizedBox(
-                width: 300,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.grey.shade400),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    _buildColorSlider(
-                      label: '色相',
-                      value: selectedHsv.hue,
-                      max: 360,
-                      displayValue: '${selectedHsv.hue.round()}°',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          selectedHsv = selectedHsv.withHue(value);
-                        });
-                      },
-                    ),
-                    _buildColorSlider(
-                      label: '饱和',
-                      value: selectedHsv.saturation * 100,
-                      max: 100,
-                      displayValue:
-                          '${(selectedHsv.saturation * 100).round()}%',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          selectedHsv = selectedHsv.withSaturation(value / 100);
-                        });
-                      },
-                    ),
-                    _buildColorSlider(
-                      label: '亮度',
-                      value: selectedHsv.value * 100,
-                      max: 100,
-                      displayValue: '${(selectedHsv.value * 100).round()}%',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          selectedHsv = selectedHsv.withValue(value / 100);
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, color),
-                  child: const Text('确定'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    if (selectedColor != null && mounted) {
-      setState(() => _selectedColor = selectedColor);
-    }
-  }
-
-  Widget _buildColorSlider({
-    required String label,
-    required double value,
-    required double max,
-    required String displayValue,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 34,
-          child: Text(label, style: const TextStyle(fontSize: 12)),
+      _ChannelContextMenuTargetKind.raw => [
+        _ChannelContextMenuItem(
+          icon: Icons.settings_outlined,
+          label: AppStrings.plot.editChannel,
+          onTap: onEditChannel,
         ),
-        Expanded(
-          child: Slider(value: value, min: 0, max: max, onChanged: onChanged),
-        ),
-        SizedBox(
-          width: 38,
-          child: Text(
-            displayValue,
-            textAlign: TextAlign.right,
-            style: const TextStyle(fontSize: 12),
+        if (target.channel?.offsetEnabled == true)
+          _ChannelContextMenuItem(
+            icon: Icons.link,
+            label: AppStrings.plot.offsetBinding,
+            onTap: onOffsetBinding,
           ),
-        ),
       ],
-    );
-  }
-
-  Color _foregroundForColor(Color background) {
-    return ThemeData.estimateBrightnessForColor(background) == Brightness.dark
-        ? Colors.white
-        : Colors.black87;
-  }
-}
-
-/// 解析器配置对话框
-///
-/// 根据当前解析器类型显示 FireWater 或固定帧的配置界面。
-class _ParserConfigDialog extends StatefulWidget {
-  final PlotViewModel vm;
-
-  const _ParserConfigDialog({required this.vm});
-
-  @override
-  State<_ParserConfigDialog> createState() => _ParserConfigDialogState();
-}
-
-/// [_ParserConfigDialog] 的状态类
-class _ParserConfigDialogState extends State<_ParserConfigDialog> {
-  /// 解析器配置的本地副本（确定后才同步到 ViewModel）
-  late ParserConfig _config;
-
-  /// FireWater 通道数输入控制器
-  late final TextEditingController _fireWaterController;
-
-  /// 固定帧通道数输入控制器
-  late final TextEditingController _fixedFrameController;
-
-  late final TextEditingController _justFloatController;
-  String? _validationError;
-
-  @override
-  void initState() {
-    super.initState();
-    _config = widget.vm.parserConfig.copyWith();
-    _fireWaterController = TextEditingController(
-      text: _config.fireWaterChannelCount.toString(),
-    );
-    _fixedFrameController = TextEditingController(
-      text: _config.channelCount.toString(),
-    );
-    _justFloatController = TextEditingController(
-      text: _config.channelCount.toString(),
-    );
-    if (_config.hasChecksum) {
-      _setCrcType(
-        _isCrcChecksum(_config.checksumType)
-            ? _config.checksumType
-            : ChecksumType.crc16,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _fireWaterController.dispose();
-    _fixedFrameController.dispose();
-    _justFloatController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: const Text('解析器配置'),
-      content: SizedBox(width: 300, child: _buildConfigContent()),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        ElevatedButton(
-          onPressed: () {
-            if (_config.type == ParserType.fixedFrame) {
-              final error = _config.fixedFrameValidationError;
-              if (error != null) {
-                setState(() => _validationError = error);
-                return;
-              }
-            }
-            widget.vm.updateParserConfig(_config);
-            Navigator.of(context).pop();
-          },
-          child: const Text('确定'),
-        ),
-      ],
-    );
-  }
-
-  /// 构建 FireWater 解析器配置界面
-  Widget _buildFireWaterConfig() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'FireWater 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        const Text('以 "," 分割数据'),
-        const Text('所有数据默认 double 类型'),
-        const Text('以 "\\n" 结尾'),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            const Text('通道数:'),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 80,
-              child: TextField(
-                controller: _fireWaterController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
-                onChanged: (value) {
-                  final count = int.tryParse(value);
-                  if (count != null && count >= 0 && count <= 16) {
-                    setState(() => _config.fireWaterChannelCount = count);
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              '(0=自动识别)',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// 根据当前解析器类型构建对应的配置界面
-  Widget _buildConfigContent() {
-    switch (widget.vm.parserType) {
-      case ParserType.fireWater:
-        return _buildFireWaterConfig();
-      case ParserType.fixedFrame:
-        return _buildFixedFrameConfig();
-      case ParserType.zobow:
-        return _buildZobowConfig();
-      case ParserType.justFloat:
-        return _buildJustFloatConfig();
-    }
-  }
-
-  Widget _buildJustFloatConfig() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'JustFloat 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        const Text('小端 float32 数组'),
-        const Text('帧尾: 00 00 80 7F'),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            const Text('通道数:'),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 80,
-              child: TextField(
-                controller: _justFloatController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
-                onChanged: (value) {
-                  final count = int.tryParse(value);
-                  if (count != null && count >= 0 && count <= 16) {
-                    setState(() => _config.channelCount = count);
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              '(0=自动识别)',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// 构建 众邦电控解析器配置界面
-  ///
-  /// 众邦通道号和数据类型在通道面板中维护，此处只选择通道数。
-  Widget _buildZobowConfig() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('众邦电控配置', style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Text('通道数:', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 90,
-              child: NoAnimDropdown<int>(
-                value: _config.zobowChannelCount,
-                hint: '通道数',
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                ),
-                items:
-                    const [4, 8].map((count) {
-                      return DropdownMenuItem(
-                        value: count,
-                        child: Text('$count 通道'),
-                      );
-                    }).toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() => _config.channelCount = value);
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${_config.zobowChannelCount * 2}字节数据 + 2字节CRC16(MODBUS)',
-          style: const TextStyle(fontSize: 11, color: Colors.grey),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          '通道号和数据类型请在通道面板中设置',
-          style: TextStyle(fontSize: 11, color: Colors.grey),
-        ),
-      ],
-    );
-  }
-
-  /// 构建固定帧解析器配置界面
-  ///
-  /// 包含帧头长度、帧头值、数据类型、通道数设置。
-  Widget _buildFixedFrameConfig() {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('帧头设置', style: TextStyle(fontWeight: FontWeight.bold)),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text('启用帧头'),
-            value: _config.hasFrameHeader,
-            onChanged: (value) {
-              setState(() {
-                _config.hasFrameHeader = value ?? false;
-                if (_config.hasFrameHeader && _config.frameHeader.isEmpty) {
-                  _config.frameHeader = [0xAA, 0x55];
-                  _config.frameHeaderLength = 2;
-                }
-              });
-            },
-          ),
-          if (_config.hasFrameHeader)
-            TextField(
-              controller: TextEditingController(
-                text: _formatHexBytes(
-                  _config.frameHeader.take(_config.frameHeaderLength).toList(),
-                ),
-              ),
-              decoration: const InputDecoration(
-                isDense: true,
-                labelText: '帧头字节',
-                hintText: '例如: AA 55',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                final bytes = _parseHexBytes(value);
-                if (bytes != null && bytes.isNotEmpty) {
-                  setState(() {
-                    _config.frameHeader = bytes;
-                    _config.frameHeaderLength = bytes.length;
-                  });
-                }
-              },
-            ),
-          const SizedBox(height: 16),
-          const Text('数据设置', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const SizedBox(
-                width: kFixedFrameConfigLabelWidth,
-                child: Text('通道类型:', softWrap: false),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: NoAnimDropdown<bool>(
-                  value: _config.fixedFrameUniformDataType,
-                  hint: '通道类型模式',
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: true, child: Text('统一')),
-                    DropdownMenuItem(value: false, child: Text('不一致')),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      setState(() {
-                        _config.fixedFrameUniformDataType = value;
-                        if (!value) {
-                          _config.fixedFrameChannelTypes = List.generate(
-                            SendProtocolConfig.maxChannelCount,
-                            (index) =>
-                                index < widget.vm.channels.length
-                                    ? widget.vm.channels[index].dataType
-                                    : _config.dataType,
-                          );
-                        }
-                      });
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-          if (_config.fixedFrameUniformDataType) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                const SizedBox(
-                  width: kFixedFrameConfigLabelWidth,
-                  child: Text('数据类型:', softWrap: false),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: NoAnimDropdown<DataType>(
-                    value: _config.dataType,
-                    hint: '类型',
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                    ),
-                    items:
-                        DataType.values
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type.label),
-                              ),
-                            )
-                            .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _config.dataType = value);
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ] else ...[
-            const SizedBox(height: 8),
-            const Text(
-              '请在通道列表的通道设置中分别选择数据类型',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Text('通道数:'),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 80,
-                child: TextField(
-                  controller: _fixedFrameController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                  ),
-                  onChanged: (value) {
-                    final count = int.tryParse(value);
-                    if (count != null && count >= 1 && count <= 16) {
-                      setState(() => _config.channelCount = count);
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-          if (_validationError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              _validationError!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-                fontSize: 12,
-              ),
-            ),
-          ],
-          const SizedBox(height: 16),
-          const Text('帧尾设置', style: TextStyle(fontWeight: FontWeight.bold)),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text('启用帧尾'),
-            value: _config.hasFrameTail,
-            onChanged: (value) {
-              setState(() {
-                _config.hasFrameTail = value ?? false;
-                if (_config.hasFrameTail &&
-                    (_config.frameTail == null || _config.frameTail!.isEmpty)) {
-                  _config.frameTail = [0x0D, 0x0A];
-                }
-              });
-            },
-          ),
-          if (_config.hasFrameTail)
-            TextField(
-              controller: TextEditingController(
-                text: _formatHexBytes(_config.frameTail ?? const []),
-              ),
-              decoration: const InputDecoration(
-                isDense: true,
-                labelText: '帧尾字节',
-                hintText: '例如: 0D 0A',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                final bytes = _parseHexBytes(value);
-                if (bytes != null && bytes.isNotEmpty) {
-                  setState(() => _config.frameTail = bytes);
-                }
-              },
-            ),
-          const SizedBox(height: 16),
-          const Text('CRC 设置', style: TextStyle(fontWeight: FontWeight.bold)),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text('启用 CRC'),
-            value: _config.hasChecksum,
-            onChanged: (value) {
-              setState(() {
-                _config.hasChecksum = value ?? false;
-                if (_config.hasChecksum &&
-                    !_isCrcChecksum(_config.checksumType)) {
-                  _setCrcType(ChecksumType.crc16);
-                }
-              });
-            },
-          ),
-          if (_config.hasChecksum) ...[
-            NoAnimDropdown<ChecksumType>(
-              value: _config.checksumType,
-              hint: 'CRC 类型',
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              items:
-                  const [
-                    ChecksumType.crc8,
-                    ChecksumType.crc16,
-                    ChecksumType.crc32,
-                  ].map((type) {
-                    return DropdownMenuItem(
-                      value: type,
-                      child: Text(type.label),
-                    );
-                  }).toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _setCrcType(value));
-              },
-            ),
-            const SizedBox(height: 8),
-            NoAnimDropdown<String>(
-              value: _config.crcPolynomialName,
-              hint: 'CRC 多项式',
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              items:
-                  _crcPolynomialNames
-                      .map(
-                        (name) => DropdownMenuItem(
-                          value: name,
-                          child: Text(
-                            name,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _config.crcPolynomialName = value);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            NoAnimDropdown<ChecksumPosition>(
-              value: _config.checksumPosition,
-              hint: 'CRC 位置',
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              items:
-                  ChecksumPosition.values
-                      .map(
-                        (position) => DropdownMenuItem(
-                          value: position,
-                          child: Text('CRC 位于${position.label}'),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _config.checksumPosition = value);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            NoAnimDropdown<ChecksumEndian>(
-              value: _config.checksumEndian,
-              hint: 'CRC 字节序',
-              decoration: const InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-              ),
-              items:
-                  ChecksumEndian.values
-                      .map(
-                        (endian) => DropdownMenuItem(
-                          value: endian,
-                          child: Text('CRC ${endian.label}'),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _config.checksumEndian = value);
-                }
-              },
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  bool _isCrcChecksum(ChecksumType type) {
-    return type == ChecksumType.crc8 ||
-        type == ChecksumType.crc16 ||
-        type == ChecksumType.crc32;
-  }
-
-  List<String> get _crcPolynomialNames {
-    final type = switch (_config.checksumType) {
-      ChecksumType.crc8 => CrcType.crc8,
-      ChecksumType.crc32 => CrcType.crc32,
-      _ => CrcType.crc16,
     };
-    return getPolysByType(type).keys.toList();
-  }
-
-  void _setCrcType(ChecksumType type) {
-    _config.checksumType = type;
-    _config.checksumBytes = _config.effectiveChecksumBytes;
-    final names = _crcPolynomialNames;
-    if (!names.contains(_config.crcPolynomialName)) {
-      _config.crcPolynomialName = names.first;
-    }
-  }
-
-  String _formatHexBytes(List<int> bytes) {
-    return bytes
-        .map((byte) => byte.toRadixString(16).toUpperCase().padLeft(2, '0'))
-        .join(' ');
-  }
-
-  List<int>? _parseHexBytes(String value) {
-    final parts = value.trim().split(RegExp(r'\s+'));
-    if (parts.length == 1 && parts.single.isEmpty) return const [];
-    final bytes = <int>[];
-    for (final part in parts) {
-      final byte = int.tryParse(
-        part.replaceFirst(RegExp(r'^0[xX]'), ''),
-        radix: 16,
-      );
-      if (byte == null || byte < 0 || byte > 0xFF) return null;
-      bytes.add(byte);
-    }
-    return bytes;
-  }
-}
-
-/// 工具栏分组枚举
-///
-/// 用于动态折叠计算，按优先级排序。
-/// 可拖动的信息框组件
-///
-/// 支持用户拖动改变位置，位置保存在 State 中。
-/// 用于显示测量信息和统计信息。
-class _DraggableInfoBox extends StatefulWidget {
-  final double initialRight;
-  final double initialTop;
-  final Color borderColor;
-  final Widget child;
-
-  const _DraggableInfoBox({
-    required this.initialRight,
-    required this.initialTop,
-    required this.borderColor,
-    required this.child,
-  });
-
-  @override
-  State<_DraggableInfoBox> createState() => _DraggableInfoBoxState();
-}
-
-class _DraggableObservationBox extends StatefulWidget {
-  final double initialLeft;
-  final double initialTop;
-  final Widget child;
-
-  const _DraggableObservationBox({
-    super.key,
-    required this.initialLeft,
-    required this.initialTop,
-    required this.child,
-  });
-
-  @override
-  State<_DraggableObservationBox> createState() =>
-      _DraggableObservationBoxState();
-}
-
-class _DraggableObservationBoxState extends State<_DraggableObservationBox> {
-  double? _left;
-  double? _top;
-  bool _isDragging = false;
-  Offset? _dragStart;
-  double? _dragStartLeft;
-  double? _dragStartTop;
-
-  @override
-  Widget build(BuildContext context) {
-    final left = _left ?? widget.initialLeft;
-    final top = _top ?? widget.initialTop;
-
-    return Positioned(
-      left: left,
-      top: top,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          _isDragging = true;
-          _dragStart = details.globalPosition;
-          _dragStartLeft = left;
-          _dragStartTop = top;
-        },
-        onPanUpdate: (details) {
-          if (!_isDragging || _dragStart == null) return;
-          final dx = details.globalPosition.dx - _dragStart!.dx;
-          final dy = details.globalPosition.dy - _dragStart!.dy;
-          setState(() {
-            _left = (_dragStartLeft! + dx).clamp(0.0, double.infinity);
-            _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
-          });
-        },
-        onPanEnd: (_) => _isDragging = false,
-        onPanCancel: () => _isDragging = false,
-        child: widget.child,
-      ),
-    );
-  }
-}
-
-/// [_DraggableInfoBox] 的状态类
-class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
-  /// 当前右边距（null 时使用初始值）
-  double? _right;
-
-  /// 当前上边距（null 时使用初始值）
-  double? _top;
-
-  /// 是否正在拖动
-  bool _isDragging = false;
-
-  /// 拖动起始指针位置
-  Offset? _dragStart;
-
-  /// 拖动起始右边距
-  double? _dragStartRight;
-
-  /// 拖动起始上边距
-  double? _dragStartTop;
-
-  @override
-  Widget build(BuildContext context) {
-    final right = _right ?? widget.initialRight;
-    final top = _top ?? widget.initialTop;
-
-    return Positioned(
-      right: right,
-      top: top,
-      child: GestureDetector(
-        onPanStart: (details) {
-          _isDragging = true;
-          _dragStart = details.globalPosition;
-          _dragStartRight = right;
-          _dragStartTop = top;
-        },
-        onPanUpdate: (details) {
-          if (!_isDragging || _dragStart == null) return;
-          final dx = _dragStart!.dx - details.globalPosition.dx;
-          final dy = details.globalPosition.dy - _dragStart!.dy;
-          setState(() {
-            _right = (_dragStartRight! + dx).clamp(0.0, double.infinity);
-            _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
-          });
-        },
-        onPanEnd: (_) => _isDragging = false,
-        onPanCancel: () => _isDragging = false,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: const Color(0xDD1A1A2E),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: widget.borderColor),
-          ),
-          child: IntrinsicHeight(child: widget.child),
+    return Material(
+      color: colorScheme.surface,
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(6),
+      clipBehavior: Clip.antiAlias,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: Theme.of(context).dividerColor),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Text(
+                target.title,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            ...children,
+          ],
         ),
       ),
     );
   }
 }
 
-/// 预设选择弹窗（支持单列/平铺切换）
-class _PresetSelectorDialog extends StatefulWidget {
-  final ZobowConfigProfile profile;
-  final ValueChanged<ZobowChannelPreset> onSelect;
+class _ChannelContextMenuItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
 
-  const _PresetSelectorDialog({required this.profile, required this.onSelect});
-
-  @override
-  State<_PresetSelectorDialog> createState() => _PresetSelectorDialogState();
-}
-
-enum _PresetViewMode { list, grid }
-
-class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
-  late _PresetViewMode _viewMode;
-  late final TextEditingController _searchController;
-  String _searchText = '';
-
-  List<ZobowChannelPreset> get _filteredPresets {
-    final query = _searchText.trim().toLowerCase();
-    if (query.isEmpty) return widget.profile.presets;
-    return widget.profile.presets.where((preset) {
-      final hexAddress = _formatZobowAddress(preset.address).toLowerCase();
-      final compactAddress =
-          _formatZobowAddress(preset.address, compact: true).toLowerCase();
-      final decimalAddress = '${preset.address & 0xFFFFFFFF}';
-      return preset.name.toLowerCase().contains(query) ||
-          hexAddress.contains(query) ||
-          compactAddress.contains(query) ||
-          decimalAddress.contains(query);
-    }).toList();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController = TextEditingController();
-    _viewMode =
-        AppSettings().zobowPresetViewMode == 'list'
-            ? _PresetViewMode.list
-            : _PresetViewMode.grid;
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _toggleViewMode() {
-    setState(() {
-      _viewMode =
-          _viewMode == _PresetViewMode.list
-              ? _PresetViewMode.grid
-              : _PresetViewMode.list;
-    });
-    final settings = AppSettings();
-    settings.zobowPresetViewMode =
-        _viewMode == _PresetViewMode.list ? 'list' : 'grid';
-    settings.save();
-  }
+  const _ChannelContextMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: const Color(0xFFF0F0F5),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '选择地址 - ${widget.profile.name}',
-              style: const TextStyle(color: Color(0xFF333344), fontSize: 15),
-            ),
-          ),
-          // 视图切换按钮
-          Tooltip(
-            message: _viewMode == _PresetViewMode.list ? '切换为平铺' : '切换为列表',
-            child: InkWell(
-              onTap: _toggleViewMode,
-              child: Icon(
-                _viewMode == _PresetViewMode.list
-                    ? Icons.grid_view
-                    : Icons.list,
-                size: 20,
-                color: const Color(0xFF666688),
-              ),
-            ),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: _viewMode == _PresetViewMode.list ? 320 : 540,
-        height: 360,
-        child: Column(
+    final enabled = onTap != null;
+    final color =
+        enabled ? IconTheme.of(context).color : Theme.of(context).disabledColor;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
           children: [
-            TextField(
-              controller: _searchController,
-              autofocus: true,
-              style: const TextStyle(fontSize: 13, color: Color(0xFF333344)),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索名称或地址',
-                prefixIcon: const Icon(Icons.search, size: 18),
-                suffixIcon:
-                    _searchText.isEmpty
-                        ? null
-                        : IconButton(
-                          tooltip: '清空搜索',
-                          icon: const Icon(Icons.clear, size: 16),
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() => _searchText = '');
-                          },
-                        ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              onChanged: (value) => setState(() => _searchText = value),
-            ),
-            const SizedBox(height: 8),
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
             Expanded(
-              child:
-                  _filteredPresets.isEmpty
-                      ? const Center(
-                        child: Text(
-                          '没有匹配的地址',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF8888AA),
-                          ),
-                        ),
-                      )
-                      : _viewMode == _PresetViewMode.list
-                      ? _buildListView()
-                      : _buildGridView(),
+              child: Text(
+                label,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: color),
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+enum _ChannelContextMenuTargetKind { blank, raw, math }
+
+class _ChannelContextMenuTarget {
+  final _ChannelContextMenuTargetKind kind;
+  final ChannelConfig? rawChannel;
+  final MathChannelConfig? mathChannel;
+
+  const _ChannelContextMenuTarget.blank()
+    : kind = _ChannelContextMenuTargetKind.blank,
+      rawChannel = null,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.raw(this.rawChannel)
+    : kind = _ChannelContextMenuTargetKind.raw,
+      mathChannel = null;
+
+  const _ChannelContextMenuTarget.math(this.mathChannel)
+    : kind = _ChannelContextMenuTargetKind.math,
+      rawChannel = null;
+
+  ChannelConfig? get channel {
+    return switch (kind) {
+      _ChannelContextMenuTargetKind.raw => rawChannel,
+      _ChannelContextMenuTargetKind.math => mathChannel?.display,
+      _ChannelContextMenuTargetKind.blank => null,
+    };
+  }
+
+  String get title {
+    return switch (kind) {
+      _ChannelContextMenuTargetKind.blank => AppStrings.plot.channelActions,
+      _ChannelContextMenuTargetKind.raw =>
+        rawChannel == null
+            ? AppStrings.plot.channelActions
+            : 'Ch${rawChannel!.index}',
+      _ChannelContextMenuTargetKind.math =>
+        mathChannel?.name ?? AppStrings.plot.channelActions,
+    };
+  }
+}
+
+class _OffsetBindingDialog extends StatefulWidget {
+  final PlotViewModel vm;
+  final int channelIndex;
+
+  const _OffsetBindingDialog({required this.vm, required this.channelIndex});
+
+  @override
+  State<_OffsetBindingDialog> createState() => _OffsetBindingDialogState();
+}
+
+class _OffsetBindingDialogState extends State<_OffsetBindingDialog> {
+  late Set<int> _selectedIndices;
+
+  @override
+  void initState() {
+    super.initState();
+    final members = widget.vm.offsetBindingMemberIndices(widget.channelIndex);
+    _selectedIndices =
+        members.where((index) => index != widget.channelIndex).toSet();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = widget.vm.offsetBindingCandidates(widget.channelIndex);
+    final currentName = widget.vm.displayChannelName(widget.channelIndex);
+
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      title: Text('${AppStrings.plot.offsetBindingTitle} - $currentName'),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.plot.offsetBindingHelp,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            if (candidates.isEmpty)
+              Text(
+                AppStrings.plot.offsetBindingNoCandidates,
+                style: Theme.of(context).textTheme.bodyMedium,
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: candidates.length,
+                  itemBuilder: (context, index) {
+                    final channel = candidates[index];
+                    final name = widget.vm.displayChannelName(channel.index);
+                    return CheckboxListTile(
+                      value: _selectedIndices.contains(channel.index),
+                      dense: true,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(name, overflow: TextOverflow.ellipsis),
+                      secondary: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: channel.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedIndices.add(channel.index);
+                          } else {
+                            _selectedIndices.remove(channel.index);
+                          }
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
       actions: [
+        TextButton(
+          onPressed: () {
+            widget.vm.clearOffsetBinding(widget.channelIndex);
+            Navigator.pop(context);
+          },
+          child: Text(AppStrings.plot.closeOffsetBinding),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消', style: TextStyle(color: Color(0xFF666688))),
+          child: Text(AppStrings.common.cancel),
+        ),
+        ElevatedButton(
+          onPressed:
+              candidates.isEmpty
+                  ? null
+                  : () {
+                    widget.vm.setOffsetBindingGroup(
+                      widget.channelIndex,
+                      _selectedIndices,
+                    );
+                    Navigator.pop(context);
+                  },
+          child: Text(AppStrings.common.confirm),
         ),
       ],
-    );
-  }
-
-  /// 单列列表视图（每行较细）
-  Widget _buildListView() {
-    final presets = _filteredPresets;
-    return ListView.builder(
-      itemCount: presets.length,
-      itemBuilder: (context, index) {
-        final preset = presets[index];
-        final hexAddr = _formatZobowAddress(preset.address, compact: true);
-        return InkWell(
-          onTap: () {
-            widget.onSelect(preset);
-            Navigator.pop(context);
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: const Color(0xFFD0D0E0).withValues(alpha: 0.5),
-                ),
-              ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    preset.name,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF333344),
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  hexAddr,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF8888AA),
-                    fontFamily: 'SarasaUiSC',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// 5列平铺视图
-  Widget _buildGridView() {
-    final presets = _filteredPresets;
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        childAspectRatio: 1.8,
-        crossAxisSpacing: 6,
-        mainAxisSpacing: 6,
-      ),
-      itemCount: presets.length,
-      itemBuilder: (context, index) {
-        final preset = presets[index];
-        final hexAddr = _formatZobowAddress(preset.address, compact: true);
-        return InkWell(
-          onTap: () {
-            widget.onSelect(preset);
-            Navigator.pop(context);
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: const Color(0xFFD0D0E0), width: 1),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  preset.name,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF333344),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  hexAddr,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Color(0xFF8888AA),
-                    fontFamily: 'SarasaUiSC',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }

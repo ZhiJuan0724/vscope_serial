@@ -40,6 +40,7 @@ class DataSourceManager {
     config.randomMinValue = newConfig.randomMinValue;
     config.randomMaxValue = newConfig.randomMaxValue;
     config.randomIntervalMs = newConfig.randomIntervalMs;
+    config.randomFrequencyHz = newConfig.randomFrequencyHz;
 
     // 如果配置变化且正在运行，重启数据源
     if (wasActive) {
@@ -54,7 +55,7 @@ class DataSourceManager {
           channelCount: config.randomChannelCount,
           minValue: config.randomMinValue,
           maxValue: config.randomMaxValue,
-          intervalMs: config.randomIntervalMs,
+          frequencyHz: config.randomFrequencyHz,
         );
         _randomSource!.start();
         _subscribe(_randomSource!.byteStream);
@@ -80,7 +81,7 @@ class DataSourceManager {
         channelCount: config.randomChannelCount,
         minValue: config.randomMinValue,
         maxValue: config.randomMaxValue,
-        intervalMs: config.randomIntervalMs,
+        frequencyHz: config.randomFrequencyHz,
       );
       _randomSource!.start();
       _subscribe(_randomSource!.byteStream);

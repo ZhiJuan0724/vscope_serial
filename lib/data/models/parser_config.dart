@@ -216,16 +216,19 @@ class ParserConfig {
     if (channelCount < 1 || channelCount > 16) {
       return '固定帧协议通道数必须为 1~16';
     }
+    if (hasFrameHeader && frameHeader.take(frameHeaderLength).isEmpty) {
+      return '启用帧头后至少需要填写一个字节';
+    }
     final tail = hasFrameTail ? (frameTail ?? const <int>[]) : const <int>[];
+    if (hasFrameTail && tail.isEmpty) {
+      return '启用帧尾后至少需要填写一个字节';
+    }
     final headerIsZero =
         !hasFrameHeader ||
         frameHeader.take(frameHeaderLength).every((b) => b == 0);
     final tailIsZero = tail.isEmpty || tail.every((b) => b == 0);
     if (headerIsZero && tailIsZero) {
       return '固定帧协议的帧头和帧尾不能同时全部为 0';
-    }
-    if (hasFrameTail && tail.isEmpty) {
-      return '启用帧尾后至少需要填写一个字节';
     }
     return null;
   }
@@ -303,7 +306,7 @@ class ParserConfig {
       type: ParserType.zobow,
       channelCount: minZobowChannelCount,
       zobowChannelIds: List.generate(maxZobowChannelCount, (i) => i + 1),
-      zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.uint16),
+      zobowChannelTypes: List.filled(maxZobowChannelCount, DataType.int16),
     );
   }
 
@@ -336,10 +339,10 @@ class ParserConfig {
 
   static List<DataType> _normalizeZobowChannelTypes(List<DataType>? types) {
     final values = List<DataType>.from(
-      types ?? List.filled(maxZobowChannelCount, DataType.uint16),
+      types ?? List.filled(maxZobowChannelCount, DataType.int16),
     );
     while (values.length < maxZobowChannelCount) {
-      values.add(DataType.uint16);
+      values.add(DataType.int16);
     }
     return values.take(maxZobowChannelCount).toList();
   }

@@ -18,14 +18,21 @@ class DataSourceConfig {
   /// 随机数据源生成间隔（毫秒）
   int randomIntervalMs;
 
+  /// 随机数据源目标频率（Hz）
+  double randomFrequencyHz;
+
   DataSourceConfig({
     this.useSerial = true,
     this.useRandom = false,
     this.randomChannelCount = 4,
     this.randomMinValue = 0.0,
     this.randomMaxValue = 32768.0,
-    this.randomIntervalMs = 100,
-  });
+    int? randomIntervalMs,
+    double? randomFrequencyHz,
+  }) : randomIntervalMs = randomIntervalMs ?? 100,
+       randomFrequencyHz = (randomFrequencyHz ??
+               (randomIntervalMs == null ? 10.0 : 1000.0 / randomIntervalMs))
+           .clamp(1.0, 100000.0);
 
   DataSourceConfig copyWith({
     bool? useSerial,
@@ -34,6 +41,7 @@ class DataSourceConfig {
     double? randomMinValue,
     double? randomMaxValue,
     int? randomIntervalMs,
+    double? randomFrequencyHz,
   }) {
     return DataSourceConfig(
       useSerial: useSerial ?? this.useSerial,
@@ -42,6 +50,7 @@ class DataSourceConfig {
       randomMinValue: randomMinValue ?? this.randomMinValue,
       randomMaxValue: randomMaxValue ?? this.randomMaxValue,
       randomIntervalMs: randomIntervalMs ?? this.randomIntervalMs,
+      randomFrequencyHz: randomFrequencyHz ?? this.randomFrequencyHz,
     );
   }
 

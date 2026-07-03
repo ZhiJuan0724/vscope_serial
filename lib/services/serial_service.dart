@@ -1,11 +1,13 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:charset/charset.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
@@ -15,28 +17,269 @@ import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
+import 'serial_port_catalog.dart';
 import 'time_window_aggregator.dart';
+import 'ymodem_service.dart';
+
+/// 支持 O(1) 头部淘汰的字符串列表。
+///
+/// 原始收发达到显示上限后会持续删除最旧行。普通 List 的 removeAt(0)
+/// 每次都要移动所有元素，环形存储可以避免高行数下的重复整体搬移。
+class _CircularStringList extends ListBase<String> {
+  List<String?> _items = List<String?>.filled(16, null);
+  int _head = 0;
+  int _length = 0;
+
+  @override
+  int get length => _length;
+
+  @override
+  set length(int value) {
+    if (value < 0) {
+      throw RangeError.range(value, 0, null, 'length');
+    }
+    if (value > _length) {
+      throw UnsupportedError('不能通过 length 扩展环形列表');
+    }
+    while (_length > value) {
+      removeLast();
+    }
+  }
+
+  @override
+  String operator [](int index) {
+    RangeError.checkValidIndex(index, this);
+    return _items[_physicalIndex(index)]!;
+  }
+
+  @override
+  void operator []=(int index, String value) {
+    RangeError.checkValidIndex(index, this);
+    _items[_physicalIndex(index)] = value;
+  }
+
+  @override
+  void add(String value) {
+    _ensureCapacity(_length + 1);
+    _items[_physicalIndex(_length)] = value;
+    _length++;
+  }
+
+  String removeFirst() {
+    if (_length == 0) throw StateError('列表为空');
+    final value = _items[_head]!;
+    _items[_head] = null;
+    _head = (_head + 1) % _items.length;
+    _length--;
+    if (_length == 0) _head = 0;
+    return value;
+  }
+
+  @override
+  String removeLast() {
+    if (_length == 0) throw StateError('列表为空');
+    final index = _physicalIndex(_length - 1);
+    final value = _items[index]!;
+    _items[index] = null;
+    _length--;
+    if (_length == 0) _head = 0;
+    return value;
+  }
+
+  @override
+  String removeAt(int index) {
+    RangeError.checkValidIndex(index, this);
+    if (index == 0) return removeFirst();
+    if (index == _length - 1) return removeLast();
+
+    final value = this[index];
+    for (var i = index; i < _length - 1; i++) {
+      this[i] = this[i + 1];
+    }
+    removeLast();
+    return value;
+  }
+
+  @override
+  void clear() {
+    _items = List<String?>.filled(16, null);
+    _head = 0;
+    _length = 0;
+  }
+
+  int _physicalIndex(int logicalIndex) =>
+      (_head + logicalIndex) % _items.length;
+
+  void _ensureCapacity(int required) {
+    if (required <= _items.length) return;
+    final next = List<String?>.filled(_items.length * 2, null);
+    for (var i = 0; i < _length; i++) {
+      next[i] = this[i];
+    }
+    _items = next;
+    _head = 0;
+  }
+}
 
 enum SendDisplaySource { user, plot }
+
+typedef ExportProgressCallback = void Function(double progress);
+
+String _decodeBytesWithEncoding(Uint8List data, String encoding) {
+  String decodeOrFallback(String Function(Uint8List) decode) {
+    try {
+      return decode(data);
+    } on FormatException {
+      return String.fromCharCodes(data);
+    }
+  }
+
+  return switch (encoding) {
+    'UTF-8' => utf8.decode(data, allowMalformed: true),
+    'GBK' => gbk.decode(data, allowMalformed: true),
+    'BIG5' => decodeOrFallback(CodePage('cp950', 'BIG5').decode),
+    'Shift_JIS' => decodeOrFallback(shiftJis.decode),
+    'EUC-KR' => decodeOrFallback(eucKr.decode),
+    'Latin-1' => decodeOrFallback(latin1.decode),
+    'ASCII' => decodeOrFallback(ascii.decode),
+    _ => utf8.decode(data, allowMalformed: true),
+  };
+}
+
+Uint8List _encodeTextWithEncoding(String text, String encoding) {
+  final bytes = switch (encoding) {
+    'UTF-8' => utf8.encode(text),
+    'GBK' => gbk.encode(text),
+    'BIG5' => CodePage('cp950', 'BIG5').encode(text),
+    'Shift_JIS' => shiftJis.encode(text),
+    'EUC-KR' => eucKr.encode(text),
+    'Latin-1' => latin1.encode(text),
+    'ASCII' => ascii.encode(text),
+    _ => utf8.encode(text),
+  };
+  return Uint8List.fromList(bytes);
+}
+
+Uint8List _buildRawExportBytes(Uint8List bytes) {
+  final crcPoly = crc32Polys['CRC-32']!;
+  final crcValue = calculateCrc(bytes, crcPoly);
+  final crcBytes = crcToBytes(crcValue, 32);
+  final output =
+      BytesBuilder(copy: false)
+        ..add(bytes)
+        ..add(Uint8List.fromList(crcBytes));
+  return output.takeBytes();
+}
+
+enum RawShellInputMode {
+  line('line', '命令行'),
+  key('key', '逐键');
+
+  final String value;
+  final String label;
+  const RawShellInputMode(this.value, this.label);
+
+  static RawShellInputMode fromString(String value) {
+    return value == key.value ? key : line;
+  }
+}
+
+enum RawShellThemeMode {
+  light('light', '浅色'),
+  dark('dark', '深色');
+
+  final String value;
+  final String label;
+  const RawShellThemeMode(this.value, this.label);
+
+  static RawShellThemeMode fromString(String value) {
+    return value == dark.value ? dark : light;
+  }
+}
+
+enum RawShellCursorMode {
+  verticalBar('verticalBar', '竖线'),
+  underline('underline', '下划线'),
+  block('block', '方块');
+
+  final String value;
+  final String label;
+  const RawShellCursorMode(this.value, this.label);
+
+  static RawShellCursorMode fromString(String value) {
+    return switch (value) {
+      'block' => block,
+      'underline' => underline,
+      _ => verticalBar,
+    };
+  }
+}
 
 /// 串口服务 - 全局单例
 class SerialService extends ChangeNotifier {
   static final SerialService _instance = SerialService._internal();
   factory SerialService() => _instance;
-  SerialService._internal();
+  SerialService._internal() {
+    _portCatalog = SerialPortCatalog(
+      enumerator: () {
+        final debugEnumerator = debugPortEnumerator;
+        return debugEnumerator != null
+            ? debugEnumerator()
+            : NativeSerialReader.listPortsInBackground();
+      },
+      onChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+    );
+  }
 
   // 串口相关
-  List<String> availablePorts = [];
   SerialConfig config = SerialConfig();
   bool isConnected = false;
   bool isConnecting = false;
+  late final SerialPortCatalog _portCatalog;
+  NativeSerialPortMonitor? _portMonitor;
+  StreamSubscription<void>? _portMonitorSubscription;
+  Timer? _portChangeDebounce;
+  bool _portDiscoveryStarted = false;
+  bool _disposed = false;
+  Map<String, String> _portFriendlyNames = const {};
+  Future<bool>? _pendingPortDetailsRefresh;
+  bool _isRefreshingPortDetails = false;
 
-  // Windows 原生串口读取器（替代 flutter_libserialport 的读取功能）
+  // Windows 原生串口读取器
   NativeSerialReader? _nativeReader;
   StreamSubscription? _nativeSubscription;
 
-  /// Test-only override for simulating a slow or failed native open.
+  /// 仅测试使用：模拟原生串口打开缓慢或失败。
   Future<bool> Function(String port, int baudRate)? debugPortOpener;
+
+  /// 仅测试使用：替换原生串口枚举。
+  Future<List<String>> Function()? debugPortEnumerator;
+
+  /// 仅测试使用：替换原生串口详细信息枚举。
+  Future<List<NativeSerialPortDetail>> Function()? debugPortDetailsEnumerator;
+
+  /// 仅测试使用：替换原生连接健康检查。
+  Future<bool> Function()? debugConnectionHealthChecker;
+
+  /// 仅测试使用：替换原生句柄打开状态。
+  bool? debugNativePortOpen;
+
+  List<String> get availablePorts => _portCatalog.ports;
+  bool get isRefreshingPorts =>
+      _portCatalog.isRefreshing || _isRefreshingPortDetails;
+
+  String portDisplayLabel(String port, {required bool showDetails}) {
+    if (!showDetails) return port;
+    final name = _portFriendlyNames[port];
+    return name == null || name.isEmpty ? port : '$port: $name';
+  }
+
+  String? get portRefreshError => _portCatalog.lastError;
+  Duration? get lastPortRefreshDuration => _portCatalog.lastDuration;
 
   // 时间窗口聚合器
   TimeWindowAggregator? _aggregator;
@@ -48,10 +291,17 @@ class SerialService extends ChangeNotifier {
   int _receiveLogBytes = 0;
   int _receiveLogFirstPacketBytes = 0;
 
-  static const int _receiveLogDetectPacketCount = 10;
-  static const int _receiveLogBatchPacketCount = 50;
-  static const Duration _receiveLogDetectWindow = Duration(milliseconds: 200);
-  static const Duration _receiveLogMaxBatchWindow = Duration(seconds: 1);
+  Timer? _sendLogFlushTimer;
+  DateTime? _sendLogWindowStart;
+  bool _sendLogHighFrequency = false;
+  int _sendLogPacketCount = 0;
+  int _sendLogBytes = 0;
+  int _sendLogFirstPacketBytes = 0;
+
+  static const int _ioLogDetectPacketCount = 10;
+  static const int _ioLogBatchPacketCount = 50;
+  static const Duration _ioLogDetectWindow = Duration(milliseconds: 200);
+  static const Duration _ioLogMaxBatchWindow = Duration(seconds: 1);
 
   // 时间窗口粒度（微秒），默认 1000us = 1ms
   int timeWindowUs = 1000;
@@ -63,13 +313,23 @@ class SerialService extends ChangeNotifier {
   final _dataController = StreamController<DataPacket>.broadcast();
   Stream<DataPacket> get dataStream => _dataController.stream;
 
+  final _shellDataController = StreamController<Uint8List>.broadcast();
+  Stream<Uint8List> get shellDataStream => _shellDataController.stream;
+
   // 原始字节数据（内部保留）
   final ChunkedByteBuffer _rawBytes = ChunkedByteBuffer();
   int get _rawBytesSize => _rawBytes.length;
 
   // 原始文本数据（用于原始数据页面显示）
-  final List<String> receivedLines = [];
+  final _CircularStringList _receivedLines = _CircularStringList();
+  List<String> get receivedLines => _receivedLines;
   int _receivedTextBytes = 0;
+  Timer? _displayNotifyTimer;
+  bool _displayBatchHasTrim = false;
+  int _displayTrimRevision = 0;
+  List<String> _lastTrimmedDisplayLines = <String>[];
+  int get displayTrimRevision => _displayTrimRevision;
+  List<String> get lastTrimmedDisplayLines => _lastTrimmedDisplayLines;
   String _pendingReceiveText = '';
   int? _pendingReceiveLineIndex;
   String _pendingReceiveLinePrefix = '';
@@ -77,13 +337,31 @@ class SerialService extends ChangeNotifier {
   int? _pendingSendLineIndex;
   String _pendingSendLinePrefix = '';
   static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
-  // 虚拟滚动窗口：最多保留500行在内存中用于显示，超出时按FIFO丢弃
-  static const int _maxDisplayLines = 500;
+  static const int minDisplayLineLimit = 100;
+  static const int defaultDisplayLineLimit = 100000;
+  static const int maxDisplayLineLimit = 100000;
+  int _displayLineLimit = defaultDisplayLineLimit;
+  int get displayLineLimit => _displayLineLimit;
 
   // 显示选项
   bool receiveHex = false;
   bool showTimestamp = false;
   bool autoScroll = true;
+  bool rawDataShellMode = false;
+  bool rawDataShellEnabled = false;
+  RawShellInputMode rawShellInputMode = RawShellInputMode.line;
+  double rawDataTerminalFontSize = 13.0;
+  String rawDataTerminalFontFamily = 'Consolas';
+  RawShellThemeMode rawShellThemeMode = RawShellThemeMode.light;
+  RawShellCursorMode rawShellCursorMode = RawShellCursorMode.verticalBar;
+
+  // 文本收发编码（非 HEX 模式下生效）
+  String _textEncoding = 'UTF-8';
+
+  String get textEncoding => _textEncoding;
+
+  /// 文本模式单行最大长度（超过此长度即使没有换行符也强制换行）
+  static const int _maxTextLineLength = 4096;
 
   // 发送选项
   bool sendHex = false;
@@ -108,12 +386,37 @@ class SerialService extends ChangeNotifier {
 
   // 原始数据接收开关（独立于串口连接和绘图状态）
   bool isRawReceiving = false;
+  late final YmodemService ymodemService = YmodemService(
+    sendBytes: sendRawBytes,
+  );
 
   /// 从 AppSettings 加载配置
   void loadSettings() {
     final settings = AppSettings();
     config = settings.saveToSerialConfig();
     useRandomSource = settings.useRandomSource;
+    _displayLineLimit = settings.rawDataDisplayLineLimit.clamp(
+      minDisplayLineLimit,
+      maxDisplayLineLimit,
+    );
+    rawDataShellEnabled = settings.rawDataShellEnabled;
+    rawDataShellMode = rawDataShellEnabled && settings.rawDataShellMode;
+    rawShellInputMode = RawShellInputMode.fromString(
+      settings.rawDataShellInputMode,
+    );
+    rawDataTerminalFontSize = settings.rawDataTerminalFontSize.clamp(
+      10.0,
+      24.0,
+    );
+    rawDataTerminalFontFamily = settings.rawDataTerminalFontFamily;
+    rawShellThemeMode = RawShellThemeMode.fromString(
+      settings.rawDataShellTheme,
+    );
+    rawShellCursorMode = RawShellCursorMode.fromString(
+      settings.rawDataShellCursor,
+    );
+    ymodemService.attach(shellDataStream);
+    _textEncoding = settings.rawDataEncoding;
   }
 
   /// 保存配置到 AppSettings
@@ -124,55 +427,168 @@ class SerialService extends ChangeNotifier {
     settings.save();
   }
 
-  bool refreshPorts({bool preserveSelectedPort = false}) {
-    try {
-      availablePorts = SerialPort.availablePorts;
-      if (!preserveSelectedPort &&
-          config.port != null &&
-          !availablePorts.contains(config.port)) {
-        config = config.copyWith(port: null);
-      }
-      AppLogger().info('已刷新串口列表', category: 'SERIAL');
-      return true;
-    } catch (e) {
-      AppLogger().warning('刷新串口列表失败: $e', category: 'SERIAL');
+  /// 初始化串口发现。启动过程不等待枚举完成。
+  void initializePortDiscovery() {
+    if (_portDiscoveryStarted || _disposed) return;
+    _portDiscoveryStarted = true;
+
+    final monitor = NativeSerialPortMonitor();
+    if (monitor.start()) {
+      _portMonitor = monitor;
+      _portMonitorSubscription = monitor.changes.listen((_) {
+        _portChangeDebounce?.cancel();
+        _portChangeDebounce = Timer(const Duration(milliseconds: 150), () {
+          AppLogger().info('检测到串口设备列表变化', category: 'SERIAL');
+          unawaited(refreshPorts(reason: '设备插拔通知'));
+          if (isConnected) {
+            unawaited(refreshConnectionStatus(reconnectOnce: true));
+          }
+        });
+      });
+    } else {
+      monitor.dispose();
+      AppLogger().warning('无法启动串口设备变化监听', category: 'SERIAL');
+    }
+
+    unawaited(refreshPorts(reason: '应用启动'));
+  }
+
+  Future<bool> refreshPorts({
+    String reason = '用户手动刷新',
+    Duration waitTimeout = const Duration(seconds: 2),
+  }) {
+    return _portCatalog.refresh(reason: reason, waitTimeout: waitTimeout);
+  }
+
+  /// 用户主动开启详细信息后刷新端口及友好名称。
+  ///
+  /// 自动刷新始终只调用 [refreshPorts]，不会读取可能缓慢的设备名称。
+  Future<bool> refreshPortsWithDetails({
+    String reason = '用户手动刷新详细串口信息',
+    Duration waitTimeout = const Duration(seconds: 2),
+  }) async {
+    final existing = _pendingPortDetailsRefresh;
+    if (existing != null) {
+      return existing.timeout(waitTimeout, onTimeout: () => false);
+    }
+
+    final portsRefreshed = await refreshPorts(
+      reason: reason,
+      waitTimeout: waitTimeout,
+    );
+    if (!portsRefreshed && _portCatalog.isRefreshing) {
       return false;
-    } finally {
-      // Defer notifyListeners to avoid calling during build phase.
-      Future.microtask(() => notifyListeners());
+    }
+
+    _isRefreshingPortDetails = true;
+    notifyListeners();
+    final stopwatch = Stopwatch()..start();
+    late final Future<bool> operation;
+    operation = Future<List<NativeSerialPortDetail>>.sync(() {
+          final debugEnumerator = debugPortDetailsEnumerator;
+          return debugEnumerator != null
+              ? debugEnumerator()
+              : NativeSerialReader.listPortDetailsInBackground();
+        })
+        .then((details) {
+          _portFriendlyNames = Map.unmodifiable({
+            for (final detail in details)
+              if (_normalizePortFriendlyName(detail).isNotEmpty)
+                detail.port: _normalizePortFriendlyName(detail),
+          });
+          AppLogger().info(
+            '串口详细信息刷新完成：耗时=${stopwatch.elapsedMilliseconds}ms，'
+            '名称数量=${_portFriendlyNames.length}',
+            category: 'SERIAL',
+          );
+          return true;
+        })
+        .catchError((Object error, StackTrace stack) {
+          AppLogger().warning(
+            '刷新串口详细信息失败：耗时=${stopwatch.elapsedMilliseconds}ms，错误=$error',
+            category: 'SERIAL',
+          );
+          return false;
+        })
+        .whenComplete(() {
+          stopwatch.stop();
+          if (identical(_pendingPortDetailsRefresh, operation)) {
+            _pendingPortDetailsRefresh = null;
+            _isRefreshingPortDetails = false;
+            if (!_disposed) notifyListeners();
+          }
+        });
+    _pendingPortDetailsRefresh = operation;
+
+    try {
+      return await operation.timeout(waitTimeout);
+    } on TimeoutException {
+      _isRefreshingPortDetails = false;
+      if (!_disposed) notifyListeners();
+      AppLogger().warning(
+        '等待串口详细信息超时：等待=${waitTimeout.inMilliseconds}ms；'
+        '后台读取将继续，界面保持响应',
+        category: 'SERIAL',
+      );
+      return false;
     }
   }
 
-  /// Refresh the available port list and verify an existing native connection.
+  String _normalizePortFriendlyName(NativeSerialPortDetail detail) {
+    final trimmed = detail.name.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed
+        .replaceFirst(
+          RegExp(
+            '\\s*\\(${RegExp.escape(detail.port)}\\)\\s*\$',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+  }
+
+  /// 校验已有原生连接是否仍然有效。
   ///
-  /// When a device was unplugged externally, the Windows handle can remain
-  /// open even though serial API calls fail. If the same port is still listed,
-  /// reconnect once; otherwise clear the stale connection state.
+  /// 健康连接不触发端口枚举。只有句柄异常后才刷新一次目录并决定是否重连。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
     final selectedPort = config.port;
-    final portsRefreshed = refreshPorts(preserveSelectedPort: isConnected);
-    if (!isConnected) return false;
-
-    if (portsRefreshed &&
-        (selectedPort == null || !availablePorts.contains(selectedPort))) {
-      AppLogger().warning('已连接串口不再存在: $selectedPort', category: 'SERIAL');
-      _cleanupPort();
-      config = config.copyWith(port: null);
-      _saveSettings();
-      AppNotifications.show('串口已断开，请重新连接');
-      Future.microtask(() => notifyListeners());
+    if (!isConnected) {
+      await refreshPorts(reason: '连接窗口刷新');
       return false;
     }
 
-    final healthy =
-        _nativeReader?.isOpen == true &&
-        _nativeReader?.isConnectionHealthy == true;
+    final healthChecker = debugConnectionHealthChecker;
+    final nativePortOpen = debugNativePortOpen ?? _nativeReader?.isOpen == true;
+    var healthy = false;
+    if (nativePortOpen) {
+      try {
+        healthy = await (healthChecker != null
+                ? healthChecker()
+                : NativeSerialReader.checkConnectionHealthInBackground())
+            .timeout(
+              const Duration(seconds: 2),
+              onTimeout: () {
+                AppLogger().warning(
+                  '串口健康检查超时: $selectedPort',
+                  category: 'SERIAL',
+                );
+                return false;
+              },
+            );
+      } catch (error) {
+        AppLogger().warning(
+          '串口健康检查失败: $selectedPort，错误=$error',
+          category: 'SERIAL',
+        );
+      }
+    }
     if (healthy) return true;
 
     AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
     _cleanupPort();
 
-    final reconnectPortsRefreshed = refreshPorts(preserveSelectedPort: true);
+    final reconnectPortsRefreshed = await refreshPorts(reason: '连接异常复查');
     if (!reconnectPortsRefreshed) return false;
     if (selectedPort == null || !availablePorts.contains(selectedPort)) {
       config = config.copyWith(port: null);
@@ -215,7 +631,7 @@ class SerialService extends ChangeNotifier {
     isConnecting = true;
     Future.microtask(() => notifyListeners());
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
-    // Let Flutter paint the connecting state before starting native work.
+    // 先让 Flutter 绘制连接中状态，再开始原生耗时操作。
     await Future<void>.delayed(Duration.zero);
 
     // 如果切换了串口，清空之前的数据
@@ -247,7 +663,7 @@ class SerialService extends ChangeNotifier {
     }
   }
 
-  /// Open the native handle in a background isolate, then attach UI-side IO.
+  /// 在后台 isolate 打开原生句柄，然后挂接 UI 侧 IO。
   Future<void> _openPort() async {
     final port = config.port!;
     if (debugPortOpener != null) {
@@ -257,9 +673,9 @@ class SerialService extends ChangeNotifier {
       }
     }
 
-    // 使用 Windows 原生串口读取器替代 flutter_libserialport 的 SerialPortReader
+    // 使用 Windows 原生串口读取器
     _nativeReader = NativeSerialReader();
-    // Initialize Dart API with NativeApi.initializeApiDLData before opening
+    // 打开前使用 NativeApi.initializeApiDLData 初始化 Dart API。
     final initData = NativeApi.initializeApiDLData;
     _nativeReader!.initDartApi(initData);
     final opened = await NativeSerialReader.openInBackground(
@@ -311,6 +727,7 @@ class SerialService extends ChangeNotifier {
 
   void _cleanupPort() {
     _flushReceiveLog();
+    _flushSendLog();
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.close();
@@ -325,8 +742,13 @@ class SerialService extends ChangeNotifier {
   /// 原生串口数据接收回调
   void _onNativeDataReceived(NativeSerialData nativeData) {
     final data = nativeData.data;
+    final shouldReceiveYmodem =
+        isConnected &&
+        rawDataShellMode &&
+        ymodemService.isActive &&
+        !isPlotting;
     final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    if (!isPlotting && !shouldReceiveRaw) {
+    if (!isPlotting && !shouldReceiveRaw && !shouldReceiveYmodem) {
       return;
     }
 
@@ -334,9 +756,21 @@ class SerialService extends ChangeNotifier {
       _dataController.add(DataPacket(data: data));
     }
 
+    if (shouldReceiveYmodem) {
+      _recordReceiveLog(data.length);
+      _rawBytes.append(data);
+      ymodemService.addIncomingBytes(data);
+      return;
+    }
+
     if (shouldReceiveRaw) {
       _recordReceiveLog(data.length);
       _rawBytes.append(data);
+
+      if (rawDataShellMode) {
+        _shellDataController.add(data);
+        return;
+      }
 
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
@@ -371,25 +805,25 @@ class SerialService extends ChangeNotifier {
 
     final elapsed = now.difference(_receiveLogWindowStart!);
     if (!_receiveLogHighFrequency &&
-        _receiveLogPacketCount >= _receiveLogDetectPacketCount &&
-        elapsed <= _receiveLogDetectWindow) {
+        _receiveLogPacketCount >= _ioLogDetectPacketCount &&
+        elapsed <= _ioLogDetectWindow) {
       _receiveLogHighFrequency = true;
     }
 
     if (_receiveLogHighFrequency) {
-      if (_receiveLogPacketCount >= _receiveLogBatchPacketCount ||
-          elapsed >= _receiveLogMaxBatchWindow) {
+      if (_receiveLogPacketCount >= _ioLogBatchPacketCount ||
+          elapsed >= _ioLogMaxBatchWindow) {
         _flushReceiveLog(now);
       } else {
-        _scheduleReceiveLogFlush(_receiveLogMaxBatchWindow - elapsed);
+        _scheduleReceiveLogFlush(_ioLogMaxBatchWindow - elapsed);
       }
       return;
     }
 
-    if (elapsed >= _receiveLogDetectWindow) {
+    if (elapsed >= _ioLogDetectWindow) {
       _flushReceiveLog(now);
     } else {
-      _scheduleReceiveLogFlush(_receiveLogDetectWindow - elapsed);
+      _scheduleReceiveLogFlush(_ioLogDetectWindow - elapsed);
     }
   }
 
@@ -432,6 +866,90 @@ class SerialService extends ChangeNotifier {
     _receiveLogFirstPacketBytes = 0;
   }
 
+  void _recordSendLog(int bytes) {
+    final now = DateTime.now();
+    _sendLogWindowStart ??= now;
+    if (_sendLogPacketCount == 0) {
+      _sendLogFirstPacketBytes = bytes;
+    }
+
+    _sendLogPacketCount++;
+    _sendLogBytes += bytes;
+
+    final elapsed = now.difference(_sendLogWindowStart!);
+    if (!_sendLogHighFrequency &&
+        _sendLogPacketCount >= _ioLogDetectPacketCount &&
+        elapsed <= _ioLogDetectWindow) {
+      _sendLogHighFrequency = true;
+    }
+
+    if (_sendLogHighFrequency) {
+      if (_sendLogPacketCount >= _ioLogBatchPacketCount ||
+          elapsed >= _ioLogMaxBatchWindow) {
+        _flushSendLog(now);
+      } else {
+        _scheduleSendLogFlush(_ioLogMaxBatchWindow - elapsed);
+      }
+      return;
+    }
+
+    if (elapsed >= _ioLogDetectWindow) {
+      _flushSendLog(now);
+    } else {
+      _scheduleSendLogFlush(_ioLogDetectWindow - elapsed);
+    }
+  }
+
+  void _scheduleSendLogFlush(Duration delay) {
+    _sendLogFlushTimer?.cancel();
+    _sendLogFlushTimer = Timer(delay, () => _flushSendLog(DateTime.now()));
+  }
+
+  void _flushSendLog([DateTime? now]) {
+    _sendLogFlushTimer?.cancel();
+    _sendLogFlushTimer = null;
+
+    if (_sendLogPacketCount == 0 || _sendLogWindowStart == null) return;
+
+    final elapsedMs = (now ?? DateTime.now())
+        .difference(_sendLogWindowStart!)
+        .inMilliseconds
+        .clamp(1, 1 << 31);
+    if (!_sendLogHighFrequency && _sendLogPacketCount == 1) {
+      AppLogger().info('发送 $_sendLogFirstPacketBytes bytes', category: 'DATA');
+    } else {
+      final packetRate = _sendLogPacketCount * 1000.0 / elapsedMs;
+      AppLogger().info(
+        '发送 $_sendLogPacketCount 包，共 $_sendLogBytes bytes，'
+        '约 ${packetRate.toStringAsFixed(1)} 包/s',
+        category: 'DATA',
+      );
+    }
+
+    _sendLogWindowStart = null;
+    _sendLogHighFrequency = false;
+    _sendLogPacketCount = 0;
+    _sendLogBytes = 0;
+    _sendLogFirstPacketBytes = 0;
+  }
+
+  @visibleForTesting
+  ({int packetCount, int bytes, bool highFrequency}) get debugSendLogState => (
+    packetCount: _sendLogPacketCount,
+    bytes: _sendLogBytes,
+    highFrequency: _sendLogHighFrequency,
+  );
+
+  @visibleForTesting
+  void debugRecordSendLogForTest(int bytes) => _recordSendLog(bytes);
+
+  @visibleForTesting
+  void debugFlushSendLogForTest() => _flushSendLog();
+
+  /// 使用当前选择的编码解码字节数据
+  String _decodeBytes(Uint8List data) =>
+      _decodeBytesWithEncoding(data, _textEncoding);
+
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
     if (receiveHex) {
@@ -442,7 +960,7 @@ class SerialService extends ChangeNotifier {
       _addDisplayLine('$prefix$text (${data.length} bytes)');
     } else {
       _addTextDataLines(
-        utf8.decode(data, allowMalformed: true),
+        _decodeBytes(data),
         timestamp: timestamp,
         isReceive: true,
       );
@@ -451,6 +969,7 @@ class SerialService extends ChangeNotifier {
 
   @visibleForTesting
   void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
+    _rawBytes.append(data);
     _addRawDataLine(timestamp ?? DateTime.now(), data);
   }
 
@@ -487,7 +1006,7 @@ class SerialService extends ChangeNotifier {
       _addDisplayLine('$prefix$hexMark$text (${data.length} bytes)');
     } else {
       _addTextDataLines(
-        utf8.decode(data, allowMalformed: true),
+        _decodeBytes(data),
         timestamp: DateTime.now(),
         isReceive: false,
         sendSource: source,
@@ -560,6 +1079,13 @@ class SerialService extends ChangeNotifier {
         }
       } else {
         pendingText += text[i];
+        // 单行超过上限时强制换行，避免长时间等不到换行符导致卡死
+        if (pendingText.length >= _maxTextLineLength) {
+          updateLine();
+          pendingText = '';
+          pendingIndex = null;
+          pendingPrefix = '';
+        }
       }
     }
 
@@ -585,37 +1111,161 @@ class SerialService extends ChangeNotifier {
 
   /// 添加一行到显示列表（通用）
   int _addDisplayLine(String line) {
-    receivedLines.add(line);
+    _beginDisplayMutation();
+    _receivedLines.add(line);
     _receivedTextBytes += line.length * 2; // UTF-16 编码估算
 
     _trimDisplayLines();
-    Future.microtask(() => notifyListeners());
-    return receivedLines.length - 1;
+    _scheduleDisplayNotify();
+    return _receivedLines.length - 1;
   }
 
   void _updateDisplayLine(int index, String line) {
-    if (index < 0 || index >= receivedLines.length) return;
-    final oldLine = receivedLines[index];
-    receivedLines[index] = line;
+    if (index < 0 || index >= _receivedLines.length) return;
+    _beginDisplayMutation();
+    final oldLine = _receivedLines[index];
+    _receivedLines[index] = line;
     _receivedTextBytes += (line.length - oldLine.length) * 2;
     _trimDisplayLines();
-    Future.microtask(() => notifyListeners());
+    _scheduleDisplayNotify();
   }
 
   void _trimDisplayLines() {
     // 文本缓存限制（按字节）
     while (_receivedTextBytes > _maxReceivedTextBytes &&
-        receivedLines.isNotEmpty) {
-      final removed = receivedLines.removeAt(0);
+        _receivedLines.isNotEmpty) {
+      final removed = _receivedLines.removeFirst();
       _receivedTextBytes -= removed.length * 2;
+      _recordTrimmedDisplayLine(removed);
       _shiftPendingLineIndexesAfterRemove();
     }
-    // 显示行数限制（虚拟滚动：最多保留 _maxDisplayLines 行）
-    while (receivedLines.length > _maxDisplayLines) {
-      final removed = receivedLines.removeAt(0);
+    // 显示行数限制，超出时按 FIFO 丢弃最早内容。
+    while (_receivedLines.length > _displayLineLimit) {
+      final removed = _receivedLines.removeFirst();
       _receivedTextBytes -= removed.length * 2;
+      _recordTrimmedDisplayLine(removed);
       _shiftPendingLineIndexesAfterRemove();
     }
+  }
+
+  void _beginDisplayMutation() {
+    if (_displayNotifyTimer == null) {
+      _displayBatchHasTrim = false;
+    }
+  }
+
+  void _recordTrimmedDisplayLine(String line) {
+    if (!_displayBatchHasTrim) {
+      _displayBatchHasTrim = true;
+      _displayTrimRevision++;
+      _lastTrimmedDisplayLines = <String>[];
+    }
+    _lastTrimmedDisplayLines.add(line);
+  }
+
+  /// 合并同一帧内的接收更新，避免一个串口数据块中的多行触发多次重建。
+  void _scheduleDisplayNotify() {
+    if (_displayNotifyTimer != null) return;
+    _displayNotifyTimer = Timer(const Duration(milliseconds: 16), () {
+      _displayNotifyTimer = null;
+      notifyListeners();
+    });
+  }
+
+  void setDisplayLineLimit(int value) {
+    final next = value.clamp(minDisplayLineLimit, maxDisplayLineLimit).toInt();
+    if (next == _displayLineLimit) return;
+
+    _displayLineLimit = next;
+    _beginDisplayMutation();
+    _trimDisplayLines();
+    final settings = AppSettings();
+    settings.rawDataDisplayLineLimit = next;
+    unawaited(settings.save());
+    AppLogger().info('接收区最多显示 $next 行', category: 'DATA');
+    _scheduleDisplayNotify();
+  }
+
+  void setRawDataShellMode(bool value) {
+    if (value && !rawDataShellEnabled) return;
+    if (rawDataShellMode == value) return;
+    rawDataShellMode = value;
+    _resetTextLineBuffers();
+    final settings = AppSettings();
+    settings.rawDataShellMode = value;
+    unawaited(settings.save());
+    AppLogger().info('Shell模式${value ? '启用' : '关闭'}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataShellEnabled(bool value) {
+    if (rawDataShellEnabled == value) return;
+    rawDataShellEnabled = value;
+    if (!value) {
+      rawDataShellMode = false;
+      _resetTextLineBuffers();
+    }
+    final settings = AppSettings();
+    settings.rawDataShellEnabled = value;
+    settings.rawDataShellMode = rawDataShellMode;
+    unawaited(settings.save());
+    AppLogger().info(
+      'Shell入口${value ? '显示' : '隐藏'}，当前Shell模式=$rawDataShellMode',
+      category: 'DATA',
+    );
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellInputMode(RawShellInputMode value) {
+    if (rawShellInputMode == value) return;
+    rawShellInputMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellInputMode = value.value;
+    unawaited(settings.save());
+    AppLogger().info('Shell输入模式切换为 ${value.label}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataTerminalFontSize(double value) {
+    final next = value.clamp(10.0, 24.0);
+    if (rawDataTerminalFontSize == next) return;
+    rawDataTerminalFontSize = next;
+    final settings = AppSettings();
+    settings.rawDataTerminalFontSize = next;
+    unawaited(settings.save());
+    AppLogger().info('Shell字体大小设置为 $next', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawDataTerminalFontFamily(String value) {
+    final next = value.trim().isEmpty ? 'Consolas' : value.trim();
+    if (rawDataTerminalFontFamily == next) return;
+    rawDataTerminalFontFamily = next;
+    final settings = AppSettings();
+    settings.rawDataTerminalFontFamily = next;
+    unawaited(settings.save());
+    AppLogger().info('Shell字体设置为 $next', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellThemeMode(RawShellThemeMode value) {
+    if (rawShellThemeMode == value) return;
+    rawShellThemeMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellTheme = value.value;
+    unawaited(settings.save());
+    AppLogger().info('Shell主题切换为 ${value.label}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setRawShellCursorMode(RawShellCursorMode value) {
+    if (rawShellCursorMode == value) return;
+    rawShellCursorMode = value;
+    final settings = AppSettings();
+    settings.rawDataShellCursor = value.value;
+    unawaited(settings.save());
+    AppLogger().info('Shell光标样式切换为 ${value.label}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
   }
 
   void _shiftPendingLineIndexesAfterRemove() {
@@ -634,7 +1284,24 @@ class SerialService extends ChangeNotifier {
     receiveHex = value;
     _aggregator = null;
     _resetTextLineBuffers();
+    AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置文本收发编码（仅非 HEX 模式生效）
+  void setTextEncoding(String encoding) {
+    if (_textEncoding == encoding) return;
+    _textEncoding = encoding;
+    unawaited(_persistEncoding());
+    _resetTextLineBuffers();
+    AppLogger().info('文本收发编码切换为: $encoding', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  Future<void> _persistEncoding() async {
+    final settings = AppSettings();
+    settings.rawDataEncoding = _textEncoding;
+    await settings.save();
   }
 
   void setShowTimestamp(bool value) {
@@ -642,6 +1309,7 @@ class SerialService extends ChangeNotifier {
     showTimestamp = value;
     _aggregator = null;
     _resetTextLineBuffers();
+    AppLogger().info('接收时间戳${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
@@ -671,7 +1339,7 @@ class SerialService extends ChangeNotifier {
   /// 清空所有数据（切换串口时调用）
   void _clearAllData() {
     _rawBytes.clear();
-    receivedLines.clear();
+    _receivedLines.clear();
     _receivedTextBytes = 0;
     _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
@@ -683,18 +1351,39 @@ class SerialService extends ChangeNotifier {
     AppLogger().info('接收区已清空', category: 'SERIAL');
   }
 
-  /// 导出数据为字符串文件
-  Future<String?> exportAsText() async {
+  /// 将完整原始接收字节按当前编码重新解码并导出为文本。
+  ///
+  /// 显示行数上限只影响界面缓存，不影响这里的导出内容。界面生成的时间戳、
+  /// 收发方向标记以及手动发送记录不属于原始接收字节，因此不会写入文本文件。
+  Future<String?> exportAsText({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) async {
+    if (!hasRawData) {
+      AppLogger().warning('没有原始接收数据，已取消文本导出', category: 'DATA');
+      return null;
+    }
     try {
+      onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}/exports');
+      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.txt';
       final file = File(path);
-      final content = receivedLines.join('\n');
+      final bytes = _rawBytes.toBytes();
+      onProgress?.call(0.25);
+      final encoding = _textEncoding;
+      final content = await Isolate.run(
+        () => _decodeBytesWithEncoding(bytes, encoding),
+      );
+      onProgress?.call(0.75);
       await file.writeAsString(content);
-      AppLogger().info('已导出文本: $path', category: 'DATA');
+      onProgress?.call(1);
+      AppLogger().info(
+        '已导出完整接收文本: $path，编码=$encoding，原始字节=${bytes.length}',
+        category: 'DATA',
+      );
       return path;
     } catch (e) {
       AppLogger().error('导出失败: $e', category: 'DATA');
@@ -703,28 +1392,29 @@ class SerialService extends ChangeNotifier {
   }
 
   /// 导出数据为原始字节文件（末尾附加 CRC-32 校验）
-  Future<String?> exportAsRawBytes() async {
+  Future<String?> exportAsRawBytes({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) async {
+    if (!hasRawData) {
+      AppLogger().warning('没有原始接收数据，已取消BIN导出', category: 'DATA');
+      return null;
+    }
     try {
+      onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = Directory('${exeDir.path}/exports');
+      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.bin';
       final file = File(path);
 
-      // 原始数据
       final bytes = _rawBytes.toBytes();
-
-      // 计算 CRC-32 并附加到末尾
-      final crcPoly = crc32Polys['CRC-32']!;
-      final crcValue = calculateCrc(bytes, crcPoly);
-      final crcBytes = crcToBytes(crcValue, 32);
-
-      // 写入文件：数据 + CRC
-      final output = BytesBuilder();
-      output.add(bytes);
-      output.add(Uint8List.fromList(crcBytes));
-      await file.writeAsBytes(output.toBytes());
+      onProgress?.call(0.25);
+      final output = await Isolate.run(() => _buildRawExportBytes(bytes));
+      onProgress?.call(0.75);
+      await file.writeAsBytes(output);
+      onProgress?.call(1);
 
       AppLogger().info('已导出原始字节: $path', category: 'DATA');
       return path;
@@ -737,17 +1427,17 @@ class SerialService extends ChangeNotifier {
   /// 获取原始字节数据（不含校验）
   Uint8List get rawBytes => _rawBytes.toBytes();
 
+  bool get hasRawData => _rawBytesSize > 0;
+
   /// 获取数据大小信息
   Map<String, String> get dataStats {
-    final stats = <String, String>{
-      '文本行数': '${receivedLines.length}',
-      '文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+    return <String, String>{
+      '显示行数': '${receivedLines.length} / $_displayLineLimit',
+      '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+      '完整原始数据':
+          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
+      '文本导出编码': _textEncoding,
     };
-    if (receiveHex) {
-      stats['原始字节'] =
-          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)';
-    }
-    return stats;
   }
 
   Uint8List? prepareSendData(String text) {
@@ -817,14 +1507,32 @@ class SerialService extends ChangeNotifier {
   @visibleForTesting
   Uint8List prepareTextSendData(String text) {
     final content = appendLineEnding ? '$text$lineEnding' : text;
-    return Uint8List.fromList(utf8.encode(content));
+    return _encodeTextWithEncoding(content, _textEncoding);
   }
+
+  Uint8List prepareShellTextData(String text) {
+    final content = '$text$lineEnding';
+    return _encodeTextWithEncoding(content, _textEncoding);
+  }
+
+  Uint8List encodeText(String text) =>
+      _encodeTextWithEncoding(text, _textEncoding);
 
   void send(
     Uint8List data, {
     SendDisplaySource displaySource = SendDisplaySource.user,
     bool? displayAsHex,
   }) {
+    _writeBytes(data);
+    // 发送的数据也显示在数据窗口
+    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
+  }
+
+  Future<void> sendRawBytes(Uint8List data) async {
+    _writeBytes(data);
+  }
+
+  void _writeBytes(Uint8List data) {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
@@ -837,13 +1545,17 @@ class SerialService extends ChangeNotifier {
         );
         throw StateError('串口已断开连接，发送失败');
       }
-      AppLogger().info('发送 $sent bytes', category: 'DATA');
+      _recordSendLog(sent);
     } else {
       _handleIoDisconnected('发送失败，串口读取器不可用');
       throw StateError('串口已断开连接，发送失败');
     }
-    // 发送的数据也显示在数据窗口
-    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
+  }
+
+  Future<File?> receiveYmodemFile() async {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final dir = Directory('${exeDir.path}/exports/ymodem');
+    return ymodemService.receiveFile(dir);
   }
 
   void _handleIoDisconnected(String message) {
@@ -914,16 +1626,27 @@ class SerialService extends ChangeNotifier {
 
   @override
   void dispose() {
-    // Do NOT call disconnect() here - it triggers notifyListeners()
-    // which will throw if called after super.dispose().
-    // Just clean up resources directly.
+    // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
+    // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
+    _disposed = true;
     _flushReceiveLog();
+    _flushSendLog();
+    _displayNotifyTimer?.cancel();
+    _displayNotifyTimer = null;
+    _portChangeDebounce?.cancel();
+    _portChangeDebounce = null;
+    unawaited(_portMonitorSubscription?.cancel());
+    _portMonitorSubscription = null;
+    _portMonitor?.dispose();
+    _portMonitor = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
     _nativeReader?.dispose();
     _nativeReader = null;
     isConnected = false;
+    unawaited(ymodemService.dispose());
     _dataController.close();
+    _shellDataController.close();
     super.dispose();
   }
 }

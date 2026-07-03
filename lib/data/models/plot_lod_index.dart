@@ -1,11 +1,10 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-/// In-memory level-of-detail index for large plot histories.
+/// 大规模绘图历史数据的内存级 LOD 索引。
 ///
-/// Levels start at 64 points per bucket. Smaller visible ranges keep using the
-/// exact point window; larger ranges can draw a bounded number of min/max
-/// samples without scanning every visible point each frame.
+/// 每个桶从 64 个点开始分层。较小可见范围仍使用精确点窗口；
+/// 较大范围可以绘制数量受控的最小/最大采样点，避免每帧扫描全部可见点。
 class PlotLodIndex {
   static const int maxChannels = 16;
   static const int minBucketSize = 64;
@@ -34,13 +33,28 @@ class PlotLodIndex {
   }
 
   void add(int index, List<double> values) {
-    final count = math.min(values.length, maxChannels);
-    if (count > _maxChannelCount) _maxChannelCount = count;
-    if (index >= _length) _length = index + 1;
+    final count = _recordPoint(index, values);
 
     for (final level in _levels) {
       level.add(index, values, count);
     }
+  }
+
+  void addSampled(int index, List<double> values, int sampleStep) {
+    final count = _recordPoint(index, values);
+    final step = math.max(1, sampleStep);
+    if (index % step != 0) return;
+
+    for (final level in _levels) {
+      level.add(index, values, count);
+    }
+  }
+
+  int _recordPoint(int index, List<double> values) {
+    final count = math.min(values.length, maxChannels);
+    if (count > _maxChannelCount) _maxChannelCount = count;
+    if (index >= _length) _length = index + 1;
+    return count;
   }
 
   void rebuild(Iterable<List<double>> rows) {

@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Verify plot rebuild isolation
+        run: flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METRICS=true
+
   build-windows:
     name: Build Windows release
     runs-on: windows-latest
@@ -62,6 +65,20 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Validate release tag version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch "^v\d+\.\d+\.\d+(-beta\.\d+)?$") {
+            throw "Release tag must use vX.Y.Z or vX.Y.Z-beta.N: $tag"
+          }
+          $pubspecVersion = (Select-String -Path pubspec.yaml -Pattern "^\s*version\s*:\s*(\S+)" | Select-Object -First 1).Matches.Groups[1].Value
+          $tagVersion = $tag -replace "^v", ""
+          if ($pubspecVersion -ne $tagVersion) {
+            throw "pubspec.yaml version ($pubspecVersion) must match tag without v ($tagVersion)"
+          }
+
       - name: Build Windows
         shell: pwsh
         run: |
@@ -75,26 +92,29 @@ jobs:
           if (-not (Test-Path $dll)) {
             throw "Missing native_serial_reader.dll in release bundle"
           }
+          $updater = "build/windows/x64/runner/Release/vscope_updater.exe"
+          if (-not (Test-Path $updater)) {
+            throw "Missing vscope_updater.exe in release bundle"
+          }
 
       - name: Package Windows bundle
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}"
           if ("${{ github.ref_type }}" -ne "tag") {
-            $version = "${{ github.sha }}"
+            $version = "v0.0.0-${{ github.sha }}"
           }
-          $packageName = "vscope_serial-windows-$version.zip"
-          Compress-Archive `
-            -Path "build/windows/x64/runner/Release/*" `
-            -DestinationPath $packageName `
-            -Force
-          "PACKAGE_NAME=$packageName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          python tools/generate_update_assets.py `
+            --bundle "build/windows/x64/runner/Release" `
+            --tag $version `
+            --output dist
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: vscope_serial-windows
-          path: ${{ env.PACKAGE_NAME }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -116,6 +136,7 @@ jobs:
           path: dist
 
       - name: Extract changelog
+        id: changelog
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
@@ -132,7 +153,7 @@ jobs:
           }
           $end = $lines.Count
           for ($i = $start; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match "^##\s+v?\d+(\.\d+)+") {
+            if ($lines[$i] -match "^##\s+v?\d+(\.\d+)+(-beta\.\d+)?") {
               $end = $i
               break
             }
@@ -142,9 +163,31 @@ jobs:
             throw "Empty CHANGELOG.md section for $tag"
           }
           $body | Out-File -FilePath release_notes.md -Encoding utf8
+          "body<<RELEASE_NOTES_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $body | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "RELEASE_NOTES_EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          prerelease: ${{ contains(github.ref_name, '-beta.') }}
+          files: |
+            dist/*.zip
+            dist/update-manifest-*.json
           body_path: release_notes.md
+
+      - name: Publish Gitee release
+        uses: nicennnnnnnlee/action-gitee-release@master
+        with:
+          gitee_action: create_release
+          gitee_owner: ZhiJuan0724
+          gitee_repo: vscope_serial
+          gitee_token: ${{ secrets.GITEE_TOKEN }}
+          gitee_tag_name: ${{ github.ref_name }}
+          gitee_release_name: ${{ github.ref_name }}
+          gitee_release_body: ${{ steps.changelog.outputs.body }}
+          gitee_target_commitish: ${{ github.sha }}
+          gitee_upload_retry_times: 3
+          gitee_files: |
+            dist/*.zip
+            dist/update-manifest-*.json

@@ -68,10 +68,7 @@ void main() {
     });
 
     test('高频生成测试 - 1KHz', () async {
-      final source = RandomDataSource(
-        channelCount: 4,
-        intervalMs: 1, // 1ms = 1000Hz
-      );
+      final source = RandomDataSource(channelCount: 4, frequencyHz: 1000);
 
       final receivedData = <Uint8List>[];
       final subscription = source.byteStream.listen((data) {
@@ -100,6 +97,24 @@ void main() {
         greaterThanOrEqualTo(500),
         reason: '实际生成速率约 $rate 包/秒，远低于1000Hz',
       );
+    });
+
+    test('100KHz 高频模式按批量数据生成', () async {
+      final source = RandomDataSource(channelCount: 4, frequencyHz: 100000);
+
+      final receivedData = <Uint8List>[];
+      final subscription = source.byteStream.listen(receivedData.add);
+
+      source.start();
+      await Future.delayed(const Duration(milliseconds: 30));
+      source.stop();
+      await subscription.cancel();
+
+      final packetCount = receivedData
+          .map((data) => String.fromCharCodes(data).trim().split('\n').length)
+          .fold<int>(0, (sum, count) => sum + count);
+
+      expect(packetCount, greaterThanOrEqualTo(1000));
     });
 
     test('不同通道数生成正确数据', () async {

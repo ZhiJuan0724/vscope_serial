@@ -1,5 +1,29 @@
 import 'package:flutter/material.dart';
 
+/// 二级弹窗内单行输入框和下拉框的默认宽度。
+const double kSecondaryDialogFieldWidth = 140;
+
+/// 二级弹窗内较长选项输入框和下拉框的默认宽度。
+const double kSecondaryDialogWideFieldWidth = 220;
+
+/// 二级弹窗内单行输入框和下拉框的统一装饰。
+InputDecoration secondaryDialogFieldDecoration({
+  String? hintText,
+  String? labelText,
+  String? suffixText,
+  String? counterText,
+}) {
+  return InputDecoration(
+    isDense: true,
+    border: const OutlineInputBorder(),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    hintText: hintText,
+    labelText: labelText,
+    suffixText: suffixText,
+    counterText: counterText,
+  );
+}
+
 /// 无动画下拉选择框
 class NoAnimDropdown<T> extends StatefulWidget {
   final T? value;

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round">
+  <text x="1.8" y="11.9" fill="#000000" stroke="none" font-family="Consolas, sans-serif" font-size="8.8" font-weight="600">Aut</text>
+  <g stroke-width="0.9">
+    <circle cx="18.8" cy="9.4" r="2" />
+    <line x1="20.2" y1="11.3" x2="21.2" y2="12.4" />
+  </g>
+  <text x="5" y="20.2" fill="#000000" stroke="none" font-family="Arial, sans-serif" font-size="7.2" font-weight="600">Full</text>
+</svg>

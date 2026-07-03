@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+const Object _unset = Object();
+
 /// 数据类型枚举
 enum DataType {
   uint8('uint8', 1),
@@ -56,6 +58,11 @@ class ChannelConfig {
   /// Y 轴缩放
   double yScale;
 
+  /// 偏置绑定组 ID。
+  ///
+  /// 该字段只用于运行期显示联动，不持久化到设置文件。
+  int? offsetBindingGroupId;
+
   /// 数据类型
   DataType dataType;
 
@@ -70,6 +77,7 @@ class ChannelConfig {
     this.yOffset = 0.0,
     this.offsetEnabled = false,
     this.yScale = 1.0,
+    this.offsetBindingGroupId,
     this.dataType = DataType.double,
   });
 
@@ -83,6 +91,7 @@ class ChannelConfig {
     double? yOffset,
     bool? offsetEnabled,
     double? yScale,
+    Object? offsetBindingGroupId = _unset,
     DataType? dataType,
   }) {
     return ChannelConfig(
@@ -96,12 +105,16 @@ class ChannelConfig {
       yOffset: yOffset ?? this.yOffset,
       offsetEnabled: offsetEnabled ?? this.offsetEnabled,
       yScale: yScale ?? this.yScale,
+      offsetBindingGroupId:
+          identical(offsetBindingGroupId, _unset)
+              ? this.offsetBindingGroupId
+              : offsetBindingGroupId as int?,
       dataType: dataType ?? this.dataType,
     );
   }
 
-  /// 默认 16 通道颜色
-  static final List<Color> defaultColors = [
+  /// 黑底预设色。保留 15 个预设，颜色选择面板第 16 个位置用于自定义色。
+  static final List<Color> darkPresetColors = [
     const Color(0xFFE6194B), // 红
     const Color(0xFF3CB44B), // 绿
     const Color(0xFFFFE119), // 黄
@@ -117,14 +130,60 @@ class ChannelConfig {
     const Color(0xFF74C0FC), // 亮蓝
     const Color(0xFFE6BEFF), // 淡紫
     const Color(0xFFFFD43B), // 金黄
-    const Color(0xFFFFFFFF), // 白
   ];
+
+  /// 白底预设色。与 [darkPresetColors] 按索引一一对应。
+  static final List<Color> lightPresetColors = [
+    const Color(0xFFC9184A), // 红
+    const Color(0xFF2B8A3E), // 绿
+    const Color(0xFFE67700), // 黄/橙
+    const Color(0xFF364FC7), // 蓝
+    const Color(0xFFD9480F), // 橙
+    const Color(0xFF862E9C), // 紫
+    const Color(0xFF0B7285), // 青
+    const Color(0xFFC2255C), // 品红
+    const Color(0xFF5C940D), // 黄绿
+    const Color(0xFFE8590C), // 暖橙
+    const Color(0xFFE03131), // 亮红
+    const Color(0xFF087F5B), // 青绿
+    const Color(0xFF1971C2), // 亮蓝
+    const Color(0xFF9C36B5), // 淡紫
+    const Color(0xFFF08C00), // 金黄
+  ];
+
+  /// 默认颜色沿用黑底预设，兼容既有调用。
+  static List<Color> get defaultColors => darkPresetColors;
+
+  static List<Color> presetColorsForBackground(String background) {
+    return background == 'light' ? lightPresetColors : darkPresetColors;
+  }
+
+  static Color colorForIndex(int index, String background) {
+    final colors = presetColorsForBackground(background);
+    return colors[index % colors.length];
+  }
+
+  static Color colorForBackground(Color color, String background) {
+    final target = presetColorsForBackground(background);
+    final source = background == 'light' ? darkPresetColors : lightPresetColors;
+    final sourceIndex = _presetIndexOf(color, source);
+    if (sourceIndex >= 0) return target[sourceIndex % target.length];
+
+    final targetIndex = _presetIndexOf(color, target);
+    if (targetIndex >= 0) return target[targetIndex];
+    return color;
+  }
+
+  static int _presetIndexOf(Color color, List<Color> colors) {
+    final value = color.toARGB32();
+    return colors.indexWhere((preset) => preset.toARGB32() == value);
+  }
 
   /// 创建默认 16 通道配置
   static List<ChannelConfig> createDefaults() {
     return List.generate(
       16,
-      (i) => ChannelConfig(index: i, color: defaultColors[i]),
+      (i) => ChannelConfig(index: i, color: colorForIndex(i, 'dark')),
     );
   }
 }

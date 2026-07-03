@@ -4,7 +4,7 @@
 ///
 /// 设计原则：
 /// - 所有修改操作（pan/zoom/reset 等）均返回新的实例，保持不可变语义
-/// - [PlotPainter.shouldRepaint] 可通过引用比较准确判断视口是否变化
+/// - [PlotLayerPainter.shouldRepaint] 可通过引用比较准确判断视口是否变化
 /// - 避免原地修改导致的重绘失效问题
 class PlotViewport {
   /// X 轴最小值（数据点序号）

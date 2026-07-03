@@ -21,8 +21,11 @@ class RandomDataSource implements IDataSource {
   /// 数值最大值
   final double maxValue;
 
-  /// 生成间隔（毫秒）
-  final int intervalMs;
+  /// 目标生成频率（Hz）
+  final double frequencyHz;
+
+  /// 兼容旧调用的生成间隔（毫秒），高频模式下可能小于 1ms，不能直接作为 Timer 间隔。
+  double get intervalMs => 1000.0 / frequencyHz;
 
   final _controller = StreamController<Uint8List>.broadcast();
 
@@ -39,8 +42,11 @@ class RandomDataSource implements IDataSource {
     this.channelCount = 4,
     this.minValue = 0.0,
     this.maxValue = 32768.0,
-    this.intervalMs = 100,
-  });
+    double? frequencyHz,
+    int? intervalMs,
+  }) : frequencyHz = (frequencyHz ??
+               (intervalMs == null ? 10.0 : 1000.0 / intervalMs))
+           .clamp(1.0, 100000.0);
 
   @override
   Stream<Uint8List> get byteStream => _controller.stream;
@@ -63,7 +69,7 @@ class RandomDataSource implements IDataSource {
       channelCount: channelCount,
       minValue: minValue,
       maxValue: maxValue,
-      intervalMs: intervalMs,
+      frequencyHz: frequencyHz,
     );
 
     Isolate.spawn(_isolateEntry, initData).then((isolate) {
@@ -111,12 +117,16 @@ class RandomDataSource implements IDataSource {
     receivePort.listen((message) {
       if (message == 'start') {
         timer?.cancel();
+        final tickMs =
+            initData.frequencyHz <= 1000
+                ? (1000 / initData.frequencyHz).round().clamp(1, 1000)
+                : 1;
         timer = Timer.periodic(
-          Duration(milliseconds: initData.intervalMs),
-          (_) => generator.generate(),
+          Duration(milliseconds: tickMs),
+          (_) => generator.generateForTick(tickMs),
         );
-        // 立即生成第一包
-        generator.generate();
+        // 立即生成第一批，避免启动后等待一个周期才有数据。
+        generator.generateForTick(tickMs);
       } else if (message == 'stop') {
         timer?.cancel();
         timer = null;
@@ -131,14 +141,14 @@ class _IsolateInitData {
   final int channelCount;
   final double minValue;
   final double maxValue;
-  final int intervalMs;
+  final double frequencyHz;
 
   _IsolateInitData({
     required this.sendPort,
     required this.channelCount,
     required this.minValue,
     required this.maxValue,
-    required this.intervalMs,
+    required this.frequencyHz,
   });
 }
 
@@ -151,6 +161,8 @@ class _DataGenerator {
 
   late final List<double> _phaseOffsets;
   late final List<double> _frequencies;
+  final double _targetFrequencyHz;
+  double _packetRemainder = 0;
   double _time = 0;
   final _random = Random();
 
@@ -158,7 +170,8 @@ class _DataGenerator {
     : channelCount = initData.channelCount,
       minValue = initData.minValue,
       maxValue = initData.maxValue,
-      sendPort = initData.sendPort {
+      sendPort = initData.sendPort,
+      _targetFrequencyHz = initData.frequencyHz {
     _phaseOffsets = List.generate(
       channelCount,
       (i) => (i * pi / channelCount) + _random.nextDouble() * 0.5,
@@ -166,7 +179,26 @@ class _DataGenerator {
     _frequencies = List.generate(channelCount, (i) => 0.05 + (i + 1) * 0.02);
   }
 
-  void generate() {
+  void generateForTick(int tickMs) {
+    final int packetCount;
+    if (_targetFrequencyHz <= 1000) {
+      packetCount = 1;
+      _packetRemainder = 0;
+    } else {
+      final exactPackets =
+          _targetFrequencyHz * tickMs / 1000 + _packetRemainder;
+      packetCount = exactPackets.floor().clamp(1, 100000).toInt();
+      _packetRemainder = exactPackets - packetCount;
+    }
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < packetCount; i++) {
+      buffer.write(_generateLine());
+    }
+    sendPort.send(Uint8List.fromList(buffer.toString().codeUnits));
+  }
+
+  String _generateLine() {
     final amplitude = (maxValue - minValue) / 2 * 0.8;
     final center = (maxValue + minValue) / 2;
 
@@ -178,9 +210,6 @@ class _DataGenerator {
 
     _time += 1;
 
-    final line =
-        '${values.map((v) => v.clamp(minValue, maxValue).toStringAsFixed(2)).join(',')}\n';
-    final bytes = Uint8List.fromList(line.codeUnits);
-    sendPort.send(bytes);
+    return '${values.map((v) => v.clamp(minValue, maxValue).toStringAsFixed(2)).join(',')}\n';
   }
 }

@@ -57,6 +57,20 @@ NSR_API int nsr_is_open();
 // APIs. A handle may remain open after a USB serial device is unplugged.
 NSR_API int nsr_is_connection_healthy();
 
+// 枚举当前可用串口。
+// buffer 为 NULL 或容量不足时返回所需字节数（包含末尾双 NUL）；
+// 成功写入时同样返回实际字节数，失败返回负数。
+NSR_API int nsr_list_ports(char* buffer, int capacity);
+
+// 枚举串口及友好名称，仅在用户主动请求详细信息时调用。
+// 每个 MultiSZ 项格式为 "COMx\t名称"；名称可能为空。
+NSR_API int nsr_list_port_details(char* buffer, int capacity);
+
+// 监听 Windows 串口设备到达和移除事件。
+// 每次变化向 dartPort 投递整数 1，返回 0 表示成功。
+NSR_API int nsr_start_port_monitor(int64_t dartPort);
+NSR_API void nsr_stop_port_monitor();
+
 #ifdef __cplusplus
 }
 #endif

@@ -204,6 +204,27 @@ void main() {
       expect(results[1], [500.0, 600.0, 700.0, 800.0]);
     });
 
+    test('大块连续帧到达不会触发小缓冲区提前丢弃', () async {
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      final frames = <int>[];
+      for (var i = 0; i < 200; i++) {
+        frames.addAll(buildFrame([i, i + 1, i + 2, i + 3]));
+      }
+
+      parser.feed(Uint8List.fromList(frames));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(results.length, 200);
+      expect(results.first, [0.0, 1.0, 2.0, 3.0]);
+      expect(results.last, [199.0, 200.0, 201.0, 202.0]);
+    });
+
     test('int16 数据类型转换', () async {
       // 设置通道0为int16
       config.zobowChannelTypes[0] = DataType.int16;
@@ -280,6 +301,49 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(results.length, 1);
+    });
+
+    test('调度暂停后新到达的有效帧优先解析并恢复', () async {
+      var now = DateTime(2026, 6, 29, 12);
+      parser = ZobowParser(config, () => now);
+      final frame = buildFrame([11, 22, 33, 44]);
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      parser.feed(Uint8List.fromList([1, 2, 3, 4, 5]));
+      now = now.add(const Duration(seconds: 15));
+      parser.feed(frame);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(results, [
+        [11.0, 22.0, 33.0, 44.0],
+      ]);
+    });
+
+    test('过期残留只清理一次且后续有效帧可以恢复', () async {
+      var now = DateTime(2026, 6, 29, 12);
+      parser = ZobowParser(config, () => now);
+      final frame = buildFrame([101, 202, 303, 404]);
+      final results = <List<double>>[];
+      parser.outputStream.listen((result) {
+        if (result.success && result.values != null) {
+          results.add(result.values!);
+        }
+      });
+
+      parser.feed(Uint8List.fromList([1, 2, 3, 4, 5]));
+      now = now.add(const Duration(seconds: 1));
+      parser.feed(Uint8List.fromList([6]));
+      parser.feed(frame);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(results, [
+        [101.0, 202.0, 303.0, 404.0],
+      ]);
     });
   });
 }

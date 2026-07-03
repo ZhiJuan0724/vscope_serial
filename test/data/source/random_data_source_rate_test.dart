@@ -14,7 +14,7 @@ void main() {
 
       final source = RandomDataSource(
         channelCount: 4,
-        intervalMs: 10, // 10ms = 100Hz
+        frequencyHz: targetRate.toDouble(),
       );
 
       final receivedData = <Uint8List>[];
@@ -46,7 +46,7 @@ void main() {
 
       final source = RandomDataSource(
         channelCount: 4,
-        intervalMs: 1, // 1ms = 1000Hz
+        frequencyHz: targetRate.toDouble(),
       );
 
       final receivedData = <Uint8List>[];

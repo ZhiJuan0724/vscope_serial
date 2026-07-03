@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../core/utils/plot_value_formatter.dart';
+import '../../core/utils/plot_performance_metrics.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
@@ -54,12 +56,44 @@ class SnapHighlightPoint {
 /// - [dense]: 每 40px 一条线（最密集）
 enum GridDensity { sparse, normal, dense }
 
-/// 绘图 CustomPainter
+enum PlotBackgroundStyle { dark, light }
+
+enum PlotPaintLayer { background, data, axis, overlay }
+
+class _PlotPalette {
+  final Color background;
+  final Color grid;
+  final Color axis;
+  final Color axisStrong;
+  final Color tooltipBackground;
+  final Color tooltipBorder;
+  final Color tooltipText;
+  final Color tooltipSubtleText;
+  final Color measurementPrimary;
+  final Color measurementSecondary;
+
+  const _PlotPalette({
+    required this.background,
+    required this.grid,
+    required this.axis,
+    required this.axisStrong,
+    required this.tooltipBackground,
+    required this.tooltipBorder,
+    required this.tooltipText,
+    required this.tooltipSubtleText,
+    required this.measurementPrimary,
+    required this.measurementSecondary,
+  });
+}
+
+/// 分层绘图 CustomPainter
 ///
-/// 接收视口、数据、通道配置等参数，在 [paint] 方法中完成所有绘制。
-/// [shouldRepaint] 通过比较视口、数据长度、光标等关键属性判断是否需要重绘。
-class PlotPainter extends CustomPainter {
+/// 四个实例共享绘制算法，但每个实例只绘制一个图层，并按该层依赖判断重绘。
+class PlotLayerPainter extends CustomPainter {
   static const double _denseLinePointThresholdRatio = 0.5;
+  static const double _invalidPointThresholdRatio = 0.5;
+
+  final PlotPaintLayer layer;
 
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -69,6 +103,9 @@ class PlotPainter extends CustomPainter {
 
   /// 数据版本，窗口长度不变但内容滚动时也会变化
   final int dataRevision;
+  final int channelConfigRevision;
+  final int viewportRevision;
+  final int overlayRevision;
 
   /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
   final PlotLodIndex? lodIndex;
@@ -84,6 +121,12 @@ class PlotPainter extends CustomPainter {
 
   /// 网格密度
   final GridDensity gridDensity;
+
+  /// 绘图区背景风格
+  final PlotBackgroundStyle backgroundStyle;
+
+  /// 绘图区悬浮窗不透明度。
+  final double floatingPanelOpacity;
 
   /// 垂直光标状态（鼠标悬停跟随）
   final CursorState? cursor;
@@ -118,18 +161,27 @@ class PlotPainter extends CustomPainter {
   /// 抗锯齿状态。高级设置中不再提供开关，默认固定开启。
   final bool antiAliasEnabled;
 
+  /// 当前显示通道是否都只包含整数值。
+  final bool yValuesAreInteger;
+
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
   final int plotFontSizeDelta;
 
-  PlotPainter({
+  PlotLayerPainter({
+    required this.layer,
     required this.viewport,
     required this.data,
     this.dataRevision = 0,
+    this.channelConfigRevision = 0,
+    this.viewportRevision = 0,
+    this.overlayRevision = 0,
     this.lodIndex,
     required this.channels,
     int? activeChannelCount,
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
+    this.backgroundStyle = PlotBackgroundStyle.dark,
+    this.floatingPanelOpacity = 0.85,
     this.cursor,
     this.xCursor1,
     this.xCursor2,
@@ -143,6 +195,7 @@ class PlotPainter extends CustomPainter {
     this.snapHighlightEnabled = true,
     this.snapHighlightDiameter = 8,
     this.antiAliasEnabled = true,
+    this.yValuesAreInteger = false,
     this.plotFontSizeDelta = 0,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
          0,
@@ -151,6 +204,48 @@ class PlotPainter extends CustomPainter {
 
   double _fontSize(double base) {
     return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
+
+  bool get _isLightBackground => backgroundStyle == PlotBackgroundStyle.light;
+
+  _PlotPalette get _palette {
+    return switch (backgroundStyle) {
+      PlotBackgroundStyle.dark => const _PlotPalette(
+        background: Color(0xFF1A1A2E),
+        grid: Color(0xFF2D2D44),
+        axis: Color(0xFF8888AA),
+        axisStrong: Color(0xFFCCCCDD),
+        tooltipBackground: Color(0xFF1A1A2E),
+        tooltipBorder: Color(0xFF8888AA),
+        tooltipText: Colors.white,
+        tooltipSubtleText: Colors.white70,
+        measurementPrimary: Colors.cyan,
+        measurementSecondary: Colors.yellow,
+      ),
+      PlotBackgroundStyle.light => const _PlotPalette(
+        background: Color(0xFFF8FAFC),
+        grid: Color(0xFFDDE3EA),
+        axis: Color(0xFF64748B),
+        axisStrong: Color(0xFF334155),
+        tooltipBackground: Colors.white,
+        tooltipBorder: Color(0xFF94A3B8),
+        tooltipText: Color(0xFF0F172A),
+        tooltipSubtleText: Color(0xFF475569),
+        measurementPrimary: Color(0xFF0369A1),
+        measurementSecondary: Color(0xFFB45309),
+      ),
+    };
+  }
+
+  Color _plotChannelColor(Color color) {
+    final hsl = HSLColor.fromColor(color);
+    if (_isLightBackground && color.computeLuminance() > 0.55) {
+      return hsl.withLightness(math.min(hsl.lightness, 0.42)).toColor();
+    }
+    if (!_isLightBackground && color.computeLuminance() < 0.18) {
+      return hsl.withLightness(math.max(hsl.lightness, 0.62)).toColor();
+    }
+    return color;
   }
 
   static double _fontSizeFor(double base, double delta) {
@@ -164,13 +259,17 @@ class PlotPainter extends CustomPainter {
     required double canvasHeight,
     required GridDensity gridDensity,
     required double plotFontSizeDelta,
+    required bool yValuesAreInteger,
   }) {
     final plotH = viewport.plotHeight(canvasHeight);
     if (plotH <= 0) return const [];
 
-    final yGridCount = _calculateGridCountFor(plotH, 60, gridDensity);
-    final roughStep = viewport.yRange / yGridCount;
-    final step = _niceNumberFor(roughStep, true);
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
     if (step <= 0) return const [];
 
     final textStyle = TextStyle(
@@ -180,9 +279,7 @@ class PlotPainter extends CustomPainter {
     final zeroTextStyle = textStyle.copyWith(fontWeight: FontWeight.bold);
     final widths = <double>[];
 
-    for (final ch in channels.take(activeChannelCount)) {
-      if (!ch.visible || !ch.offsetEnabled) continue;
-
+    for (final ch in _visibleOffsetAxisChannels(channels, activeChannelCount)) {
       var maxTextWidth = 0.0;
       final startValue = (viewport.yMin / step).floor() * step;
       final drawnValues = <double>{};
@@ -229,62 +326,95 @@ class PlotPainter extends CustomPainter {
     return widths;
   }
 
+  static List<ChannelConfig> _visibleOffsetAxisChannels(
+    List<ChannelConfig> channels,
+    int activeChannelCount,
+  ) {
+    final result = <ChannelConfig>[];
+    final seenGroups = <int>{};
+    for (final channel in channels.take(activeChannelCount)) {
+      if (!channel.visible || !channel.offsetEnabled) continue;
+      final groupId = channel.offsetBindingGroupId;
+      if (groupId != null) {
+        if (!seenGroups.add(groupId)) continue;
+      }
+      result.add(channel);
+    }
+    return result;
+  }
+
   /// 判断两个视口是否相等（用于重绘判断）
   bool _viewportEquals(PlotViewport a, PlotViewport b) {
     return a.xMin == b.xMin &&
         a.xMax == b.xMax &&
         a.yMin == b.yMin &&
-        a.yMax == b.yMax;
+        a.yMax == b.yMax &&
+        _doubleListsEqual(a.offsetAxisColumnWidths, b.offsetAxisColumnWidths);
+  }
+
+  bool _doubleListsEqual(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 绘制层次：背景 → 网格 → 数据 → 坐标轴 → 光标 → 统计范围
-    _drawBackground(canvas, size);
-
-    if (showGrid) {
-      _drawGrid(canvas, size);
-    }
-
-    _drawChannels(canvas, size);
-    _drawAxes(canvas, size);
-
-    // 通道偏移基准线和标签（绘制在数据层之上，坐标轴之下）
-    _drawChannelOffsetBaselines(canvas, size);
-
-    // 垂直光标（鼠标悬停跟随）
-    _drawCursor(canvas, size);
-
-    // X-X 测量线（独立绘制，不依赖 cursor）
-    if (xCursor1 != null || xCursor2 != null) {
-      _drawXMeasurement(
-        canvas,
-        size,
-        xCursor1,
-        xCursor2,
-        viewport.plotHeight(size.height),
-      );
-    }
-
-    // Y-Y 测量线（独立绘制，不依赖 cursor）
-    if (yCursor1 != null || yCursor2 != null) {
-      _drawYMeasurement(
-        canvas,
-        size,
-        yCursor1,
-        yCursor2,
-        viewport.plotWidth(size.width),
-      );
-    }
-
-    // 统计范围框（独立绘制）
-    _drawSnapHighlights(canvas, size);
-
-    if (statsEnabled &&
-        statsRangeEnabled &&
-        statsX1 != null &&
-        statsX2 != null) {
-      _drawStatsRange(canvas, size);
+    switch (layer) {
+      case PlotPaintLayer.background:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.backgroundPainterPaint,
+        );
+        _drawBackground(canvas, size);
+        if (showGrid) _drawGrid(canvas, size);
+        break;
+      case PlotPaintLayer.data:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.dataPainterPaint,
+        );
+        _drawChannels(canvas, size);
+        break;
+      case PlotPaintLayer.axis:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.axisPainterPaint,
+        );
+        _drawAxes(canvas, size);
+        _drawChannelOffsetBaselines(canvas, size);
+        break;
+      case PlotPaintLayer.overlay:
+        PlotPerformanceMetrics.instance.increment(
+          PlotPerformanceMetric.overlayPainterPaint,
+        );
+        if (xCursor1 != null || xCursor2 != null) {
+          _drawXMeasurement(
+            canvas,
+            size,
+            xCursor1,
+            xCursor2,
+            viewport.plotHeight(size.height),
+          );
+        }
+        if (yCursor1 != null || yCursor2 != null) {
+          _drawYMeasurement(
+            canvas,
+            size,
+            yCursor1,
+            yCursor2,
+            viewport.plotWidth(size.width),
+          );
+        }
+        _drawSnapHighlights(canvas, size);
+        if (statsEnabled &&
+            statsRangeEnabled &&
+            statsX1 != null &&
+            statsX2 != null) {
+          _drawStatsRange(canvas, size);
+        }
+        // 光标和浮窗最后绘制，避免被测量线遮挡。
+        _drawCursor(canvas, size);
+        break;
     }
   }
 
@@ -292,7 +422,7 @@ class PlotPainter extends CustomPainter {
   void _drawBackground(Canvas canvas, Size size) {
     final paint =
         Paint()
-          ..color = const Color(0xFF1A1A2E)
+          ..color = _palette.background
           ..style = PaintingStyle.fill;
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
   }
@@ -301,67 +431,126 @@ class PlotPainter extends CustomPainter {
   void _drawGrid(Canvas canvas, Size size) {
     final paint =
         Paint()
-          ..color = const Color(0xFF2D2D44)
+          ..color = _palette.grid
           ..strokeWidth = 0.5
           ..style = PaintingStyle.stroke
           ..isAntiAlias = antiAliasEnabled;
 
     final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
-
-    // 计算网格间距
-    final xGridCount = _calculateGridCount(plotW, 80);
-    final yGridCount = _calculateGridCount(plotH, 60);
+    if (plotW <= 0 || plotH <= 0) return;
 
     // 批量绘制网格线：先收集所有线，用 drawRawPoints 或 Path 优化
     final gridPath = Path();
 
-    // 垂直网格线
-    for (int i = 0; i <= xGridCount; i++) {
-      final x = PlotViewport().marginLeft + plotW * i / xGridCount;
-      gridPath.moveTo(x, PlotViewport().marginTop);
-      gridPath.lineTo(x, PlotViewport().marginTop + plotH);
+    // 垂直网格线：复用 X 轴刻度比例，确保网格线和刻度标签对齐。
+    for (final ratio in _xTickRatios(size)) {
+      final x = viewport.marginLeft + plotW * ratio;
+      gridPath.moveTo(x, viewport.marginTop);
+      gridPath.lineTo(x, viewport.marginTop + plotH);
     }
 
-    // 水平网格线
-    for (int i = 0; i <= yGridCount; i++) {
-      final y = PlotViewport().marginTop + plotH * i / yGridCount;
-      gridPath.moveTo(PlotViewport().marginLeft, y);
-      gridPath.lineTo(PlotViewport().marginLeft + plotW, y);
+    // 水平网格线：复用 Y 轴 nice number 刻度值，避免刻度值和背景线错位。
+    for (final value in _yTickValues(size, includeZero: true)) {
+      final y = viewport.dataToScreenY(value, size.height);
+      gridPath.moveTo(viewport.marginLeft, y);
+      gridPath.lineTo(viewport.marginLeft + plotW, y);
     }
 
     canvas.drawPath(gridPath, paint);
   }
 
-  /// 根据网格密度计算网格间距（像素）
-  double _getGridSpacing() {
-    return switch (gridDensity) {
-      GridDensity.sparse => 160, // 稀疏: 每160px一条线
-      GridDensity.normal => 80, // 普通: 每80px一条线
-      GridDensity.dense => 40, // 密集: 每40px一条线
-    };
+  List<double> _xTickRatios(Size size) {
+    final plotW = viewport.plotWidth(size.width);
+    final xGridCount = _calculateGridCountFor(plotW, GridDensity.normal);
+    return List<double>.generate(xGridCount + 1, (i) => i / xGridCount);
   }
 
-  int _calculateGridCount(double length, double minSpacing) {
-    final densitySpacing = _getGridSpacing();
-    final effectiveSpacing =
-        minSpacing > densitySpacing ? minSpacing : densitySpacing;
-    return _calculateGridCountWithSpacing(length, effectiveSpacing);
+  List<double> _yTickValues(Size size, {required bool includeZero}) {
+    final plotH = viewport.plotHeight(size.height);
+    if (plotH <= 0 || viewport.yRange <= 0) return const [];
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
+    if (step <= 0) return const [];
+
+    final result = <double>[];
+    final startValue = (viewport.yMin / step).floor() * step;
+    for (
+      double value = startValue;
+      value <= viewport.yMax + step * 0.5;
+      value += step
+    ) {
+      if (value < viewport.yMin || value > viewport.yMax) continue;
+      final y = viewport.dataToScreenY(value, size.height);
+      if (y < viewport.marginTop || y > viewport.marginTop + plotH) continue;
+      result.add(value);
+    }
+
+    if (includeZero && viewport.yMin <= 0 && viewport.yMax >= 0) {
+      final hasZero = result.any((value) => value.abs() < 1e-9);
+      final zeroY = viewport.dataToScreenY(0, size.height);
+      if (!hasZero &&
+          zeroY >= viewport.marginTop &&
+          zeroY <= viewport.marginTop + plotH) {
+        result.add(0);
+      }
+    }
+    result.sort();
+    return result;
   }
 
-  static int _calculateGridCountFor(
-    double length,
-    double minSpacing,
-    GridDensity gridDensity,
-  ) {
+  static int _calculateGridCountFor(double length, GridDensity gridDensity) {
     final densitySpacing = switch (gridDensity) {
       GridDensity.sparse => 160.0,
       GridDensity.normal => 80.0,
       GridDensity.dense => 40.0,
     };
-    final effectiveSpacing =
-        minSpacing > densitySpacing ? minSpacing : densitySpacing;
-    return _calculateGridCountWithSpacing(length, effectiveSpacing);
+    return _calculateGridCountWithSpacing(length, densitySpacing);
+  }
+
+  static int debugXGridCountFor(double length) {
+    return _calculateGridCountFor(length, GridDensity.normal);
+  }
+
+  static double debugYTickStepFor(
+    double yRange,
+    double plotHeight,
+    GridDensity gridDensity, {
+    bool yValuesAreInteger = false,
+  }) {
+    return _calculateYTickStepFor(
+      yRange,
+      plotHeight,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
+  }
+
+  static double _calculateYTickStepFor(
+    double yRange,
+    double plotHeight,
+    GridDensity gridDensity, {
+    required bool yValuesAreInteger,
+  }) {
+    if (yRange <= 0 || plotHeight <= 0) return 0;
+
+    final normalCount = _calculateGridCountFor(plotHeight, GridDensity.normal);
+    final normalRoughStep = yRange / normalCount;
+    final normalStep = _niceNumberFor(
+      yValuesAreInteger ? math.max(1.0, normalRoughStep) : normalRoughStep,
+      true,
+    );
+    final factor = switch (gridDensity) {
+      GridDensity.sparse => 2.0,
+      GridDensity.normal => 1.0,
+      GridDensity.dense => 0.5,
+    };
+    final step = _niceNumberFor(normalStep * factor, true);
+    return yValuesAreInteger ? math.max(1.0, step) : step;
   }
 
   static int _calculateGridCountWithSpacing(
@@ -453,9 +642,10 @@ class PlotPainter extends CustomPainter {
             ? math.max(0, viewport.xRange.round())
             : visibleRange.end - visibleRange.start;
     if (channel.showLine && visibleCount > 1) {
+      final channelColor = _plotChannelColor(channel.color);
       final linePaint =
           Paint()
-            ..color = channel.color
+            ..color = channelColor
             ..strokeWidth = channel.lineWidth
             ..style = PaintingStyle.stroke
             ..isAntiAlias = antiAliasEnabled;
@@ -498,9 +688,10 @@ class PlotPainter extends CustomPainter {
         visibleCount >
             math.max(1, plotW * _denseLinePointThresholdRatio).round();
     if (!hidePointsForDenseLine && !canUseLod) {
+      final channelColor = _plotChannelColor(channel.color);
       final pointPaint =
           Paint()
-            ..color = channel.color
+            ..color = channelColor
             ..style = PaintingStyle.fill;
 
       _drawChannelPoints(
@@ -519,9 +710,10 @@ class PlotPainter extends CustomPainter {
         plotWidth: viewport.plotWidth(size.width),
       );
       if (lodSeries != null && lodSeries.isNotEmpty) {
+        final channelColor = _plotChannelColor(channel.color);
         final pointPaint =
             Paint()
-              ..color = channel.color
+              ..color = channelColor
               ..style = PaintingStyle.fill
               ..strokeWidth = channel.pointSize;
         _drawChannelLodPoints(canvas, size, channel, lodSeries, pointPaint);
@@ -602,19 +794,34 @@ class PlotPainter extends CustomPainter {
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
+    var hasInvalid = false;
     for (int i = visibleRange.start; i < visibleRange.end; i++) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) {
+        hasInvalid = true;
+        continue;
+      }
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
+    }
+
+    if (hasInvalid) {
+      _drawInvalidAwareRawPath(
+        canvas,
+        size,
         channelIndex,
         channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+        visibleRange,
+        paint,
+      );
+      return;
     }
 
     if (rawIndex >= 4) {
@@ -656,13 +863,12 @@ class PlotPainter extends CustomPainter {
       for (int i = start; i < end && i < visibleRange.end; i++) {
         final point = data[i];
         if (channelIndex >= point.values.length) continue;
+        final value = _displayValue(point, channelIndex, channel);
+        if (!value.isFinite) continue;
         final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-        final y = _screenY(
-          point,
-          channelIndex,
-          channel,
-          size.height,
-        ).clamp(marginTop, marginBottom);
+        final y = viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom);
 
         final bucketPoint = _BucketPoint(point.index, x, y);
         firstPoint ??= bucketPoint;
@@ -716,16 +922,15 @@ class PlotPainter extends CustomPainter {
     for (int i = visibleRange.start; i < visibleRange.end; i += step) {
       final point = data[i];
       if (channelIndex >= point.values.length) continue;
+      final value = _displayValue(point, channelIndex, channel);
+      if (!value.isFinite) continue;
       rawPoints[rawIndex++] = viewport.dataToScreenX(
         point.index.toDouble(),
         size.width,
       );
-      rawPoints[rawIndex++] = _screenY(
-        point,
-        channelIndex,
-        channel,
-        size.height,
-      ).clamp(marginTop, marginBottom);
+      rawPoints[rawIndex++] = viewport
+          .dataToScreenY(value, size.height)
+          .clamp(marginTop, marginBottom);
     }
 
     if (rawIndex > 0) {
@@ -737,16 +942,104 @@ class PlotPainter extends CustomPainter {
     }
   }
 
-  double _screenY(
+  double _displayValue(
     PlotDataPoint point,
     int channelIndex,
     ChannelConfig channel,
-    double height,
   ) {
-    return viewport.dataToScreenY(
-      point.values[channelIndex] * channel.yScale + channel.yOffset,
-      height,
-    );
+    final value = point.values[channelIndex];
+    if (!value.isFinite) return double.nan;
+    final displayValue = value * channel.yScale + channel.yOffset;
+    return displayValue.isFinite ? displayValue : double.nan;
+  }
+
+  void _drawInvalidAwareRawPath(
+    Canvas canvas,
+    Size size,
+    int channelIndex,
+    ChannelConfig channel,
+    _Range visibleRange,
+    Paint normalPaint,
+  ) {
+    final dataCount = visibleRange.end - visibleRange.start;
+    final plotW = viewport.plotWidth(size.width);
+    if (dataCount > plotW * 2) return;
+
+    final zeroY =
+        viewport
+            .dataToScreenY(0, size.height)
+            .clamp(viewport.marginTop, size.height - viewport.marginBottom)
+            .toDouble();
+    final channelColor = _plotChannelColor(channel.color);
+    final dashPaint =
+        Paint()
+          ..color = channelColor.withValues(alpha: 0.65)
+          ..strokeWidth = math.max(1.0, channel.lineWidth)
+          ..style = PaintingStyle.stroke;
+    final invalidPoints = <Offset>[];
+    final dashedPoints = <Offset>[];
+    final showInvalidPoints =
+        dataCount <= math.max(1, plotW * _invalidPointThresholdRatio).round();
+
+    void flushDashedPoints() {
+      if (dashedPoints.length >= 2) {
+        _drawDashedPolyline(canvas, dashedPoints, dashPaint);
+      }
+      dashedPoints.clear();
+    }
+
+    Offset? previous;
+    var previousInvalid = false;
+    for (int i = visibleRange.start; i < visibleRange.end; i++) {
+      final point = data[i];
+      if (channelIndex >= point.values.length) continue;
+      final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
+      final value = _displayValue(point, channelIndex, channel);
+      final invalid = !value.isFinite;
+      final y =
+          invalid
+              ? zeroY
+              : viewport
+                  .dataToScreenY(value, size.height)
+                  .clamp(
+                    viewport.marginTop,
+                    size.height - viewport.marginBottom,
+                  )
+                  .toDouble();
+      final current = Offset(x, y);
+      if (previous != null) {
+        if (previousInvalid || invalid) {
+          if (dashedPoints.isEmpty) dashedPoints.add(previous);
+          dashedPoints.add(current);
+        } else {
+          flushDashedPoints();
+          canvas.drawLine(previous, current, normalPaint);
+        }
+      }
+      if (showInvalidPoints && invalid) invalidPoints.add(current);
+      previous = current;
+      previousInvalid = invalid;
+    }
+
+    flushDashedPoints();
+    _drawInvalidHollowPoints(canvas, invalidPoints, channel);
+  }
+
+  void _drawInvalidHollowPoints(
+    Canvas canvas,
+    List<Offset> invalidPoints,
+    ChannelConfig channel,
+  ) {
+    if (invalidPoints.isEmpty) return;
+    final pointPaint =
+        Paint()
+          ..color = _plotChannelColor(channel.color)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(0.75, channel.lineWidth * 0.75);
+    final radius = math.max(1.5, channel.pointSize * 0.7);
+    for (final point in invalidPoints) {
+      canvas.drawCircle(point, radius, pointPaint);
+    }
   }
 
   /// 绘制坐标轴、刻度线和刻度值
@@ -797,13 +1090,14 @@ class PlotPainter extends CustomPainter {
   }
 
   void _drawAxes(Canvas canvas, Size size) {
+    final palette = _palette;
     final axisPaint =
         Paint()
-          ..color = const Color(0xFF8888AA)
+          ..color = palette.axis
           ..strokeWidth = 1.0;
 
     final textStyle = TextStyle(
-      color: const Color(0xFF8888AA),
+      color: palette.axis,
       fontSize: _fontSize(12),
       fontFamily: 'SarasaUiSC',
     );
@@ -813,38 +1107,30 @@ class PlotPainter extends CustomPainter {
 
     // X 轴
     canvas.drawLine(
-      Offset(
-        PlotViewport().marginLeft,
-        size.height - PlotViewport().marginBottom,
-      ),
+      Offset(viewport.marginLeft, size.height - viewport.marginBottom),
       Offset(
         size.width - viewport.marginRight,
-        size.height - PlotViewport().marginBottom,
+        size.height - viewport.marginBottom,
       ),
       axisPaint,
     );
 
     // Y 轴
     canvas.drawLine(
-      Offset(PlotViewport().marginLeft, PlotViewport().marginTop),
-      Offset(
-        PlotViewport().marginLeft,
-        size.height - PlotViewport().marginBottom,
-      ),
+      Offset(viewport.marginLeft, viewport.marginTop),
+      Offset(viewport.marginLeft, size.height - viewport.marginBottom),
       axisPaint,
     );
 
     // X 轴刻度
-    final xGridCount = _calculateGridCount(plotW, 80);
-    for (int i = 0; i <= xGridCount; i++) {
-      final xRatio = i / xGridCount;
-      final x = PlotViewport().marginLeft + plotW * xRatio;
+    for (final xRatio in _xTickRatios(size)) {
+      final x = viewport.marginLeft + plotW * xRatio;
       final xValue = viewport.xMin + viewport.xRange * xRatio;
 
       // 刻度线
       canvas.drawLine(
-        Offset(x, size.height - PlotViewport().marginBottom),
-        Offset(x, size.height - PlotViewport().marginBottom + 5),
+        Offset(x, size.height - viewport.marginBottom),
+        Offset(x, size.height - viewport.marginBottom + 5),
         axisPaint,
       );
 
@@ -852,55 +1138,34 @@ class PlotPainter extends CustomPainter {
       _drawText(
         canvas,
         _formatNumber(xValue, false),
-        Offset(x, size.height - PlotViewport().marginBottom + 8),
+        Offset(x, size.height - viewport.marginBottom + 8),
         textStyle,
         alignCenter: true,
       );
     }
 
     // Y 轴刻度（使用 nice number 取整）
-    final yGridCount = _calculateGridCount(plotH, 60);
-    final roughStep = viewport.yRange / yGridCount;
-    final integerYValues = _visibleYValuesAreInteger();
-    final step = _niceNumber(
-      integerYValues ? math.max(1.0, roughStep) : roughStep,
-      true,
-    );
     final Set<double> drawnValues = {};
-    if (step > 0) {
-      final startValue = (viewport.yMin / step).floor() * step;
-      for (
-        double value = startValue;
-        value <= viewport.yMax + step * 0.5;
-        value += step
-      ) {
-        if (value < viewport.yMin || value > viewport.yMax) continue;
+    for (final value in _yTickValues(size, includeZero: false)) {
+      final y = viewport.dataToScreenY(value, size.height);
+      drawnValues.add(value);
 
-        final y = viewport.dataToScreenY(value, size.height);
-        if (y < PlotViewport().marginTop ||
-            y > PlotViewport().marginTop + plotH) {
-          continue;
-        }
+      // 刻度线
+      canvas.drawLine(
+        Offset(viewport.marginLeft - 5, y),
+        Offset(viewport.marginLeft, y),
+        axisPaint,
+      );
 
-        drawnValues.add(value);
-
-        // 刻度线
-        canvas.drawLine(
-          Offset(PlotViewport().marginLeft - 5, y),
-          Offset(PlotViewport().marginLeft, y),
-          axisPaint,
-        );
-
-        // 刻度值
-        _drawText(
-          canvas,
-          _formatNumber(value, true),
-          Offset(PlotViewport().marginLeft - 8, y),
-          textStyle,
-          alignRight: true,
-          alignVerticalCenter: true,
-        );
-      }
+      // 刻度值
+      _drawText(
+        canvas,
+        _formatNumber(value, true),
+        Offset(viewport.marginLeft - 8, y),
+        textStyle,
+        alignRight: true,
+        alignVerticalCenter: true,
+      );
     }
 
     // 常驻 Y=0 刻度（如果 0 在可见范围内且尚未绘制）
@@ -908,18 +1173,17 @@ class PlotPainter extends CustomPainter {
         viewport.yMax >= 0 &&
         !drawnValues.contains(0.0)) {
       final zeroY = viewport.dataToScreenY(0, size.height);
-      if (zeroY >= PlotViewport().marginTop &&
-          zeroY <= PlotViewport().marginTop + plotH) {
+      if (zeroY >= viewport.marginTop && zeroY <= viewport.marginTop + plotH) {
         // 刻度线（稍长，突出显示）
         canvas.drawLine(
-          Offset(PlotViewport().marginLeft - 8, zeroY),
-          Offset(PlotViewport().marginLeft, zeroY),
+          Offset(viewport.marginLeft - 8, zeroY),
+          Offset(viewport.marginLeft, zeroY),
           axisPaint,
         );
 
         // 刻度值：Y=0（加粗）
         final zeroTextStyle = TextStyle(
-          color: const Color(0xFFCCCCDD),
+          color: palette.axisStrong,
           fontSize: _fontSize(12),
           fontFamily: 'SarasaUiSC',
           fontWeight: FontWeight.bold,
@@ -927,7 +1191,7 @@ class PlotPainter extends CustomPainter {
         _drawText(
           canvas,
           '0',
-          Offset(PlotViewport().marginLeft - 8, zeroY),
+          Offset(viewport.marginLeft - 8, zeroY),
           zeroTextStyle,
           alignRight: true,
           alignVerticalCenter: true,
@@ -949,13 +1213,11 @@ class PlotPainter extends CustomPainter {
     final left = PlotViewport().marginLeft;
     final right = left + plotW;
 
-    // 收集所有可见且开启偏移的通道，分配列索引
-    final offsetChannels = <ChannelConfig>[];
-    for (final ch in channels.take(activeChannelCount)) {
-      if (ch.visible && ch.offsetEnabled) {
-        offsetChannels.add(ch);
-      }
-    }
+    // 收集所有可见且开启偏移的通道，分配列索引。绑定组只占用一列。
+    final offsetChannels = _visibleOffsetAxisChannels(
+      channels,
+      activeChannelCount,
+    );
 
     var axisX = right;
     for (int colIndex = 0; colIndex < offsetChannels.length; colIndex++) {
@@ -971,10 +1233,11 @@ class PlotPainter extends CustomPainter {
           zeroY <= PlotViewport().marginTop + plotH;
 
       if (labelVisible) {
+        final channelColor = _plotChannelColor(ch.color);
         // 绘制水平虚线（通道颜色，半透明）
         final dashPaint =
             Paint()
-              ..color = ch.color.withValues(alpha: 0.4)
+              ..color = channelColor.withValues(alpha: 0.4)
               ..strokeWidth = 1.0;
 
         const dashLen = 6.0;
@@ -986,10 +1249,13 @@ class PlotPainter extends CustomPainter {
           x += dashLen + gapLen;
         }
 
-        // 绘制左侧标签。完整通道名称放到图例中，这里只保留短编号。
-        final displayName = 'Ch${ch.index}';
+        // 绘制左侧标签。绑定组显示组名，完整通道名称放到图例中。
+        final displayName = _offsetAxisLabel(ch);
         final labelStyle = TextStyle(
-          color: Colors.white,
+          color:
+              channelColor.computeLuminance() > 0.5
+                  ? Colors.black
+                  : Colors.white,
           fontSize: _fontSize(10),
           fontWeight: FontWeight.bold,
           fontFamily: 'SarasaUiSC',
@@ -1014,7 +1280,7 @@ class PlotPainter extends CustomPainter {
           Rect.fromLTWH(labelX, labelY, labelW, labelH),
           const Radius.circular(2),
         );
-        canvas.drawRRect(bgRect, Paint()..color = ch.color);
+        canvas.drawRRect(bgRect, Paint()..color = channelColor);
 
         // 标签文字
         textPainter.paint(
@@ -1027,6 +1293,29 @@ class PlotPainter extends CustomPainter {
       _drawChannelYAxis(canvas, size, ch, axisX);
       axisX += _offsetAxisColumnWidth(colIndex);
     }
+  }
+
+  String _offsetAxisLabel(ChannelConfig channel) {
+    final groupId = channel.offsetBindingGroupId;
+    if (groupId == null) return _shortChannelName(channel);
+    final names = channels
+        .take(activeChannelCount)
+        .where(
+          (member) =>
+              member.visible &&
+              member.offsetEnabled &&
+              member.offsetBindingGroupId == groupId,
+        )
+        .map(_shortChannelName)
+        .toList(growable: false);
+    if (names.isEmpty) return _shortChannelName(channel);
+    return names.join('+');
+  }
+
+  String _shortChannelName(ChannelConfig channel) {
+    return channel.index >= 16
+        ? 'Math${channel.index - 15}'
+        : 'Ch${channel.index}';
   }
 
   double _offsetAxisColumnWidth(int colIndex) {
@@ -1052,19 +1341,22 @@ class PlotPainter extends CustomPainter {
     final bottom = top + plotH;
 
     // 计算 nice number 步长
-    final yRange = viewport.yRange;
-    final yGridCount = _calculateGridCount(plotH, 60);
-    final roughStep = yRange / yGridCount;
-    final step = _niceNumber(roughStep, true);
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotH,
+      gridDensity,
+      yValuesAreInteger: yValuesAreInteger,
+    );
     if (step <= 0) return;
+    final channelColor = _plotChannelColor(ch.color);
 
     final tickPaint =
         Paint()
-          ..color = ch.color.withValues(alpha: 0.6)
+          ..color = channelColor.withValues(alpha: 0.6)
           ..strokeWidth = 0.5;
 
     final textStyle = TextStyle(
-      color: ch.color,
+      color: channelColor,
       fontSize: _fontSize(11),
       fontFamily: 'SarasaUiSC',
     );
@@ -1115,7 +1407,7 @@ class PlotPainter extends CustomPainter {
 
       // 刻度值（加粗）
       final zeroTextStyle = TextStyle(
-        color: ch.color,
+        color: channelColor,
         fontSize: _fontSize(11),
         fontFamily: 'SarasaUiSC',
         fontWeight: FontWeight.bold,
@@ -1133,7 +1425,7 @@ class PlotPainter extends CustomPainter {
     // 绘制轴线
     final axisPaint =
         Paint()
-          ..color = ch.color.withValues(alpha: 0.3)
+          ..color = channelColor.withValues(alpha: 0.3)
           ..strokeWidth = 1.0;
     canvas.drawLine(Offset(axisX, top), Offset(axisX, bottom), axisPaint);
   }
@@ -1144,7 +1436,7 @@ class PlotPainter extends CustomPainter {
 
     final cursorPaint =
         Paint()
-          ..color = Colors.white
+          ..color = _palette.axisStrong
           ..strokeWidth = 1.0
           ..style = PaintingStyle.stroke;
 
@@ -1189,7 +1481,8 @@ class PlotPainter extends CustomPainter {
         rows.add(
           _CursorValueRow(
             index: i,
-            text: '$displayName: ${_formatExactNumber(values[i])}',
+            name: displayName,
+            value: formatPlotValue(values[i]),
           ),
         );
       }
@@ -1201,13 +1494,26 @@ class PlotPainter extends CustomPainter {
     final lineHeight = _fontSize(12) + 8;
     final headerHeight = _fontSize(12) + 10;
     const padding = 8.0;
-    final maxLabelWidth = rows.fold<double>(120, (width, row) {
-      return math.max(width, _measureTextWidth(row.text, valueStyle));
+    const markerAndGapWidth = 12.0;
+    final separatorWidth = _measureRawTextWidth(': ', valueStyle);
+    final maxValueWidth = rows.fold<double>(0, (width, row) {
+      return math.max(width, _measureRawTextWidth(row.value, valueStyle));
     });
-    final tooltipWidth = math.min(size.width - 10, maxLabelWidth + padding * 2);
+    final maxNameWidth = rows.fold<double>(0, (width, row) {
+      return math.max(width, _measureRawTextWidth(row.name, valueStyle));
+    });
+    final desiredContentWidth =
+        markerAndGapWidth + maxNameWidth + separatorWidth + maxValueWidth;
+    final tooltipWidth =
+        math
+            .min(
+              size.width - 10,
+              math.max(120, desiredContentWidth + padding * 2),
+            )
+            .toDouble();
     final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
-    // tooltip位置（在鼠标右侧，如果超出边界则在左侧）
+    // 提示框位置（默认在鼠标右侧，超出边界时放到左侧）。
     var tooltipX = screenPos.dx + 18;
     var tooltipY = screenPos.dy + 18;
 
@@ -1226,23 +1532,26 @@ class PlotPainter extends CustomPainter {
       Rect.fromLTWH(tooltipX, tooltipY, tooltipWidth, tooltipHeight),
       const Radius.circular(4),
     );
+    final palette = _palette;
     canvas.drawRRect(
       bgRect,
       Paint()
-        ..color = const Color(0xEE1A1A2E)
+        ..color = palette.tooltipBackground.withValues(
+          alpha: floatingPanelOpacity,
+        )
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
       bgRect,
       Paint()
-        ..color = const Color(0xFF8888AA)
+        ..color = palette.tooltipBorder
         ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke,
     );
 
     // 绘制标题（X值）
     final headerStyle = TextStyle(
-      color: Colors.white,
+      color: palette.tooltipText,
       fontSize: _fontSize(12),
       fontWeight: FontWeight.bold,
       fontFamily: 'SarasaUiSC',
@@ -1262,7 +1571,7 @@ class PlotPainter extends CustomPainter {
         tooltipY + padding + headerHeight - 5,
       ),
       Paint()
-        ..color = const Color(0xFF8888AA)
+        ..color = palette.tooltipBorder
         ..strokeWidth = 0.5,
     );
 
@@ -1271,7 +1580,7 @@ class PlotPainter extends CustomPainter {
     for (final rowValue in rows) {
       // 只显示有数据值的通道，跳过数据范围外的
       final y = tooltipY + padding + headerHeight + row * lineHeight;
-      final color = channels[rowValue.index].color;
+      final color = _plotChannelColor(channels[rowValue.index].color);
 
       // 颜色指示点
       canvas.drawCircle(
@@ -1288,11 +1597,40 @@ class PlotPainter extends CustomPainter {
         fontSize: _fontSize(12),
         fontFamily: 'SarasaUiSC',
       );
-      _drawText(
+      final valuePainter = TextPainter(
+        text: TextSpan(text: rowValue.value, style: rowStyle),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+
+      final separatorPainter = TextPainter(
+        text: TextSpan(text: ': ', style: rowStyle),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+
+      final nameX = tooltipX + padding + markerAndGapWidth;
+      final rowRight = tooltipX + tooltipWidth - padding;
+      final availableNameWidth = math.max(
+        0.0,
+        rowRight - nameX - separatorPainter.width - valuePainter.width,
+      );
+      var paintedNameWidth = 0.0;
+      if (availableNameWidth > 0) {
+        final namePainter = TextPainter(
+          text: TextSpan(text: rowValue.name, style: rowStyle),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+          ellipsis: '...',
+        )..layout(maxWidth: availableNameWidth);
+        namePainter.paint(canvas, Offset(nameX, y));
+        paintedNameWidth = namePainter.width;
+      }
+      final separatorX = nameX + paintedNameWidth;
+      separatorPainter.paint(canvas, Offset(separatorX, y));
+      valuePainter.paint(
         canvas,
-        rowValue.text,
-        Offset(tooltipX + padding + 12, y),
-        rowStyle,
+        Offset(separatorX + separatorPainter.width, y),
       );
 
       row++;
@@ -1353,14 +1691,6 @@ class PlotPainter extends CustomPainter {
     );
   }
 
-  double _measureTextWidth(String text, TextStyle style) {
-    final textPainter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return textPainter.width + 12;
-  }
-
   static double _measureRawTextWidth(String text, TextStyle style) {
     final textPainter = TextPainter(
       text: TextSpan(text: text, style: style),
@@ -1370,10 +1700,6 @@ class PlotPainter extends CustomPainter {
   }
 
   /// 将值取整到 "好看" 的数字（1, 2, 5, 10, 20, 50, 100...）
-  double _niceNumber(double value, bool round) {
-    return _niceNumberFor(value, round);
-  }
-
   static double _niceNumberFor(double value, bool round) {
     if (value <= 0) return 0;
     final exponent = (math.log(value) / math.ln10).floor();
@@ -1438,29 +1764,6 @@ class PlotPainter extends CustomPainter {
     return value.toStringAsFixed(3);
   }
 
-  String _formatExactNumber(double value) {
-    if (!value.isFinite) return value.toString();
-    if (value == value.roundToDouble()) return value.toInt().toString();
-    return value.toString();
-  }
-
-  bool _visibleYValuesAreInteger() {
-    var hasValue = false;
-    for (final point in data) {
-      if (point.index < viewport.xMin || point.index > viewport.xMax) continue;
-      for (int i = 0; i < point.values.length && i < channels.length; i++) {
-        final channel = channels[i];
-        if (!channel.visible) continue;
-        final value = point.values[i] * channel.yScale + channel.yOffset;
-        hasValue = true;
-        if ((value - value.roundToDouble()).abs() > 1e-9) {
-          return false;
-        }
-      }
-    }
-    return hasValue;
-  }
-
   // ========== X-X / Y-Y 测量绘制 ==========
   /// 绘制 X-X 测量两条垂直线及标签
   void _drawXMeasurement(
@@ -1474,12 +1777,12 @@ class PlotPainter extends CustomPainter {
 
     final line1Paint =
         Paint()
-          ..color = Colors.cyan
+          ..color = _palette.measurementPrimary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = Colors.yellow
+          ..color = _palette.measurementSecondary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1497,8 +1800,8 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X1',
           sx1,
-          PlotViewport().marginTop - 12,
-          Colors.cyan,
+          PlotViewport().marginTop + 12,
+          _palette.measurementPrimary,
         );
       }
     }
@@ -1517,8 +1820,8 @@ class PlotPainter extends CustomPainter {
           canvas,
           'X2',
           sx2,
-          PlotViewport().marginTop - 12,
-          Colors.yellow,
+          PlotViewport().marginTop + 12,
+          _palette.measurementSecondary,
         );
       }
     }
@@ -1536,12 +1839,12 @@ class PlotPainter extends CustomPainter {
 
     final line1Paint =
         Paint()
-          ..color = Colors.cyan
+          ..color = _palette.measurementPrimary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = Colors.yellow
+          ..color = _palette.measurementSecondary
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1560,7 +1863,7 @@ class PlotPainter extends CustomPainter {
           'Y1',
           PlotViewport().marginLeft - 18,
           sy1,
-          Colors.cyan,
+          _palette.measurementPrimary,
         );
       }
     }
@@ -1580,7 +1883,7 @@ class PlotPainter extends CustomPainter {
           'Y2',
           PlotViewport().marginLeft - 18,
           sy2,
-          Colors.yellow,
+          _palette.measurementSecondary,
         );
       }
     }
@@ -1620,7 +1923,9 @@ class PlotPainter extends CustomPainter {
     canvas.drawRRect(
       bgRect,
       Paint()
-        ..color = const Color(0xDD1A1A2E)
+        ..color = _palette.tooltipBackground.withValues(
+          alpha: floatingPanelOpacity,
+        )
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
@@ -1740,13 +2045,13 @@ class PlotPainter extends CustomPainter {
     );
   }
 
-  /// 绘制虚线（5px 实线 + 3px 间隙）
+  /// 绘制虚线（7px 实线 + 5px 间隙）
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
     final dx = end.dx - start.dx;
     final dy = end.dy - start.dy;
     final distance = math.sqrt(dx * dx + dy * dy);
-    const dashLength = 5.0;
-    const gapLength = 3.0;
+    const dashLength = 7.0;
+    const gapLength = 5.0;
     final dashCount = (distance / (dashLength + gapLength)).floor();
 
     for (int i = 0; i < dashCount; i++) {
@@ -1763,36 +2068,89 @@ class PlotPainter extends CustomPainter {
     }
   }
 
+  void _drawDashedPolyline(Canvas canvas, List<Offset> points, Paint paint) {
+    if (points.length < 2) return;
+    const dashLength = 7.0;
+    const gapLength = 5.0;
+    const patternLength = dashLength + gapLength;
+    var patternOffset = 0.0;
+
+    for (int i = 1; i < points.length; i++) {
+      final start = points[i - 1];
+      final end = points[i];
+      final dx = end.dx - start.dx;
+      final dy = end.dy - start.dy;
+      final segmentLength = math.sqrt(dx * dx + dy * dy);
+      if (segmentLength <= 0) continue;
+
+      var consumed = 0.0;
+      while (consumed < segmentLength) {
+        final inDash = patternOffset < dashLength;
+        final remainInPattern =
+            (inDash ? dashLength : patternLength) - patternOffset;
+        final step = math.min(remainInPattern, segmentLength - consumed);
+
+        if (inDash) {
+          final t1 = consumed / segmentLength;
+          final t2 = (consumed + step) / segmentLength;
+          canvas.drawLine(
+            Offset(start.dx + dx * t1, start.dy + dy * t1),
+            Offset(start.dx + dx * t2, start.dy + dy * t2),
+            paint,
+          );
+        }
+
+        consumed += step;
+        patternOffset = (patternOffset + step) % patternLength;
+      }
+    }
+  }
+
   /// 判断是否需要重绘
   ///
   /// 比较视口、数据长度、光标、网格、统计范围等关键属性。
   @override
-  bool shouldRepaint(covariant PlotPainter oldDelegate) {
+  bool shouldRepaint(covariant PlotLayerPainter oldDelegate) {
+    if (oldDelegate.layer != layer) return true;
     final viewportChanged = !_viewportEquals(oldDelegate.viewport, viewport);
     final dataChanged = oldDelegate.data.length != data.length;
     final dataRevisionChanged = oldDelegate.dataRevision != dataRevision;
-    final result =
+    return switch (layer) {
+      PlotPaintLayer.background =>
         viewportChanged ||
-        dataChanged ||
-        dataRevisionChanged ||
-        oldDelegate.lodIndex != lodIndex ||
-        oldDelegate.cursor != cursor ||
-        oldDelegate.showGrid != showGrid ||
-        oldDelegate.statsEnabled != statsEnabled ||
-        oldDelegate.statsRangeEnabled != statsRangeEnabled ||
-        oldDelegate.statsX1 != statsX1 ||
-        oldDelegate.statsX2 != statsX2 ||
-        oldDelegate.snapHighlights != snapHighlights ||
-        oldDelegate.snapHighlightEnabled != snapHighlightEnabled ||
-        oldDelegate.snapHighlightDiameter != snapHighlightDiameter ||
-        oldDelegate.plotFontSizeDelta != plotFontSizeDelta;
-    final cursorChanged =
-        oldDelegate.cursor != cursor ||
-        oldDelegate.xCursor1 != xCursor1 ||
-        oldDelegate.xCursor2 != xCursor2 ||
-        oldDelegate.yCursor1 != yCursor1 ||
-        oldDelegate.yCursor2 != yCursor2;
-    return result || cursorChanged;
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.showGrid != showGrid ||
+            oldDelegate.gridDensity != gridDensity ||
+            oldDelegate.backgroundStyle != backgroundStyle ||
+            oldDelegate.antiAliasEnabled != antiAliasEnabled,
+      PlotPaintLayer.data =>
+        viewportChanged ||
+            dataChanged ||
+            dataRevisionChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.lodIndex != lodIndex ||
+            oldDelegate.activeChannelCount != activeChannelCount ||
+            oldDelegate.backgroundStyle != backgroundStyle ||
+            oldDelegate.antiAliasEnabled != antiAliasEnabled,
+      PlotPaintLayer.axis =>
+        viewportChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.activeChannelCount != activeChannelCount ||
+            oldDelegate.gridDensity != gridDensity ||
+            oldDelegate.backgroundStyle != backgroundStyle ||
+            oldDelegate.yValuesAreInteger != yValuesAreInteger ||
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+      PlotPaintLayer.overlay =>
+        viewportChanged ||
+            oldDelegate.viewportRevision != viewportRevision ||
+            oldDelegate.overlayRevision != overlayRevision ||
+            oldDelegate.channelConfigRevision != channelConfigRevision ||
+            oldDelegate.backgroundStyle != backgroundStyle ||
+            oldDelegate.floatingPanelOpacity != floatingPanelOpacity ||
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+    };
   }
 }
 
@@ -1815,7 +2173,12 @@ class _BucketPoint {
 
 class _CursorValueRow {
   final int index;
-  final String text;
+  final String name;
+  final String value;
 
-  const _CursorValueRow({required this.index, required this.text});
+  const _CursorValueRow({
+    required this.index,
+    required this.name,
+    required this.value,
+  });
 }

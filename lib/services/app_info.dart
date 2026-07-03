@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 class AppInfo {
   AppInfo._();
 
-  static const name = 'VScope Serial';
+  static const name = 'SerialTools';
   static const _buildTimeValue = String.fromEnvironment('BUILD_TIME');
   static String? _cachedVersion;
 
@@ -25,8 +25,7 @@ class AppInfo {
         return version;
       }
     } catch (_) {
-      // Fall through to a stable placeholder when assets are unavailable in
-      // unusual test or tooling contexts.
+      // 在异常测试或工具上下文中资源不可用时，回退到稳定占位值。
     }
 
     const fallback = '0.0.0';

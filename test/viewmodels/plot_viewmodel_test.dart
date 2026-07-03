@@ -1,15 +1,21 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/views/plot/plot_painter.dart';
 
 Future<void> _writeLegacyDat(File file) async {
   const channelCount = 4;
@@ -51,7 +57,25 @@ void main() {
       settings.useRandomSource = false;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
+      settings.rProtocolLooseChannelSettings = false;
+      settings.discardInitialPacketCount = 0;
+      settings.zobowChannelIds = List.generate(
+        ParserConfig.maxZobowChannelCount,
+        (i) => i + 1,
+      );
+      settings.zobowChannelTypes = List.filled(
+        ParserConfig.maxZobowChannelCount,
+        DataType.int16,
+      );
+      settings.fixedFrameChannelTypes = List.filled(
+        SendProtocolConfig.maxChannelCount,
+        DataType.uint16,
+      );
       settings.rProfileId = '';
+      settings.xMin = 0;
+      settings.xMax = 1000;
+      settings.yMin = 0;
+      settings.yMax = 32768;
       serialService = SerialService();
       vm = PlotViewModel(serialService);
     });
@@ -71,6 +95,45 @@ void main() {
       expect(vm.vCursorEnabled, false);
       expect(vm.vCursorEnabled, false);
       expect(vm.cursor, null);
+    });
+
+    test('配置选择会递增配置修订号以刷新工具栏', () {
+      final before = vm.profileRevision;
+
+      vm.selectZobowProfile(null);
+
+      expect(vm.profileRevision, before + 1);
+    });
+
+    test('背景切换会映射预设通道颜色但保留自定义颜色', () {
+      const customColor = Color(0xFF123456);
+      vm.setChannelColor(0, ChannelConfig.darkPresetColors.first);
+      vm.setChannelColor(1, customColor);
+
+      vm.setPlotBackground('light');
+
+      expect(vm.plotBackground, 'light');
+      expect(vm.channels[0].color, ChannelConfig.lightPresetColors.first);
+      expect(vm.channels[1].color, customColor);
+
+      vm.setPlotBackground('dark');
+
+      expect(vm.channels[0].color, ChannelConfig.darkPresetColors.first);
+      expect(vm.channels[1].color, customColor);
+    });
+
+    test('悬浮窗透明度限制在有效范围内', () {
+      vm.setFloatingPanelOpacity(0.75);
+      expect(vm.floatingPanelOpacity, 0.75);
+
+      vm.setFloatingPanelOpacity(0.1);
+      expect(vm.floatingPanelOpacity, 0.1);
+
+      vm.setFloatingPanelOpacity(-1);
+      expect(vm.floatingPanelOpacity, 0);
+
+      vm.setFloatingPanelOpacity(2);
+      expect(vm.floatingPanelOpacity, 1);
     });
 
     test('视口默认范围', () {
@@ -124,12 +187,38 @@ void main() {
       }
       vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
       vm.updateFollowCursor(1000, 0, const Offset(50, 50));
+      vm.setObservationClickToPlace(false);
 
       vm.addObservation();
 
+      expect(vm.observationClickToPlace, isFalse);
       expect(vm.observations, hasLength(1));
       expect(vm.observations.first.x, inInclusiveRange(20, 40));
       expect(vm.observations.first.x, 40);
+    });
+
+    test('点击定位观察只在提交后新增观察', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 20, xMax: 40));
+      vm.setObservationClickToPlace(true);
+
+      vm.startObservationPlacement();
+      vm.updateObservationPlacement(31.6);
+
+      expect(vm.observationPlacementActive, isTrue);
+      expect(vm.observationPreview, isNotNull);
+      expect(vm.observationPreview!.x, 32);
+      expect(vm.observations, isEmpty);
+
+      vm.commitObservationPlacement(34.7);
+
+      expect(vm.observationPlacementActive, isFalse);
+      expect(vm.observationPreview, isNull);
+      expect(vm.observations.single.x, 35);
     });
 
     test('clearData清空数据', () {
@@ -140,6 +229,154 @@ void main() {
 
       expect(vm.dataPoints.isEmpty, true);
       expect(vm.pointCount, 0);
+    });
+
+    test('数学通道追加到显示数据且无效求值为NaN', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([8, 0], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 / CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      expect(
+        vm.displayChannels.map((channel) => channel.alias),
+        contains('Math1'),
+      );
+      expect(vm.displayDataPoints[0].values.last, 5);
+      expect(vm.displayDataPoints[1].values.last.isNaN, true);
+    });
+
+    test('数学通道支持按X偏移取相邻点数据', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 10], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 20], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 30], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[-1] + CH0', vm.mathChannels[0].display),
+        true,
+      );
+
+      final values = vm.displayDataPoints.map((point) => point.values.last);
+      expect(values.elementAt(0), 21);
+      expect(values.elementAt(1), 32);
+      expect(values.elementAt(2).isNaN, true);
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[1]', vm.mathChannels[0].display),
+        true,
+      );
+
+      final shiftedValues = vm.displayDataPoints.map(
+        (point) => point.values.last,
+      );
+      expect(shiftedValues.elementAt(0).isNaN, true);
+      expect(shiftedValues.elementAt(1), 10);
+      expect(shiftedValues.elementAt(2), 20);
+    });
+
+    test('数学通道缓存会在新点到来后补算受未来偏移影响的尾部点', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 10], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 20], bytesConsumed: 8));
+
+      expect(
+        vm.configureMathChannel(0, 'CH1[-1]', vm.mathChannels[0].display),
+        true,
+      );
+
+      final firstDisplay = vm.displayDataPoints;
+      expect(firstDisplay[0].values.last, 20);
+      expect(firstDisplay[1].values.last.isNaN, true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 30], bytesConsumed: 8));
+
+      final nextDisplay = vm.displayDataPoints;
+      expect(nextDisplay[1].values.last, 30);
+      expect(nextDisplay[2].values.last.isNaN, true);
+    });
+
+    test('数学通道显示偏移和缩放不重建表达式数据缓存', () {
+      for (int i = 0; i < 20; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble(), (i * 2).toDouble()], bytesConsumed: 8),
+        );
+      }
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      final firstDisplay = vm.displayDataPoints;
+
+      vm.setChannelYOffset(16, 25);
+      expect(identical(vm.displayDataPoints, firstDisplay), true);
+
+      vm.zoomChannelYScale(16, 1.2);
+      expect(identical(vm.displayDataPoints, firstDisplay), true);
+    });
+
+    test('观察和吸附高亮包含数学通道', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
+      vm.ingestParsedResultForTest(ParseResult.ok([8, 3], bytesConsumed: 8));
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 1));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        true,
+      );
+
+      vm.updateFollowCursor(0, 0, const Offset(10, 10));
+      vm.addObservation();
+      expect(vm.observations.single.channelValues, [10, 2, 12]);
+
+      vm.setSnapHighlightColorMode('channel');
+      vm.setXCursor1(0);
+
+      final xCursorHighlights = vm.snapHighlights.take(3).toList();
+      expect(xCursorHighlights, hasLength(3));
+      expect(xCursorHighlights.last.y, 12);
+      expect(xCursorHighlights.last.color, vm.mathChannels[0].display.color);
+    });
+
+    test('X测量线在视口外时切换高亮颜色不会吸附到边缘', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.setXCursor1(2);
+      expect(vm.snapHighlights, isNotEmpty);
+
+      vm.updateViewport(vm.viewport.copyWith(xMin: 6, xMax: 9));
+      vm.setSnapHighlightColorMode('channel');
+
+      expect(vm.xCursor1, 2);
+      expect(vm.snapHighlights, isEmpty);
+    });
+
+    test('丢弃包数会跳过开始后的前N个有效数据包', () {
+      vm.setDiscardInitialPacketCount(2);
+      vm.setPlottingForTest(true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      expect(vm.pointCount, 0);
+      expect(vm.dataPoints, isEmpty);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3], bytesConsumed: 1));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.values, [3]);
+
+      vm.clearData();
+      vm.ingestParsedResultForTest(ParseResult.ok([4], bytesConsumed: 1));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.values, [4]);
     });
 
     test('BIN 导入导出保留通道数据', () async {
@@ -172,10 +409,10 @@ void main() {
       await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n');
       expect(await vm.importFromCsv(csv.path), isNull);
       vm.setParserType(ParserType.zobow);
-      vm.setChannelAlias(0, '主轴角度');
-      vm.setChannelAlias(1, '速度');
       vm.setZobowChannelId(0, 0x00000095);
       vm.setZobowChannelId(1, 0x12345678);
+      vm.setChannelAlias(0, '主轴角度');
+      vm.setChannelAlias(1, '速度');
 
       final binPath = '${dir.path}/plot.bin';
       expect(await vm.exportToBin(binPath), binPath);
@@ -189,6 +426,58 @@ void main() {
       expect(imported.channels[1].alias, '速度');
       expect(imported.parserConfig.zobowChannelIds[0], 0x00000095);
       expect(imported.parserConfig.zobowChannelIds[1], 0x12345678);
+    });
+
+    test('众邦通道地址和通道数据类型会写入设置并可重启恢复', () async {
+      vm.setParserType(ParserType.zobow);
+      vm.setZobowChannelId(0, 0x00000095);
+      expect(await vm.setZobowChannelType(1, DataType.uint16), true);
+
+      expect(AppSettings().zobowChannelIds[0], 0x00000095);
+      expect(AppSettings().zobowChannelTypes[1], DataType.uint16);
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+      restored.setParserType(ParserType.zobow);
+
+      expect(restored.parserConfig.zobowChannelIds[0], 0x00000095);
+      expect(restored.parserConfig.zobowChannelTypes[0], DataType.int16);
+      expect(restored.parserConfig.zobowChannelTypes[1], DataType.uint16);
+    });
+
+    test('手动修改众邦通道地址会清空快捷配置带入的通道名称', () {
+      vm.setParserType(ParserType.zobow);
+      vm.channels[0].alias = '主轴角度';
+
+      vm.setZobowChannelId(0, 0x00000096);
+
+      expect(vm.parserConfig.zobowChannelIds[0], 0x00000096);
+      expect(vm.channels[0].alias, isEmpty);
+    });
+
+    test('固定帧逐通道数据类型会写入设置并可重启恢复', () async {
+      vm.setParserType(ParserType.fixedFrame);
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(
+          type: ParserType.fixedFrame,
+          channelCount: 2,
+          fixedFrameUniformDataType: false,
+          fixedFrameChannelTypes: [
+            DataType.int16,
+            DataType.float,
+            ...List.filled(14, DataType.uint16),
+          ],
+        ),
+      );
+
+      expect(AppSettings().fixedFrameChannelTypes[0], DataType.int16);
+      expect(AppSettings().fixedFrameChannelTypes[1], DataType.float);
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+
+      expect(restored.parserConfig.fixedFrameChannelTypes[0], DataType.int16);
+      expect(restored.parserConfig.fixedFrameChannelTypes[1], DataType.float);
     });
 
     test('CSV 导入在众邦模式下也会重建绘图窗口', () async {
@@ -283,6 +572,18 @@ void main() {
       expect(vm.followEnabled, true);
     });
 
+    test('测量统计工具开关只控制工具栏入口', () {
+      expect(vm.statsToolbarEnabled, false);
+      expect(vm.statsEnabled, false);
+      expect(vm.statsRangeEnabled, false);
+
+      vm.setStatsToolbarEnabled(true);
+
+      expect(vm.statsToolbarEnabled, true);
+      expect(vm.statsEnabled, false);
+      expect(vm.statsRangeEnabled, false);
+    });
+
     test('拖动画布时自动关闭跟随', () {
       vm.setFollowEnabled(true);
 
@@ -304,6 +605,16 @@ void main() {
       final oldRange = vm.viewport.xRange;
       vm.zoomXOut();
       expect(vm.viewport.xRange, greaterThan(oldRange));
+    });
+
+    test('X范围达到显示上限后继续缩小不移动视口', () {
+      vm.updateViewport(vm.viewport.copyWith(xMin: 100, xMax: 1000100));
+      final before = vm.viewport.copy();
+
+      vm.zoomXOut();
+
+      expect(vm.viewport.xMin, before.xMin);
+      expect(vm.viewport.xMax, before.xMax);
     });
 
     test('resetViewport恢复默认', () {
@@ -430,6 +741,95 @@ void main() {
       expect(fittedValues[1], lessThan(vm.viewport.yMax));
     });
 
+    test('绑定偏置支持多组且组内同步偏移和缩放', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      for (int i = 0; i < 4; i++) {
+        vm.setChannelOffsetEnabled(i, true);
+      }
+
+      vm.setChannelYOffset(0, 100);
+      vm.zoomChannelYScale(0, 2);
+      vm.setChannelYOffset(2, 200);
+      vm.zoomChannelYScale(2, 3);
+
+      vm.setOffsetBindingGroup(0, {1});
+      vm.setOffsetBindingGroup(2, {3});
+
+      expect(vm.offsetBindingMemberIndices(0), [0, 1]);
+      expect(vm.offsetBindingMemberIndices(2), [2, 3]);
+      expect(vm.channels[1].yOffset, vm.channels[0].yOffset);
+      expect(vm.channels[1].yScale, vm.channels[0].yScale);
+      expect(vm.channels[3].yOffset, vm.channels[2].yOffset);
+      expect(vm.channels[3].yScale, vm.channels[2].yScale);
+
+      vm.setChannelYOffset(1, 320);
+      vm.zoomChannelYScale(3, 0.5);
+
+      expect(vm.channels[0].yOffset, 320);
+      expect(vm.channels[1].yOffset, 320);
+      expect(vm.channels[2].yScale, vm.channels[3].yScale);
+      expect(vm.channels[0].offsetBindingGroupId, isNotNull);
+      expect(vm.channels[2].offsetBindingGroupId, isNotNull);
+      expect(
+        vm.channels[0].offsetBindingGroupId,
+        isNot(vm.channels[2].offsetBindingGroupId),
+      );
+    });
+
+    test('绑定偏置Y自适应按组内所有通道合并计算', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+      vm.setChannelOffsetEnabled(1, true);
+      vm.setOffsetBindingGroup(0, {1});
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([0.0, 100.0], bytesConsumed: 8),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([10.0, 200.0], bytesConsumed: 8),
+      );
+
+      vm.fitYAxis();
+
+      expect(vm.channels[0].yScale, vm.channels[1].yScale);
+      expect(vm.channels[0].yOffset, vm.channels[1].yOffset);
+      final values = <double>[0, 10, 100, 200];
+      final fitted =
+          values
+              .map(
+                (value) =>
+                    value * vm.channels[0].yScale + vm.channels[0].yOffset,
+              )
+              .toList();
+      expect(fitted.reduce(math.min), greaterThan(vm.viewport.yMin));
+      expect(fitted.reduce(math.max), lessThan(vm.viewport.yMax));
+    });
+
+    test('关闭偏置会移出绑定组并在组不足两通道时解散', () {
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
+      vm.setChannelOffsetEnabled(0, true);
+      vm.setChannelOffsetEnabled(1, true);
+      vm.setChannelOffsetEnabled(2, true);
+      vm.setOffsetBindingGroup(0, {1, 2});
+
+      vm.setChannelOffsetEnabled(1, false);
+
+      expect(vm.channels[1].offsetBindingGroupId, isNull);
+      expect(vm.channels[0].offsetBindingGroupId, isNotNull);
+      expect(
+        vm.channels[2].offsetBindingGroupId,
+        vm.channels[0].offsetBindingGroupId,
+      );
+
+      vm.setChannelOffsetEnabled(2, false);
+
+      expect(vm.channels[0].offsetBindingGroupId, isNull);
+      expect(vm.channels[2].offsetBindingGroupId, isNull);
+    });
+
     test('导入常量偏置通道时全自适应会将通道居中', () async {
       final dir = await Directory.systemTemp.createTemp(
         'vscope_const_bin_test_',
@@ -542,6 +942,178 @@ void main() {
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
     });
 
+    test('随机源频率支持整数100KHz上限', () {
+      vm.setRandomFrequency(100000.4);
+      expect(vm.randomFrequency, 100000);
+
+      vm.setRandomFrequency(0);
+      expect(vm.randomFrequency, 1);
+    });
+
+    test('状态栏高速率统计不会被1000个样本限制在2000每秒', () {
+      for (int ms = 500; ms <= 1000; ms++) {
+        vm.recordRateSampleForTest(ms * 64, ms);
+      }
+
+      final match = RegExp(r'\(([\d.]+)/s\)').firstMatch(vm.statusText);
+      expect(match, isNotNull);
+      final rate = double.parse(match!.group(1)!);
+      expect(rate, greaterThan(60000));
+    });
+
+    test('十万包速率统计只保留固定数量时间桶', () {
+      for (int i = 0; i < 100000; i++) {
+        vm.recordRateSampleForTest(i, i ~/ 100);
+      }
+
+      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(25));
+      expect(vm.highRateMode, true);
+    });
+
+    test('数据类型元数据替代绘制阶段全量整数扫描', () {
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(
+        ParserConfig.fireWaterDefault()..fireWaterChannelCount = 2,
+      );
+      for (int i = 0; i < 2; i++) {
+        vm.setChannelVisible(i, true);
+        vm.setChannelOffsetEnabled(i, false);
+        vm.setChannelYScale(i, 1);
+      }
+      for (final channel in vm.mathChannels) {
+        if (channel.enabled) vm.disableMathChannel(channel.index);
+      }
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      expect(vm.displayYValuesAreInteger, true);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([3.5, 4], bytesConsumed: 1));
+      expect(vm.displayYValuesAreInteger, false);
+
+      vm.clearData();
+      vm.ingestParsedResultForTest(ParseResult.ok([2, 4], bytesConsumed: 1));
+      vm.setChannelYScale(0, 0.5);
+      expect(vm.displayYValuesAreInteger, false);
+    });
+
+    test('数据、通道、视口和覆盖层revision互不串扰', () {
+      final dataRevision = vm.dataRevision;
+      final channelRevision = vm.channelConfigRevision;
+      final viewportRevision = vm.viewportRevision;
+      final overlayRevision = vm.overlayRevision;
+
+      vm.setChannelColor(0, Colors.purple);
+      expect(vm.channelConfigRevision, channelRevision + 1);
+      expect(vm.dataRevision, dataRevision);
+      expect(vm.viewportRevision, viewportRevision);
+      expect(vm.overlayRevision, overlayRevision);
+
+      vm.updateViewport(vm.viewport.copyWith(xMin: 10, xMax: 1010));
+      expect(vm.viewportRevision, viewportRevision + 1);
+      expect(vm.overlayRevision, overlayRevision);
+
+      vm.updateCursor(CursorState(x: 10, y: 1, hasData: false));
+      expect(vm.overlayRevision, overlayRevision + 1);
+      expect(vm.dataRevision, dataRevision);
+    });
+
+    test('高频接收强制使用30fps但不修改用户刷新帧率', () {
+      vm.setRefreshFps(60);
+
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 20, ms);
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.refreshFps, 60);
+      expect(vm.effectiveRefreshFps, 30);
+      expect(vm.statusText, contains('高频模式 30fps'));
+    });
+
+    test('高频模式在10K附近不会反复切换并在低于8K后延迟退出', () {
+      vm.setRefreshFps(60);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(10500, 800);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(13500, 1300);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(16500, 1800);
+      vm.recordRateSampleForTest(19500, 2300);
+      vm.recordRateSampleForTest(22500, 2800);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(25500, 3300);
+      expect(vm.highRateMode, false);
+      expect(vm.effectiveRefreshFps, 60);
+    });
+
+    test('串口源高频刷新批量按实测速率和有效fps计算', () {
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 100, ms);
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.notifyBatchSizeForTest, inInclusiveRange(3300, 3350));
+    });
+
+    test('高频模式使用用户配置的当前精确窗口上限', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      expect(vm.highRateMode, true);
+      expect(vm.maxVisiblePoints, 1000000);
+      expect(vm.effectiveMaxVisiblePoints, 1000000);
+    });
+
+    test('高频模式未达到用户窗口上限时保留当前精确窗口', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+
+      for (int i = 0; i < 200005; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.visiblePointCount, 200005);
+      expect(vm.pointCount, greaterThan(vm.visiblePointCount));
+      expect(vm.lodIndex.length, vm.pointCount);
+    });
+
+    test('高频模式超过40万点时不使用固定窗口上限', () {
+      vm.setMaxVisiblePoints(1000000);
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+      final startPointCount = vm.pointCount;
+
+      for (int i = 0; i < 400005; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.highRateMode, true);
+      expect(vm.visiblePointCount, 400005);
+      expect(vm.pointCount - startPointCount, 400005);
+      expect(vm.lodIndex.length, vm.pointCount);
+    });
+
+    test('高频模式按实测速率降低LOD逐包更新压力', () {
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(50000, 500);
+
+      expect(vm.highRateMode, true);
+      expect(vm.lodSampleStepForTest, greaterThan(1));
+    });
+
     test('众邦初始化帧使用4字节小端通道号', () {
       final frame = PlotViewModel.buildZobowInitFrame([
         0x01020304,
@@ -636,19 +1208,102 @@ void main() {
 
     test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
       final bytes = PlotViewModel.buildRProtocolCommand([
+        '0',
         ' 12 ',
         '0x10',
         '0X2A',
       ]);
 
-      expect(utf8.decode(bytes), 'r 12 0x10 0X2A\n');
+      expect(utf8.decode(bytes), 'r 0 12 0x10 0X2A\n');
     });
 
-    test('r协议地址校验支持自动连续前缀和固定通道截断', () {
-      expect(
-        PlotViewModel.validateRProtocolAddresses(['1', '0x10', '20', '']),
-        ['1', '0x10', '20'],
+    test('r协议地址严格区分十进制和带0x前缀的十六进制', () {
+      expect(PlotViewModel.parseRProtocolAddress('16'), 16);
+      expect(PlotViewModel.parseRProtocolAddress('0x10'), 16);
+      expect(PlotViewModel.parseRProtocolAddress('FF'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('12x3'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('0xGG'), isNull);
+      expect(PlotViewModel.parseRProtocolAddress('4294967296'), isNull);
+    });
+
+    test('r协议预设应用到通道时保留配置进制', () {
+      final revisionBefore = vm.channelConfigRevision;
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '十进制',
+          address: 16,
+          addressFormat: AddressValueFormat.decimal,
+        ),
       );
+      vm.applyRProtocolPresetToChannel(
+        1,
+        AddressChannelPreset(
+          name: '十六进制',
+          address: 16,
+          addressFormat: AddressValueFormat.hexadecimal,
+        ),
+      );
+
+      expect(vm.rChannelAddresses.take(2), ['16', '0x10']);
+      expect(vm.channels[0].alias, '十进制');
+      expect(vm.channelConfigRevision, greaterThan(revisionBefore));
+    });
+
+    test('绘图运行中锁定R和Zobow地址但允许修改名称', () {
+      vm.setRChannelAddress(0, '10');
+      vm.setZobowChannelId(0, 0x10);
+      vm.setPlottingForTest(true);
+
+      vm.setRChannelAddress(0, '20');
+      vm.setZobowChannelId(0, 0x20);
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '运行中预设',
+          address: 30,
+          addressFormat: AddressValueFormat.decimal,
+        ),
+      );
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '运行中Zobow', address: 0x30),
+      );
+      vm.setChannelAlias(0, '运行中名称');
+
+      expect(vm.rChannelAddresses[0], '10');
+      expect(vm.parserConfig.zobowChannelIds[0], 0x10);
+      expect(vm.channels[0].alias, '运行中名称');
+    });
+
+    test('停止时可重置全部通道且运行中拒绝重置', () {
+      vm.setRChannelAddress(0, '10');
+      vm.setZobowChannelId(0, 0x20);
+      vm.setChannelAlias(0, '自定义名称');
+      vm.setChannelVisible(0, false);
+      expect(vm.enableMathChannel(0, 'CH0 + CH1'), isTrue);
+
+      expect(vm.resetAllChannels(), isTrue);
+      expect(vm.rChannelAddresses.every((address) => address.isEmpty), isTrue);
+      expect(vm.parserConfig.zobowChannelIds.first, 1);
+      expect(vm.parserConfig.zobowChannelTypes.first, DataType.int16);
+      expect(vm.parserConfig.fixedFrameChannelTypes.first, DataType.uint16);
+      expect(vm.channels[0].alias, isEmpty);
+      expect(vm.channels[0].visible, isTrue);
+      expect(vm.mathChannels.every((channel) => !channel.enabled), isTrue);
+
+      vm.setChannelAlias(0, '运行中保留');
+      vm.setPlottingForTest(true);
+      expect(vm.resetAllChannels(), isFalse);
+      expect(vm.channels[0].alias, '运行中保留');
+    });
+
+    test('r协议地址校验支持0地址、自动连续前缀和固定通道截断', () {
+      expect(PlotViewModel.validateRProtocolAddresses(['0', '0x0', '20', '']), [
+        '0',
+        '0x0',
+        '20',
+      ]);
       expect(
         PlotViewModel.validateRProtocolAddresses([
           '1',
@@ -659,9 +1314,34 @@ void main() {
       );
     });
 
-    test('r协议地址校验拒绝空地址、固定通道不足和中间空洞', () {
+    test('r协议宽松通道设置会压紧非空地址并保留0地址', () {
       expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', '0']),
+        PlotViewModel.validateRProtocolAddresses([
+          '',
+          '0',
+          '',
+          '0x10',
+          ' 20 ',
+        ], loose: true),
+        ['0', '0x10', '20'],
+      );
+      expect(
+        PlotViewModel.validateRProtocolAddresses(
+          ['', '0', '', '0x10'],
+          requiredCount: 3,
+          loose: true,
+        ),
+        ['0', '0x10'],
+      );
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', ''], loose: true),
+        throwsFormatException,
+      );
+    });
+
+    test('r协议地址校验拒绝全空、固定通道不足和中间空洞', () {
+      expect(
+        () => PlotViewModel.validateRProtocolAddresses(['', '']),
         throwsFormatException,
       );
       expect(
@@ -669,7 +1349,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => PlotViewModel.validateRProtocolAddresses(['1', '', '2']),
+        () => PlotViewModel.validateRProtocolAddresses(['0', '', '2']),
         throwsFormatException,
       );
     });
@@ -685,6 +1365,58 @@ void main() {
       expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
     });
 
+    test('宽松通道设置下FireWater自动识别按非空r地址显示槽位', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(ParserConfig.fireWaterDefault());
+      vm.setRChannelAddress(3, '0');
+      vm.setRChannelAddress(5, '0x10');
+      vm.setRProtocolLooseChannelSettings(true);
+      vm.setPlottingForTest(true);
+      expect(vm.rAddressDisplayCount, 3);
+    });
+
+    test('JustFloat自动识别运行时r协议按解析通道数显示', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault());
+
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+
+      vm.setPlottingForTest(true);
+      expect(vm.rAddressDisplayCount, 0);
+
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1, 2, 3], bytesConsumed: 12),
+      );
+      expect(vm.activeChannelCount, 3);
+      expect(vm.rAddressDisplayCount, 3);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([4, 5], bytesConsumed: 8));
+      expect(vm.activeChannelCount, 2);
+      expect(vm.rAddressDisplayCount, 2);
+
+      vm.setPlottingForTest(false);
+      expect(vm.rAddressDisplayCount, SendProtocolConfig.maxChannelCount);
+    });
+
+    test('固定接收通道数时r协议按配置通道数显示', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      for (var i = 0; i < 8; i++) {
+        vm.setRChannelAddress(i, '${i + 1}');
+      }
+
+      vm.setParserType(ParserType.justFloat);
+      vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 3);
+      expect(vm.rAddressDisplayCount, 3);
+
+      vm.setParserType(ParserType.fireWater);
+      vm.updateParserConfig(
+        ParserConfig.fireWaterDefault()..fireWaterChannelCount = 4,
+      );
+      expect(vm.rAddressDisplayCount, 4);
+    });
+
     test('众邦模式强制内置发送协议并在离开后恢复选择', () {
       vm.setSendProtocolType(SendProtocolType.rProtocol);
       expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
@@ -695,6 +1427,38 @@ void main() {
 
       vm.setParserType(ParserType.fireWater);
       expect(vm.effectiveSendProtocolType, SendProtocolType.rProtocol);
+    });
+
+    test('绘图运行时拒绝修改随机源、协议、解析器和配置文件', () {
+      final originalParser = vm.parserType;
+      final originalSendProtocol = vm.sendProtocolType;
+      final originalRandomSource = vm.useRandomSource;
+      final originalChannelCount = vm.parserConfig.channelCount;
+      final originalLooseSettings = vm.rProtocolLooseChannelSettings;
+      final originalProfileRevision = vm.profileRevision;
+
+      vm.setPlottingForTest(true);
+      vm.setUseRandomSource(!originalRandomSource);
+      vm.setParserType(ParserType.zobow);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setRProtocolLooseChannelSettings(!vm.rProtocolLooseChannelSettings);
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(channelCount: originalChannelCount + 1),
+      );
+      vm.selectRProfile(null);
+
+      expect(vm.useRandomSource, originalRandomSource);
+      expect(vm.parserType, originalParser);
+      expect(vm.sendProtocolType, originalSendProtocol);
+      expect(vm.parserConfig.channelCount, originalChannelCount);
+      expect(vm.rProtocolLooseChannelSettings, originalLooseSettings);
+      expect(vm.profileRevision, originalProfileRevision);
+      expect(
+        vm.lastStatusMessage,
+        AppStrings.plot.inputConfigurationDisabledWhilePlotting,
+      );
+
+      vm.setPlottingForTest(false);
     });
 
     test('随机源无串口时自动将r协议切回无并继续绘图', () async {
@@ -737,6 +1501,25 @@ void main() {
 
       await stopFuture;
       expect(vm.isStopping, false);
+    });
+
+    test('stopPlotting后高频模式恢复用户配置刷新帧率', () async {
+      vm.setRefreshFps(60);
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.startPlotting();
+      expect(vm.isPlotting, true);
+
+      vm.recordRateSampleForTest(0, 0);
+      vm.recordRateSampleForTest(6000, 300);
+      expect(vm.highRateMode, true);
+      expect(vm.effectiveRefreshFps, 30);
+
+      await vm.stopPlotting();
+
+      expect(vm.highRateMode, false);
+      expect(vm.refreshFps, 60);
+      expect(vm.effectiveRefreshFps, 60);
     });
 
     test('canUndoZoom初始为false', () {

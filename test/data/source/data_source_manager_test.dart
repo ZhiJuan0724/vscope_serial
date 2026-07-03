@@ -22,7 +22,7 @@ void main() {
         useSerial: false,
         useRandom: true,
         randomChannelCount: 4,
-        randomIntervalMs: 1, // 1KHz
+        randomFrequencyHz: targetRate.toDouble(),
       );
 
       final manager = DataSourceManager(serialService, config: config);
