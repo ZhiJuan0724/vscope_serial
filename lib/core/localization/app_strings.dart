@@ -341,21 +341,22 @@ final class _RawDataStrings {
   String get sendTextHint => '输入要发送的数据';
   String get saveDataTitle => '保存数据';
   String get chooseSaveFormat => '选择保存格式：';
+  String get chooseExportDirectory => '选择导出文件夹';
   String get savedTextPrefix => '已保存为文本';
   String get savedRawPrefix => '已保存为原始字节';
   String get textFileFormat => '文本 (.txt)';
   String get rawBytesFormat => '原始字节 (.bin)';
   String get exportingData => '正在导出数据';
   String get preparingExport => '正在准备原始数据';
-  String get decodingExportText => '正在按接收编码解析文本';
+  String get decodingExportText => '正在按文本编码解析数据';
   String get buildingRawExport => '正在计算校验并生成 BIN 数据';
   String get writingExportFile => '正在写入文件';
   String exportProgressPercent(double progress) =>
       '${(progress * 100).round()}%';
   String get rawSettingsTitle => '普通收发设置';
-  String get textDecoding => '文本解码方式:';
-  String get decodingHint => '解码';
-  String get textDecodingHelp => '非 HEX 模式下，使用选定的编码将原始字节解码为文本。';
+  String get textEncoding => '文本编码方式:';
+  String get encodingHint => '编码';
+  String get textEncodingHelp => '非 HEX 模式下，发送文本按选定编码转换为字节，接收字节按同一编码解码。';
   String get hexPacketTime => 'HEX分包时间 (μs):';
   String hexPacketTimeHelp(int timeWindowUs, String precisionText) {
     return '仅在 HEX显示 + 时间戳 开启时生效。当前: $timeWindowUsμs ($precisionText)';
@@ -364,7 +365,7 @@ final class _RawDataStrings {
   String get microsecondTimestamp => '显示微秒级时间戳';
   String get millisecondTimestamp => '显示毫秒级时间戳';
   String get displayLineLimit => '接收区最大显示行数:';
-  String get displayLineLimitHelp => '默认 10000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
+  String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
   String get enableShellEntry => '启用 Shell 模式入口';
   String get enableShellEntryHelp => '开启后普通收发工具栏显示 Shell 切换按钮。';
   String get timeWindowInvalid => '请输入 10 ~ 10000 之间的数值';

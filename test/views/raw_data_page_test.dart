@@ -8,6 +8,41 @@ import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
 
 void main() {
+  testWidgets('无原始数据时禁用保存按钮，收到数据后恢复', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = SerialService();
+    service.clearReceivedData();
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+
+    final exportButtonFinder = find.byKey(
+      const ValueKey('raw-data-export-button'),
+    );
+    expect(tester.widget<TextButton>(exportButtonFinder).onPressed, isNull);
+    expect(find.byKey(const ValueKey('raw-data-stats-overlay')), findsNothing);
+
+    service.debugAddRawReceiveData(Uint8List.fromList([1, 2, 3]));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(tester.widget<TextButton>(exportButtonFinder).onPressed, isNotNull);
+    expect(
+      find.byKey(const ValueKey('raw-data-stats-overlay')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('null'), findsNothing);
+
+    service.clearReceivedData();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('开启自动滚动时保持在最新行', (tester) async {
     final service = SerialService();
     service.clearReceivedData();

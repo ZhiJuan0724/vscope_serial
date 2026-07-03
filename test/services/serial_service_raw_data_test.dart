@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:charset/charset.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/services/serial_service.dart';
@@ -15,6 +16,7 @@ void main() {
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
+      service.setTextEncoding('UTF-8');
       service.sendHex = false;
       service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
     });
@@ -24,6 +26,7 @@ void main() {
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
+      service.setTextEncoding('UTF-8');
       service.sendHex = false;
       service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
     });
@@ -78,6 +81,16 @@ void main() {
       service.lineEnding = '\n';
 
       expect(utf8.decode(service.prepareShellTextData('help')), 'help\n');
+    });
+
+    test('普通文本和Shell文本发送使用设置中的编码', () {
+      service.setTextEncoding('GBK');
+      service.appendLineEnding = false;
+      service.lineEnding = '\r\n';
+
+      expect(service.prepareTextSendData('中文'), gbk.encode('中文'));
+      expect(service.prepareShellTextData('中文'), gbk.encode('中文\r\n'));
+      expect(service.encodeText('中文'), gbk.encode('中文'));
     });
 
     test('hex send appends CRC using selected byte order', () {
@@ -138,8 +151,8 @@ void main() {
       expect(service.debugSendLogState.packetCount, 0);
     });
 
-    test('display line limit defaults to 10000 and removes oldest lines', () {
-      expect(SerialService.defaultDisplayLineLimit, 10000);
+    test('display line limit defaults to 100000 and removes oldest lines', () {
+      expect(SerialService.defaultDisplayLineLimit, 100000);
       service.setDisplayLineLimit(100);
 
       for (var i = 0; i < 105; i++) {
@@ -189,6 +202,24 @@ void main() {
         expect(progress, [0.05, 0.25, 0.75, 1.0]);
       },
     );
+
+    test('没有原始数据时文本和BIN导出均不创建文件', () async {
+      final outputDirectory = await Directory.systemTemp.createTemp(
+        'vscope_empty_export_',
+      );
+      addTearDown(() => outputDirectory.delete(recursive: true));
+
+      expect(service.hasRawData, isFalse);
+      expect(
+        await service.exportAsText(outputDirectory: outputDirectory),
+        isNull,
+      );
+      expect(
+        await service.exportAsRawBytes(outputDirectory: outputDirectory),
+        isNull,
+      );
+      expect(await outputDirectory.list().toList(), isEmpty);
+    });
 
     test('raw export reports progress while building CRC payload', () async {
       service.debugAddRawReceiveData(Uint8List.fromList([1, 2, 3, 4]));

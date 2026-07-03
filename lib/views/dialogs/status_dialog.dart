@@ -43,7 +43,8 @@ class _StatusDialogState extends State<StatusDialog> {
           title: Text(AppStrings.serial.connectionTitle),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(
-            width: 520,
+            key: const ValueKey('serial-dialog-content'),
+            width: 400,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -105,7 +106,50 @@ class _StatusDialogState extends State<StatusDialog> {
                               : const Icon(Icons.refresh, size: 18),
                       label: Text(AppStrings.common.refresh),
                     ),
-                    const SizedBox(width: 8),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // 波特率 + 串口详细信息
+                Row(
+                  children: [
+                    SizedBox(
+                      key: const ValueKey('baud-rate-field-container'),
+                      width: 220,
+                      child: ComboInput(
+                        value: service.config.baudRate.toString(),
+                        hint: AppStrings.serial.baudRate,
+                        items: const [
+                          '9600',
+                          '19200',
+                          '38400',
+                          '57600',
+                          '115200',
+                          '230400',
+                          '460800',
+                          '512000',
+                          '921600',
+                          '1152000',
+                        ],
+                        enabled: !service.isConnected,
+                        decoration: InputDecoration(
+                          labelText: AppStrings.serial.baudRate,
+                          border: const OutlineInputBorder(),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                        ),
+                        onChanged: (value) {
+                          final rate = int.tryParse(value);
+                          if (rate != null && rate > 0) {
+                            service.updateConfig(
+                              service.config.copyWith(baudRate: rate),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                    const Spacer(),
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -124,41 +168,6 @@ class _StatusDialogState extends State<StatusDialog> {
                       ],
                     ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                // 波特率
-                ComboInput(
-                  value: service.config.baudRate.toString(),
-                  hint: AppStrings.serial.baudRate,
-                  items: const [
-                    '9600',
-                    '19200',
-                    '38400',
-                    '57600',
-                    '115200',
-                    '230400',
-                    '460800',
-                    '512000',
-                    '921600',
-                    '1152000',
-                  ],
-                  enabled: !service.isConnected,
-                  decoration: InputDecoration(
-                    labelText: AppStrings.serial.baudRate,
-                    border: const OutlineInputBorder(),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                  onChanged: (value) {
-                    final rate = int.tryParse(value);
-                    if (rate != null && rate > 0) {
-                      service.updateConfig(
-                        service.config.copyWith(baudRate: rate),
-                      );
-                    }
-                  },
                 ),
                 const SizedBox(height: 12),
                 // 数据位、停止位、校验位

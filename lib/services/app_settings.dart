@@ -164,7 +164,7 @@ class AppSettings {
 
   // ========== 原始数据设置 ==========
   /// 数据收发页面保留的最大显示行数。
-  int rawDataDisplayLineLimit = 10000;
+  int rawDataDisplayLineLimit = 100000;
 
   /// 数据收发页面 Shell 模式开关。
   bool rawDataShellMode = false;
@@ -288,7 +288,7 @@ class AppSettings {
     updateSource = 'auto';
     disableNotifications = false;
 
-    rawDataDisplayLineLimit = 10000;
+    rawDataDisplayLineLimit = 100000;
     rawDataShellMode = false;
     rawDataShellEnabled = false;
     rawDataShellInputMode = 'line';
@@ -407,7 +407,7 @@ class AppSettings {
       };
       disableNotifications = json['disableNotifications'] as bool? ?? false;
       rawDataDisplayLineLimit =
-          ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 10000)
+          ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 100000)
               .clamp(100, 100000)
               .toInt();
       rawDataShellMode = json['rawDataShellMode'] as bool? ?? false;

@@ -91,7 +91,7 @@ void main() {
       expect(settings.updateChannel, 'stable');
       expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
-      expect(settings.rawDataDisplayLineLimit, 10000);
+      expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataShellMode, isFalse);
       expect(settings.rawDataShellEnabled, isFalse);
       expect(settings.rawDataShellInputMode, 'line');

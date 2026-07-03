@@ -36,6 +36,7 @@ class RawDataViewModel extends BaseViewModel {
   String get crcPolyName => serialService.crcPolyName;
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
+  bool get hasRawData => serialService.hasRawData;
   int get timeWindowUs => serialService.timeWindowUs;
   int get displayLineLimit => serialService.displayLineLimit;
   Stream<Uint8List> get shellDataStream => serialService.shellDataStream;
@@ -43,9 +44,9 @@ class RawDataViewModel extends BaseViewModel {
       serialService.ymodemService.statusStream;
   YmodemTransferStatus get ymodemStatus => serialService.ymodemService.status;
   bool get isYmodemActive => ymodemStatus.isActive;
-  String get receiveEncoding => serialService.receiveEncoding;
+  String get textEncoding => serialService.textEncoding;
 
-  /// 可选的文本解码方式（用于非 HEX 显示模式）
+  /// 非 HEX 模式可选的文本收发编码。
   static const List<Map<String, String>> availableEncodings = [
     {'id': 'UTF-8', 'name': 'UTF-8'},
     {'id': 'GBK', 'name': 'GBK (简体中文)'},
@@ -75,8 +76,8 @@ class RawDataViewModel extends BaseViewModel {
     serialService.setReceiveHex(value);
   }
 
-  void setReceiveEncoding(String encoding) {
-    serialService.setReceiveEncoding(encoding);
+  void setTextEncoding(String encoding) {
+    serialService.setTextEncoding(encoding);
   }
 
   void setShowTimestamp(bool value) {
@@ -220,6 +221,8 @@ class RawDataViewModel extends BaseViewModel {
     await serialService.sendRawBytes(data);
   }
 
+  Uint8List encodeText(String text) => serialService.encodeText(text);
+
   Future<void> sendYmodemFile(
     File file, {
     YmodemPacketSizeMode packetSizeMode = YmodemPacketSizeMode.auto,
@@ -244,9 +247,19 @@ class RawDataViewModel extends BaseViewModel {
     return serialService.ymodemService.cancel();
   }
 
-  Future<String?> exportAsText({ExportProgressCallback? onProgress}) =>
-      serialService.exportAsText(onProgress: onProgress);
-  Future<String?> exportAsRawBytes({ExportProgressCallback? onProgress}) =>
-      serialService.exportAsRawBytes(onProgress: onProgress);
+  Future<String?> exportAsText({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) => serialService.exportAsText(
+    outputDirectory: outputDirectory,
+    onProgress: onProgress,
+  );
+  Future<String?> exportAsRawBytes({
+    Directory? outputDirectory,
+    ExportProgressCallback? onProgress,
+  }) => serialService.exportAsRawBytes(
+    outputDirectory: outputDirectory,
+    onProgress: onProgress,
+  );
   Map<String, String> get dataStats => serialService.dataStats;
 }

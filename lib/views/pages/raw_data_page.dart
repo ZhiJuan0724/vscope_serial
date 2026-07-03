@@ -180,7 +180,7 @@ class _RawDataPageState extends State<RawDataPage> {
           vm.isYmodemActive) {
         return;
       }
-      vm.sendShellBytes(Uint8List.fromList(utf8.encode(output)));
+      vm.sendShellBytes(vm.encodeText(output));
     };
   }
 
@@ -278,6 +278,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   Widget _buildToolbarIconAction({
+    Key? key,
     required String tooltip,
     required IconData icon,
     required VoidCallback? onPressed,
@@ -291,6 +292,7 @@ class _RawDataPageState extends State<RawDataPage> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          key: key,
           onTap: onPressed,
           borderRadius: BorderRadius.circular(4),
           hoverColor: Theme.of(
@@ -361,9 +363,7 @@ class _RawDataPageState extends State<RawDataPage> {
                         final data = await Clipboard.getData('text/plain');
                         final text = data?.text;
                         if (text != null) {
-                          await vm.sendShellBytes(
-                            Uint8List.fromList(utf8.encode(text)),
-                          );
+                          await vm.sendShellBytes(vm.encodeText(text));
                         }
                       }
                     },
@@ -519,9 +519,13 @@ class _RawDataPageState extends State<RawDataPage> {
                     },
                   ),
                   _buildToolbarIconAction(
+                    key: const ValueKey('raw-shell-export-button'),
                     tooltip: AppStrings.common.save,
                     icon: Icons.save,
-                    onPressed: () => _showExportDialog(context, vm),
+                    onPressed:
+                        vm.hasRawData
+                            ? () => _showExportDialog(context, vm)
+                            : null,
                   ),
                   _buildToolbarIconAction(
                     tooltip: AppStrings.raw.shellSettings,
@@ -1081,14 +1085,21 @@ class _RawDataPageState extends State<RawDataPage> {
       return KeyEventResult.handled;
     }
 
-    final bytes = _shellBytesForKey(event, ctrl: ctrl, alt: alt, meta: meta);
+    final bytes = _shellBytesForKey(
+      event,
+      vm,
+      ctrl: ctrl,
+      alt: alt,
+      meta: meta,
+    );
     if (bytes == null || bytes.isEmpty) return KeyEventResult.handled;
     vm.sendShellBytes(bytes);
     return KeyEventResult.handled;
   }
 
   Uint8List? _shellBytesForKey(
-    KeyEvent event, {
+    KeyEvent event,
+    RawDataViewModel vm, {
     required bool ctrl,
     required bool alt,
     required bool meta,
@@ -1114,7 +1125,7 @@ class _RawDataPageState extends State<RawDataPage> {
 
     final character = event.character;
     if (character == null || character.isEmpty) return null;
-    return Uint8List.fromList(utf8.encode(character));
+    return vm.encodeText(character);
   }
 
   int? _controlByteForKey(LogicalKeyboardKey key) {
@@ -1145,7 +1156,7 @@ class _RawDataPageState extends State<RawDataPage> {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) return;
-    await vm.sendShellBytes(Uint8List.fromList(utf8.encode(text)));
+    await vm.sendShellBytes(vm.encodeText(text));
   }
 
   @override
@@ -1326,7 +1337,11 @@ class _RawDataPageState extends State<RawDataPage> {
                           style: _toolbarFlatButtonStyle(),
                         ),
                         TextButton.icon(
-                          onPressed: () => _showExportDialog(context, vm),
+                          key: const ValueKey('raw-data-export-button'),
+                          onPressed:
+                              vm.hasRawData
+                                  ? () => _showExportDialog(context, vm)
+                                  : null,
                           icon: const Icon(Icons.save, size: 18),
                           label: Text(AppStrings.common.save),
                           style: _toolbarFlatButtonStyle(),
@@ -1397,37 +1412,39 @@ class _RawDataPageState extends State<RawDataPage> {
                         style: TextStyle(color: Colors.grey, fontSize: 14),
                       ),
                     ),
-                // 右下角统计信息
-                Positioned(
-                  bottom: 4,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surface.withValues(alpha: 0.9),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
+                if (vm.hasRawData)
+                  // 右下角统计信息
+                  Positioned(
+                    bottom: 4,
+                    right: 4,
+                    child: Container(
+                      key: const ValueKey('raw-data-stats-overlay'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
                         color: Theme.of(
                           context,
-                        ).dividerColor.withValues(alpha: 0.5),
+                        ).colorScheme.surface.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).dividerColor.withValues(alpha: 0.5),
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      vm.receiveHex
-                          ? '接收: ${vm.dataStats['原始字节']} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}'
-                          : '解码: ${vm.receiveEncoding} | 行数: ${vm.dataStats['文本行数']} | 缓存: ${vm.dataStats['文本缓存']}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      child: Text(
+                        vm.receiveHex
+                            ? '接收: ${vm.dataStats['完整原始数据']} | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}'
+                            : '编码: ${vm.textEncoding} | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ),
-                ),
               ],
             ),
           ),
@@ -1721,6 +1738,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   void _showExportDialog(BuildContext context, RawDataViewModel vm) {
+    if (!vm.hasRawData) return;
     showDialog(
       context: context,
       builder:
@@ -1783,7 +1801,13 @@ class _RawDataPageState extends State<RawDataPage> {
   ) async {
     Navigator.of(formatDialogContext).pop();
     await Future<void>.delayed(Duration.zero);
-    if (!pageContext.mounted) return;
+    if (!pageContext.mounted || !vm.hasRawData) return;
+
+    final outputPath = await file_picker.FilePicker.getDirectoryPath(
+      dialogTitle: AppStrings.raw.chooseExportDirectory,
+    );
+    if (outputPath == null || !pageContext.mounted || !vm.hasRawData) return;
+    final outputDirectory = Directory(outputPath);
 
     final progress = ValueNotifier<double>(0);
     final progressDialog = showDialog<void>(
@@ -1841,8 +1865,14 @@ class _RawDataPageState extends State<RawDataPage> {
 
       path =
           format == _RawDataExportFormat.text
-              ? await vm.exportAsText(onProgress: updateProgress)
-              : await vm.exportAsRawBytes(onProgress: updateProgress);
+              ? await vm.exportAsText(
+                outputDirectory: outputDirectory,
+                onProgress: updateProgress,
+              )
+              : await vm.exportAsRawBytes(
+                outputDirectory: outputDirectory,
+                onProgress: updateProgress,
+              );
     } finally {
       if (pageContext.mounted) {
         Navigator.of(pageContext, rootNavigator: true).pop();
@@ -1908,7 +1938,7 @@ class _RawDataPageState extends State<RawDataPage> {
       text: vm.displayLineLimit.toString(),
     );
     var shellEnabled = vm.shellEnabled;
-    var selectedEncoding = vm.receiveEncoding;
+    var selectedEncoding = vm.textEncoding;
     showDialog(
       context: context,
       builder:
@@ -1923,13 +1953,13 @@ class _RawDataPageState extends State<RawDataPage> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(AppStrings.raw.textDecoding),
+                      Text(AppStrings.raw.textEncoding),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: kSecondaryDialogWideFieldWidth,
                         child: NoAnimDropdown<String>(
                           value: selectedEncoding,
-                          hint: AppStrings.raw.decodingHint,
+                          hint: AppStrings.raw.encodingHint,
                           decoration: secondaryDialogFieldDecoration(),
                           items:
                               RawDataViewModel.availableEncodings.map((e) {
@@ -1947,7 +1977,7 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        AppStrings.raw.textDecodingHelp,
+                        AppStrings.raw.textEncodingHelp,
                         style: const TextStyle(
                           fontSize: 12,
                           color: Colors.grey,
@@ -2053,9 +2083,9 @@ class _RawDataPageState extends State<RawDataPage> {
                             us != vm.timeWindowUs ||
                             displayLineLimit != vm.displayLineLimit ||
                             shellEnabled != vm.shellEnabled ||
-                            selectedEncoding != vm.receiveEncoding;
+                            selectedEncoding != vm.textEncoding;
                         if (changed) {
-                          vm.setReceiveEncoding(selectedEncoding);
+                          vm.setTextEncoding(selectedEncoding);
                           vm.setTimeWindowUs(us);
                           vm.setDisplayLineLimit(displayLineLimit);
                           vm.setShellEnabled(shellEnabled);
@@ -2309,12 +2339,15 @@ class _RawDataPageState extends State<RawDataPage> {
           );
           items.add(
             PopupMenuItem(
+              key: const ValueKey('raw-data-export-menu-item'),
               value: 'export',
+              enabled: vm.hasRawData,
+              onTap:
+                  vm.hasRawData ? () => _showExportDialog(context, vm) : null,
               child: _buildMenuItem(
                 icon: Icons.save,
                 label: AppStrings.common.save,
               ),
-              onTap: () => _showExportDialog(context, vm),
             ),
           );
           items.add(

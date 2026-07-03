@@ -146,6 +146,20 @@ String _decodeBytesWithEncoding(Uint8List data, String encoding) {
   };
 }
 
+Uint8List _encodeTextWithEncoding(String text, String encoding) {
+  final bytes = switch (encoding) {
+    'UTF-8' => utf8.encode(text),
+    'GBK' => gbk.encode(text),
+    'BIG5' => CodePage('cp950', 'BIG5').encode(text),
+    'Shift_JIS' => shiftJis.encode(text),
+    'EUC-KR' => eucKr.encode(text),
+    'Latin-1' => latin1.encode(text),
+    'ASCII' => ascii.encode(text),
+    _ => utf8.encode(text),
+  };
+  return Uint8List.fromList(bytes);
+}
+
 Uint8List _buildRawExportBytes(Uint8List bytes) {
   final crcPoly = crc32Polys['CRC-32']!;
   final crcValue = calculateCrc(bytes, crcPoly);
@@ -324,7 +338,7 @@ class SerialService extends ChangeNotifier {
   String _pendingSendLinePrefix = '';
   static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
   static const int minDisplayLineLimit = 100;
-  static const int defaultDisplayLineLimit = 10000;
+  static const int defaultDisplayLineLimit = 100000;
   static const int maxDisplayLineLimit = 100000;
   int _displayLineLimit = defaultDisplayLineLimit;
   int get displayLineLimit => _displayLineLimit;
@@ -341,11 +355,10 @@ class SerialService extends ChangeNotifier {
   RawShellThemeMode rawShellThemeMode = RawShellThemeMode.light;
   RawShellCursorMode rawShellCursorMode = RawShellCursorMode.verticalBar;
 
-  // 文本解码选项（非 HEX 模式下生效）
-  String _receiveEncoding = 'UTF-8';
+  // 文本收发编码（非 HEX 模式下生效）
+  String _textEncoding = 'UTF-8';
 
-  /// 当前接收文本解码方式
-  String get receiveEncoding => _receiveEncoding;
+  String get textEncoding => _textEncoding;
 
   /// 文本模式单行最大长度（超过此长度即使没有换行符也强制换行）
   static const int _maxTextLineLength = 4096;
@@ -403,7 +416,7 @@ class SerialService extends ChangeNotifier {
       settings.rawDataShellCursor,
     );
     ymodemService.attach(shellDataStream);
-    _receiveEncoding = settings.rawDataEncoding;
+    _textEncoding = settings.rawDataEncoding;
   }
 
   /// 保存配置到 AppSettings
@@ -935,7 +948,7 @@ class SerialService extends ChangeNotifier {
 
   /// 使用当前选择的编码解码字节数据
   String _decodeBytes(Uint8List data) =>
-      _decodeBytesWithEncoding(data, _receiveEncoding);
+      _decodeBytesWithEncoding(data, _textEncoding);
 
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
@@ -1275,19 +1288,19 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置接收文本解码方式（仅非 HEX 模式生效）
-  void setReceiveEncoding(String encoding) {
-    if (_receiveEncoding == encoding) return;
-    _receiveEncoding = encoding;
+  /// 设置文本收发编码（仅非 HEX 模式生效）
+  void setTextEncoding(String encoding) {
+    if (_textEncoding == encoding) return;
+    _textEncoding = encoding;
     unawaited(_persistEncoding());
     _resetTextLineBuffers();
-    AppLogger().info('接收文本解码切换为: $encoding', category: 'DATA');
+    AppLogger().info('文本收发编码切换为: $encoding', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
   Future<void> _persistEncoding() async {
     final settings = AppSettings();
-    settings.rawDataEncoding = _receiveEncoding;
+    settings.rawDataEncoding = _textEncoding;
     await settings.save();
   }
 
@@ -1346,6 +1359,10 @@ class SerialService extends ChangeNotifier {
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
   }) async {
+    if (!hasRawData) {
+      AppLogger().warning('没有原始接收数据，已取消文本导出', category: 'DATA');
+      return null;
+    }
     try {
       onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
@@ -1356,7 +1373,7 @@ class SerialService extends ChangeNotifier {
       final file = File(path);
       final bytes = _rawBytes.toBytes();
       onProgress?.call(0.25);
-      final encoding = _receiveEncoding;
+      final encoding = _textEncoding;
       final content = await Isolate.run(
         () => _decodeBytesWithEncoding(bytes, encoding),
       );
@@ -1379,6 +1396,10 @@ class SerialService extends ChangeNotifier {
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
   }) async {
+    if (!hasRawData) {
+      AppLogger().warning('没有原始接收数据，已取消BIN导出', category: 'DATA');
+      return null;
+    }
     try {
       onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
@@ -1406,6 +1427,8 @@ class SerialService extends ChangeNotifier {
   /// 获取原始字节数据（不含校验）
   Uint8List get rawBytes => _rawBytes.toBytes();
 
+  bool get hasRawData => _rawBytesSize > 0;
+
   /// 获取数据大小信息
   Map<String, String> get dataStats {
     return <String, String>{
@@ -1413,7 +1436,7 @@ class SerialService extends ChangeNotifier {
       '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
       '完整原始数据':
           '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
-      '文本导出编码': _receiveEncoding,
+      '文本导出编码': _textEncoding,
     };
   }
 
@@ -1484,13 +1507,16 @@ class SerialService extends ChangeNotifier {
   @visibleForTesting
   Uint8List prepareTextSendData(String text) {
     final content = appendLineEnding ? '$text$lineEnding' : text;
-    return Uint8List.fromList(utf8.encode(content));
+    return _encodeTextWithEncoding(content, _textEncoding);
   }
 
   Uint8List prepareShellTextData(String text) {
     final content = '$text$lineEnding';
-    return Uint8List.fromList(utf8.encode(content));
+    return _encodeTextWithEncoding(content, _textEncoding);
   }
+
+  Uint8List encodeText(String text) =>
+      _encodeTextWithEncoding(text, _textEncoding);
 
   void send(
     Uint8List data, {
