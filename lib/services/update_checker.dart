@@ -149,15 +149,19 @@ class UpdateChecker {
       'https://gitee.com/ZhiJuan0724/vscope_serial/releases';
 
   final Future<dynamic> Function(Uri uri) _fetchJson;
+  final Future<String> Function() _getCurrentVersion;
 
-  UpdateChecker({Future<dynamic> Function(Uri uri)? fetchJson})
-    : _fetchJson = fetchJson ?? _defaultFetchJson;
+  UpdateChecker({
+    Future<dynamic> Function(Uri uri)? fetchJson,
+    Future<String> Function()? getCurrentVersion,
+  }) : _fetchJson = fetchJson ?? _defaultFetchJson,
+       _getCurrentVersion = getCurrentVersion ?? AppInfo.version;
 
   Future<UpdateCheckResult> check({
     UpdateChannel channel = UpdateChannel.stable,
     UpdateReleaseSource? source,
   }) async {
-    final currentVersion = await AppInfo.version();
+    final currentVersion = await _getCurrentVersion();
     final release =
         source == null
             ? await _tryFetchLatestRelease(channel)

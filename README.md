@@ -1,210 +1,121 @@
-# VScope Serial
+# SerialTools
 
-VScope Serial 是一个基于 Flutter 的 Windows 串口波形工具，用于串口数据接收、协议解析、实时绘图、测量统计和大文件回看。
+SerialTools 是一款面向 Windows 的串口数据收发与波形分析工具，支持多种串口协议、实时绘图、测量统计、Shell 终端和文件传输。
 
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows-42A5F5)
 ![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)
+![License](https://img.shields.io/badge/license-MIT-43A047)
 
-## 功能概览
 
-### 串口通信
+![SerialTools 主界面](docs/images/main-window.png)
 
-- Windows 串口枚举、连接和配置。
-- 底部状态栏快速打开串口连接弹窗。
-- 操作结果和错误通过浮动 SnackBar 临时提示，避免遗漏重要反馈；可在应用信息页的高级设置中全局关闭临时提示。
-- 原始数据收发页支持文本/HEX 显示、发送内容回显、时间戳、自动行尾、Shell 终端模式和 YMODEM 文件传输。
-- Windows 读取路径使用原生 DLL，降低 Dart 层串口读取不稳定的影响。
+## 主要功能
 
-### 协议解析
+- 串口枚举、连接、参数配置和连接状态显示。
+- 文本/HEX 原始数据收发，支持时间戳、自动行尾、回显和多种文本编码。
+- FireWater、固定帧、Zobow、JustFloat 接收协议，以及独立的发送协议配置。
+- 最多 16 个普通通道和 4 个数学通道实时绘图。
+- 波形缩放、平移、框选、跟随、观察、X/Y 测量和区间统计。
+- CSV、BIN 和旧版 `.dat` 数据导入，文本、BIN 和绘图数据导出。
+- Shell 终端、ANSI 显示和 YMODEM 文件发送/接收。
+- 稳定版/Beta 更新通道、自动更新校验和本地版本回退。
 
-- FireWater：CSV 风格文本数据，支持自动识别或固定通道数。
-- 固定帧协议：自定义可选帧头、帧尾和固定通道数；通道类型可统一配置或逐通道设置，支持 CRC-8/16/32 多项式、CRC 位于帧尾前后以及大小端字节序。
-- Zobow：4/8 通道固定帧，CRC16/MODBUS 校验；地址和 `uint16/int16` 类型在通道面板中配置。
-- JustFloat：VOFA 小端 `float32` 数组 + `00 00 80 7F` 帧尾，支持自动通道数识别。
-- 绘图页分别选择接收协议和发送协议。发送协议默认是“无”；Zobow 接收协议固定使用内置二进制初始化帧。
-- `r协议` 发送 UTF-8 文本命令 `r 地址1 地址2 ...\n`，地址支持十进制和 `0x` 前缀十六进制，并保留输入格式。
-- FireWater 和 JustFloat 使用自动通道识别时，开始绘图前显示全部 16 个通道槽位，便于预先填写多通道 r 地址。
-- Zobow/r 地址配置支持 JSON 和 CSV 导入；CSV 两列分别是通道名称和通道地址，并会按地址格式智能识别表头。
+## 下载与启动
 
-### 绘图
+1. 从 [GitHub Releases](https://github.com/ZhiJuan0724/vscope_serial/releases) 或 [Gitee Releases](https://gitee.com/ZhiJuan0724/vscope_serial/releases) 下载 Windows ZIP。
+2. 将压缩包完整解压到可写目录，不要直接在压缩包内运行。
+3. 启动 `vscope_serial.exe`。
 
-- 最多 16 通道显示，每通道可设置颜色、名称、显示、偏置、缩放、线宽和点半径。
-- 当前精确窗口默认上限 `1,000,000` 点，可在高级设置中调整到 `40,000,000` 点。
-- 内存级 `PlotLodIndex` 用于大窗口绘制，拖动/缩放时优先绘制 LOD 预览，小窗口使用精确点。
-- 抗锯齿固定开启。
-- 网格支持稀疏、普通、密集三档。
-- 多通道偏置模式下，右侧独立 Y 轴刻度列会按文本宽度动态调整，避免长数值挤占相邻通道。
+支持 Windows 10/11 x64。应用设置、日志、导出文件和更新缓存默认保存在程序所在目录，因此不建议安装到无写入权限的位置。
 
-### 交互与测量
+## 快速使用
 
-- 鼠标滚轮缩放，Shift+滚轮进行 Y 轴缩放。
-- 拖拽平移、框选放大、撤回视口。
-- X-X、Y-Y、统计范围和观察线都吸附当前显示窗口内的数据点。
-- 吸附点可高亮显示，高级设置中可开关，直径范围 `6~12 px`，默认 `8 px`。
-- 吸附高亮固定在吸附时的数据点；缩放后若该点不在当前窗口内则自动隐藏。
-- 统计显示 Max/Min/Avg、样本数和实际数据点 index 范围；大范围统计会采样并标注近似。
+### 连接串口
 
-### 文件与测试数据
+1. 点击窗口底部的串口状态区域。
+2. 选择端口、波特率、数据位、停止位和校验位。
+3. 点击“连接”。
+4. 如需查看设备名称，开启“显示详细信息”后手动刷新端口列表。
 
-- CSV/BIN 导入导出，支持导入旧版虚拟示波器 `.dat` 文件。
-- 大文件导入异步执行，并显示进度弹窗。
-- Zobow/FixedFrame 导出可基于运行期内保留的原始固定帧数据。
-- `test_tools/generate_plot_bin.py` 可生成大规模 BIN 测试文件，便于直接导入绘图页测试。
+设备名称读取默认关闭，避免部分 USB 串口驱动导致刷新耗时过长。
 
-## 快速开始
+### 原始数据收发
 
-### 环境要求
-- Flutter 3.x
-- Windows 10/11
-- Visual Studio 2022（Windows 桌面开发）
+1. 打开“数据收发”页。
+2. 按设备选择文本或 HEX 显示方式。
+3. 设置文本编码、时间戳、自动滚动和行尾。
+4. 输入内容并发送；停止接收后可将完整原始数据导出为文本或 BIN。
 
-### 运行
+文本发送和接收共用同一编码设置。显示行数只影响界面缓存，不影响完整原始数据导出。
 
-```bash
-flutter pub get
-flutter run -d windows
-```
+### 实时绘图
 
-### 构建 Release
+1. 打开“绘图”页并选择接收协议。
+2. 按需选择发送协议和地址配置。
+3. 设置通道名称、地址、数据类型和显示状态。
+4. 点击“开始绘图”。
+5. 使用工具栏或鼠标完成缩放、平移、测量、观察和数据导入导出。
 
-```bash
-python tools/build_release.py
-```
+绘图过程中会锁定协议、配置和数据导入导出，停止绘图后即可修改。
 
-## 基本使用
+![SerialTools 实时绘图](docs/images/plot-window.png)
 
-1. 在底部状态栏连接串口，或在绘图页启用随机数据源。
-2. 在绘图页选择接收协议，并按需选择发送协议：无、`r协议`，或 Zobow 自动使用的内置发送帧。
-3. 点击“开始”进入绘图。
-4. 使用滚轮、拖拽、框选、测量和观察线查看波形细节。
-5. 需要大文件回看时，使用文件导入，等待进度弹窗完成。
+## 协议说明
 
-## 高级设置
+| 协议 | 数据格式 | 适用场景 |
+| --- | --- | --- |
+| FireWater | 逗号分隔的 ASCII 数值文本 | 通用文本波形输出 |
+| 固定帧 | 可配置帧头、帧尾、通道类型、大小端和 CRC | 自定义二进制协议 |
+| Zobow | 4/8 通道固定帧，CRC16/MODBUS | 众邦设备 |
+| JustFloat | 小端 `float32` 数组 + `00 00 80 7F` 帧尾 | VOFA JustFloat 兼容设备 |
+| r 协议 | `r 地址1 地址2 ...` 文本命令 | 向设备发送通道读取地址 |
 
-绘图页工具栏的设置按钮打开绘图高级设置：
+固定帧、Zobow 和 r 协议的详细选项可在对应协议设置或通道设置中配置。地址配置支持 JSON/CSV 导入和导出。
 
-- 网格显示和网格密度。
-- 绘图刷新率：`30~60 fps`，默认 `60 fps`，使用输入框设置。
-- 绘图字体大小偏移。
-- 吸附点高亮：开关和直径 `6~12 px`。
-- 绘图窗口上限：`1,000,000~40,000,000` 点，默认 `1,000,000` 点。
+## 绘图操作
 
-应用信息页提供应用级高级设置：
+- 鼠标滚轮：缩放 X 轴。
+- `Shift + 滚轮`：缩放 Y 轴。
+- 鼠标拖动：平移当前视口。
+- `Shift + 左键拖动`：根据起始方向锁定并缩放 X 或 Y 轴。
+- 通道右键菜单：高级设置、偏置绑定和数学通道操作。
+- 绘图空白区域右键：添加数学通道或重置通道。
+- 工具栏：观察、跟随、图例、实时值、X/Y 测量和区间统计。
 
-- 显示应用名称、版本、构建时间和当前/上一版本说明。
-- 支持手动检查更新，并可开启启动时自动检查更新。
-- 发现 Windows 新版本后可下载并校验 Release 更新包，确认重启后由外置更新器覆盖安装；失败时自动回滚。
-- 可全局关闭应用内临时提示信息。
+高级设置中可调整背景、网格、刷新率、显示点数、浮窗透明度和交互行为。
 
-## 测试工具
+## Shell 与 YMODEM
 
-测试工具位于 `test_tools/`：
+Shell 入口默认隐藏，可在普通收发的高级设置中开启。Shell 支持：
 
-```bash
-pip install pyserial
-```
+- 命令行发送和逐键发送。
+- ANSI 颜色与终端控制序列。
+- `Ctrl+C` 向设备发送 ETX。
+- `Ctrl+Shift+C` 或右键复制终端文本。
+- YMODEM 文件发送与接收。
 
-Zobow 设备模拟：
+接收到的 YMODEM 文件默认保存到 `<程序目录>/exports/ymodem/`。
 
-```bash
-python test_tools/zobow_device.py --port COM14 --mode sine --interval 1
-```
+## 数据与配置
 
-JustFloat 设备模拟：
+| 目录 | 内容 |
+| --- | --- |
+| `settings/` | 应用设置 |
+| `config/` | 协议和通道配置 |
+| `logs/` | 运行日志 |
+| `exports/` | 数据与 YMODEM 文件 |
+| `updates/` | 更新缓存和回退版本 |
 
-```bash
-python test_tools/justfloat_device.py --port COM14 --mode sine --interval 1
-```
+“恢复默认设置”不会删除已保存的协议配置文件。排查连接、解析或性能问题时，可将 `logs/` 中对应时间的日志提供给开发者。
 
-Shell/YMODEM 虚拟设备：
+## 更新与回退
 
-```bash
-python test_tools/shell_device.py --port COM14 --mode terminal
-python test_tools/shell_device.py --port COM14 --mode ymodem-send --file E:\temp\tx.bin
-python test_tools/shell_device.py --port COM14 --mode ymodem-receive --output E:\temp\ymodem_rx
-```
+应用信息页可选择稳定版或 Beta 更新通道并手动检查更新。更新包下载后会校验文件大小和 SHA-256，再由外置更新器完成安装。
 
-模拟脚本运行时支持单键控制：`p` 暂停/恢复发送，`r` 复位到等待命令状态，`c` 关闭脚本。
+稳定版和 Beta 各保留一个本地回退版本。需要恢复旧版本时，在应用信息页的高级设置中选择对应回退槽。
 
-生成可导入绘图页的 BIN 文件：
+## 开发与许可
 
-```bash
-python test_tools/generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 1800000 --channels 8
-python test_tools/generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
-```
+开发环境、构建、测试和发布说明见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
-## 项目结构
-
-```text
-lib/                    # Flutter 应用源码
-├── core/               # 通用工具、日志、CRC 等基础能力
-├── data/
-│   ├── models/         # 绘图、协议、通道、设置等数据模型
-│   ├── parser/         # JustFloat、Zobow、固定帧等协议解析
-│   └── source/         # 绘图数据源和导入数据源
-├── services/           # 串口、设置、更新检查、配置导入、原生读取等服务
-├── viewmodels/         # 绘图、协议、原始数据等 MVVM 状态
-├── views/
-│   ├── dialogs/        # 配置、通道、应用信息等弹窗
-│   ├── pages/          # 绘图、数据收发、协议页面
-│   ├── plot/           # PlotPainter、PlotViewport、手势和坐标轴组件
-│   └── widgets/        # 通用 UI 组件
-└── main.dart           # 应用入口
-
-test/                   # 单元测试和组件测试
-├── data/               # 模型、解析器、数据源测试
-├── parser/             # 协议解析兼容测试
-├── services/           # 服务层测试
-├── viewmodels/         # ViewModel 行为测试
-└── views/              # 绘图视图组件测试
-
-test_tools/             # 串口模拟器、绘图 BIN 生成器和测试数据
-tools/                  # 发布构建脚本
-docs/                   # 项目上下文、历史记录和 TODO
-resources/              # 字体等资源文件
-windows/                # Windows 桌面端原生工程和串口读取 DLL
-```
-
-## 开发检查
-
-```bash
-dart format lib test
-flutter test
-flutter analyze
-```
-
-常用定向测试：
-
-```bash
-flutter test test/data/models/plot_lod_index_test.dart
-flutter test test/viewmodels/plot_viewmodel_test.dart
-flutter test test/viewmodels/plot_viewmodel_window_test.dart
-flutter test test/viewmodels/plot_viewmodel_stats_test.dart
-flutter test test/parser/just_float_parser_test.dart
-```
-
-## CI 与发布
-
-- PR 到 `main` 会运行静态分析、测试和 Windows Release 构建。
-- 手动构建可通过 GitHub Actions `workflow_dispatch` 触发。
-- 推送 `v*` tag 会构建发布包并创建 GitHub Release。
-- Release 同时包含 Windows ZIP 和 `update-manifest-vX.Y.Z.json`；手动搬运到 Gitee 时需保持两个附件完全一致。
-
-```bash
-git tag v1.0.5
-git push origin v1.0.5
-```
-
-## 主要依赖
-
-- Windows 原生 DLL：串口枚举、设备变化监听和数据读写
-- `provider`：状态管理
-- `path_provider`：路径获取
-- `file_picker`：文件选择
-- `logger`：日志
-- `ffi`：原生 DLL 接入
-- `window_manager`：窗口生命周期管理
-
-## License
-
-MIT
+本项目使用 [MIT License](LICENSE)。

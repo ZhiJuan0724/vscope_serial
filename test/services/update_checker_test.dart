@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/services/app_info.dart';
 import 'package:vscope_serial/services/update_checker.dart';
 
 void main() {
@@ -7,8 +6,9 @@ void main() {
 
   group('UpdateChecker', () {
     test('reports no update when latest beta equals current version', () async {
-      final currentVersion = await AppInfo.version();
+      const currentVersion = '1.0.6-beta.9';
       final checker = UpdateChecker(
+        getCurrentVersion: () async => currentVersion,
         fetchJson:
             (_) async => [
               {
