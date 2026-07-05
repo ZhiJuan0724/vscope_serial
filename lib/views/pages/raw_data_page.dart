@@ -33,6 +33,32 @@ enum _ShellFileTransferProtocol {
 
 enum _RawDataExportFormat { text, rawBytes }
 
+typedef _ReceiveAreaState =
+    ({
+      int displayRevision,
+      bool connected,
+      bool receiving,
+      bool receiveHex,
+      bool showTimestamp,
+      bool autoScroll,
+      bool shellEnabled,
+      bool hasRawData,
+      String textEncoding,
+    });
+
+typedef _SendAreaState =
+    ({
+      bool connected,
+      bool keepText,
+      bool appendLineEnding,
+      String lineEnding,
+      bool sendHex,
+      bool enableCrc,
+      CrcType crcType,
+      String crcPolyName,
+      CrcByteOrder crcByteOrder,
+    });
+
 extension on YmodemPacketSizeMode {
   String get label {
     return switch (this) {
@@ -139,18 +165,17 @@ class _RawDataPageState extends State<RawDataPage> {
 
     final textDirection = Directionality.of(context);
     final textScaler = MediaQuery.textScalerOf(context);
-    var removedHeight = 0.0;
-    for (final line in vm.lastTrimmedDisplayLines) {
-      final painter = TextPainter(
-        text: TextSpan(
-          text: line.isEmpty ? ' ' : line,
-          style: _receiveLineStyle,
-        ),
-        textDirection: textDirection,
-        textScaler: textScaler,
-      )..layout(maxWidth: lineWidth);
-      removedHeight += painter.height;
-    }
+    // 多行合并为一次文本布局。串口突发数据可能在一帧内淘汰大量旧行，
+    // 逐行创建 TextPainter 会把滚动保持本身变成 UI 卡顿源。
+    final removedText = vm.lastTrimmedDisplayLines
+        .map((line) => line.isEmpty ? ' ' : line)
+        .join('\n');
+    final painter = TextPainter(
+      text: TextSpan(text: removedText, style: _receiveLineStyle),
+      textDirection: textDirection,
+      textScaler: textScaler,
+    )..layout(maxWidth: lineWidth);
+    final removedHeight = painter.height;
 
     final previousOffset = _scrollController.offset;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1164,19 +1189,45 @@ class _RawDataPageState extends State<RawDataPage> {
     final service = Provider.of<SerialService>(context, listen: false);
     return ChangeNotifierProvider(
       create: (_) => RawDataViewModel(service),
-      child: Consumer<RawDataViewModel>(
-        builder: (context, vm, child) {
+      child: Selector<RawDataViewModel, bool>(
+        selector: (_, vm) => vm.shellMode,
+        builder: (context, shellMode, child) {
+          final vm = context.read<RawDataViewModel>();
           _syncShellSubscription(vm);
           _syncShellFocus(vm);
           _scrollToBottom(vm);
-          if (vm.shellMode) {
-            return _buildShellArea(vm);
+          if (shellMode) {
+            return Consumer<RawDataViewModel>(
+              builder: (_, shellVm, _) {
+                _syncShellSubscription(shellVm);
+                _syncShellFocus(shellVm);
+                return _buildShellArea(shellVm);
+              },
+            );
           }
           return Column(
             children: [
               SizedBox(
                 height: MediaQuery.of(context).size.height * _splitRatio,
-                child: _buildReceiveArea(vm),
+                child: Selector<RawDataViewModel, _ReceiveAreaState>(
+                  selector:
+                      (_, value) => (
+                        displayRevision: value.displayRevision,
+                        connected: value.isConnected,
+                        receiving: value.isRawReceiving,
+                        receiveHex: value.receiveHex,
+                        showTimestamp: value.showTimestamp,
+                        autoScroll: value.autoScroll,
+                        shellEnabled: value.shellEnabled,
+                        hasRawData: value.hasRawData,
+                        textEncoding: value.textEncoding,
+                      ),
+                  builder: (context, _, _) {
+                    final receiveVm = context.read<RawDataViewModel>();
+                    _scrollToBottom(receiveVm);
+                    return _buildReceiveArea(receiveVm);
+                  },
+                ),
               ),
               GestureDetector(
                 behavior: HitTestBehavior.translucent,
@@ -1207,7 +1258,25 @@ class _RawDataPageState extends State<RawDataPage> {
                   ),
                 ),
               ),
-              Expanded(child: _buildSendArea(vm)),
+              Expanded(
+                child: Selector<RawDataViewModel, _SendAreaState>(
+                  selector:
+                      (_, value) => (
+                        connected: value.isConnected,
+                        keepText: value.keepSendText,
+                        appendLineEnding: value.appendLineEnding,
+                        lineEnding: value.lineEnding,
+                        sendHex: value.sendHex,
+                        enableCrc: value.enableCrc,
+                        crcType: value.crcType,
+                        crcPolyName: value.crcPolyName,
+                        crcByteOrder: value.crcByteOrder,
+                      ),
+                  builder:
+                      (context, _, _) =>
+                          _buildSendArea(context.read<RawDataViewModel>()),
+                ),
+              ),
             ],
           );
         },

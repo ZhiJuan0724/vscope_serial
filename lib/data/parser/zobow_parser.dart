@@ -78,16 +78,26 @@ class ZobowParser extends IDataParser {
 
   @override
   void feed(Uint8List data) {
+    for (final result in feedBatch(data)) {
+      if (!_controller.isClosed) {
+        _controller.add(result);
+      }
+    }
+  }
+
+  @override
+  List<ParseResult> feedBatch(Uint8List data) {
     try {
-      if (data.isEmpty) return;
+      if (data.isEmpty) return const [];
       final now = _now();
       if (_buffer.isEmpty) {
         _residualSince = now;
       }
       _buffer.addAll(data);
-      _processBuffer(now);
+      return _processBuffer(now);
     } catch (e, stack) {
       AppLogger().debug('众邦电控解析异常: $e\n$stack', category: 'PARSER');
+      return const [];
     }
   }
 
@@ -95,7 +105,8 @@ class ZobowParser extends IDataParser {
   ///
   /// 使用滑动窗口策略：从索引0开始尝试解析，CRC失败则移动到索引1重试，
   /// 直到找到有效帧或遍历完所有可能位置。
-  void _processBuffer(DateTime now) {
+  List<ParseResult> _processBuffer(DateTime now) {
+    final results = <ParseResult>[];
     var scanOffset = 0;
     var scanAttempts = 0;
     var parsedFrame = false;
@@ -112,13 +123,8 @@ class ZobowParser extends IDataParser {
         _consecutiveFailures = 0;
         parsedFrame = true;
 
-        // 移除已跳过的噪声和已消费的帧
-        _buffer.removeRange(0, scanOffset + _frameLength);
-        scanOffset = 0;
-
-        if (!_controller.isClosed) {
-          _controller.add(result);
-        }
+        results.add(result);
+        scanOffset += _frameLength;
 
         // 高频场景下禁用逐帧trace日志，避免性能瓶颈
         // AppLogger().trace(...)
@@ -158,6 +164,7 @@ class ZobowParser extends IDataParser {
         _consecutiveFailures = 0;
       }
     }
+    return results;
   }
 
   /// 尝试从指定索引位置解析一帧

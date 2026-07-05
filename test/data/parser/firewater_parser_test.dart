@@ -37,6 +37,22 @@ void main() {
       expect(results[2].values, [5.0, 6.0]);
     });
 
+    test('批量入口一次返回字节块内的全部数据行', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+
+      final results = parser.feedBatch(
+        Uint8List.fromList('1,2\n3,4\n5,6\n'.codeUnits),
+      );
+
+      expect(results, hasLength(3));
+      expect(results.map((result) => result.values).toList(), [
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+    });
+
     test('分多次feed解析', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];

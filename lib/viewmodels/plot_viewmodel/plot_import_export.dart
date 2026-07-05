@@ -7,7 +7,11 @@ extension PlotViewModelImportExport on PlotViewModel {
   ///
   /// [selectedPath] 为 null 时，自动保存到可执行文件目录下的 exports 文件夹。
   /// 返回实际保存的文件路径，失败返回 null。
-  Future<String?> exportToCsv(String? selectedPath) async {
+  Future<String?> exportToCsv(
+    String? selectedPath, {
+    PlotExportProgressCallback? onProgress,
+  }) async {
+    IOSink? sink;
     try {
       if (_nextIndex == 0) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
@@ -24,91 +28,69 @@ extension PlotViewModelImportExport on PlotViewModel {
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         path = '${dir.path}/vscope_plot_$timestamp.csv';
       }
-      final file = File(path);
-
-      // 构建 CSV 内容
-      final buffer = StringBuffer();
-
-      // 表头: x,y1,y2,...
       final maxChannels = _exportChannelCount;
-      buffer.writeln(
+      final pointCount = _exportPointCount;
+      final file = File(path);
+      sink = file.openWrite();
+      sink.writeln(
         '# vscope_plot_meta=${jsonEncode(_buildExportMetadata(maxChannels))}',
       );
-      buffer.write('x');
+      final header = StringBuffer('x');
       for (int i = 0; i < maxChannels; i++) {
-        buffer.write(',y${i + 1}');
+        header.write(',y${i + 1}');
       }
-      buffer.writeln();
+      sink.writeln(header);
 
-      // 数据行。所有协议导出历史全量数据；Zobow 从原始帧按需解析。
-      if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-        for (
-          int packetIndex = 0;
-          packetIndex < _zobowRawFrames.packetCount;
-          packetIndex++
-        ) {
-          final values = ZobowParser.decodeFrameValues(
-            _zobowRawFrames.readPacket(packetIndex),
-            _parserConfig,
-          );
-          buffer.write(packetIndex);
-          for (int i = 0; i < maxChannels; i++) {
-            buffer.write(',');
-            buffer.write(values[i].toStringAsFixed(6));
-          }
-          buffer.writeln();
-        }
-      } else if (_parserType == ParserType.fixedFrame &&
-          _fixedFrameRawFrames.isNotEmpty) {
-        for (
-          int packetIndex = 0;
-          packetIndex < _fixedFrameRawFrames.packetCount;
-          packetIndex++
-        ) {
-          final values = FixedFrameParser.decodeFrameValues(
-            _fixedFrameRawFrames.readPacket(packetIndex),
-            _parserConfig,
-          );
-          buffer.write(packetIndex);
-          for (int i = 0; i < maxChannels; i++) {
-            buffer.write(',');
-            if (i < values.length) {
-              buffer.write(values[i].toStringAsFixed(6));
-            }
-          }
-          buffer.writeln();
-        }
-      } else {
-        for (
-          int pointIndex = 0;
-          pointIndex < _parsedHistory.length;
-          pointIndex++
-        ) {
-          final values = _parsedHistory.valuesAt(pointIndex);
+      const batchSize = 4096;
+      for (
+        var batchStart = 0;
+        batchStart < pointCount;
+        batchStart += batchSize
+      ) {
+        final batchEnd = math.min(batchStart + batchSize, pointCount);
+        final buffer = StringBuffer();
+        for (var pointIndex = batchStart; pointIndex < batchEnd; pointIndex++) {
+          final values =
+              _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
+          final valueCount =
+              values?.length ?? _parsedHistory.valueCountAt(pointIndex);
           buffer.write(pointIndex);
-          for (int i = 0; i < maxChannels; i++) {
+          for (var channel = 0; channel < maxChannels; channel++) {
             buffer.write(',');
-            if (i < values.length) {
-              buffer.write(values[i].toStringAsFixed(6));
+            if (channel < valueCount) {
+              final value =
+                  values?[channel] ??
+                  _parsedHistory.valueAt(pointIndex, channel);
+              buffer.write(value.toStringAsFixed(6));
             }
           }
           buffer.writeln();
         }
+        sink.write(buffer);
+        await sink.flush();
+        await _reportExportProgress(onProgress, '写入 CSV', batchEnd, pointCount);
       }
 
-      await file.writeAsString(buffer.toString());
+      await sink.flush();
+      await sink.close();
+      sink = null;
       AppLogger().info('已导出 CSV: $path', category: 'PLOT');
       return path;
     } catch (e) {
+      await sink?.close();
       AppLogger().error('CSV 导出失败: $e', category: 'PLOT');
       return null;
     }
   }
 
-  Future<String?> exportToBin(String? selectedPath) async {
+  Future<String?> exportToBin(
+    String? selectedPath, {
+    PlotExportProgressCallback? onProgress,
+  }) async {
+    RandomAccessFile? output;
     try {
-      final points = _collectExportPoints();
-      if (points.isEmpty) {
+      final pointCount = _exportPointCount;
+      if (pointCount == 0) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
@@ -125,29 +107,49 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
 
       final channelCount = _exportChannelCount;
-      final payloadLength = points.length * (8 + channelCount * 8);
-      final payload = ByteData(payloadLength);
-      var offset = 0;
-      for (final point in points) {
-        payload.setFloat64(offset, point.timestamp, Endian.little);
-        offset += 8;
-        for (int i = 0; i < channelCount; i++) {
-          final value = i < point.values.length ? point.values[i] : 0.0;
-          payload.setFloat64(offset, value, Endian.little);
-          offset += 8;
-        }
-      }
-
-      final payloadBytes = payload.buffer.asUint8List();
+      final rowLength = 8 + channelCount * 8;
+      final payloadLength = pointCount * rowLength;
       final metadataBytes = utf8.encode(
         jsonEncode(_buildExportMetadata(channelCount)),
       );
-      final dataBlock =
-          BytesBuilder(copy: false)
-            ..add(metadataBytes)
-            ..add(payloadBytes);
-      final dataBlockBytes = dataBlock.takeBytes();
-      final checksum = calculateCrc(dataBlockBytes, crc32Polys['CRC-32']!);
+      final crc = CrcCalculator(crc32Polys['CRC-32']!)..add(metadataBytes);
+      output = await File(path).open(mode: FileMode.write);
+      await output.writeFrom(Uint8List(28));
+      await output.writeFrom(metadataBytes);
+
+      const batchSize = 4096;
+      for (
+        var batchStart = 0;
+        batchStart < pointCount;
+        batchStart += batchSize
+      ) {
+        final batchEnd = math.min(batchStart + batchSize, pointCount);
+        final bytes = ByteData((batchEnd - batchStart) * rowLength);
+        var offset = 0;
+        for (var pointIndex = batchStart; pointIndex < batchEnd; pointIndex++) {
+          final values =
+              _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
+          final valueCount =
+              values?.length ?? _parsedHistory.valueCountAt(pointIndex);
+          bytes.setFloat64(offset, pointIndex.toDouble(), Endian.little);
+          offset += 8;
+          for (var channel = 0; channel < channelCount; channel++) {
+            final value =
+                channel < valueCount
+                    ? values == null
+                        ? _parsedHistory.valueAt(pointIndex, channel)
+                        : values[channel]
+                    : 0.0;
+            bytes.setFloat64(offset, value, Endian.little);
+            offset += 8;
+          }
+        }
+        final chunk = bytes.buffer.asUint8List();
+        crc.add(chunk);
+        await output.writeFrom(chunk);
+        await _reportExportProgress(onProgress, '写入 BIN', batchEnd, pointCount);
+      }
+
       final header = ByteData(28);
       const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
       for (int i = 0; i < magic.length; i++) {
@@ -155,19 +157,19 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
       header.setUint16(8, 2, Endian.little);
       header.setUint16(10, channelCount, Endian.little);
-      header.setUint32(12, points.length, Endian.little);
+      header.setUint32(12, pointCount, Endian.little);
       header.setUint32(16, payloadLength, Endian.little);
-      header.setUint32(20, checksum, Endian.little);
+      header.setUint32(20, crc.digest, Endian.little);
       header.setUint32(24, metadataBytes.length, Endian.little);
-
-      final builder =
-          BytesBuilder(copy: false)
-            ..add(header.buffer.asUint8List())
-            ..add(dataBlockBytes);
-      await File(path).writeAsBytes(builder.takeBytes());
+      await output.setPosition(0);
+      await output.writeFrom(header.buffer.asUint8List());
+      await output.flush();
+      await output.close();
+      output = null;
       AppLogger().info('已导出 BIN: $path', category: 'PLOT');
       return path;
     } catch (e) {
+      await output?.close();
       AppLogger().error('BIN 导出失败: $e', category: 'PLOT');
       return null;
     }
@@ -182,6 +184,39 @@ extension PlotViewModelImportExport on PlotViewModel {
       return _parserConfig.channelCount;
     }
     return _parsedHistory.maxChannelCount;
+  }
+
+  int get _exportPointCount {
+    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+      return _zobowRawFrames.packetCount;
+    }
+    if (_parserType == ParserType.fixedFrame &&
+        _fixedFrameRawFrames.isNotEmpty) {
+      return _fixedFrameRawFrames.packetCount;
+    }
+    return _parsedHistory.length;
+  }
+
+  bool get _exportsParsedHistory =>
+      !(_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) &&
+      !(_parserType == ParserType.fixedFrame &&
+          _fixedFrameRawFrames.isNotEmpty);
+
+  List<double> _decodeExportValuesAt(int pointIndex) {
+    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+      return ZobowParser.decodeFrameValues(
+        _zobowRawFrames.readPacket(pointIndex),
+        _parserConfig,
+      );
+    }
+    if (_parserType == ParserType.fixedFrame &&
+        _fixedFrameRawFrames.isNotEmpty) {
+      return FixedFrameParser.decodeFrameValues(
+        _fixedFrameRawFrames.readPacket(pointIndex),
+        _parserConfig,
+      );
+    }
+    throw StateError('文本历史无需解码');
   }
 
   Map<String, dynamic> _buildExportMetadata(int channelCount) {
@@ -213,49 +248,16 @@ extension PlotViewModelImportExport on PlotViewModel {
     return metadata;
   }
 
-  List<PlotDataPoint> _collectExportPoints() {
-    final points = <PlotDataPoint>[];
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-      for (int i = 0; i < _zobowRawFrames.packetCount; i++) {
-        points.add(
-          PlotDataPoint(
-            index: i,
-            timestamp: i.toDouble(),
-            values: ZobowParser.decodeFrameValues(
-              _zobowRawFrames.readPacket(i),
-              _parserConfig,
-            ),
-          ),
-        );
-      }
-      return points;
-    }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      for (int i = 0; i < _fixedFrameRawFrames.packetCount; i++) {
-        points.add(
-          PlotDataPoint(
-            index: i,
-            timestamp: i.toDouble(),
-            values: FixedFrameParser.decodeFrameValues(
-              _fixedFrameRawFrames.readPacket(i),
-              _parserConfig,
-            ),
-          ),
-        );
-      }
-      return points;
-    }
-    for (int i = 0; i < _parsedHistory.length; i++) {
-      points.add(
-        PlotDataPoint(
-          index: i,
-          timestamp: i.toDouble(),
-          values: _parsedHistory.valuesAt(i),
-        ),
-      );
-    }
-    return points;
+  Future<void> _reportExportProgress(
+    PlotExportProgressCallback? onProgress,
+    String stage,
+    int current,
+    int total,
+  ) async {
+    onProgress?.call(
+      PlotImportProgress(stage: stage, current: current, total: total),
+    );
+    await Future<void>.delayed(Duration.zero);
   }
 
   // ========== 导入 ==========

@@ -1324,7 +1324,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
           context: context,
           barrierDismissible: false,
           builder:
-              (dialogContext) => _PlotImportProgressDialog(
+              (dialogContext) => _PlotFileProgressDialog(
                 title: '更新通道数据类型',
                 progressListenable: progressNotifier,
               ),

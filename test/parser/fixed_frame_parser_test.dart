@@ -22,6 +22,23 @@ void main() {
       expect(result.values, [1, 2]);
     });
 
+    test('批量入口一次解析多帧并跳过帧头前噪声', () {
+      final config = _crcConfig(ChecksumPosition.beforeFrameTail);
+      final parser = FixedFrameParser(config);
+      addTearDown(parser.dispose);
+      final bytes =
+          BytesBuilder()
+            ..add([0x7E, 0x7D])
+            ..add(_buildFrame(config, [1, 0, 2, 0]))
+            ..add(_buildFrame(config, [3, 0, 4, 0]));
+
+      final results = parser.feedBatch(bytes.takeBytes());
+
+      expect(results, hasLength(2));
+      expect(results[0].values, [1, 2]);
+      expect(results[1].values, [3, 4]);
+    });
+
     test('CRC16支持位于帧尾后', () async {
       final config = _crcConfig(ChecksumPosition.afterFrameTail);
       final parser = FixedFrameParser(config);

@@ -2550,11 +2550,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       allowedExtensions: ['csv'],
     );
     if (result == null) return; // 用户取消
+    if (!context.mounted) return;
 
-    final path = await vm.exportToCsv(result);
-    if (path != null && context.mounted) {
-      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
-    }
+    await _runExportWithProgress(
+      context: context,
+      vm: vm,
+      title: AppStrings.plot.exportCsvTitle,
+      exportFile:
+          ({onProgress}) => vm.exportToCsv(result, onProgress: onProgress),
+    );
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
@@ -2565,11 +2569,58 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       allowedExtensions: ['bin'],
     );
     if (result == null) return;
+    if (!context.mounted) return;
 
-    final path = await vm.exportToBin(result);
-    if (path != null && context.mounted) {
-      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
+    await _runExportWithProgress(
+      context: context,
+      vm: vm,
+      title: AppStrings.plot.exportBinTitle,
+      exportFile:
+          ({onProgress}) => vm.exportToBin(result, onProgress: onProgress),
+    );
+  }
+
+  Future<void> _runExportWithProgress({
+    required BuildContext context,
+    required PlotViewModel vm,
+    required String title,
+    required Future<String?> Function({PlotExportProgressCallback? onProgress})
+    exportFile,
+  }) async {
+    final progressNotifier = ValueNotifier<PlotImportProgress>(
+      PlotImportProgress(
+        stage: AppStrings.plot.exportPreparing,
+        current: 0,
+        total: 0,
+      ),
+    );
+    var dialogClosed = false;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (dialogContext) => _PlotFileProgressDialog(
+              title: title,
+              progressListenable: progressNotifier,
+            ),
+      ).whenComplete(() => dialogClosed = true),
+    );
+    await _waitForImportDialogPresentation();
+
+    final path = await exportFile(
+      onProgress: (progress) => progressNotifier.value = progress,
+    );
+    if (context.mounted && !dialogClosed) {
+      Navigator.of(context, rootNavigator: true).pop();
     }
+    progressNotifier.dispose();
+    if (!context.mounted) return;
+    vm.showStatusMessage(
+      path == null
+          ? AppStrings.plot.exportFailed
+          : '${AppStrings.plot.exportedPrefix}: $path',
+    );
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
@@ -2695,7 +2746,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         context: context,
         barrierDismissible: false,
         builder:
-            (dialogContext) => _PlotImportProgressDialog(
+            (dialogContext) => _PlotFileProgressDialog(
               title: title,
               progressListenable: progressNotifier,
             ),

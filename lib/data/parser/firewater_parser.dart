@@ -21,18 +21,29 @@ class FireWaterParser extends IDataParser {
 
   @override
   void feed(Uint8List data) {
-    try {
-      final text = String.fromCharCodes(data);
-      _buffer.write(text);
-      _processBuffer();
-    } catch (e) {
-      AppLogger().debug('FireWater 解析异常: $e', category: 'PARSER');
+    for (final result in feedBatch(data)) {
+      if (!_controller.isClosed) {
+        _controller.add(result);
+      }
     }
   }
 
-  void _processBuffer() {
+  @override
+  List<ParseResult> feedBatch(Uint8List data) {
+    try {
+      final text = String.fromCharCodes(data);
+      _buffer.write(text);
+      return _processBuffer();
+    } catch (e) {
+      AppLogger().debug('FireWater 解析异常: $e', category: 'PARSER');
+      return const [];
+    }
+  }
+
+  List<ParseResult> _processBuffer() {
     final bufferStr = _buffer.toString();
     final lines = bufferStr.split('\n');
+    final results = <ParseResult>[];
 
     // 保留最后一行（可能不完整）
     _buffer.clear();
@@ -46,11 +57,9 @@ class FireWaterParser extends IDataParser {
 
     for (final line in completeLines) {
       if (line.trim().isEmpty) continue;
-      final result = _parseLine(line);
-      if (!_controller.isClosed) {
-        _controller.add(result);
-      }
+      results.add(_parseLine(line));
     }
+    return results;
   }
 
   ParseResult _parseLine(String line) {

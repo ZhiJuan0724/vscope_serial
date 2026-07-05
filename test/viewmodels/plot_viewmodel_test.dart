@@ -97,6 +97,16 @@ void main() {
       expect(vm.cursor, null);
     });
 
+    test('解析历史按实际通道数分配存储空间', () {
+      for (var i = 0; i < 5000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([1, 2, 3, 4], bytesConsumed: 16),
+        );
+      }
+
+      expect(vm.parsedHistoryAllocatedValueSlotsForTest, 2 * 4096 * 4);
+    });
+
     test('配置选择会递增配置修订号以刷新工具栏', () {
       final before = vm.profileRevision;
 
@@ -389,8 +399,11 @@ void main() {
       expect(csvError, isNull);
 
       final binPath = '${dir.path}/plot.bin';
-      final exported = await vm.exportToBin(binPath);
+      final progress = <PlotImportProgress>[];
+      final exported = await vm.exportToBin(binPath, onProgress: progress.add);
       expect(exported, binPath);
+      expect(progress, isNotEmpty);
+      expect(progress.last.current, progress.last.total);
 
       final imported = PlotViewModel(serialService);
       addTearDown(imported.dispose);

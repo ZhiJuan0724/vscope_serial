@@ -325,6 +325,8 @@ class SerialService extends ChangeNotifier {
   List<String> get receivedLines => _receivedLines;
   int _receivedTextBytes = 0;
   Timer? _displayNotifyTimer;
+  int _displayRevision = 0;
+  int get displayRevision => _displayRevision;
   bool _displayBatchHasTrim = false;
   int _displayTrimRevision = 0;
   List<String> _lastTrimmedDisplayLines = <String>[];
@@ -1168,6 +1170,7 @@ class SerialService extends ChangeNotifier {
     if (_displayNotifyTimer != null) return;
     _displayNotifyTimer = Timer(const Duration(milliseconds: 16), () {
       _displayNotifyTimer = null;
+      _displayRevision++;
       notifyListeners();
     });
   }

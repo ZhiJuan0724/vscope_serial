@@ -150,6 +150,10 @@ final class _PlotStrings {
   String get chooseExportFormat => '选择导出格式';
   String get saveCsvFile => '保存 CSV 文件';
   String get saveBinFile => '保存 BIN 文件';
+  String get exportCsvTitle => '导出 CSV';
+  String get exportBinTitle => '导出 BIN';
+  String get exportPreparing => '准备导出';
+  String get exportFailed => '导出失败';
   String get exportedPrefix => '已导出';
   String get chooseImportFormat => '选择导入格式';
   String get chooseCsvFile => '选择 CSV 文件';

@@ -1,13 +1,13 @@
 part of '../plot_page.dart';
 
-/// 绘图页面的文件导入导出辅助 UI，包括格式枚举和导入进度弹窗。
+/// 绘图页面的文件导入导出辅助 UI，包括格式枚举和文件进度弹窗。
 enum _PlotFileFormat { csv, bin, legacyDat }
 
-class _PlotImportProgressDialog extends StatelessWidget {
+class _PlotFileProgressDialog extends StatelessWidget {
   final String title;
   final ValueListenable<PlotImportProgress> progressListenable;
 
-  const _PlotImportProgressDialog({
+  const _PlotFileProgressDialog({
     required this.title,
     required this.progressListenable,
   });

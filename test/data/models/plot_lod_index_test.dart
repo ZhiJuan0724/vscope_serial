@@ -66,5 +66,19 @@ void main() {
         isNull,
       );
     });
+
+    test('sampled updates do not allocate skipped buckets', () {
+      final index = PlotLodIndex();
+      for (var i = 0; i < 100000; i++) {
+        index.addSampled(i, [i.toDouble()], 1024);
+      }
+
+      expect(index.length, 100000);
+      expect(index.allocatedBucketCount, lessThan(1000));
+      expect(
+        index.query(channelIndex: 0, xMin: 0, xMax: 99999, plotWidth: 100),
+        isNotNull,
+      );
+    });
   });
 }

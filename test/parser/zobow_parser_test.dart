@@ -81,6 +81,20 @@ void main() {
       expect(results[0], [100.0, 200.0, 300.0, 400.0]);
     });
 
+    test('批量入口一次返回连续帧并跳过噪声', () {
+      final bytes =
+          BytesBuilder()
+            ..add([0x7E, 0x7D])
+            ..add(buildFrame([1, 2, 3, 4]))
+            ..add(buildFrame([5, 6, 7, 8]));
+
+      final results = parser.feedBatch(bytes.takeBytes());
+
+      expect(results, hasLength(2));
+      expect(results[0].values, [1, 2, 3, 4]);
+      expect(results[1].values, [5, 6, 7, 8]);
+    });
+
     test('8通道帧解析', () async {
       config.channelCount = 8;
       parser = ZobowParser(config);

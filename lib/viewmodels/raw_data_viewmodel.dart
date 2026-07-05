@@ -12,6 +12,7 @@ class RawDataViewModel extends BaseViewModel {
   RawDataViewModel(super.serialService);
 
   List<String> get receivedLines => serialService.receivedLines;
+  int get displayRevision => serialService.displayRevision;
   int get displayTrimRevision => serialService.displayTrimRevision;
   List<String> get lastTrimmedDisplayLines =>
       serialService.lastTrimmedDisplayLines;

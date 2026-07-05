@@ -40,6 +40,7 @@ part 'plot_viewmodel/plot_profiles.dart';
 part 'plot_viewmodel/plot_support_models.dart';
 
 typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
+typedef PlotExportProgressCallback = void Function(PlotImportProgress progress);
 
 class PlotImportProgress {
   final String stage;
@@ -819,6 +820,10 @@ class PlotViewModel extends BaseViewModel {
   @visibleForTesting
   int get rateBucketCountForTest => _rateBuckets.length;
 
+  @visibleForTesting
+  int get parsedHistoryAllocatedValueSlotsForTest =>
+      _parsedHistory.allocatedValueSlots;
+
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
 
@@ -971,23 +976,22 @@ class PlotViewModel extends BaseViewModel {
     int pointPosition,
     List<PlotDataPoint> sourcePoints,
   ) {
-    final values = List<double>.from(point.values);
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
-    while (values.length < rawCount) {
-      values.add(double.nan);
-    }
     final mathValues = <double>[];
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
       final value = _evaluateMathChannel(channel, pointPosition, sourcePoints);
-      values.add(value);
       mathValues.add(value);
     }
     _recordObservedValues(mathValues, startChannel: rawCount);
     return PlotDataPoint(
       index: point.index,
       timestamp: point.timestamp,
-      values: values,
+      values: _CombinedChannelValues(
+        rawValues: point.values,
+        rawChannelCount: rawCount,
+        mathValues: mathValues,
+      ),
     );
   }
 
@@ -1601,19 +1605,29 @@ class PlotViewModel extends BaseViewModel {
     serialService.isPlotting = true;
     _sourceManager.start();
 
-    // 连接数据源 → 解析器
+    // 连接数据源 → 解析器 → 数据缓冲区。
+    // 一个原始字节块内的多帧结果直接批量消费，避免每包经过一次 Stream 调度。
     _parseSubscription = _sourceManager.byteStream.listen(
-      (data) => _parser?.feed(data),
+      (data) {
+        final parser = _parser;
+        if (parser == null) return;
+        final results = parser.feedBatch(data);
+        if (results.isEmpty) return;
+        final receivedAt = DateTime.now();
+        for (final result in results) {
+          _onParseResult(
+            result,
+            receivedAt: receivedAt,
+            updateFollowViewport: false,
+          );
+        }
+        if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+          final lastIndex = _dataPoints.last.index;
+          _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
+        }
+      },
       onError: (error) {
         AppLogger().error('数据源错误: $error', category: 'PLOT');
-      },
-    );
-
-    // 连接解析器 → 数据缓冲区
-    _parser?.outputStream.listen(
-      (result) => _onParseResult(result),
-      onError: (error) {
-        AppLogger().error('解析器错误: $error', category: 'PLOT');
       },
     );
 
@@ -1811,7 +1825,11 @@ class PlotViewModel extends BaseViewModel {
   /// - 更新实际通道数
   /// - 跟随模式下自动平移视口
   /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
-  void _onParseResult(ParseResult result) {
+  void _onParseResult(
+    ParseResult result, {
+    DateTime? receivedAt,
+    bool updateFollowViewport = true,
+  }) {
     if (!result.success || result.values == null || result.values!.isEmpty) {
       return;
     }
@@ -1821,7 +1839,7 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
 
-    final now = DateTime.now();
+    final now = receivedAt ?? DateTime.now();
     final timestamp =
         _startTime != null
             ? now.difference(_startTime!).inMilliseconds.toDouble()
@@ -1830,26 +1848,33 @@ class PlotViewModel extends BaseViewModel {
     final point = PlotDataPoint(
       index: _nextIndex++,
       timestamp: timestamp,
-      values: List.from(result.values!),
+      values: result.values!,
     );
     _recordObservedValues(point.values);
 
     // 历史缓存按协议分流：
     // - Zobow/FixedFrame 保留原始帧，导出和视口重建都从原始帧重新解析。
     // - 其他协议只保存解析后的紧凑 double 块，降低大数据量下的对象开销。
+    var visiblePoint = point;
     if (_parserType == ParserType.zobow && result.rawBytes != null) {
       _zobowRawFrames.appendPacket(result.rawBytes!);
     } else if (_parserType == ParserType.fixedFrame &&
         result.rawBytes != null) {
       _fixedFrameRawFrames.appendPacket(result.rawBytes!);
     } else {
+      final historyIndex = _parsedHistory.length;
       _parsedHistory.add(point.values);
+      visiblePoint = PlotDataPoint(
+        index: point.index,
+        timestamp: point.timestamp,
+        values: _ParsedHistoryValues(_parsedHistory, historyIndex),
+      );
     }
     _lodIndex.addSampled(point.index, point.values, _lodSampleStep);
 
     final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
-      _dataPoints.add(point);
+      _dataPoints.add(visiblePoint);
       _trimVisibleWindowToLimit();
       _dataRevision++;
     }
@@ -1877,7 +1902,10 @@ class PlotViewModel extends BaseViewModel {
     }
 
     // 自动跟随最新数据（仅跟随模式开启时）
-    if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+    if (updateFollowViewport &&
+        _isPlotting &&
+        _followEnabled &&
+        _dataPoints.length > 1) {
       final lastIndex = _dataPoints.last.index;
       _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
     }
@@ -2075,7 +2103,7 @@ class PlotViewModel extends BaseViewModel {
 
     for (int i = 0; i < count; i++) {
       final pointIndex = start + i;
-      final values = _parsedHistory.valuesAt(pointIndex);
+      final values = _ParsedHistoryValues(_parsedHistory, pointIndex);
       _recordObservedValues(values);
       _dataPoints.add(
         PlotDataPoint(

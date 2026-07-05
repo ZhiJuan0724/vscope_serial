@@ -47,6 +47,23 @@ void main() {
       expect(result.values, [10.5, 20.25]);
     });
 
+    test('batch parsing consumes multiple frames without stream dispatch', () {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 2,
+      );
+      addTearDown(parser.dispose);
+      final bytes =
+          BytesBuilder()
+            ..add(buildFrame([1, 2]))
+            ..add(buildFrame([3, 4]));
+
+      final results = parser.feedBatch(bytes.takeBytes());
+
+      expect(results, hasLength(2));
+      expect(results[0].values, [1, 2]);
+      expect(results[1].values, [3, 4]);
+    });
+
     test('auto detects channel count when configured as 0', () async {
       final parser = JustFloatParser(
         ParserConfig.justFloatDefault()..channelCount = 0,

@@ -23,32 +23,49 @@ class JustFloatParser extends IDataParser {
 
   @override
   void feed(Uint8List data) {
-    try {
-      _buffer.addAll(data);
-      _processBuffer();
-    } catch (e) {
-      AppLogger().debug('JustFloat 解析异常: $e', category: 'PARSER');
-    }
-  }
-
-  void _processBuffer() {
-    while (_buffer.length >= tail.length) {
-      final tailIndex = _indexOfTail();
-      if (tailIndex < 0) {
-        return;
-      }
-
-      final payload = Uint8List.fromList(_buffer.sublist(0, tailIndex));
-      _buffer.removeRange(0, tailIndex + tail.length);
-      final result = _parsePayload(payload);
+    for (final result in feedBatch(data)) {
       if (!_controller.isClosed) {
         _controller.add(result);
       }
     }
   }
 
-  int _indexOfTail() {
-    for (int i = 0; i <= _buffer.length - tail.length; i++) {
+  @override
+  List<ParseResult> feedBatch(Uint8List data) {
+    try {
+      _buffer.addAll(data);
+      return _processBuffer();
+    } catch (e) {
+      AppLogger().debug('JustFloat 解析异常: $e', category: 'PARSER');
+      return const [];
+    }
+  }
+
+  List<ParseResult> _processBuffer() {
+    final results = <ParseResult>[];
+    var readOffset = 0;
+    while (_buffer.length - readOffset >= tail.length) {
+      final tailIndex = _indexOfTail(readOffset);
+      if (tailIndex < 0) {
+        break;
+      }
+
+      final payloadLength = tailIndex - readOffset;
+      final payload = Uint8List(payloadLength);
+      for (var i = 0; i < payloadLength; i++) {
+        payload[i] = _buffer[readOffset + i];
+      }
+      results.add(_parsePayload(payload));
+      readOffset = tailIndex + tail.length;
+    }
+    if (readOffset > 0) {
+      _buffer.removeRange(0, readOffset);
+    }
+    return results;
+  }
+
+  int _indexOfTail(int start) {
+    for (int i = start; i <= _buffer.length - tail.length; i++) {
       var matched = true;
       for (int j = 0; j < tail.length; j++) {
         if (_buffer[i + j] != tail[j]) {

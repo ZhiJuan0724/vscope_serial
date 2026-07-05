@@ -23,6 +23,8 @@ class PlotLodIndex {
   int get maxChannelCount => _maxChannelCount;
   bool get isEmpty => _length == 0;
   bool get isNotEmpty => _length > 0;
+  int get allocatedBucketCount =>
+      _levels.fold(0, (total, level) => total + level.allocatedBucketCount);
 
   void clear() {
     for (final level in _levels) {
@@ -117,18 +119,30 @@ class PlotLodSeries {
 
 class _LodLevel {
   final int bucketSize;
-  final List<_LodBucket> _buckets = [];
+  final List<_LodBucket?> _buckets = [];
+  int _allocatedBucketCount = 0;
 
   _LodLevel(this.bucketSize);
 
-  void clear() => _buckets.clear();
+  int get allocatedBucketCount => _allocatedBucketCount;
+
+  void clear() {
+    _buckets.clear();
+    _allocatedBucketCount = 0;
+  }
 
   void add(int index, List<double> values, int channelCount) {
     final bucketIndex = index ~/ bucketSize;
     while (_buckets.length <= bucketIndex) {
-      _buckets.add(_LodBucket());
+      _buckets.add(null);
     }
-    _buckets[bucketIndex].add(index, values, channelCount);
+    var bucket = _buckets[bucketIndex];
+    if (bucket == null) {
+      bucket = _LodBucket(channelCount);
+      _buckets[bucketIndex] = bucket;
+      _allocatedBucketCount++;
+    }
+    bucket.add(index, values, channelCount);
   }
 
   PlotLodSeries? query(int channelIndex, double xMin, double xMax) {
@@ -143,13 +157,21 @@ class _LodLevel {
       _buckets.length - 1,
     );
 
-    final maxPoints = (lastBucket - firstBucket + 1) * 4;
+    var populatedBucketCount = 0;
+    for (var i = firstBucket; i <= lastBucket; i++) {
+      if (_buckets[i] != null) populatedBucketCount++;
+    }
+    if (populatedBucketCount == 0) return null;
+
+    final maxPoints = populatedBucketCount * 4;
     final indices = Int32List(maxPoints);
     final values = Float64List(maxPoints);
     var out = 0;
 
     for (int i = firstBucket; i <= lastBucket; i++) {
-      out = _buckets[i].appendChannelSamples(
+      final bucket = _buckets[i];
+      if (bucket == null) continue;
+      out = bucket.appendChannelSamples(
         channelIndex,
         xMin,
         xMax,
@@ -168,19 +190,26 @@ class _LodLevel {
 }
 
 class _LodBucket {
-  final Float64List _firstValues = Float64List(PlotLodIndex.maxChannels);
-  final Float64List _lastValues = Float64List(PlotLodIndex.maxChannels);
-  final Float64List _minValues = Float64List(PlotLodIndex.maxChannels);
-  final Float64List _maxValues = Float64List(PlotLodIndex.maxChannels);
-  final Int32List _minIndices = Int32List(PlotLodIndex.maxChannels);
-  final Int32List _maxIndices = Int32List(PlotLodIndex.maxChannels);
-  final Uint8List _hasChannel = Uint8List(PlotLodIndex.maxChannels);
+  late Float64List _firstValues;
+  late Float64List _lastValues;
+  late Float64List _minValues;
+  late Float64List _maxValues;
+  late Int32List _minIndices;
+  late Int32List _maxIndices;
+  late Uint8List _hasChannel;
 
   int _firstIndex = -1;
   int _lastIndex = -1;
   int _channelCount = 0;
 
+  _LodBucket(int channelCapacity) {
+    _allocate(channelCapacity.clamp(1, PlotLodIndex.maxChannels));
+  }
+
   void add(int index, List<double> values, int channelCount) {
+    if (channelCount > _firstValues.length) {
+      _grow(channelCount);
+    }
     if (_firstIndex < 0) _firstIndex = index;
     _lastIndex = index;
     if (channelCount > _channelCount) _channelCount = channelCount;
@@ -222,29 +251,55 @@ class _LodBucket {
       return out;
     }
 
-    final samples = <_LodSample>[
-      _LodSample(_firstIndex, _firstValues[channelIndex]),
-      _LodSample(_minIndices[channelIndex], _minValues[channelIndex]),
-      _LodSample(_maxIndices[channelIndex], _maxValues[channelIndex]),
-      _LodSample(_lastIndex, _lastValues[channelIndex]),
-    ]..sort((a, b) => a.index.compareTo(b.index));
-
     var previousIndex = -1;
-    for (final sample in samples) {
-      if (sample.index == previousIndex) continue;
-      previousIndex = sample.index;
-      if (sample.index < xMin || sample.index > xMax) continue;
-      indices[out] = sample.index;
-      values[out] = sample.value;
+    void append(int index, double value) {
+      if (index == previousIndex) return;
+      previousIndex = index;
+      if (index < xMin || index > xMax) return;
+      indices[out] = index;
+      values[out] = value;
       out++;
     }
+
+    append(_firstIndex, _firstValues[channelIndex]);
+    final minIndex = _minIndices[channelIndex];
+    final maxIndex = _maxIndices[channelIndex];
+    if (minIndex <= maxIndex) {
+      append(minIndex, _minValues[channelIndex]);
+      append(maxIndex, _maxValues[channelIndex]);
+    } else {
+      append(maxIndex, _maxValues[channelIndex]);
+      append(minIndex, _minValues[channelIndex]);
+    }
+    append(_lastIndex, _lastValues[channelIndex]);
     return out;
   }
-}
 
-class _LodSample {
-  final int index;
-  final double value;
+  void _allocate(int capacity) {
+    _firstValues = Float64List(capacity);
+    _lastValues = Float64List(capacity);
+    _minValues = Float64List(capacity);
+    _maxValues = Float64List(capacity);
+    _minIndices = Int32List(capacity);
+    _maxIndices = Int32List(capacity);
+    _hasChannel = Uint8List(capacity);
+  }
 
-  const _LodSample(this.index, this.value);
+  void _grow(int nextCapacity) {
+    final oldFirst = _firstValues;
+    final oldLast = _lastValues;
+    final oldMin = _minValues;
+    final oldMax = _maxValues;
+    final oldMinIndices = _minIndices;
+    final oldMaxIndices = _maxIndices;
+    final oldHasChannel = _hasChannel;
+    _allocate(nextCapacity.clamp(1, PlotLodIndex.maxChannels));
+    _firstValues.setRange(0, oldFirst.length, oldFirst);
+    _lastValues.setRange(0, oldLast.length, oldLast);
+    _minValues.setRange(0, oldMin.length, oldMin);
+    _maxValues.setRange(0, oldMax.length, oldMax);
+    _minIndices.setRange(0, oldMinIndices.length, oldMinIndices);
+    _maxIndices.setRange(0, oldMaxIndices.length, oldMaxIndices);
+    _hasChannel.setRange(0, oldHasChannel.length, oldHasChannel);
+  }
 }
