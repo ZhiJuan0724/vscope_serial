@@ -3164,38 +3164,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      AppStrings.plot.observationClickToPlace,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    Text(
-                                      AppStrings
-                                          .plot
-                                          .observationClickToPlaceHelp,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Switch(
-                                value: vm.observationClickToPlace,
-                                onChanged: (value) {
-                                  vm.setObservationClickToPlace(value);
-                                  setState(() {});
-                                },
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
                           // 网格开关
                           Row(
                             children: [
@@ -3446,6 +3414,39 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 value: vm.statsToolbarEnabled,
                                 onChanged: (value) {
                                   vm.setStatsToolbarEnabled(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.observationClickToPlace,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings
+                                          .plot
+                                          .observationClickToPlaceHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.observationClickToPlace,
+                                onChanged: (value) {
+                                  vm.setObservationClickToPlace(value);
                                   setState(() {});
                                 },
                               ),
