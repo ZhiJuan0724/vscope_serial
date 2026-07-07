@@ -11,6 +11,7 @@ import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../core/utils/math_expression.dart';
+import '../core/utils/plot_value_formatter.dart';
 import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/chunked_byte_buffer.dart';
@@ -41,6 +42,81 @@ part 'plot_viewmodel/plot_support_models.dart';
 
 typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
 typedef PlotExportProgressCallback = void Function(PlotImportProgress progress);
+
+enum PlotTriggerComparison {
+  greater('>'),
+  less('<'),
+  equal('='),
+  crossUp('上升沿经过'),
+  crossDown('下降沿经过');
+
+  final String label;
+
+  const PlotTriggerComparison(this.label);
+}
+
+enum PlotTriggerAction {
+  markOnly('不停止'),
+  stopImmediately('立即停止'),
+  stopAfterPackets('继续接收后停止');
+
+  final String label;
+
+  const PlotTriggerAction(this.label);
+}
+
+enum PlotTriggerObservationMode {
+  none('不打观察'),
+  triggerPoint('标记触发点'),
+  allHits('标记本轮全部命中');
+
+  final String label;
+
+  const PlotTriggerObservationMode(this.label);
+}
+
+class PlotTriggerConfig {
+  static const double equalTolerance = 1e-6;
+
+  bool enabled;
+  int channelIndex;
+  PlotTriggerComparison comparison;
+  double targetValue;
+  int hitThreshold;
+  int triggerLimit;
+  PlotTriggerAction action;
+  int postTriggerPacketCount;
+  PlotTriggerObservationMode observationMode;
+  bool includeSystemTimeInNote;
+
+  PlotTriggerConfig({
+    this.enabled = false,
+    this.channelIndex = 0,
+    this.comparison = PlotTriggerComparison.greater,
+    this.targetValue = 0,
+    this.hitThreshold = 1,
+    this.triggerLimit = 1,
+    this.action = PlotTriggerAction.stopImmediately,
+    this.postTriggerPacketCount = 0,
+    this.observationMode = PlotTriggerObservationMode.none,
+    this.includeSystemTimeInNote = true,
+  });
+
+  PlotTriggerConfig copy() {
+    return PlotTriggerConfig(
+      enabled: enabled,
+      channelIndex: channelIndex,
+      comparison: comparison,
+      targetValue: targetValue,
+      hitThreshold: hitThreshold,
+      triggerLimit: triggerLimit,
+      action: action,
+      postTriggerPacketCount: postTriggerPacketCount,
+      observationMode: observationMode,
+      includeSystemTimeInNote: includeSystemTimeInNote,
+    );
+  }
+}
 
 class PlotImportProgress {
   final String stage;
@@ -109,6 +185,7 @@ class PlotViewModel extends BaseViewModel {
   final PlotLodIndex _lodIndex = PlotLodIndex();
 
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
+  static const int maxObservationCount = 100;
   static const int minVisiblePoints = 1000000;
   static const int defaultVisiblePoints = 1000000;
   static const int maxVisiblePointsLimit = 40000000;
@@ -252,6 +329,7 @@ class PlotViewModel extends BaseViewModel {
   double _snapHighlightDiameter = 8.0;
   String _snapHighlightColorMode = 'cursor';
   bool _statsToolbarEnabled = false;
+  bool _triggerToolbarEnabled = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
   bool _followEnabled = false;
@@ -286,9 +364,17 @@ class PlotViewModel extends BaseViewModel {
   /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
 
-  final List<CursorState> _observations = [];
+  final List<PlotObservation> _observations = [];
   bool _observationPlacementActive = false;
   CursorState? _observationPreview;
+  final PlotTriggerConfig _triggerConfig = PlotTriggerConfig();
+  final List<PlotDataPoint> _triggerHitPoints = [];
+  final List<double?> _triggerPreviousValues = List<double?>.filled(16, null);
+  int _triggerHitCount = 0;
+  int _triggeredCount = 0;
+  int? _triggerStopPacketsRemaining;
+  bool _triggerStopRequested = false;
+  bool _triggerConfigured = false;
 
   /// 当前解析器类型
   ParserType _parserType = ParserType.fireWater;
@@ -465,6 +551,7 @@ class PlotViewModel extends BaseViewModel {
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
+    _triggerToolbarEnabled = settings.triggerToolbarEnabled;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
@@ -535,6 +622,7 @@ class PlotViewModel extends BaseViewModel {
     settings.snapHighlightDiameter = _snapHighlightDiameter;
     settings.snapHighlightColorMode = _snapHighlightColorMode;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
+    settings.triggerToolbarEnabled = _triggerToolbarEnabled;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.plotBackground = _plotBackground;
@@ -688,6 +776,7 @@ class PlotViewModel extends BaseViewModel {
   bool get statsEnabled => _statsEnabled;
   bool get statsRangeEnabled => _statsRangeEnabled;
   bool get statsToolbarEnabled => _statsToolbarEnabled;
+  bool get triggerToolbarEnabled => _triggerToolbarEnabled;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
@@ -741,9 +830,15 @@ class PlotViewModel extends BaseViewModel {
 
   String get snapHighlightColorMode => _snapHighlightColorMode;
   CursorState? get cursor => _cursor;
-  List<CursorState> get observations => List.unmodifiable(_observations);
+  List<PlotObservation> get observations => List.unmodifiable(_observations);
   bool get observationPlacementActive => _observationPlacementActive;
   CursorState? get observationPreview => _observationPreview;
+  PlotTriggerConfig get triggerConfig => _triggerConfig.copy();
+  bool get triggerEnabled => _triggerConfig.enabled;
+  bool get triggerConfigured => _triggerConfigured;
+  int get triggerHitCount => _triggerHitCount;
+  int get triggeredCount => _triggeredCount;
+  int? get triggerStopPacketsRemaining => _triggerStopPacketsRemaining;
   List<SnapHighlightPoint> get snapHighlights {
     if (!_snapHighlightEnabled) return const [];
     return [
@@ -1554,6 +1649,7 @@ class PlotViewModel extends BaseViewModel {
     _activeChannelCount = 0;
     _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
     _discardedInitialPacketCount = 0;
+    _resetTriggerRuntimeState();
     _startTime = DateTime.now();
 
     // 重置速率统计
@@ -1683,6 +1779,10 @@ class PlotViewModel extends BaseViewModel {
         _notifyTimer = null;
         _pendingNotifyCount = 0;
         _isStopping = false;
+        if (_triggerConfig.enabled) {
+          _triggerConfig.enabled = false;
+        }
+        _resetTriggerRuntimeState();
         if (!_disposed) {
           showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
           AppLogger().info(
@@ -1781,6 +1881,7 @@ class PlotViewModel extends BaseViewModel {
     _activeChannelCount = 0;
     _activeDiscardInitialPacketLimit = 0;
     _discardedInitialPacketCount = 0;
+    _resetTriggerRuntimeState();
     _startTime = null;
     _lastRateLogTime = null;
     _lastRateLogIndex = 0;
@@ -1799,10 +1900,16 @@ class PlotViewModel extends BaseViewModel {
   }
 
   @visibleForTesting
+  void ingestParsedResultForTestAt(ParseResult result, DateTime receivedAt) {
+    _onParseResult(result, receivedAt: receivedAt);
+  }
+
+  @visibleForTesting
   void setPlottingForTest(bool value) {
     if (value && !_isPlotting) {
       _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
       _discardedInitialPacketCount = 0;
+      _resetTriggerRuntimeState();
     }
     _isPlotting = value;
   }
@@ -1900,6 +2007,8 @@ class PlotViewModel extends BaseViewModel {
       _activeChannelCount = nextActiveChannelCount;
       _markChannelConfigChanged();
     }
+
+    _handleTriggerForPoint(point, now);
 
     // 自动跟随最新数据（仅跟随模式开启时）
     if (updateFollowViewport &&
@@ -2905,6 +3014,36 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void updateTriggerConfig(PlotTriggerConfig config) {
+    _triggerConfig
+      ..enabled = config.enabled
+      ..channelIndex = config.channelIndex.clamp(0, 15).toInt()
+      ..comparison = config.comparison
+      ..targetValue = config.targetValue
+      ..hitThreshold = math.max(1, config.hitThreshold)
+      ..triggerLimit = math.max(1, config.triggerLimit)
+      ..action = config.action
+      ..postTriggerPacketCount = math.max(0, config.postTriggerPacketCount)
+      ..observationMode = config.observationMode
+      ..includeSystemTimeInNote = config.includeSystemTimeInNote;
+    _triggerConfigured = true;
+    _resetTriggerRuntimeState();
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setTriggerEnabled(bool value) {
+    if (value && !_triggerConfigured) {
+      showStatusMessage('请先右键触发按钮配置触发条件');
+      return;
+    }
+    if (_triggerConfig.enabled == value) return;
+    _triggerConfig.enabled = value;
+    _resetTriggerRuntimeState();
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
   // ========== 通道控制 ==========
   void setOffsetBindingGroup(int index, Set<int> selectedIndices) {
     final primary = displayChannelByIndex(index);
@@ -3426,6 +3565,18 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setTriggerToolbarEnabled(bool value) {
+    if (_triggerToolbarEnabled == value) return;
+    _triggerToolbarEnabled = value;
+    if (!value && _triggerConfig.enabled) {
+      _triggerConfig.enabled = false;
+      _resetTriggerRuntimeState();
+      _markOverlayChanged();
+    }
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   void setFollowPositionRatio(double value) {
     final next = value.clamp(0.5, 0.95).toDouble();
     if ((_followPositionRatio - next).abs() < 1e-9) return;
@@ -3641,6 +3792,172 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void _handleTriggerForPoint(PlotDataPoint point, DateTime now) {
+    final triggerChannelIndex = _triggerConfig.channelIndex;
+    final currentValue =
+        triggerChannelIndex >= 0 && triggerChannelIndex < point.values.length
+            ? point.values[triggerChannelIndex]
+            : null;
+    final previousValue =
+        triggerChannelIndex >= 0 &&
+                triggerChannelIndex < _triggerPreviousValues.length
+            ? _triggerPreviousValues[triggerChannelIndex]
+            : null;
+
+    if (_triggerStopPacketsRemaining != null) {
+      _recordTriggerPreviousValue(point);
+      final remaining = _triggerStopPacketsRemaining! - 1;
+      if (remaining <= 0) {
+        _triggerStopPacketsRemaining = null;
+        _requestTriggerStop();
+      } else {
+        _triggerStopPacketsRemaining = remaining;
+      }
+      return;
+    }
+
+    if (!_triggerConfig.enabled || _triggerStopRequested) {
+      _recordTriggerPreviousValue(point);
+      return;
+    }
+
+    if (!_canUseTriggerChannel(triggerChannelIndex) || currentValue == null) {
+      _recordTriggerPreviousValue(point);
+      return;
+    }
+
+    if (!_matchesTriggerCondition(currentValue, previousValue)) {
+      _recordTriggerPreviousValue(point);
+      return;
+    }
+
+    _recordTriggerPreviousValue(point);
+
+    _triggerHitCount++;
+    _triggerHitPoints.add(point);
+    if (_triggerHitCount < _triggerConfig.hitThreshold) return;
+
+    _triggeredCount++;
+    final hitPoints = List<PlotDataPoint>.from(_triggerHitPoints);
+    final note = _buildTriggerObservationNote(now);
+    _addTriggerObservations(hitPoints, note);
+    _triggerHitCount = 0;
+    _triggerHitPoints.clear();
+
+    final reachedTriggerLimit = _triggeredCount >= _triggerConfig.triggerLimit;
+    if (!reachedTriggerLimit) {
+      _markOverlayChanged();
+      Future.microtask(() => notifyListeners());
+      return;
+    }
+
+    _triggerConfig.enabled = false;
+
+    switch (_triggerConfig.action) {
+      case PlotTriggerAction.markOnly:
+        _markOverlayChanged();
+        Future.microtask(() => notifyListeners());
+        break;
+      case PlotTriggerAction.stopImmediately:
+        _requestTriggerStop();
+        break;
+      case PlotTriggerAction.stopAfterPackets:
+        if (_triggerConfig.postTriggerPacketCount <= 0) {
+          _requestTriggerStop();
+        } else {
+          _triggerStopPacketsRemaining = _triggerConfig.postTriggerPacketCount;
+        }
+        break;
+    }
+  }
+
+  bool _canUseTriggerChannel(int index) {
+    return index >= 0 &&
+        index < channels.length &&
+        index < 16 &&
+        channels[index].visible;
+  }
+
+  bool _matchesTriggerCondition(double value, double? previousValue) {
+    return switch (_triggerConfig.comparison) {
+      PlotTriggerComparison.greater => value > _triggerConfig.targetValue,
+      PlotTriggerComparison.less => value < _triggerConfig.targetValue,
+      PlotTriggerComparison.equal =>
+        (value - _triggerConfig.targetValue).abs() <=
+            PlotTriggerConfig.equalTolerance,
+      PlotTriggerComparison.crossUp =>
+        previousValue != null &&
+            previousValue < _triggerConfig.targetValue &&
+            value >= _triggerConfig.targetValue,
+      PlotTriggerComparison.crossDown =>
+        previousValue != null &&
+            previousValue > _triggerConfig.targetValue &&
+            value <= _triggerConfig.targetValue,
+    };
+  }
+
+  void _recordTriggerPreviousValue(PlotDataPoint point) {
+    final count = math.min(point.values.length, _triggerPreviousValues.length);
+    for (int i = 0; i < count; i++) {
+      _triggerPreviousValues[i] = point.values[i];
+    }
+  }
+
+  void _addTriggerObservations(List<PlotDataPoint> hitPoints, String note) {
+    switch (_triggerConfig.observationMode) {
+      case PlotTriggerObservationMode.none:
+        return;
+      case PlotTriggerObservationMode.triggerPoint:
+        if (hitPoints.isNotEmpty) {
+          _addObservationAtX(hitPoints.last.index.toDouble(), note: note);
+        }
+        break;
+      case PlotTriggerObservationMode.allHits:
+        for (final point in hitPoints) {
+          if (!_addObservationAtX(point.index.toDouble(), note: note)) break;
+        }
+        break;
+    }
+  }
+
+  String _buildTriggerObservationNote(DateTime now) {
+    final channel = displayChannelName(_triggerConfig.channelIndex);
+    final parts = <String>[];
+    if (_triggerConfig.includeSystemTimeInNote) {
+      parts.add('触发于 ${_formatTriggerTime(now)}');
+    }
+    parts.add(
+      '$channel ${_triggerConfig.comparison.label} ${formatPlotValue(_triggerConfig.targetValue)}',
+    );
+    parts.add('累计 ${_triggerConfig.hitThreshold} 次');
+    parts.add('第 $_triggeredCount 次触发');
+    return parts.join('，');
+  }
+
+  String _formatTriggerTime(DateTime value) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${value.year}-${two(value.month)}-${two(value.day)} '
+        '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+
+  void _requestTriggerStop() {
+    if (_triggerStopRequested) return;
+    _triggerStopRequested = true;
+    _triggerConfig.enabled = false;
+    Future.microtask(() {
+      if (!_disposed) unawaited(stopPlotting());
+    });
+  }
+
+  void _resetTriggerRuntimeState() {
+    _triggerHitCount = 0;
+    _triggeredCount = 0;
+    _triggerHitPoints.clear();
+    _triggerPreviousValues.fillRange(0, _triggerPreviousValues.length, null);
+    _triggerStopPacketsRemaining = null;
+    _triggerStopRequested = false;
+  }
+
   /// 更新垂直光标（跟随鼠标模式）
   ///
   /// - X 值吸附到最近的整数（数据点索引都是整数）
@@ -3667,9 +3984,10 @@ class PlotViewModel extends BaseViewModel {
         cursorX != null && viewport.isVisibleX(cursorX)
             ? cursorX
             : viewport.xMin + viewport.xRange / 2;
-    _observations.add(_buildCursorAtX(sourceX));
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
+    if (_addObservationAtX(sourceX)) {
+      _markOverlayChanged();
+      scheduleMicrotask(notifyListeners);
+    }
   }
 
   void startObservationPlacement() {
@@ -3689,7 +4007,7 @@ class PlotViewModel extends BaseViewModel {
 
   void commitObservationPlacement(double x) {
     if (!_observationPlacementActive) return;
-    _observations.add(_buildCursorAtX(x));
+    _addObservationAtX(x);
     _observationPlacementActive = false;
     _observationPreview = null;
     _markOverlayChanged();
@@ -3698,7 +4016,16 @@ class PlotViewModel extends BaseViewModel {
 
   void updateObservation(int index, double x) {
     if (index < 0 || index >= _observations.length) return;
-    _observations[index] = _buildCursorAtX(x);
+    _observations[index] = _observations[index].copyWith(
+      cursor: _buildCursorAtX(x),
+    );
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservationNote(int index, String note) {
+    if (index < 0 || index >= _observations.length) return;
+    _observations[index] = _observations[index].copyWith(note: note);
     _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
@@ -3708,6 +4035,35 @@ class PlotViewModel extends BaseViewModel {
     _observations.removeAt(index);
     _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
+  }
+
+  void jumpToObservation(int index) {
+    if (index < 0 || index >= _observations.length) return;
+    final x = _observations[index].x;
+    final range = viewport.xRange;
+    final halfRange = range / 2;
+    _setViewport(viewport.copyWith(xMin: x - halfRange, xMax: x + halfRange));
+    _loadWindowForViewport();
+    Future.microtask(() => notifyListeners());
+  }
+
+  bool _addObservationAtX(double x, {String note = ''}) {
+    if (_observations.length >= maxObservationCount) return false;
+    var nextNote = note;
+    if (_observations.length + 1 == maxObservationCount) {
+      nextNote = _appendObservationLimitNote(nextNote);
+    }
+    _observations.add(
+      PlotObservation(cursor: _buildCursorAtX(x), note: nextNote),
+    );
+    return true;
+  }
+
+  String _appendObservationLimitNote(String note) {
+    const limitNote = '观察已达 100 条上限，后续触发不再新增观察';
+    if (note.isEmpty) return limitNote;
+    if (note.contains(limitNote)) return note;
+    return '$note；$limitNote';
   }
 
   CursorState _buildCursorAtX(double x, {double? y, Offset? screenPosition}) {

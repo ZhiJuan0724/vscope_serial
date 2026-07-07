@@ -85,7 +85,7 @@ class PlotGestureHandler extends StatefulWidget {
 
   /// S2 统计范围拖动回调
   final void Function(double x)? onStatsX2Drag;
-  final List<CursorState> observations;
+  final List<PlotObservation> observations;
   final void Function(int index, double x)? onObservationDrag;
   final void Function(int index)? onObservationDelete;
   final bool observationPlacementActive;

@@ -55,6 +55,7 @@ void main() {
       final settings = AppSettings();
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
+      settings.triggerToolbarEnabled = false;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
       settings.rProtocolLooseChannelSettings = false;
@@ -229,6 +230,321 @@ void main() {
       expect(vm.observationPlacementActive, isFalse);
       expect(vm.observationPreview, isNull);
       expect(vm.observations.single.x, 35);
+    });
+
+    test('触发关闭时不检测条件', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: false,
+          channelIndex: 0,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 1,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 0);
+      expect(vm.observations, isEmpty);
+    });
+
+    test('触发条件支持大于小于和容差等于', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.less,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([9], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.equal,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([
+          10 + PlotTriggerConfig.equalTolerance / 2,
+        ], bytesConsumed: 1),
+      );
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('触发条件支持向上和向下越过阈值', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.crossUp,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([9], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.crossDown,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('触发只对打开的普通通道生效且未配置不能左键开启', () {
+      vm.setTriggerEnabled(true);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.triggerToolbarEnabled, isFalse);
+
+      vm.setChannelVisible(0, false);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 0,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+    });
+
+    test('触发工具默认隐藏且关闭入口会关闭触发模式', () {
+      expect(vm.triggerToolbarEnabled, isFalse);
+
+      vm.setTriggerToolbarEnabled(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+        ),
+      );
+
+      expect(vm.triggerToolbarEnabled, isTrue);
+      expect(vm.triggerEnabled, isTrue);
+
+      vm.setTriggerToolbarEnabled(false);
+
+      expect(vm.triggerToolbarEnabled, isFalse);
+      expect(vm.triggerEnabled, isFalse);
+    });
+
+    test('累计命中达到阈值后才触发并可继续监听多次', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          hitThreshold: 2,
+          triggerLimit: 2,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+          includeSystemTimeInNote: false,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggerHitCount, 1);
+      expect(vm.triggeredCount, 0);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([12], bytesConsumed: 1));
+      expect(vm.triggerHitCount, 0);
+      expect(vm.triggeredCount, 1);
+      expect(vm.triggerEnabled, isTrue);
+      expect(vm.observations.single.x, 1);
+      expect(vm.observations.single.note, contains('累计 2 次'));
+      expect(vm.observations.single.note, isNot(contains('触发于')));
+
+      vm.ingestParsedResultForTest(ParseResult.ok([13], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([14], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 2);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.observations, hasLength(2));
+    });
+
+    test('触发可标记本轮全部命中点并记录系统时间', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          hitThreshold: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.allHits,
+          includeSystemTimeInNote: true,
+        ),
+      );
+      final now = DateTime(2026, 7, 7, 15, 4, 5);
+
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([1], bytesConsumed: 1),
+        now,
+      );
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([2], bytesConsumed: 1),
+        now,
+      );
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([3], bytesConsumed: 1),
+        now,
+      );
+
+      expect(vm.observations.map((item) => item.x), [0, 1, 2]);
+      expect(vm.observations.first.note, contains('触发于 2026-07-07 15:04:05'));
+    });
+
+    test('观察上限限制手动和触发新增并在第100条备注记录上限', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      for (int i = 0; i < PlotViewModel.maxObservationCount; i++) {
+        vm.addObservation();
+      }
+
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+      expect(vm.observations.last.note, contains('观察已达 100 条上限'));
+
+      vm.addObservation();
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+    });
+
+    test('观察备注编辑和拖动后保留', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+      vm.addObservation();
+
+      vm.updateObservationNote(0, 'note');
+      vm.updateObservation(0, 1);
+
+      expect(vm.observations.single.x, 1);
+      expect(vm.observations.single.note, 'note');
+    });
+
+    test('触发后继续接收N包后停止且N不包含触发包', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.stopAfterPackets,
+          postTriggerPacketCount: 2,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggerStopPacketsRemaining, 2);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      expect(vm.triggerStopPacketsRemaining, 1);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(vm.triggerStopPacketsRemaining, isNull);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.isPlotting, isFalse);
+    });
+
+    test('触发行为只在达到触发次数后执行', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          triggerLimit: 2,
+          action: PlotTriggerAction.stopImmediately,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.triggeredCount, 1);
+      expect(vm.triggerEnabled, isTrue);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([12], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.triggeredCount, 2);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.isPlotting, isFalse);
+    });
+
+    test('手动停止绘图会关闭未触发的触发模式', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.stopImmediately,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      expect(vm.triggerEnabled, isTrue);
+
+      await vm.stopPlotting();
+
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.triggerHitCount, 0);
     });
 
     test('clearData清空数据', () {

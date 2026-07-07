@@ -83,6 +83,8 @@ typedef _PlotToolbarSelection =
       double randomFrequency,
       bool canUndoZoom,
       bool vCursorEnabled,
+      bool triggerToolbarEnabled,
+      bool triggerEnabled,
       bool observationPlacementActive,
       bool boxZoomEnabled,
       bool xMeasurementEnabled,
@@ -238,6 +240,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       randomFrequency: vm.randomFrequency,
       canUndoZoom: vm.canUndoZoom,
       vCursorEnabled: vm.vCursorEnabled,
+      triggerToolbarEnabled: vm.triggerToolbarEnabled,
+      triggerEnabled: vm.triggerEnabled,
       observationPlacementActive: vm.observationPlacementActive,
       boxZoomEnabled: vm.boxZoomEnabled,
       xMeasurementEnabled: vm.xMeasurementEnabled,
@@ -810,6 +814,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ],
+        if (vm.triggerToolbarEnabled || vm.triggerEnabled) ...[
+          const SizedBox(width: 8),
+          _buildTriggerButton(context, vm),
+        ],
       ],
     );
   }
@@ -846,6 +854,44 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ),
         ],
         onChanged: canChangeConfiguration ? vm.selectRProfile : null,
+      ),
+    );
+  }
+
+  Widget _buildTriggerButton(BuildContext context, PlotViewModel vm) {
+    return Tooltip(
+      message: AppStrings.plot.triggerTooltip,
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.buttons == kSecondaryMouseButton) {
+            _showTriggerConfigDialog(context, vm);
+          }
+        },
+        child: TextButton.icon(
+          onPressed: () => vm.setTriggerEnabled(!vm.triggerEnabled),
+          icon: Icon(
+            Icons.online_prediction,
+            size: 18,
+            color: vm.triggerEnabled ? Colors.white : null,
+          ),
+          label: Text(
+            AppStrings.plot.trigger,
+            style: TextStyle(
+              fontSize: 11,
+              fontFamily: 'SarasaUiSC',
+              color: vm.triggerEnabled ? Colors.white : null,
+            ),
+          ),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            minimumSize: const Size(0, 28),
+            backgroundColor: vm.triggerEnabled ? Colors.green : null,
+            side:
+                vm.triggerEnabled
+                    ? const BorderSide(color: Colors.green, width: 1)
+                    : BorderSide.none,
+          ),
+        ),
       ),
     );
   }
@@ -940,35 +986,42 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               vm.observationPlacementActive
                   ? AppStrings.plot.placeObservation
                   : AppStrings.plot.addObservation,
-          child: TextButton.icon(
-            onPressed: () {
-              if (vm.dataPoints.isEmpty) return;
-              if (vm.observationClickToPlace) {
-                vm.startObservationPlacement();
-              } else {
-                vm.addObservation();
+          child: Listener(
+            onPointerDown: (event) {
+              if (event.buttons == kSecondaryMouseButton) {
+                _showObservationManagerDialog(context, vm);
               }
             },
-            icon: Icon(
-              Icons.add_location_alt,
-              size: 18,
-              color: vm.observationPlacementActive ? Colors.amber : null,
-            ),
-            label: Text(
-              AppStrings.plot.observation,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
+            child: TextButton.icon(
+              onPressed: () {
+                if (vm.dataPoints.isEmpty) return;
+                if (vm.observationClickToPlace) {
+                  vm.startObservationPlacement();
+                } else {
+                  vm.addObservation();
+                }
+              },
+              icon: Icon(
+                Icons.add_location_alt,
+                size: 18,
                 color: vm.observationPlacementActive ? Colors.amber : null,
               ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.observationPlacementActive
-                      ? Colors.amber.withValues(alpha: 0.1)
-                      : null,
+              label: Text(
+                AppStrings.plot.observation,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: vm.observationPlacementActive ? Colors.amber : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    vm.observationPlacementActive
+                        ? Colors.amber.withValues(alpha: 0.1)
+                        : null,
+              ),
             ),
           ),
         ),
@@ -2064,7 +2117,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   Widget _buildObservationTooltip(
     int index,
-    CursorState observation,
+    PlotObservation observation,
     PlotViewModel vm,
   ) {
     final values = observation.channelValues;
@@ -2117,6 +2170,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           ),
         );
       }
+    }
+    if (observation.note.trim().isNotEmpty) {
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            observation.note,
+            style: TextStyle(
+              color: _floatingSubtleTextColor(vm),
+              fontSize: _plotFontSize(vm, 11),
+              fontFamily: 'SarasaUiSC',
+            ),
+          ),
+        ),
+      );
     }
 
     return Container(
@@ -2718,6 +2786,494 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       importFile: vm.importFromLegacyDat,
       successMessage: AppStrings.plot.importLegacyDatSuccess,
     );
+  }
+
+  void _showTriggerConfigDialog(BuildContext context, PlotViewModel vm) {
+    final initial = vm.triggerConfig;
+    final visibleRawChannels = vm.channels
+        .where((channel) => channel.index < 16 && channel.visible)
+        .toList(growable: false);
+    var enabled = initial.enabled;
+    var channelIndex =
+        visibleRawChannels.any(
+              (channel) => channel.index == initial.channelIndex,
+            )
+            ? initial.channelIndex
+            : (visibleRawChannels.isNotEmpty
+                ? visibleRawChannels.first.index
+                : initial.channelIndex);
+    var comparison = initial.comparison;
+    var action = initial.action;
+    var observationMode = initial.observationMode;
+    var includeSystemTime = initial.includeSystemTimeInNote;
+    final targetController = TextEditingController(
+      text: formatPlotValue(initial.targetValue),
+    );
+    final hitThresholdController = TextEditingController(
+      text: initial.hitThreshold.toString(),
+    );
+    final triggerLimitController = TextEditingController(
+      text: initial.triggerLimit.toString(),
+    );
+    final postPacketsController = TextEditingController(
+      text: initial.postTriggerPacketCount.toString(),
+    );
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.plot.triggerConfig),
+                  content: SizedBox(
+                    width: 520,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Expanded(child: Text('启用触发')),
+                              Switch(
+                                value: enabled,
+                                onChanged:
+                                    visibleRawChannels.isEmpty
+                                        ? null
+                                        : (value) => setDialogState(
+                                          () => enabled = value,
+                                        ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Divider(height: 1),
+                          const SizedBox(height: 14),
+                          if (visibleRawChannels.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                '当前没有打开的普通通道，无法选择触发通道。',
+                                style: TextStyle(color: Colors.redAccent),
+                              ),
+                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<int>(
+                                  initialValue:
+                                      visibleRawChannels.isEmpty
+                                          ? null
+                                          : channelIndex,
+                                  decoration: const InputDecoration(
+                                    labelText: '通道',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  items: [
+                                    for (final channel in visibleRawChannels)
+                                      DropdownMenuItem(
+                                        value: channel.index,
+                                        child: Text(
+                                          vm.displayChannelName(channel.index),
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged:
+                                      visibleRawChannels.isEmpty
+                                          ? null
+                                          : (value) => setDialogState(
+                                            () => channelIndex = value ?? 0,
+                                          ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButtonFormField<
+                                  PlotTriggerComparison
+                                >(
+                                  initialValue: comparison,
+                                  decoration: const InputDecoration(
+                                    labelText: '条件',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                  items: [
+                                    for (final item
+                                        in PlotTriggerComparison.values)
+                                      DropdownMenuItem(
+                                        value: item,
+                                        child: Text(
+                                          item.label,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged:
+                                      (value) => setDialogState(
+                                        () =>
+                                            comparison =
+                                                value ??
+                                                PlotTriggerComparison.greater,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 120,
+                                child: TextField(
+                                  controller: targetController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                        signed: true,
+                                      ),
+                                  decoration: const InputDecoration(
+                                    labelText: '目标值',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: hitThresholdController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: '累计命中次数',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextField(
+                                  controller: triggerLimitController,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: '触发次数',
+                                    border: OutlineInputBorder(),
+                                    isDense: true,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '累计命中次数表示命中 N 次算一次触发；触发次数表示 N 次触发后执行触发行为。',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<PlotTriggerAction>(
+                            initialValue: action,
+                            decoration: const InputDecoration(
+                              labelText: '触发行为',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final item in PlotTriggerAction.values)
+                                DropdownMenuItem(
+                                  value: item,
+                                  child: Text(item.label),
+                                ),
+                            ],
+                            onChanged:
+                                (value) => setDialogState(
+                                  () =>
+                                      action =
+                                          value ?? PlotTriggerAction.markOnly,
+                                ),
+                          ),
+                          if (action == PlotTriggerAction.stopAfterPackets) ...[
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: postPacketsController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: '继续接收包数',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<PlotTriggerObservationMode>(
+                            initialValue: observationMode,
+                            decoration: const InputDecoration(
+                              labelText: '观察标记',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final item
+                                  in PlotTriggerObservationMode.values)
+                                DropdownMenuItem(
+                                  value: item,
+                                  child: Text(item.label),
+                                ),
+                            ],
+                            onChanged:
+                                (value) => setDialogState(
+                                  () =>
+                                      observationMode =
+                                          value ??
+                                          PlotTriggerObservationMode.none,
+                                ),
+                          ),
+                          if (observationMode !=
+                              PlotTriggerObservationMode.none)
+                            CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: const Text('备注记录触发系统时间'),
+                              value: includeSystemTime,
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => includeSystemTime = value ?? false,
+                                  ),
+                            ),
+                          Text(
+                            AppStrings.plot.triggerObservationLimitHelp,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('取消'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        vm.updateTriggerConfig(
+                          PlotTriggerConfig(
+                            enabled: enabled && visibleRawChannels.isNotEmpty,
+                            channelIndex: channelIndex,
+                            comparison: comparison,
+                            targetValue:
+                                double.tryParse(targetController.text.trim()) ??
+                                initial.targetValue,
+                            hitThreshold:
+                                int.tryParse(
+                                  hitThresholdController.text.trim(),
+                                ) ??
+                                1,
+                            triggerLimit:
+                                int.tryParse(
+                                  triggerLimitController.text.trim(),
+                                ) ??
+                                1,
+                            action: action,
+                            postTriggerPacketCount:
+                                int.tryParse(
+                                  postPacketsController.text.trim(),
+                                ) ??
+                                0,
+                            observationMode: observationMode,
+                            includeSystemTimeInNote: includeSystemTime,
+                          ),
+                        );
+                        Navigator.of(dialogContext).pop();
+                      },
+                      child: const Text('确定'),
+                    ),
+                  ],
+                ),
+          ),
+    ).whenComplete(() {
+      targetController.dispose();
+      hitThresholdController.dispose();
+      triggerLimitController.dispose();
+      postPacketsController.dispose();
+    });
+  }
+
+  void _showObservationManagerDialog(BuildContext context, PlotViewModel vm) {
+    final noteControllers = <int, TextEditingController>{};
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.plot.observationManage),
+                  content: SizedBox(
+                    width: 680,
+                    height: 420,
+                    child:
+                        vm.observations.isEmpty
+                            ? const Center(child: Text('暂无观察'))
+                            : Column(
+                              children: [
+                                Container(
+                                  height: 34,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      SizedBox(width: 64, child: Text('观察')),
+                                      SizedBox(width: 84, child: Text('X')),
+                                      Expanded(child: Text('备注')),
+                                      SizedBox(
+                                        width: 88,
+                                        child: Align(
+                                          alignment: Alignment.center,
+                                          child: Text('操作'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Expanded(
+                                  child: ListView.separated(
+                                    itemCount: vm.observations.length,
+                                    separatorBuilder:
+                                        (context, index) =>
+                                            const Divider(height: 1),
+                                    itemBuilder: (context, index) {
+                                      final observation =
+                                          vm.observations[index];
+                                      final controller = noteControllers
+                                          .putIfAbsent(
+                                            index,
+                                            () => TextEditingController(
+                                              text: observation.note,
+                                            ),
+                                          );
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            SizedBox(
+                                              width: 64,
+                                              child: Text(
+                                                'O${index + 1}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              width: 84,
+                                              child: Text(
+                                                observation.x
+                                                    .toInt()
+                                                    .toString(),
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: TextField(
+                                                controller: controller,
+                                                minLines: 1,
+                                                maxLines: 2,
+                                                decoration:
+                                                    const InputDecoration(
+                                                      border:
+                                                          OutlineInputBorder(),
+                                                      isDense: true,
+                                                      contentPadding:
+                                                          EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                            vertical: 8,
+                                                          ),
+                                                    ),
+                                                onChanged:
+                                                    (value) => vm
+                                                        .updateObservationNote(
+                                                          index,
+                                                          value,
+                                                        ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              width: 88,
+                                              child: Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  IconButton(
+                                                    tooltip: '跳转',
+                                                    onPressed: () {
+                                                      vm.jumpToObservation(
+                                                        index,
+                                                      );
+                                                      Navigator.of(
+                                                        dialogContext,
+                                                      ).pop();
+                                                    },
+                                                    icon: const Icon(
+                                                      Icons.my_location,
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    tooltip: '删除',
+                                                    onPressed: () {
+                                                      vm.removeObservation(
+                                                        index,
+                                                      );
+                                                      for (final controller
+                                                          in noteControllers
+                                                              .values) {
+                                                        controller.dispose();
+                                                      }
+                                                      noteControllers.clear();
+                                                      setDialogState(() {});
+                                                    },
+                                                    icon: const Icon(
+                                                      Icons.delete_outline,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                ),
+          ),
+    ).whenComplete(() {
+      for (final controller in noteControllers.values) {
+        controller.dispose();
+      }
+    });
   }
 
   Future<void> _runImportWithProgress({
@@ -3387,6 +3943,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Text(
                             AppStrings.plot.yFitDisplayRatioHelp,
                             style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.triggerFeatureToggle,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.triggerFeatureHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.triggerToolbarEnabled,
+                                onChanged: (value) {
+                                  vm.setTriggerToolbarEnabled(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
                           ),
                           const Divider(),
                           Row(

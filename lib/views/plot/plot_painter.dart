@@ -37,6 +37,26 @@ class CursorState {
   });
 }
 
+class PlotObservation {
+  final CursorState cursor;
+  final String note;
+
+  const PlotObservation({required this.cursor, this.note = ''});
+
+  double get x => cursor.x;
+  double? get y => cursor.y;
+  Offset? get screenPosition => cursor.screenPosition;
+  List<double>? get channelValues => cursor.channelValues;
+  bool get hasData => cursor.hasData;
+
+  PlotObservation copyWith({CursorState? cursor, String? note}) {
+    return PlotObservation(
+      cursor: cursor ?? this.cursor,
+      note: note ?? this.note,
+    );
+  }
+}
+
 class SnapHighlightPoint {
   final double x;
   final double y;
