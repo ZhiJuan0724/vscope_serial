@@ -229,10 +229,12 @@ class PlotViewModel extends BaseViewModel {
   final ListQueue<_RateBucket> _rateBuckets = ListQueue<_RateBucket>();
 
   /// 速率统计保留窗口，必须按时间裁剪，不能按固定样本数裁剪。
-  static const int _rateSampleWindowMs = 1200;
+  static const int _rateSampleWindowMs = 2400;
+  static const int _rateDisplayWindowMs = 2000;
   static const int _rateBucketDurationMs = 50;
 
   static const int _rateCalculationIntervalMs = 250;
+  static const double _rateDisplayEmaAlpha = 0.35;
   static const double _highRateEnterThreshold = 10000.0;
   static const double _highRateExitThreshold = 8000.0;
   static const int _highRateExitHoldMs = 2000;
@@ -240,6 +242,8 @@ class PlotViewModel extends BaseViewModel {
   static const double _highRateLodTargetUpdatesPerSecond = 5000.0;
 
   double? _cachedPointsPerSecond;
+  double? _cachedRawPointsPerSecond;
+  double? _smoothedPointsPerSecond;
   int? _lastRateCalculationMs;
   bool _highRateMode = false;
   int? _belowHighRateSinceMs;
@@ -460,7 +464,8 @@ class PlotViewModel extends BaseViewModel {
     if (_useRandomSource) {
       targetRate = _sourceConfig.randomFrequencyHz;
     } else {
-      targetRate = _cachedPointsPerSecond ?? 1000.0;
+      targetRate =
+          _cachedRawPointsPerSecond ?? _cachedPointsPerSecond ?? 1000.0;
     }
     return (targetRate / fps).round().clamp(1, 5000);
   }
@@ -472,7 +477,7 @@ class PlotViewModel extends BaseViewModel {
 
   int get _lodSampleStep {
     if (!_highRateMode) return 1;
-    final rate = _cachedPointsPerSecond;
+    final rate = _cachedRawPointsPerSecond ?? _cachedPointsPerSecond;
     if (rate == null || rate <= _highRateLodTargetUpdatesPerSecond) return 1;
     return (rate / _highRateLodTargetUpdatesPerSecond).ceil().clamp(1, 128);
   }
@@ -1155,11 +1160,13 @@ class PlotViewModel extends BaseViewModel {
     return buffer.toString();
   }
 
-  /// 计算每秒点数，基于最近500ms的数据（响应更快）
-  /// 使用计数器方式，避免遍历整个数据列表
+  /// 计算每秒点数，基于最近2s窗口并使用 EMA 平滑显示值。
+  /// 使用计数器方式，避免遍历整个数据列表。
   double? _calculatePointsPerSecond({int? nowMs, bool force = false}) {
     if (_rateBuckets.isEmpty || _startTime == null) {
       _cachedPointsPerSecond = null;
+      _cachedRawPointsPerSecond = null;
+      _smoothedPointsPerSecond = null;
       return null;
     }
     final effectiveNowMs =
@@ -1170,7 +1177,24 @@ class PlotViewModel extends BaseViewModel {
       return _cachedPointsPerSecond;
     }
 
-    final cutoffMs = effectiveNowMs - 500; // 最近500ms
+    final rawRate = _calculateRawPointsPerSecond(effectiveNowMs);
+    _cachedRawPointsPerSecond = rawRate;
+    _lastRateCalculationMs = effectiveNowMs;
+    if (rawRate == null) {
+      _cachedPointsPerSecond = null;
+      return null;
+    }
+    _smoothedPointsPerSecond =
+        _smoothedPointsPerSecond == null
+            ? rawRate
+            : _smoothedPointsPerSecond! * (1 - _rateDisplayEmaAlpha) +
+                rawRate * _rateDisplayEmaAlpha;
+    _cachedPointsPerSecond = _smoothedPointsPerSecond;
+    return _cachedPointsPerSecond;
+  }
+
+  double? _calculateRawPointsPerSecond(int effectiveNowMs) {
+    final cutoffMs = effectiveNowMs - _rateDisplayWindowMs;
 
     _RateBucket? first;
     _RateBucket? last;
@@ -1180,19 +1204,14 @@ class PlotViewModel extends BaseViewModel {
       last = bucket;
     }
 
-    _lastRateCalculationMs = effectiveNowMs;
     if (first == null || last == null) {
-      _cachedPointsPerSecond = null;
       return null;
     }
     final elapsedMs = last.lastTimestampMs - first.firstTimestampMs;
     if (elapsedMs <= 0) {
-      _cachedPointsPerSecond = null;
       return null;
     }
-    _cachedPointsPerSecond =
-        (last.lastIndex - first.firstIndex) * 1000.0 / elapsedMs;
-    return _cachedPointsPerSecond;
+    return (last.lastIndex - first.firstIndex) * 1000.0 / elapsedMs;
   }
 
   void _recordRateSample(int pointIndex, int timestampMs) {
@@ -1215,13 +1234,17 @@ class PlotViewModel extends BaseViewModel {
         _rateBuckets.first.lastTimestampMs < cutoffMs) {
       _rateBuckets.removeFirst();
     }
-    final rate = _calculatePointsPerSecond(nowMs: timestampMs);
+    final rate = _calculateRawPointsPerSecond(timestampMs);
+    _cachedRawPointsPerSecond = rate;
+    _calculatePointsPerSecond(nowMs: timestampMs);
     _updateHighRateMode(rate, timestampMs);
   }
 
   void _resetRateState() {
     _rateBuckets.clear();
     _cachedPointsPerSecond = null;
+    _cachedRawPointsPerSecond = null;
+    _smoothedPointsPerSecond = null;
     _lastRateCalculationMs = null;
     _highRateMode = false;
     _belowHighRateSinceMs = null;

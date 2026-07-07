@@ -1295,7 +1295,7 @@ void main() {
         vm.recordRateSampleForTest(i, i ~/ 100);
       }
 
-      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(25));
+      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(49));
       expect(vm.highRateMode, true);
     });
 
@@ -1377,6 +1377,10 @@ void main() {
       expect(vm.highRateMode, true);
 
       vm.recordRateSampleForTest(25500, 3300);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(28500, 3800);
+      vm.recordRateSampleForTest(31500, 4300);
       expect(vm.highRateMode, false);
       expect(vm.effectiveRefreshFps, 60);
     });
