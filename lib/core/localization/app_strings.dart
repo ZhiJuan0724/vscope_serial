@@ -420,6 +420,12 @@ final class _AppInfoStrings {
   String get debugInstallUnsupported => 'Debug/Profile 构建仅支持检查更新，不支持覆盖安装。';
   String get cancelingDownload => '正在取消下载...';
   String get downloadCanceled => '下载已取消';
+  String get multipleInstancesUpdateTitle => '关闭其他窗口并更新';
+  String get multipleInstancesUpdateMessage =>
+      '检测到已打开多个 Vscope Serial 窗口。升级过程会关闭所有实例。如有未导出或未保存的数据，请先取消并保存。是否继续？';
+  String get multipleInstancesCloseTimeout =>
+      '其他 Vscope Serial 窗口未能及时关闭，请手动关闭后重试。';
+  String get closeOtherInstancesAndContinue => '关闭并继续';
   String get appName => '应用名称';
   String get version => '版本';
   String get buildTime => '构建时间';

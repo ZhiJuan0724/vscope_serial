@@ -3,17 +3,19 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
-/// 自定义文件输出 - 每次启动新建日志，旧日志自动归档，最多保留20份
+/// 自定义文件输出 - 每个进程写入独立日志文件，最多保留20份
 class FileLogOutput extends LogOutput {
   RandomAccessFile? _raf;
   File? _file;
   static const int _maxLogFiles = 20;
-  static const String _latestName = 'latest.log';
 
   /// 批量flush：累计一定量或定时flush，减少磁盘IO
   static const int _flushThresholdBytes = 4096;
   int _pendingBytes = 0;
   DateTime? _lastFlushTime;
+
+  @visibleForTesting
+  String? get filePathForTest => _file?.path;
 
   @override
   Future<void> init() async {
@@ -21,32 +23,20 @@ class FileLogOutput extends LogOutput {
     final logDir = Directory('${exeDir.path}/logs');
     await logDir.create(recursive: true);
 
-    // 归档旧日志
-    await _archiveOldLog(logDir);
     // 清理超期日志
     await _cleanupOldLogs(logDir);
 
-    // 新建 latest.log
-    _file = File('${logDir.path}/$_latestName');
+    _file = File('${logDir.path}/${_newLogFileName()}');
     _raf = await _file!.open(mode: FileMode.write);
   }
 
-  /// 将已有的 latest.log 重命名为带时间戳的归档文件
-  Future<void> _archiveOldLog(Directory logDir) async {
-    final latest = File('${logDir.path}/$_latestName');
-    if (!await latest.exists()) return;
-
+  String _newLogFileName() {
     final now = DateTime.now();
     final timestamp =
-        '${now.year}${_two(now.month)}${_two(now.day)}_${_two(now.hour)}${_two(now.minute)}${_two(now.second)}';
-    final archiveName = 'vscope_log_$timestamp.log';
-    final archive = File('${logDir.path}/$archiveName');
-
-    try {
-      await latest.rename(archive.path);
-    } catch (_) {
-      // 重命名失败则忽略（可能被占用）
-    }
+        '${now.year}${_two(now.month)}${_two(now.day)}_'
+        '${_two(now.hour)}${_two(now.minute)}${_two(now.second)}_'
+        '${now.millisecond.toString().padLeft(3, '0')}';
+    return 'vscope_log_${timestamp}_$pid.log';
   }
 
   /// 清理超期日志，只保留最新的 _maxLogFiles 份

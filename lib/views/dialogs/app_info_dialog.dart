@@ -243,6 +243,8 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   Future<void> _install() async {
     final prepared = _prepared;
     if (prepared == null) return;
+    final canProceed = await _confirmAndCloseOtherInstances(_service);
+    if (!canProceed) return;
     setState(() {
       _installing = true;
       _error = null;
@@ -259,6 +261,41 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
         });
       }
     }
+  }
+
+  Future<bool> _confirmAndCloseOtherInstances(UpdateService service) async {
+    final otherInstances = await service.findOtherRunningInstanceProcessIds();
+    if (otherInstances.isEmpty) return true;
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(AppStrings.appInfo.multipleInstancesUpdateTitle),
+            content: Text(AppStrings.appInfo.multipleInstancesUpdateMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppStrings.appInfo.closeOtherInstancesAndContinue),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return false;
+    await service.requestCloseOtherRunningInstances(otherInstances);
+    final closed = await service.waitForOtherRunningInstancesToExit(
+      const Duration(seconds: 10),
+    );
+    if (!closed && mounted) {
+      setState(() {
+        _error = AppStrings.appInfo.multipleInstancesCloseTimeout;
+      });
+    }
+    return closed;
   }
 
   static String _formatBytes(num bytes) {
@@ -845,7 +882,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
 
   Future<void> _installRollback(RollbackUpdate update) async {
     try {
-      await UpdateService().launchRollbackInstaller(update);
+      final service = UpdateService();
+      final canProceed = await _confirmAndCloseOtherInstances(service);
+      if (!canProceed) return;
+      await service.launchRollbackInstaller(update);
       if (mounted) Navigator.of(context).pop();
       await windowManager.close();
     } catch (error) {
@@ -854,6 +894,43 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         _lastResult = UpdateCheckResult.failed(error.toString());
       });
     }
+  }
+
+  Future<bool> _confirmAndCloseOtherInstances(UpdateService service) async {
+    final otherInstances = await service.findOtherRunningInstanceProcessIds();
+    if (otherInstances.isEmpty) return true;
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(AppStrings.appInfo.multipleInstancesUpdateTitle),
+            content: Text(AppStrings.appInfo.multipleInstancesUpdateMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppStrings.appInfo.closeOtherInstancesAndContinue),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return false;
+    await service.requestCloseOtherRunningInstances(otherInstances);
+    final closed = await service.waitForOtherRunningInstancesToExit(
+      const Duration(seconds: 10),
+    );
+    if (!closed && mounted) {
+      setState(() {
+        _lastResult = UpdateCheckResult.failed(
+          AppStrings.appInfo.multipleInstancesCloseTimeout,
+        );
+      });
+    }
+    return closed;
   }
 
   static String _formatBuildTime(DateTime? time) {

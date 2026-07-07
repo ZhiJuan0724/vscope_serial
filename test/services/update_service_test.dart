@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/services/update_checker.dart';
+import 'package:vscope_serial/services/update_runtime_guard.dart';
 import 'package:vscope_serial/services/update_service.dart';
 
 void main() {
@@ -340,6 +341,72 @@ void main() {
     );
   });
 
+  test('download is rejected when update lock is already held', () async {
+    final service = UpdateService(
+      runtimeGuard: _FakeUpdateRuntimeGuard(lockUnavailable: true),
+    );
+    final release = ReleaseInfo(
+      tagName: 'v1.0.5',
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+    );
+
+    expect(
+      () => service.downloadAndPrepare(
+        release,
+        channel: UpdateChannel.stable,
+        onProgress: (_) {},
+      ),
+      throwsA(
+        isA<UpdateRuntimeGuardException>().having(
+          (error) => error.message,
+          'message',
+          contains('已有更新任务正在进行'),
+        ),
+      ),
+    );
+  });
+
+  test('installer launch rejects other running instances before starting updater', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-launch-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = UpdateService(
+      updatesRoot: root,
+      runtimeGuard: _FakeUpdateRuntimeGuard(otherProcessIds: [1234]),
+    );
+    final release = ReleaseInfo(
+      tagName: 'v1.2.3',
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+    );
+    final update = PreparedUpdate(
+      release: release,
+      manifest: const UpdateManifest(
+        schemaVersion: 1,
+        version: '1.2.3',
+        packageName: '',
+        packageSize: 0,
+        sha256: '',
+        executable: 'vscope_serial.exe',
+      ),
+      updateDirectory: Directory('${root.path}/update'),
+      payloadDirectory: Directory('${root.path}/payload'),
+    );
+
+    expect(
+      () => service.launchInstaller(update, channel: UpdateChannel.stable),
+      throwsA(
+        isA<UpdateDownloadException>().having(
+          (error) => error.message,
+          'message',
+          contains('请先关闭其他 Vscope Serial 窗口'),
+        ),
+      ),
+    );
+  });
+
   test('rejects zip path traversal', () async {
     final root = await Directory.systemTemp.createTemp('vscope-zip-test-');
     addTearDown(() => root.delete(recursive: true));
@@ -485,4 +552,32 @@ List<int> _validPackage() {
     archive.addFile(ArchiveFile.bytes(entry.key, utf8.encode(entry.value)));
   }
   return ZipEncoder().encodeBytes(archive);
+}
+
+final class _FakeUpdateRuntimeGuard implements UpdateRuntimeGuard {
+  final bool lockUnavailable;
+  final List<int> otherProcessIds;
+
+  _FakeUpdateRuntimeGuard({
+    this.lockUnavailable = false,
+    this.otherProcessIds = const <int>[],
+  });
+
+  @override
+  Future<T> runWithUpdateLock<T>(Future<T> Function() action) {
+    if (lockUnavailable) {
+      throw const UpdateRuntimeGuardException('已有更新任务正在进行，请稍后再试');
+    }
+    return action();
+  }
+
+  @override
+  Future<List<int>> findOtherInstanceProcessIds() async => otherProcessIds;
+
+  @override
+  Future<void> requestCloseProcesses(List<int> processIds) async {}
+
+  @override
+  Future<bool> waitForOtherInstancesToExit(Duration timeout) async =>
+      otherProcessIds.isEmpty;
 }

@@ -128,6 +128,40 @@ def rollback_case(updater: Path, root: Path) -> None:
     assert digest(install / "vscope_serial.exe") == original_digest
 
 
+def running_instance_case(updater: Path, root: Path) -> None:
+    install = root / "running-install"
+    payload = root / "running-payload"
+    workspace = root / "running-work"
+    for directory in (install, payload, workspace):
+        directory.mkdir(parents=True)
+
+    system32 = Path(os.environ["SystemRoot"]) / "System32"
+    shutil.copy2(system32 / "ping.exe", install / "vscope_serial.exe")
+    original_digest = digest(install / "vscope_serial.exe")
+    write_manifest(install, ["vscope_serial.exe"])
+
+    shutil.copy2(system32 / "where.exe", payload / "vscope_serial.exe")
+    write_manifest(payload, ["vscope_serial.exe"])
+
+    app = subprocess.Popen(
+        [str(install / "vscope_serial.exe"), "127.0.0.1", "-n", "30"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        time.sleep(0.5)
+        result = run_updater(updater, install, payload, workspace)
+    finally:
+        app.terminate()
+        try:
+            app.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            app.kill()
+    assert result["success"] is False
+    assert "other application instances" in result["message"]
+    assert digest(install / "vscope_serial.exe") == original_digest
+
+
 def main() -> None:
     project = Path(__file__).resolve().parent.parent
     updater = (
@@ -149,6 +183,7 @@ def main() -> None:
         shutil.copy2(updater, copied_updater)
         success_case(copied_updater, root)
         rollback_case(copied_updater, root)
+        running_instance_case(copied_updater, root)
         time.sleep(0.5)
     print("Native updater integration tests passed.")
 

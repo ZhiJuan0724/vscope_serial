@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 
 import 'app_info.dart';
 import 'update_checker.dart';
+import 'update_runtime_guard.dart';
 
 class UpdateManifest {
   final int schemaVersion;
@@ -134,6 +135,7 @@ class UpdateService {
   final BytesFetcher _bytesFetcher;
   final UpdateFileDownloader? _fileDownloader;
   final Directory? _updatesRootOverride;
+  final UpdateRuntimeGuard _runtimeGuard;
   HttpClient? _downloadClient;
   static const _maxNetworkAttempts = 3;
 
@@ -142,12 +144,30 @@ class UpdateService {
     BytesFetcher? bytesFetcher,
     UpdateFileDownloader? fileDownloader,
     Directory? updatesRoot,
+    UpdateRuntimeGuard? runtimeGuard,
   }) : _releaseFetcher = releaseFetcher ?? _defaultFetchRelease,
        _bytesFetcher = bytesFetcher ?? _defaultFetchBytes,
        _fileDownloader = fileDownloader,
-       _updatesRootOverride = updatesRoot;
+       _updatesRootOverride = updatesRoot,
+       _runtimeGuard = runtimeGuard ?? WindowsUpdateRuntimeGuard();
 
   Future<PreparedUpdate> downloadAndPrepare(
+    ReleaseInfo checkedRelease, {
+    required UpdateChannel channel,
+    bool allowSourceFallback = true,
+    required void Function(UpdateDownloadProgress progress) onProgress,
+  }) async {
+    return _runtimeGuard.runWithUpdateLock(
+      () => _downloadAndPrepareLocked(
+        checkedRelease,
+        channel: channel,
+        allowSourceFallback: allowSourceFallback,
+        onProgress: onProgress,
+      ),
+    );
+  }
+
+  Future<PreparedUpdate> _downloadAndPrepareLocked(
     ReleaseInfo checkedRelease, {
     required UpdateChannel channel,
     bool allowSourceFallback = true,
@@ -377,11 +397,16 @@ class UpdateService {
     PreparedUpdate update, {
     required UpdateChannel channel,
   }) async {
-    await _launchInstaller(
-      manifest: update.manifest,
-      updateDirectory: update.updateDirectory,
-      payloadDirectory: update.payloadDirectory,
-      channel: channel,
+    await _runtimeGuard.runWithUpdateLock(
+      () async {
+        await _ensureNoOtherRunningInstances();
+        await _launchInstaller(
+          manifest: update.manifest,
+          updateDirectory: update.updateDirectory,
+          payloadDirectory: update.payloadDirectory,
+          channel: channel,
+        );
+      },
     );
   }
 
@@ -434,20 +459,41 @@ class UpdateService {
   }
 
   Future<void> launchRollbackInstaller(RollbackUpdate update) async {
-    final stagingDir = await _rollbackInstallDirectory(update.channel);
-    if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
-    await stagingDir.create(recursive: true);
-    final stagedPayload = Directory('${stagingDir.path}/payload');
-    await _copyDirectory(update.payloadDirectory, stagedPayload);
-    await File(
-      '${update.rollbackDirectory.path}/update-manifest.json',
-    ).copy('${stagingDir.path}/update-manifest.json');
-    await _launchInstaller(
-      manifest: update.manifest,
-      updateDirectory: stagingDir,
-      payloadDirectory: stagedPayload,
-      channel: update.channel,
+    await _runtimeGuard.runWithUpdateLock(
+      () async {
+        await _ensureNoOtherRunningInstances();
+        final stagingDir = await _rollbackInstallDirectory(update.channel);
+        if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+        await stagingDir.create(recursive: true);
+        final stagedPayload = Directory('${stagingDir.path}/payload');
+        await _copyDirectory(update.payloadDirectory, stagedPayload);
+        await File(
+          '${update.rollbackDirectory.path}/update-manifest.json',
+        ).copy('${stagingDir.path}/update-manifest.json');
+        await _launchInstaller(
+          manifest: update.manifest,
+          updateDirectory: stagingDir,
+          payloadDirectory: stagedPayload,
+          channel: update.channel,
+        );
+      },
     );
+  }
+
+  Future<List<int>> findOtherRunningInstanceProcessIds() =>
+      _runtimeGuard.findOtherInstanceProcessIds();
+
+  Future<void> requestCloseOtherRunningInstances(List<int> processIds) =>
+      _runtimeGuard.requestCloseProcesses(processIds);
+
+  Future<bool> waitForOtherRunningInstancesToExit(Duration timeout) =>
+      _runtimeGuard.waitForOtherInstancesToExit(timeout);
+
+  Future<void> _ensureNoOtherRunningInstances() async {
+    final otherInstances = await _runtimeGuard.findOtherInstanceProcessIds();
+    if (otherInstances.isNotEmpty) {
+      throw const UpdateDownloadException('请先关闭其他 Vscope Serial 窗口后再更新或回退');
+    }
   }
 
   Future<void> _launchInstaller({
