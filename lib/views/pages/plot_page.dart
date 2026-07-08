@@ -2618,6 +2618,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
+    final range = await _showPlotExportRangeDialog(context, vm);
+    if (range == null || !context.mounted) return;
+
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveCsvFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.csv',
@@ -2632,11 +2635,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       vm: vm,
       title: AppStrings.plot.exportCsvTitle,
       exportFile:
-          ({onProgress}) => vm.exportToCsv(result, onProgress: onProgress),
+          ({onProgress, cancelToken}) => vm.exportToCsv(
+            result,
+            startIndex: range.startIndex,
+            endIndex: range.endIndex,
+            onProgress: onProgress,
+            cancelToken: cancelToken,
+          ),
     );
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
+    final range = await _showPlotExportRangeDialog(context, vm);
+    if (range == null || !context.mounted) return;
+
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveBinFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.bin',
@@ -2651,17 +2663,154 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       vm: vm,
       title: AppStrings.plot.exportBinTitle,
       exportFile:
-          ({onProgress}) => vm.exportToBin(result, onProgress: onProgress),
+          ({onProgress, cancelToken}) => vm.exportToBin(
+            result,
+            startIndex: range.startIndex,
+            endIndex: range.endIndex,
+            onProgress: onProgress,
+            cancelToken: cancelToken,
+          ),
     );
+  }
+
+  Future<_PlotExportRange?> _showPlotExportRangeDialog(
+    BuildContext context,
+    PlotViewModel vm,
+  ) async {
+    final maxIndex = vm.pointCount - 1;
+    if (maxIndex < 0) return null;
+    final startController = TextEditingController(text: '0');
+    final endController = TextEditingController(text: maxIndex.toString());
+    String? errorText;
+
+    return showDialog<_PlotExportRange>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              void useCurrentViewport() {
+                final start = vm.viewport.xMin.floor().clamp(0, maxIndex);
+                final end = vm.viewport.xMax.ceil().clamp(0, maxIndex);
+                startController.text = start.toString();
+                endController.text = math.max(start, end).toString();
+                setDialogState(() => errorText = null);
+              }
+
+              void submit() {
+                final start = int.tryParse(startController.text.trim());
+                final end = int.tryParse(endController.text.trim());
+                if (start == null || end == null) {
+                  setDialogState(() => errorText = '请输入整数起始点和结束点');
+                  return;
+                }
+                if (start < 0 || end > maxIndex || start > end) {
+                  setDialogState(
+                    () => errorText = '范围应满足 0 <= 起始点 <= 结束点 <= $maxIndex',
+                  );
+                  return;
+                }
+                Navigator.of(
+                  dialogContext,
+                ).pop(_PlotExportRange(startIndex: start, endIndex: end));
+              }
+
+              return AlertDialog(
+                title: const Text('导出范围'),
+                content: SizedBox(
+                  width: 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '可导出范围: 0-$maxIndex，导出文件内 X 将从 0 重新编号。',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: startController,
+                              autofocus: true,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: '起始点',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (_) {
+                                if (errorText != null) {
+                                  setDialogState(() => errorText = null);
+                                }
+                              },
+                              onSubmitted: (_) => submit(),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: endController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: '结束点',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (_) {
+                                if (errorText != null) {
+                                  setDialogState(() => errorText = null);
+                                }
+                              },
+                              onSubmitted: (_) => submit(),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          errorText!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: useCurrentViewport,
+                    child: const Text('使用当前视口'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('取消'),
+                  ),
+                  TextButton(onPressed: submit, child: const Text('继续')),
+                ],
+              );
+            },
+          ),
+    ).whenComplete(() {
+      startController.dispose();
+      endController.dispose();
+    });
   }
 
   Future<void> _runExportWithProgress({
     required BuildContext context,
     required PlotViewModel vm,
     required String title,
-    required Future<String?> Function({PlotExportProgressCallback? onProgress})
+    required Future<String?> Function({
+      PlotExportProgressCallback? onProgress,
+      PlotExportCancelToken? cancelToken,
+    })
     exportFile,
   }) async {
+    final cancelToken = PlotExportCancelToken();
     final progressNotifier = ValueNotifier<PlotImportProgress>(
       PlotImportProgress(
         stage: AppStrings.plot.exportPreparing,
@@ -2678,6 +2827,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             (dialogContext) => _PlotFileProgressDialog(
               title: title,
               progressListenable: progressNotifier,
+              cancelToken: cancelToken,
             ),
       ).whenComplete(() => dialogClosed = true),
     );
@@ -2685,6 +2835,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     final path = await exportFile(
       onProgress: (progress) => progressNotifier.value = progress,
+      cancelToken: cancelToken,
     );
     if (context.mounted && !dialogClosed) {
       Navigator.of(context, rootNavigator: true).pop();
@@ -2692,7 +2843,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     progressNotifier.dispose();
     if (!context.mounted) return;
     vm.showStatusMessage(
-      path == null
+      cancelToken.isCancelled
+          ? '导出已取消'
+          : path == null
           ? AppStrings.plot.exportFailed
           : '${AppStrings.plot.exportedPrefix}: $path',
     );

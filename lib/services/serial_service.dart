@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:charset/charset.dart';
@@ -121,6 +120,20 @@ class _CircularStringList extends ListBase<String> {
   }
 }
 
+class _IosStringSink implements Sink<String> {
+  final IOSink output;
+
+  _IosStringSink(this.output);
+
+  @override
+  void add(String data) {
+    output.write(data);
+  }
+
+  @override
+  void close() {}
+}
+
 enum SendDisplaySource { user, plot }
 
 typedef ExportProgressCallback = void Function(double progress);
@@ -158,17 +171,6 @@ Uint8List _encodeTextWithEncoding(String text, String encoding) {
     _ => utf8.encode(text),
   };
   return Uint8List.fromList(bytes);
-}
-
-Uint8List _buildRawExportBytes(Uint8List bytes) {
-  final crcPoly = crc32Polys['CRC-32']!;
-  final crcValue = calculateCrc(bytes, crcPoly);
-  final crcBytes = crcToBytes(crcValue, 32);
-  final output =
-      BytesBuilder(copy: false)
-        ..add(bytes)
-        ..add(Uint8List.fromList(crcBytes));
-  return output.takeBytes();
 }
 
 enum RawShellInputMode {
@@ -1374,17 +1376,20 @@ class SerialService extends ChangeNotifier {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.txt';
       final file = File(path);
-      final bytes = _rawBytes.toBytes();
-      onProgress?.call(0.25);
       final encoding = _textEncoding;
-      final content = await Isolate.run(
-        () => _decodeBytesWithEncoding(bytes, encoding),
-      );
-      onProgress?.call(0.75);
-      await file.writeAsString(content);
+      if (_supportsStreamingTextExport(encoding)) {
+        await _exportTextStreaming(file, encoding, onProgress);
+      } else {
+        // 其他代码页的流式跨块解码需要保留解码器状态，暂时保留旧行为保证文本正确性。
+        final bytes = _rawBytes.toBytes();
+        onProgress?.call(0.25);
+        final content = _decodeBytesWithEncoding(bytes, encoding);
+        onProgress?.call(0.75);
+        await file.writeAsString(content);
+      }
       onProgress?.call(1);
       AppLogger().info(
-        '已导出完整接收文本: $path，编码=$encoding，原始字节=${bytes.length}',
+        '已导出完整接收文本: $path，编码=$encoding，原始字节=$_rawBytesSize',
         category: 'DATA',
       );
       return path;
@@ -1412,11 +1417,7 @@ class SerialService extends ChangeNotifier {
       final path = '${dir.path}/vscope_serial_$timestamp.bin';
       final file = File(path);
 
-      final bytes = _rawBytes.toBytes();
-      onProgress?.call(0.25);
-      final output = await Isolate.run(() => _buildRawExportBytes(bytes));
-      onProgress?.call(0.75);
-      await file.writeAsBytes(output);
+      await _exportRawBytesStreaming(file, onProgress);
       onProgress?.call(1);
 
       AppLogger().info('已导出原始字节: $path', category: 'DATA');
@@ -1424,6 +1425,67 @@ class SerialService extends ChangeNotifier {
     } catch (e) {
       AppLogger().error('导出失败: $e', category: 'DATA');
       return null;
+    }
+  }
+
+  bool _supportsStreamingTextExport(String encoding) {
+    return encoding == 'UTF-8' || encoding == 'Latin-1' || encoding == 'ASCII';
+  }
+
+  Converter<List<int>, String> _streamingTextDecoder(String encoding) {
+    return switch (encoding) {
+      'Latin-1' => latin1.decoder,
+      'ASCII' => ascii.decoder,
+      _ => utf8.decoder,
+    };
+  }
+
+  Future<void> _exportTextStreaming(
+    File file,
+    String encoding,
+    ExportProgressCallback? onProgress,
+  ) async {
+    final output = file.openWrite();
+    final decoder = _streamingTextDecoder(encoding);
+    final decoderSink = decoder.startChunkedConversion(_IosStringSink(output));
+    var written = 0;
+    try {
+      for (final chunk in _rawBytes.readChunks()) {
+        decoderSink.add(chunk);
+        written += chunk.length;
+        onProgress?.call(0.05 + 0.9 * written / _rawBytesSize);
+        await Future<void>.delayed(Duration.zero);
+      }
+      decoderSink.close();
+      await output.flush();
+      await output.close();
+    } catch (_) {
+      await output.close();
+      rethrow;
+    }
+  }
+
+  Future<void> _exportRawBytesStreaming(
+    File file,
+    ExportProgressCallback? onProgress,
+  ) async {
+    final crc = CrcCalculator(crc32Polys['CRC-32']!);
+    final output = await file.open(mode: FileMode.write);
+    var written = 0;
+    try {
+      for (final chunk in _rawBytes.readChunks()) {
+        crc.add(chunk);
+        await output.writeFrom(chunk);
+        written += chunk.length;
+        onProgress?.call(0.05 + 0.9 * written / _rawBytesSize);
+        await Future<void>.delayed(Duration.zero);
+      }
+      await output.writeFrom(Uint8List.fromList(crcToBytes(crc.digest, 32)));
+      await output.flush();
+      await output.close();
+    } catch (_) {
+      await output.close();
+      rethrow;
     }
   }
 

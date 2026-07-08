@@ -199,7 +199,9 @@ void main() {
         expect(content, startsWith('line0\n'));
         expect(content, endsWith('line104\n'));
         expect(const LineSplitter().convert(content), hasLength(105));
-        expect(progress, [0.05, 0.25, 0.75, 1.0]);
+        expect(progress.first, 0.05);
+        expect(progress.last, 1.0);
+        expect(progress.any((value) => (value - 0.95).abs() < 1e-9), isTrue);
       },
     );
 
@@ -237,7 +239,9 @@ void main() {
 
       expect(output.sublist(0, 4), [1, 2, 3, 4]);
       expect(output, hasLength(8));
-      expect(progress, [0.05, 0.25, 0.75, 1.0]);
+      expect(progress.first, 0.05);
+      expect(progress.last, 1.0);
+      expect(progress.any((value) => (value - 0.95).abs() < 1e-9), isTrue);
     });
   });
 }

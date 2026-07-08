@@ -17,6 +17,13 @@ class _ParsedValueHistory {
   int get allocatedValueSlots =>
       _chunks.fold(0, (total, chunk) => total + chunk.allocatedValueSlots);
 
+  @visibleForTesting
+  void debugSetLengthForTest(int length, {int maxChannelCount = 16}) {
+    _chunks.clear();
+    _length = length;
+    _maxChannelCount = maxChannelCount.clamp(0, _maxChannels).toInt();
+  }
+
   void clear() {
     _chunks.clear();
     _length = 0;

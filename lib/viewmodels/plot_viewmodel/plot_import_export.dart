@@ -1,7 +1,13 @@
 part of '../plot_viewmodel.dart';
 
+class _PlotExportCancelled implements Exception {}
+
 /// PlotViewModel 的数据导入导出能力，包含 CSV、BIN 和旧版 DAT 格式。
 extension PlotViewModelImportExport on PlotViewModel {
+  static const int _binMaxUint32 = 0xFFFFFFFF;
+  static const int _binExportBatchSize = 65536;
+  static const int _csvExportBatchSize = 8192;
+
   // ========== 导出 ==========
   /// 导出数据到 CSV 文件
   ///
@@ -9,16 +15,20 @@ extension PlotViewModelImportExport on PlotViewModel {
   /// 返回实际保存的文件路径，失败返回 null。
   Future<String?> exportToCsv(
     String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
     PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
   }) async {
     IOSink? sink;
+    String? path;
     try {
-      if (_nextIndex == 0) {
+      final exportRange = _normalizeExportRange(startIndex, endIndex);
+      if (exportRange == null) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
 
-      String path;
       if (selectedPath != null) {
         path = selectedPath;
       } else {
@@ -29,9 +39,12 @@ extension PlotViewModelImportExport on PlotViewModel {
         path = '${dir.path}/vscope_plot_$timestamp.csv';
       }
       final maxChannels = _exportChannelCount;
-      final pointCount = _exportPointCount;
+      final sourceStart = exportRange.$1;
+      final pointCount = exportRange.$2;
       final file = File(path);
       sink = file.openWrite();
+      final startedAt = DateTime.now();
+      var writtenBytes = 0;
       sink.writeln(
         '# vscope_plot_meta=${jsonEncode(_buildExportMetadata(maxChannels))}',
       );
@@ -40,21 +53,27 @@ extension PlotViewModelImportExport on PlotViewModel {
         header.write(',y${i + 1}');
       }
       sink.writeln(header);
+      writtenBytes += header.length + 1;
 
-      const batchSize = 4096;
       for (
         var batchStart = 0;
         batchStart < pointCount;
-        batchStart += batchSize
+        batchStart += _csvExportBatchSize
       ) {
-        final batchEnd = math.min(batchStart + batchSize, pointCount);
+        if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
+        final batchEnd = math.min(batchStart + _csvExportBatchSize, pointCount);
         final buffer = StringBuffer();
-        for (var pointIndex = batchStart; pointIndex < batchEnd; pointIndex++) {
+        for (
+          var exportIndex = batchStart;
+          exportIndex < batchEnd;
+          exportIndex++
+        ) {
+          final pointIndex = sourceStart + exportIndex;
           final values =
               _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
           final valueCount =
               values?.length ?? _parsedHistory.valueCountAt(pointIndex);
-          buffer.write(pointIndex);
+          buffer.write(exportIndex);
           for (var channel = 0; channel < maxChannels; channel++) {
             buffer.write(',');
             if (channel < valueCount) {
@@ -66,9 +85,18 @@ extension PlotViewModelImportExport on PlotViewModel {
           }
           buffer.writeln();
         }
-        sink.write(buffer);
-        await sink.flush();
-        await _reportExportProgress(onProgress, '写入 CSV', batchEnd, pointCount);
+        final text = buffer.toString();
+        writtenBytes += text.length;
+        sink.write(text);
+        await _reportExportProgress(
+          onProgress,
+          '写入 CSV',
+          batchEnd,
+          pointCount,
+          bytesWritten: writtenBytes,
+          startedAt: startedAt,
+          cancelToken: cancelToken,
+        );
       }
 
       await sink.flush();
@@ -76,6 +104,15 @@ extension PlotViewModelImportExport on PlotViewModel {
       sink = null;
       AppLogger().info('已导出 CSV: $path', category: 'PLOT');
       return path;
+    } on _PlotExportCancelled {
+      await sink?.close();
+      if (path != null) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+      AppLogger().info('CSV 导出已取消', category: 'PLOT');
+      return null;
     } catch (e) {
       await sink?.close();
       AppLogger().error('CSV 导出失败: $e', category: 'PLOT');
@@ -85,17 +122,22 @@ extension PlotViewModelImportExport on PlotViewModel {
 
   Future<String?> exportToBin(
     String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
     PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
   }) async {
     RandomAccessFile? output;
+    String? path;
     try {
-      final pointCount = _exportPointCount;
-      if (pointCount == 0) {
+      final exportRange = _normalizeExportRange(startIndex, endIndex);
+      if (exportRange == null) {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
+      final sourceStart = exportRange.$1;
+      final pointCount = exportRange.$2;
 
-      String path;
       if (selectedPath != null) {
         path = selectedPath;
       } else {
@@ -109,29 +151,46 @@ extension PlotViewModelImportExport on PlotViewModel {
       final channelCount = _exportChannelCount;
       final rowLength = 8 + channelCount * 8;
       final payloadLength = pointCount * rowLength;
+      if (pointCount > _binMaxUint32 || payloadLength > _binMaxUint32) {
+        final payloadGb = payloadLength / 1024 / 1024 / 1024;
+        final message =
+            'BIN 导出失败：当前 BIN 格式单文件最多支持 4GB 数据，'
+            '本次预计 ${payloadGb.toStringAsFixed(2)} GB。请先缩小数据范围或改用分段导出。';
+        showStatusMessage(message, duration: const Duration(seconds: 6));
+        AppLogger().warning(message, category: 'PLOT');
+        return null;
+      }
       final metadataBytes = utf8.encode(
         jsonEncode(_buildExportMetadata(channelCount)),
       );
       final crc = CrcCalculator(crc32Polys['CRC-32']!)..add(metadataBytes);
       output = await File(path).open(mode: FileMode.write);
+      final startedAt = DateTime.now();
+      var writtenBytes = 0;
       await output.writeFrom(Uint8List(28));
       await output.writeFrom(metadataBytes);
+      writtenBytes += 28 + metadataBytes.length;
 
-      const batchSize = 4096;
       for (
         var batchStart = 0;
         batchStart < pointCount;
-        batchStart += batchSize
+        batchStart += _binExportBatchSize
       ) {
-        final batchEnd = math.min(batchStart + batchSize, pointCount);
+        if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
+        final batchEnd = math.min(batchStart + _binExportBatchSize, pointCount);
         final bytes = ByteData((batchEnd - batchStart) * rowLength);
         var offset = 0;
-        for (var pointIndex = batchStart; pointIndex < batchEnd; pointIndex++) {
+        for (
+          var exportIndex = batchStart;
+          exportIndex < batchEnd;
+          exportIndex++
+        ) {
+          final pointIndex = sourceStart + exportIndex;
           final values =
               _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
           final valueCount =
               values?.length ?? _parsedHistory.valueCountAt(pointIndex);
-          bytes.setFloat64(offset, pointIndex.toDouble(), Endian.little);
+          bytes.setFloat64(offset, exportIndex.toDouble(), Endian.little);
           offset += 8;
           for (var channel = 0; channel < channelCount; channel++) {
             final value =
@@ -147,7 +206,16 @@ extension PlotViewModelImportExport on PlotViewModel {
         final chunk = bytes.buffer.asUint8List();
         crc.add(chunk);
         await output.writeFrom(chunk);
-        await _reportExportProgress(onProgress, '写入 BIN', batchEnd, pointCount);
+        writtenBytes += chunk.length;
+        await _reportExportProgress(
+          onProgress,
+          '写入 BIN',
+          batchEnd,
+          pointCount,
+          bytesWritten: writtenBytes,
+          startedAt: startedAt,
+          cancelToken: cancelToken,
+        );
       }
 
       final header = ByteData(28);
@@ -168,6 +236,15 @@ extension PlotViewModelImportExport on PlotViewModel {
       output = null;
       AppLogger().info('已导出 BIN: $path', category: 'PLOT');
       return path;
+    } on _PlotExportCancelled {
+      await output?.close();
+      if (path != null) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+      AppLogger().info('BIN 导出已取消', category: 'PLOT');
+      return null;
     } catch (e) {
       await output?.close();
       AppLogger().error('BIN 导出失败: $e', category: 'PLOT');
@@ -195,6 +272,20 @@ extension PlotViewModelImportExport on PlotViewModel {
       return _fixedFrameRawFrames.packetCount;
     }
     return _parsedHistory.length;
+  }
+
+  (int, int)? _normalizeExportRange(int? startIndex, int? endIndex) {
+    final total = _exportPointCount;
+    if (total <= 0) return null;
+    final start = startIndex ?? 0;
+    final end = endIndex ?? total - 1;
+    if (start < 0 || end < start || end >= total) {
+      final message = '导出范围无效：起始点和结束点必须在 0-${total - 1} 内';
+      showStatusMessage(message, duration: const Duration(seconds: 4));
+      AppLogger().warning(message, category: 'PLOT');
+      return null;
+    }
+    return (start, end - start + 1);
   }
 
   bool get _exportsParsedHistory =>
@@ -252,12 +343,29 @@ extension PlotViewModelImportExport on PlotViewModel {
     PlotExportProgressCallback? onProgress,
     String stage,
     int current,
-    int total,
-  ) async {
+    int total, {
+    int? bytesWritten,
+    DateTime? startedAt,
+    PlotExportCancelToken? cancelToken,
+  }) async {
+    if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
+    double? bytesPerSecond;
+    if (bytesWritten != null && startedAt != null) {
+      final elapsedMs = DateTime.now().difference(startedAt).inMilliseconds;
+      if (elapsedMs > 0) {
+        bytesPerSecond = bytesWritten * 1000.0 / elapsedMs;
+      }
+    }
     onProgress?.call(
-      PlotImportProgress(stage: stage, current: current, total: total),
+      PlotImportProgress(
+        stage: stage,
+        current: current,
+        total: total,
+        bytesPerSecond: bytesPerSecond,
+      ),
     );
     await Future<void>.delayed(Duration.zero);
+    if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
   }
 
   // ========== 导入 ==========

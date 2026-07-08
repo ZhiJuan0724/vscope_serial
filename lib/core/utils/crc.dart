@@ -346,6 +346,15 @@ class CrcCalculator {
   late final int _mask;
   late final int _topBit;
   late int _crc;
+  late final bool _useReflectedCrc32Table;
+
+  static final List<int> _crc32Table = List<int>.generate(256, (index) {
+    var crc = index;
+    for (var i = 0; i < 8; i++) {
+      crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1;
+    }
+    return crc & 0xFFFFFFFF;
+  }, growable: false);
 
   CrcCalculator(this.poly) {
     if (poly.width != 8 && poly.width != 16 && poly.width != 32) {
@@ -354,9 +363,22 @@ class CrcCalculator {
     _mask = (1 << poly.width) - 1;
     _topBit = 1 << (poly.width - 1);
     _crc = poly.init & _mask;
+    _useReflectedCrc32Table =
+        poly.width == 32 &&
+        poly.poly == 0x04C11DB7 &&
+        poly.refIn &&
+        poly.refOut;
   }
 
   void add(List<int> data) {
+    if (_useReflectedCrc32Table) {
+      for (final byte in data) {
+        _crc = _crc32Table[(_crc ^ byte) & 0xFF] ^ (_crc >>> 8);
+      }
+      _crc &= _mask;
+      return;
+    }
+
     final shift = poly.width - 8;
     for (final byte in data) {
       final input = poly.refIn ? _reverse8(byte) : byte;
@@ -371,6 +393,9 @@ class CrcCalculator {
   }
 
   int get digest {
+    if (_useReflectedCrc32Table) {
+      return (_crc ^ poly.xorOut) & _mask;
+    }
     final reflected = switch (poly.width) {
       8 => _reverse8(_crc),
       16 => _reverse16(_crc),

@@ -772,6 +772,84 @@ void main() {
       expect(imported.dataPoints[1].values, [3.5, 4.5]);
     });
 
+    test('CSV 和 BIN 导出支持范围并重新编号X', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_export_range_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,10,20\n1,11,21\n2,12,22\n3,13,23\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+
+      final outCsvPath = '${dir.path}/range.csv';
+      expect(
+        await vm.exportToCsv(outCsvPath, startIndex: 1, endIndex: 2),
+        outCsvPath,
+      );
+      final outLines = await File(outCsvPath).readAsLines().then(
+        (lines) => lines.where((line) => !line.startsWith('#')),
+      );
+      expect(outLines.toList(), [
+        'x,y1,y2',
+        '0,11.000000,21.000000',
+        '1,12.000000,22.000000',
+      ]);
+
+      final outBinPath = '${dir.path}/range.bin';
+      expect(
+        await vm.exportToBin(outBinPath, startIndex: 2, endIndex: 3),
+        outBinPath,
+      );
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(outBinPath), isNull);
+      expect(imported.dataPoints, hasLength(2));
+      expect(imported.dataPoints[0].timestamp, 0);
+      expect(imported.dataPoints[0].values, [12, 22]);
+      expect(imported.dataPoints[1].timestamp, 1);
+      expect(imported.dataPoints[1].values, [13, 23]);
+    });
+
+    test('BIN 导出取消后删除半成品', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_cancel_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      for (var i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      final token = PlotExportCancelToken()..cancel();
+      final binPath = '${dir.path}/cancel.bin';
+
+      final exported = await vm.exportToBin(binPath, cancelToken: token);
+
+      expect(exported, isNull);
+      expect(File(binPath).existsSync(), isFalse);
+    });
+
+    test('BIN 导出超过当前格式4GB上限时拒绝导出', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_limit_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.debugSetParsedHistoryForExportTest(
+        pointCount: 40000000,
+        channelCount: 16,
+      );
+      final binPath = '${dir.path}/too_large.bin';
+
+      final exported = await vm.exportToBin(binPath);
+
+      expect(exported, isNull);
+      expect(File(binPath).existsSync(), isFalse);
+      expect(vm.lastStatusMessage, contains('4GB'));
+    });
+
     test('导入导出保留通道名称和众邦地址', () async {
       final dir = await Directory.systemTemp.createTemp('vscope_meta_test_');
       addTearDown(() => dir.deleteSync(recursive: true));

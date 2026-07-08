@@ -71,6 +71,29 @@ class ChunkedByteBuffer {
     return output;
   }
 
+  Iterable<Uint8List> readChunks({int offset = 0, int? length}) sync* {
+    RangeError.checkValueInInterval(offset, 0, _length, 'offset');
+    final totalLength = length ?? (_length - offset);
+    if (totalLength < 0 || offset + totalLength > _length) {
+      throw RangeError.range(totalLength, 0, _length - offset, 'length');
+    }
+
+    var remaining = totalLength;
+    var sourceOffset = offset;
+    while (remaining > 0) {
+      final chunkIndex = sourceOffset ~/ chunkSize;
+      final chunkOffset = sourceOffset % chunkSize;
+      final count = remaining.clamp(0, chunkSize - chunkOffset).toInt();
+      yield Uint8List.sublistView(
+        _chunks[chunkIndex],
+        chunkOffset,
+        chunkOffset + count,
+      );
+      sourceOffset += count;
+      remaining -= count;
+    }
+  }
+
   Uint8List toBytes() => readRange(0, _length);
 }
 

@@ -123,17 +123,29 @@ class PlotImportProgress {
   final int current;
   final int total;
   final String? detail;
+  final double? bytesPerSecond;
 
   const PlotImportProgress({
     required this.stage,
     required this.current,
     required this.total,
     this.detail,
+    this.bytesPerSecond,
   });
 
   double? get fraction {
     if (total <= 0) return null;
     return (current / total).clamp(0.0, 1.0);
+  }
+}
+
+class PlotExportCancelToken {
+  bool _isCancelled = false;
+
+  bool get isCancelled => _isCancelled;
+
+  void cancel() {
+    _isCancelled = true;
   }
 }
 
@@ -1927,6 +1939,19 @@ class PlotViewModel extends BaseViewModel {
   @visibleForTesting
   void ingestParsedResultForTestAt(ParseResult result, DateTime receivedAt) {
     _onParseResult(result, receivedAt: receivedAt);
+  }
+
+  @visibleForTesting
+  void debugSetParsedHistoryForExportTest({
+    required int pointCount,
+    required int channelCount,
+  }) {
+    _parserType = ParserType.fireWater;
+    _nextIndex = pointCount;
+    _parsedHistory.debugSetLengthForTest(
+      pointCount,
+      maxChannelCount: channelCount,
+    );
   }
 
   @visibleForTesting
