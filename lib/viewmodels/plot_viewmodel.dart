@@ -870,6 +870,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
+  int? get minJumpXIndex => _nextIndex > 0 ? 0 : null;
+  int? get maxJumpXIndex => _nextIndex > 0 ? _nextIndex - 1 : null;
 
   /// 当前窗口中的数据点数量
   int get visiblePointCount => _dataPoints.length;
@@ -4062,10 +4064,21 @@ class PlotViewModel extends BaseViewModel {
 
   void jumpToObservation(int index) {
     if (index < 0 || index >= _observations.length) return;
-    final x = _observations[index].x;
+    jumpToXIndex(_observations[index].x.round());
+  }
+
+  bool canJumpToXIndex(int x) {
+    return x >= 0 && x < _nextIndex;
+  }
+
+  void jumpToXIndex(int x) {
+    if (!canJumpToXIndex(x)) return;
     final range = viewport.xRange;
     final halfRange = range / 2;
-    _setViewport(viewport.copyWith(xMin: x - halfRange, xMax: x + halfRange));
+    final center = x.toDouble();
+    _setViewport(
+      viewport.copyWith(xMin: center - halfRange, xMax: center + halfRange),
+    );
     _loadWindowForViewport();
     Future.microtask(() => notifyListeners());
   }

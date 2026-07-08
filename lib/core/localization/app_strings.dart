@@ -94,14 +94,14 @@ final class _PlotStrings {
   String get createRProtocolConfig => '新建 r 协议配置';
   String get editRProtocolConfig => '编辑 r 协议配置';
   String get noConfig => '不使用配置';
-  String get verticalCursor => '垂直光标';
-  String get addObservation => '添加观察，右键标签删除';
+  String get verticalCursor => '左键开关垂直光标；右键输入 X 跳转';
+  String get addObservation => '左键添加观察；右键管理观察；观察标签右键删除';
   String get observationManage => '管理观察';
   String get placeObservation => '移动鼠标定位观察，左键固定';
   String get observation => '观察';
   String get trigger => '触发';
   String get triggerConfig => '触发配置';
-  String get triggerTooltip => '配置触发条件和触发行为';
+  String get triggerTooltip => '左键启停触发；右键配置触发条件和触发行为';
   String get triggerObservationLimitHelp =>
       '观察最多支持 100 条；触发次数可以超过 100，但超出后不会继续新增观察。';
   String get measureXx => 'X测量';

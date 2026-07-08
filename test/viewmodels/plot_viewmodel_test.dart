@@ -166,6 +166,48 @@ void main() {
       expect(vm.viewport.xMax, 500.0);
     });
 
+    test('jumpToXIndex 保持当前范围并移动视口中心', () {
+      for (int i = 0; i < 1000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 100, xMax: 500));
+
+      vm.jumpToXIndex(900);
+
+      expect(vm.viewport.xRange, 400.0);
+      expect(vm.viewport.xMin, 700.0);
+      expect(vm.viewport.xMax, 1100.0);
+    });
+
+    test('jumpToXIndex 拒绝无数据和越界索引', () {
+      final oldViewport = vm.viewport.copy();
+
+      vm.jumpToXIndex(0);
+
+      expect(vm.viewport.xMin, oldViewport.xMin);
+      expect(vm.viewport.xMax, oldViewport.xMax);
+      expect(vm.minJumpXIndex, isNull);
+      expect(vm.maxJumpXIndex, isNull);
+
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.minJumpXIndex, 0);
+      expect(vm.maxJumpXIndex, 9);
+      expect(vm.canJumpToXIndex(-1), isFalse);
+      expect(vm.canJumpToXIndex(10), isFalse);
+      expect(vm.canJumpToXIndex(9), isTrue);
+
+      vm.jumpToXIndex(-1);
+      expect(vm.viewport.xMin, oldViewport.xMin);
+      expect(vm.viewport.xMax, oldViewport.xMax);
+    });
+
     test('updateFollowCursor 没有数据时保留指针 X', () {
       vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 100));
       vm.updateFollowCursor(30.4, 100.0, const Offset(50, 50));

@@ -957,27 +957,34 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         // 垂直光标开关
         Tooltip(
           message: AppStrings.plot.verticalCursor,
-          child: TextButton.icon(
-            onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-            icon: AppIcon(
-              AppIcons.plotCursor,
-              color: vm.vCursorEnabled ? Colors.orange : null,
-            ),
-            label: Text(
-              AppStrings.plot.cursor,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
+          child: Listener(
+            onPointerDown: (event) {
+              if (event.buttons == kSecondaryMouseButton) {
+                if (vm.pointCount > 0) _showCursorJumpDialog(context, vm);
+              }
+            },
+            child: TextButton.icon(
+              onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+              icon: AppIcon(
+                AppIcons.plotCursor,
                 color: vm.vCursorEnabled ? Colors.orange : null,
               ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.vCursorEnabled
-                      ? Colors.orange.withValues(alpha: 0.1)
-                      : null,
+              label: Text(
+                AppStrings.plot.cursor,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: vm.vCursorEnabled ? Colors.orange : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    vm.vCursorEnabled
+                        ? Colors.orange.withValues(alpha: 0.1)
+                        : null,
+              ),
             ),
           ),
         ),
@@ -3274,6 +3281,70 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         controller.dispose();
       }
     });
+  }
+
+  void _showCursorJumpDialog(BuildContext context, PlotViewModel vm) {
+    final maxX = vm.maxJumpXIndex;
+    if (maxX == null) return;
+    final initialX = vm.cursor?.x ?? vm.viewport.xMin + vm.viewport.xRange / 2;
+    final initialIndex = initialX.round().clamp(0, maxX).toInt();
+    final controller = TextEditingController(text: initialIndex.toString());
+    String? errorText;
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              void submit() {
+                final text = controller.text.trim();
+                final x = int.tryParse(text);
+                if (x == null) {
+                  setDialogState(() => errorText = '请输入整数 X');
+                  return;
+                }
+                if (!vm.canJumpToXIndex(x)) {
+                  setDialogState(() => errorText = 'X 范围应为 0-$maxX');
+                  return;
+                }
+                vm.jumpToXIndex(x);
+                Navigator.of(dialogContext).pop();
+              }
+
+              return AlertDialog(
+                title: const Text('跳转到 X'),
+                content: SizedBox(
+                  width: 260,
+                  child: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'X',
+                      helperText: '范围: 0-$maxX',
+                      errorText: errorText,
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                    onSubmitted: (_) => submit(),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('取消'),
+                  ),
+                  TextButton(onPressed: submit, child: const Text('跳转')),
+                ],
+              );
+            },
+          ),
+    ).whenComplete(controller.dispose);
   }
 
   Future<void> _runImportWithProgress({
