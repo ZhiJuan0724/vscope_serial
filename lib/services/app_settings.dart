@@ -81,6 +81,10 @@ class AppSettings {
 
   /// 绘图区悬浮窗不透明度，范围 0.0~1.0。
   double floatingPanelOpacity = 0.85;
+  double? plotLegendPanelRight;
+  double? plotLegendPanelTop;
+  double? plotLiveValuesPanelRight;
+  double? plotLiveValuesPanelTop;
 
   /// 添加观察时是否先跟随鼠标，再由左键固定。
   bool observationClickToPlace = false;
@@ -255,6 +259,10 @@ class AppSettings {
     gridDensity = 'normal';
     plotBackground = 'dark';
     floatingPanelOpacity = 0.85;
+    plotLegendPanelRight = null;
+    plotLegendPanelTop = null;
+    plotLiveValuesPanelRight = null;
+    plotLiveValuesPanelTop = null;
     observationClickToPlace = false;
     useRandomSource = false;
     randomFrequency = 1000.0;
@@ -356,6 +364,18 @@ class AppSettings {
             0.0,
             1.0,
           );
+      plotLegendPanelRight = _nullableNonNegativeDouble(
+        json['plotLegendPanelRight'],
+      );
+      plotLegendPanelTop = _nullableNonNegativeDouble(
+        json['plotLegendPanelTop'],
+      );
+      plotLiveValuesPanelRight = _nullableNonNegativeDouble(
+        json['plotLiveValuesPanelRight'],
+      );
+      plotLiveValuesPanelTop = _nullableNonNegativeDouble(
+        json['plotLiveValuesPanelTop'],
+      );
       observationClickToPlace =
           json['observationClickToPlace'] as bool? ?? false;
       useRandomSource = json['useRandomSource'] as bool? ?? false;
@@ -474,6 +494,10 @@ class AppSettings {
       'gridDensity': gridDensity,
       'plotBackground': plotBackground,
       'floatingPanelOpacity': floatingPanelOpacity,
+      'plotLegendPanelRight': plotLegendPanelRight,
+      'plotLegendPanelTop': plotLegendPanelTop,
+      'plotLiveValuesPanelRight': plotLiveValuesPanelRight,
+      'plotLiveValuesPanelTop': plotLiveValuesPanelTop,
       'observationClickToPlace': observationClickToPlace,
       'useRandomSource': useRandomSource,
       'randomFrequency': randomFrequency,
@@ -530,6 +554,13 @@ class AppSettings {
       values.add('');
     }
     return values.take(16).toList();
+  }
+
+  static double? _nullableNonNegativeDouble(Object? value) {
+    if (value is! num) return null;
+    final parsed = value.toDouble();
+    if (!parsed.isFinite || parsed < 0) return null;
+    return parsed;
   }
 
   static List<int> _normalizeZobowChannelIds(Object? value) {

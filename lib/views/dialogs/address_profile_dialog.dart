@@ -161,9 +161,14 @@ class _AddressProfileDialog extends StatefulWidget {
 }
 
 class _AddressProfileDialogState extends State<_AddressProfileDialog> {
+  static const double _presetRowExtent = 41.0;
+
   late final TextEditingController _nameController;
+  late final TextEditingController _searchController;
+  late final ScrollController _presetListScrollController;
   late final List<_PresetRow> _rows;
   int? _selectedRowIndex;
+  String _searchText = '';
   bool _ignoreCImportComments = false;
 
   @override
@@ -172,6 +177,8 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
     _nameController = TextEditingController(
       text: widget.profile?.name ?? AppStrings.profile.defaultConfigName,
     );
+    _searchController = TextEditingController();
+    _presetListScrollController = ScrollController();
     _rows =
         widget.profile?.presets
             .map(
@@ -189,6 +196,8 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
   @override
   void dispose() {
     _nameController.dispose();
+    _searchController.dispose();
+    _presetListScrollController.dispose();
     for (final row in _rows) {
       row.dispose();
     }
@@ -205,8 +214,8 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
             : AppStrings.profile.editProfile,
       ),
       content: SizedBox(
-        width: 520,
-        height: 400,
+        width: 560,
+        height: 480,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -233,6 +242,33 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _searchController,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIcon:
+                    _searchText.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: AppStrings.profile.clearSearch,
+                          icon: const Icon(Icons.close, size: 16),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchText = '');
+                          },
+                        ),
+                hintText: AppStrings.profile.searchNameOrAddress,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (value) => setState(() => _searchText = value),
             ),
             const SizedBox(height: 12),
             // 表头
@@ -281,124 +317,10 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
             ),
             // 表格内容（支持拖动排序）
             Expanded(
-              child: ReorderableListView.builder(
-                buildDefaultDragHandles: false,
-                proxyDecorator: (child, index, animation) {
-                  return AnimatedBuilder(
-                    animation: animation,
-                    builder: (context, child) {
-                      return Material(
-                        elevation: 4,
-                        color: Colors.transparent,
-                        child: child,
-                      );
-                    },
-                    child: child,
-                  );
-                },
-                itemCount: _rows.length,
-                onReorderItem: (oldIndex, newIndex) {
-                  setState(() {
-                    final row = _rows.removeAt(oldIndex);
-                    _rows.insert(newIndex, row);
-                    _selectedRowIndex = null;
-                  });
-                },
-                itemBuilder: (context, index) {
-                  final isSelected = _selectedRowIndex == index;
-                  return InkWell(
-                    key: ValueKey('preset_$index'),
-                    onTap: () => setState(() => _selectedRowIndex = index),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            isSelected
-                                ? Theme.of(
-                                  context,
-                                ).colorScheme.primary.withValues(alpha: 0.1)
-                                : null,
-                        border: Border(
-                          bottom: BorderSide(
-                            color: Theme.of(
-                              context,
-                            ).dividerColor.withValues(alpha: 0.3),
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 32,
-                            child: Text(
-                              '${index + 1}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          // 拖动手柄
-                          SizedBox(
-                            width: 32,
-                            child: ReorderableDragStartListener(
-                              index: index,
-                              child: const Icon(
-                                Icons.drag_handle,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: Tooltip(
-                              message: _rows[index].nameController.text,
-                              waitDuration: const Duration(milliseconds: 500),
-                              child: TextField(
-                                controller: _rows[index].nameController,
-                                style: const TextStyle(fontSize: 12),
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 4,
-                                  ),
-                                  border: InputBorder.none,
-                                ),
-                                onChanged: (_) => setState(() {}),
-                              ),
-                            ),
-                          ),
-                          SizedBox(
-                            width: 150,
-                            child: TextField(
-                              controller: _rows[index].addressController,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontFamily: 'SarasaUiSC',
-                              ),
-                              decoration: InputDecoration(
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                  vertical: 4,
-                                ),
-                                border: InputBorder.none,
-                                hintText: widget.behavior.addressHint,
-                              ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                  RegExp(r'[0-9a-fA-FxX]'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
+              child:
+                  _searchText.trim().isEmpty
+                      ? _buildEditablePresetList()
+                      : _buildFilteredPresetList(context),
             ),
             const SizedBox(height: 8),
             // 操作按钮
@@ -484,6 +406,255 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildEditablePresetList() {
+    return ReorderableListView.builder(
+      scrollController: _presetListScrollController,
+      buildDefaultDragHandles: false,
+      proxyDecorator: (child, index, animation) {
+        return AnimatedBuilder(
+          animation: animation,
+          builder: (context, child) {
+            return Material(
+              elevation: 4,
+              color: Colors.transparent,
+              child: child,
+            );
+          },
+          child: child,
+        );
+      },
+      itemCount: _rows.length,
+      onReorderItem: (oldIndex, newIndex) {
+        setState(() {
+          final row = _rows.removeAt(oldIndex);
+          _rows.insert(newIndex, row);
+          _selectedRowIndex = null;
+        });
+      },
+      itemBuilder: (context, index) {
+        final row = _rows[index];
+        final isSelected = _selectedRowIndex == index;
+        return InkWell(
+          key: row.rowKey,
+          onTap: () => setState(() => _selectedRowIndex = index),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: _rowDecoration(context, isSelected: isSelected),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 32,
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 32,
+                  child: ReorderableDragStartListener(
+                    index: index,
+                    child: const Icon(
+                      Icons.drag_handle,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Tooltip(
+                    message: row.nameController.text,
+                    waitDuration: const Duration(milliseconds: 500),
+                    child: TextField(
+                      controller: row.nameController,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 4,
+                        ),
+                        border: InputBorder.none,
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 150,
+                  child: TextField(
+                    controller: row.addressController,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'SarasaUiSC',
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 4,
+                      ),
+                      border: InputBorder.none,
+                      hintText: widget.behavior.addressHint,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'[0-9a-fA-FxX]'),
+                      ),
+                    ],
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFilteredPresetList(BuildContext context) {
+    final matches = _matchingRowIndexes();
+    if (matches.isEmpty) {
+      return Center(
+        child: Text(
+          AppStrings.profile.noSearchResult,
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).disabledColor,
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: matches.length,
+      itemBuilder: (context, index) {
+        final rowIndex = matches[index];
+        final row = _rows[rowIndex];
+        final isSelected = _selectedRowIndex == rowIndex;
+        return InkWell(
+          onTap: () => _jumpToRow(rowIndex, clearSearch: true),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: _rowDecoration(context, isSelected: isSelected),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 32,
+                  child: Text(
+                    '${rowIndex + 1}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 32),
+                Expanded(
+                  child: Text(
+                    row.nameController.text.trim().isEmpty
+                        ? AppStrings.profile.presetName(rowIndex + 1)
+                        : row.nameController.text.trim(),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 150,
+                  child: Text(
+                    row.addressController.text.trim(),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'SarasaUiSC',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  BoxDecoration _rowDecoration(
+    BuildContext context, {
+    required bool isSelected,
+  }) {
+    return BoxDecoration(
+      color:
+          isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.1)
+              : null,
+      border: Border(
+        bottom: BorderSide(
+          color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
+        ),
+      ),
+    );
+  }
+
+  List<int> _matchingRowIndexes() {
+    final query = _searchText.trim().toLowerCase();
+    if (query.isEmpty) return const [];
+    final result = <int>[];
+    for (var i = 0; i < _rows.length; i++) {
+      final row = _rows[i];
+      final name = row.nameController.text.toLowerCase();
+      final address = row.addressController.text.toLowerCase();
+      if (name.contains(query) || address.contains(query)) {
+        result.add(i);
+      }
+    }
+    return result;
+  }
+
+  void _jumpToRow(int index, {bool clearSearch = false}) {
+    if (index < 0 || index >= _rows.length) return;
+    final rowKey = _rows[index].rowKey;
+    setState(() {
+      if (clearSearch) {
+        _searchController.clear();
+        _searchText = '';
+      }
+      _selectedRowIndex = index;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final rowContext = rowKey.currentContext;
+      if (rowContext != null) {
+        _ensureRowVisible(rowContext);
+        return;
+      }
+      if (!_presetListScrollController.hasClients) return;
+      final maxExtent = _presetListScrollController.position.maxScrollExtent;
+      final target = (index * _presetRowExtent).clamp(0.0, maxExtent);
+      _presetListScrollController
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          )
+          .then((_) {
+            if (!mounted) return;
+            final visibleContext = rowKey.currentContext;
+            if (visibleContext != null && visibleContext.mounted) {
+              _ensureRowVisible(visibleContext, duration: Duration.zero);
+            }
+          });
+    });
+  }
+
+  void _ensureRowVisible(
+    BuildContext rowContext, {
+    Duration duration = const Duration(milliseconds: 180),
+  }) {
+    Scrollable.ensureVisible(
+      rowContext,
+      duration: duration,
+      curve: Curves.easeOutCubic,
+      alignment: 0.2,
     );
   }
 
@@ -1011,6 +1182,7 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
 
 /// 表格行数据包装
 class _PresetRow {
+  final GlobalKey rowKey = GlobalKey();
   final TextEditingController nameController;
   final TextEditingController addressController;
 

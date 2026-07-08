@@ -335,6 +335,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// 绘图区悬浮窗不透明度。
   double _floatingPanelOpacity = 0.85;
+  double? _legendPanelRight;
+  double? _legendPanelTop;
+  double? _liveValuesPanelRight;
+  double? _liveValuesPanelTop;
 
   /// 添加观察时是否先跟随鼠标，再由左键固定。
   bool _observationClickToPlace = false;
@@ -563,6 +567,10 @@ class PlotViewModel extends BaseViewModel {
     _gridDensity = settings.gridDensity;
     _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
     _floatingPanelOpacity = settings.floatingPanelOpacity.clamp(0.0, 1.0);
+    _legendPanelRight = settings.plotLegendPanelRight;
+    _legendPanelTop = settings.plotLegendPanelTop;
+    _liveValuesPanelRight = settings.plotLiveValuesPanelRight;
+    _liveValuesPanelTop = settings.plotLiveValuesPanelTop;
     _observationClickToPlace = settings.observationClickToPlace;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
@@ -644,6 +652,10 @@ class PlotViewModel extends BaseViewModel {
     settings.gridDensity = _gridDensity;
     settings.plotBackground = _plotBackground;
     settings.floatingPanelOpacity = _floatingPanelOpacity;
+    settings.plotLegendPanelRight = _legendPanelRight;
+    settings.plotLegendPanelTop = _legendPanelTop;
+    settings.plotLiveValuesPanelRight = _liveValuesPanelRight;
+    settings.plotLiveValuesPanelTop = _liveValuesPanelTop;
     settings.observationClickToPlace = _observationClickToPlace;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
@@ -698,6 +710,11 @@ class PlotViewModel extends BaseViewModel {
   String get gridDensity => _gridDensity;
   String get plotBackground => _plotBackground;
   double get floatingPanelOpacity => _floatingPanelOpacity;
+  double get legendPanelRight => _legendPanelRight ?? 16;
+  double get legendPanelTop => _legendPanelTop ?? 96;
+  double get liveValuesPanelRight => _liveValuesPanelRight ?? 16;
+  double liveValuesPanelTop({required bool legendVisible}) =>
+      _liveValuesPanelTop ?? (legendVisible ? 240 : 96);
   bool get observationClickToPlace => _observationClickToPlace;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get followEnabled => _followEnabled;
@@ -3709,6 +3726,36 @@ class PlotViewModel extends BaseViewModel {
     _markOverlayChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());
+  }
+
+  void setLegendPanelPosition({required double right, required double top}) {
+    final nextRight = _normalizeFloatingPanelPosition(right);
+    final nextTop = _normalizeFloatingPanelPosition(top);
+    if (nextRight == null || nextTop == null) return;
+    if (_legendPanelRight == nextRight && _legendPanelTop == nextTop) return;
+    _legendPanelRight = nextRight;
+    _legendPanelTop = nextTop;
+    _saveSettings();
+  }
+
+  void setLiveValuesPanelPosition({
+    required double right,
+    required double top,
+  }) {
+    final nextRight = _normalizeFloatingPanelPosition(right);
+    final nextTop = _normalizeFloatingPanelPosition(top);
+    if (nextRight == null || nextTop == null) return;
+    if (_liveValuesPanelRight == nextRight && _liveValuesPanelTop == nextTop) {
+      return;
+    }
+    _liveValuesPanelRight = nextRight;
+    _liveValuesPanelTop = nextTop;
+    _saveSettings();
+  }
+
+  double? _normalizeFloatingPanelPosition(double value) {
+    if (!value.isFinite || value < 0) return null;
+    return double.parse(value.toStringAsFixed(1));
   }
 
   void setObservationClickToPlace(bool value) {

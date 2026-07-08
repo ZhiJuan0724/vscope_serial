@@ -6,13 +6,16 @@ class _DraggableInfoBox extends StatefulWidget {
   final double initialTop;
   final Color backgroundColor;
   final Color borderColor;
+  final void Function(double right, double top)? onPositionChanged;
   final Widget child;
 
   const _DraggableInfoBox({
+    super.key,
     required this.initialRight,
     required this.initialTop,
     required this.backgroundColor,
     required this.borderColor,
+    this.onPositionChanged,
     required this.child,
   });
 
@@ -122,8 +125,8 @@ class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
             _top = (_dragStartTop! + dy).clamp(0.0, double.infinity);
           });
         },
-        onPanEnd: (_) => _isDragging = false,
-        onPanCancel: () => _isDragging = false,
+        onPanEnd: (_) => _finishDrag(),
+        onPanCancel: _finishDrag,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
@@ -135,5 +138,14 @@ class _DraggableInfoBoxState extends State<_DraggableInfoBox> {
         ),
       ),
     );
+  }
+
+  void _finishDrag() {
+    _isDragging = false;
+    final right = _right;
+    final top = _top;
+    if (right != null && top != null) {
+      widget.onPositionChanged?.call(right, top);
+    }
   }
 }

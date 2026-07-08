@@ -22,6 +22,10 @@ void main() {
             ..gridDensity = 'dense'
             ..plotBackground = 'light'
             ..floatingPanelOpacity = 0.5
+            ..plotLegendPanelRight = 10
+            ..plotLegendPanelTop = 20
+            ..plotLiveValuesPanelRight = 30
+            ..plotLiveValuesPanelTop = 40
             ..observationClickToPlace = true
             ..useRandomSource = true
             ..randomFrequency = 500
@@ -73,6 +77,10 @@ void main() {
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');
       expect(settings.floatingPanelOpacity, 0.85);
+      expect(settings.plotLegendPanelRight, isNull);
+      expect(settings.plotLegendPanelTop, isNull);
+      expect(settings.plotLiveValuesPanelRight, isNull);
+      expect(settings.plotLiveValuesPanelTop, isNull);
       expect(settings.observationClickToPlace, isFalse);
       expect(settings.useRandomSource, isFalse);
       expect(settings.randomFrequency, 1000);

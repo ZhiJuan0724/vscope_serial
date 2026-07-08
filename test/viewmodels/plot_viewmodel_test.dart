@@ -56,6 +56,10 @@ void main() {
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
+      settings.plotLegendPanelRight = null;
+      settings.plotLegendPanelTop = null;
+      settings.plotLiveValuesPanelRight = null;
+      settings.plotLiveValuesPanelTop = null;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
       settings.rProtocolLooseChannelSettings = false;
@@ -145,6 +149,33 @@ void main() {
 
       vm.setFloatingPanelOpacity(2);
       expect(vm.floatingPanelOpacity, 1);
+    });
+
+    test('图例和实时值浮窗位置可保存到设置', () {
+      expect(vm.legendPanelRight, 16);
+      expect(vm.legendPanelTop, 96);
+      expect(vm.liveValuesPanelRight, 16);
+      expect(vm.liveValuesPanelTop(legendVisible: false), 96);
+      expect(vm.liveValuesPanelTop(legendVisible: true), 240);
+
+      vm.setLegendPanelPosition(right: 42.34, top: 88.86);
+      vm.setLiveValuesPanelPosition(right: 123.45, top: 234.56);
+
+      expect(vm.legendPanelRight, 42.3);
+      expect(vm.legendPanelTop, 88.9);
+      expect(vm.liveValuesPanelRight, 123.5);
+      expect(vm.liveValuesPanelTop(legendVisible: false), 234.6);
+      expect(vm.liveValuesPanelTop(legendVisible: true), 234.6);
+      expect(AppSettings().plotLegendPanelRight, 42.3);
+      expect(AppSettings().plotLegendPanelTop, 88.9);
+      expect(AppSettings().plotLiveValuesPanelRight, 123.5);
+      expect(AppSettings().plotLiveValuesPanelTop, 234.6);
+
+      vm.setLegendPanelPosition(right: -1, top: 20);
+      vm.setLiveValuesPanelPosition(right: double.infinity, top: 20);
+
+      expect(vm.legendPanelRight, 42.3);
+      expect(vm.liveValuesPanelRight, 123.5);
     });
 
     test('视口默认范围', () {

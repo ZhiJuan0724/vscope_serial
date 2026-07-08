@@ -483,6 +483,9 @@ final class _ProfileStrings {
   String get createProfile => '新建配置文件';
   String get editProfile => '编辑配置文件';
   String get nameLabel => '名称:';
+  String get searchNameOrAddress => '搜索名称或地址';
+  String get clearSearch => '清除搜索';
+  String get noSearchResult => '无匹配项';
   String get nameColumn => '名称';
   String get addressColumn => '地址';
   String get add => '添加';

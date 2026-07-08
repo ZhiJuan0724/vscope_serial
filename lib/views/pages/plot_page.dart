@@ -2291,10 +2291,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     }
 
     return _DraggableInfoBox(
-      initialRight: 16,
-      initialTop: _legendVisible ? 240 : 96,
+      key: const ValueKey('plot-live-values-box'),
+      initialRight: vm.liveValuesPanelRight,
+      initialTop: vm.liveValuesPanelTop(legendVisible: _legendVisible),
       backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
+      onPositionChanged:
+          (right, top) => vm.setLiveValuesPanelPosition(right: right, top: top),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
         child: SizedBox(
@@ -2370,10 +2373,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (visibleChannels.isEmpty) return const SizedBox.shrink();
 
     return _DraggableInfoBox(
-      initialRight: 16,
-      initialTop: 96,
+      key: const ValueKey('plot-legend-box'),
+      initialRight: vm.legendPanelRight,
+      initialTop: vm.legendPanelTop,
       backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.teal.withValues(alpha: 0.55),
+      onPositionChanged:
+          (right, top) => vm.setLegendPanelPosition(right: right, top: top),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
         child: SingleChildScrollView(
