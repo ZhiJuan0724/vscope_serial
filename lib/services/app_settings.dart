@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../data/models/address_config_profile.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
@@ -137,6 +138,9 @@ class AppSettings {
     ParserConfig.maxZobowChannelCount,
     DataType.int16,
   );
+
+  /// 地址预设带入的通道名称绑定，适用于 Zobow 和 r 协议。
+  List<ChannelPresetBinding> channelPresetBindings = [];
 
   /// 固定帧逐通道数据类型。
   List<DataType> fixedFrameChannelTypes = List.filled(
@@ -285,6 +289,7 @@ class AppSettings {
       ParserConfig.maxZobowChannelCount,
       DataType.int16,
     );
+    channelPresetBindings = [];
     fixedFrameChannelTypes = List.filled(
       SendProtocolConfig.maxChannelCount,
       DataType.uint16,
@@ -411,6 +416,9 @@ class AppSettings {
         fallback: DataType.int16,
         allowed: const [DataType.uint16, DataType.int16],
       );
+      channelPresetBindings = _normalizeChannelPresetBindings(
+        json['channelPresetBindings'],
+      );
       fixedFrameChannelTypes = _normalizeDataTypeList(
         json['fixedFrameChannelTypes'],
         length: SendProtocolConfig.maxChannelCount,
@@ -514,6 +522,8 @@ class AppSettings {
       'justFloatChannelCount': justFloatChannelCount,
       'zobowChannelIds': zobowChannelIds,
       'zobowChannelTypes': zobowChannelTypes.map((type) => type.name).toList(),
+      'channelPresetBindings':
+          channelPresetBindings.map((binding) => binding.toJson()).toList(),
       'fixedFrameChannelTypes':
           fixedFrameChannelTypes.map((type) => type.name).toList(),
       'zobowProfileId': zobowProfileId,
@@ -575,6 +585,29 @@ class AppSettings {
       values.add(values.length + 1);
     }
     return values.take(ParserConfig.maxZobowChannelCount).toList();
+  }
+
+  static List<ChannelPresetBinding> _normalizeChannelPresetBindings(
+    Object? value,
+  ) {
+    if (value is! List) return [];
+    final bindings = <ChannelPresetBinding>[];
+    for (final item in value) {
+      if (item is! Map<String, dynamic>) continue;
+      final binding = ChannelPresetBinding.fromJson(item);
+      final maxChannel =
+          binding.protocolType == AddressProfileProtocolType.rProtocol
+              ? SendProtocolConfig.maxChannelCount
+              : ParserConfig.maxZobowChannelCount;
+      if (binding.channelIndex < 0 ||
+          binding.channelIndex >= maxChannel ||
+          binding.addressKey.isEmpty ||
+          binding.name.isEmpty) {
+        continue;
+      }
+      bindings.add(binding);
+    }
+    return bindings;
   }
 
   static List<DataType> _normalizeDataTypeList(

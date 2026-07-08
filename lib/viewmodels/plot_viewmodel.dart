@@ -298,6 +298,7 @@ class PlotViewModel extends BaseViewModel {
   List<ChannelConfig>? _cachedDisplayChannels;
   String? _cachedDisplayChannelKey;
   List<int>? _importedChannelAddresses;
+  List<ChannelPresetBinding> _channelPresetBindings = [];
   List<int>? get importedChannelAddresses =>
       _importedChannelAddresses == null
           ? null
@@ -617,6 +618,18 @@ class PlotViewModel extends BaseViewModel {
       ..zobowChannelIds = List.from(settings.zobowChannelIds)
       ..zobowChannelTypes = List.from(settings.zobowChannelTypes)
       ..fixedFrameChannelTypes = List.from(settings.fixedFrameChannelTypes);
+    _channelPresetBindings =
+        settings.channelPresetBindings
+            .map(
+              (binding) => ChannelPresetBinding(
+                protocolType: binding.protocolType,
+                channelIndex: binding.channelIndex,
+                addressKey: binding.addressKey,
+                name: binding.name,
+                profileId: binding.profileId,
+              ),
+            )
+            .toList();
     _sendProtocolType = _sendProtocolTypeFromString(settings.sendProtocolType);
     _sendProtocolConfig
       ..type = _sendProtocolType
@@ -629,6 +642,7 @@ class PlotViewModel extends BaseViewModel {
               ? null
               : settings.sendCustomProtocolId
       ..rChannelAddresses = List.from(settings.rChannelAddresses);
+    _restorePresetAliasesFromBindings();
     _rProtocolLooseChannelSettings = settings.rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       _parserConfig.channelCount =
@@ -680,6 +694,18 @@ class PlotViewModel extends BaseViewModel {
     }
     settings.zobowChannelIds = List.from(_parserConfig.zobowChannelIds);
     settings.zobowChannelTypes = List.from(_parserConfig.zobowChannelTypes);
+    settings.channelPresetBindings =
+        _channelPresetBindings
+            .map(
+              (binding) => ChannelPresetBinding(
+                protocolType: binding.protocolType,
+                channelIndex: binding.channelIndex,
+                addressKey: binding.addressKey,
+                name: binding.name,
+                profileId: binding.profileId,
+              ),
+            )
+            .toList();
     settings.fixedFrameChannelTypes = List.from(
       _parserConfig.fixedFrameChannelTypes,
     );
@@ -1027,6 +1053,115 @@ class PlotViewModel extends BaseViewModel {
 
   void _markChannelConfigChanged() {
     _channelConfigRevision++;
+  }
+
+  static String _presetAddressKey(
+    AddressProfileProtocolType protocolType,
+    int address,
+  ) {
+    return '${protocolType.id}:${address & 0xFFFFFFFF}';
+  }
+
+  static String? _rPresetAddressKeyFromText(String text) {
+    final value = parseRProtocolAddress(text);
+    if (value == null || value < 0) return null;
+    return _presetAddressKey(AddressProfileProtocolType.rProtocol, value);
+  }
+
+  String? _currentPresetAddressKey(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    switch (protocolType) {
+      case AddressProfileProtocolType.zobow:
+        if (channelIndex < 0 ||
+            channelIndex >= _parserConfig.zobowChannelIds.length) {
+          return null;
+        }
+        return _presetAddressKey(
+          protocolType,
+          _parserConfig.zobowChannelIds[channelIndex],
+        );
+      case AddressProfileProtocolType.rProtocol:
+        if (channelIndex < 0 ||
+            channelIndex >= _sendProtocolConfig.rChannelAddresses.length) {
+          return null;
+        }
+        return _rPresetAddressKeyFromText(
+          _sendProtocolConfig.rChannelAddresses[channelIndex],
+        );
+    }
+  }
+
+  int _findPresetBindingIndex(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    return _channelPresetBindings.indexWhere(
+      (binding) =>
+          binding.protocolType == protocolType &&
+          binding.channelIndex == channelIndex,
+    );
+  }
+
+  void _setPresetBinding({
+    required AddressProfileProtocolType protocolType,
+    required int channelIndex,
+    required int address,
+    required String name,
+    required String profileId,
+  }) {
+    _clearPresetBinding(protocolType, channelIndex);
+    if (name.isEmpty) return;
+    _channelPresetBindings.add(
+      ChannelPresetBinding(
+        protocolType: protocolType,
+        channelIndex: channelIndex,
+        addressKey: _presetAddressKey(protocolType, address),
+        name: name,
+        profileId: profileId,
+      ),
+    );
+  }
+
+  void _clearPresetBinding(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    _channelPresetBindings.removeWhere(
+      (binding) =>
+          binding.protocolType == protocolType &&
+          binding.channelIndex == channelIndex,
+    );
+  }
+
+  void _clearPresetAliasesForChangedAddress(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+    String? nextAddressKey,
+  ) {
+    final bindingIndex = _findPresetBindingIndex(protocolType, channelIndex);
+    if (bindingIndex < 0) return;
+    final binding = _channelPresetBindings[bindingIndex];
+    if (binding.addressKey == nextAddressKey) return;
+    _channelPresetBindings.removeAt(bindingIndex);
+    if (channelIndex < channels.length) {
+      channels[channelIndex].alias = '';
+    }
+  }
+
+  void _restorePresetAliasesFromBindings() {
+    _channelPresetBindings.removeWhere((binding) {
+      final currentKey = _currentPresetAddressKey(
+        binding.protocolType,
+        binding.channelIndex,
+      );
+      if (currentKey != binding.addressKey) return true;
+      if (binding.channelIndex < channels.length) {
+        channels[binding.channelIndex].alias = binding.name;
+      }
+      return false;
+    });
   }
 
   void _markOverlayChanged() {
@@ -1459,7 +1594,13 @@ class PlotViewModel extends BaseViewModel {
     if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
     final next = address.trim();
     if (_sendProtocolConfig.rChannelAddresses[index] == next) return;
+    final nextKey = _rPresetAddressKeyFromText(next);
     _sendProtocolConfig.rChannelAddresses[index] = next;
+    _clearPresetAliasesForChangedAddress(
+      AddressProfileProtocolType.rProtocol,
+      index,
+      nextKey,
+    );
     _markChannelConfigChanged();
     _saveSettings();
     AppLogger().info(
@@ -3376,6 +3517,7 @@ class PlotViewModel extends BaseViewModel {
       SendProtocolConfig.maxChannelCount,
       '',
     );
+    _channelPresetBindings.clear();
     _parserConfig.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
       (index) => index + 1,
@@ -3400,8 +3542,11 @@ class PlotViewModel extends BaseViewModel {
   /// 设置通道别名
   void setChannelAlias(int index, String alias) {
     if (index < 0 || index >= channels.length) return;
+    _clearPresetBinding(AddressProfileProtocolType.zobow, index);
+    _clearPresetBinding(AddressProfileProtocolType.rProtocol, index);
     channels[index].alias = alias;
     _markChannelConfigChanged();
+    _saveSettings();
     Future.microtask(() => notifyListeners());
   }
 
@@ -3491,10 +3636,17 @@ class PlotViewModel extends BaseViewModel {
   void setZobowChannelId(int index, int channelId) {
     if (_isPlotting || _isStopping) return;
     if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
-    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
-    if (index < channels.length) {
-      channels[index].alias = '';
-    }
+    final normalized = channelId & 0xFFFFFFFF;
+    final nextKey = _presetAddressKey(
+      AddressProfileProtocolType.zobow,
+      normalized,
+    );
+    _parserConfig.zobowChannelIds[index] = normalized;
+    _clearPresetAliasesForChangedAddress(
+      AddressProfileProtocolType.zobow,
+      index,
+      nextKey,
+    );
     _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());

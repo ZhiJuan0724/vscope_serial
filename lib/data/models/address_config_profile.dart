@@ -182,3 +182,43 @@ class AddressConfigProfile {
     );
   }
 }
+
+/// 通道名称来自地址预设选择时的绑定信息。
+///
+/// 绑定只用于恢复“由配置项带入的名称”。用户手动修改地址时，如果当前
+/// 地址不再匹配绑定地址，就会清空绑定和名称，避免旧名称残留到新地址。
+class ChannelPresetBinding {
+  AddressProfileProtocolType protocolType;
+  int channelIndex;
+  String addressKey;
+  String name;
+  String profileId;
+
+  ChannelPresetBinding({
+    required this.protocolType,
+    required this.channelIndex,
+    required this.addressKey,
+    required this.name,
+    required this.profileId,
+  });
+
+  factory ChannelPresetBinding.fromJson(Map<String, dynamic> json) {
+    return ChannelPresetBinding(
+      protocolType: AddressProfileProtocolType.fromJsonValue(
+        json['protocolType'],
+      ),
+      channelIndex: (json['channelIndex'] as num?)?.toInt() ?? -1,
+      addressKey: json['addressKey'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      profileId: json['profileId'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'protocolType': protocolType.id,
+    'channelIndex': channelIndex,
+    'addressKey': addressKey,
+    'name': name,
+    'profileId': profileId,
+  };
+}

@@ -161,7 +161,9 @@ extension PlotViewModelImportExport on PlotViewModel {
         return null;
       }
       final metadataBytes = utf8.encode(
-        jsonEncode(_buildExportMetadata(channelCount)),
+        jsonEncode(
+          _buildExportMetadata(channelCount, includeObservations: true),
+        ),
       );
       final crc = CrcCalculator(crc32Polys['CRC-32']!)..add(metadataBytes);
       output = await File(path).open(mode: FileMode.write);
@@ -310,7 +312,10 @@ extension PlotViewModelImportExport on PlotViewModel {
     throw StateError('文本历史无需解码');
   }
 
-  Map<String, dynamic> _buildExportMetadata(int channelCount) {
+  Map<String, dynamic> _buildExportMetadata(
+    int channelCount, {
+    bool includeObservations = false,
+  }) {
     final names = List<String>.generate(channelCount, (i) {
       if (i >= channels.length) return 'Ch$i';
       return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
@@ -334,6 +339,17 @@ extension PlotViewModelImportExport on PlotViewModel {
       metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
           .take(channelCount)
           .map((id) => id & 0xFFFFFFFF)
+          .toList(growable: false);
+    }
+    if (includeObservations && _observations.isNotEmpty) {
+      metadata['observations'] = _observations
+          .map(
+            (observation) => <String, dynamic>{
+              'x': observation.x,
+              if (observation.note.isNotEmpty) 'note': observation.note,
+              if (observation.locked) 'locked': true,
+            },
+          )
           .toList(growable: false);
     }
     return metadata;
@@ -855,6 +871,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     _viewportHistory.clear();
 
     _resetCursorPositions();
+    _applyImportedObservations(metadata);
 
     _notifyLater();
   }
@@ -906,6 +923,43 @@ extension PlotViewModelImportExport on PlotViewModel {
         MathChannelConfig.normalizeList(importedMathChannels),
       );
     }
+  }
+
+  void _applyImportedObservations(Map<String, dynamic>? metadata) {
+    final values = metadata?['observations'];
+    if (values is! List) return;
+    for (final item in values) {
+      if (_observations.length >= PlotViewModel.maxObservationCount) break;
+      if (item is! Map) continue;
+      final xValue = item['x'];
+      final x = xValue is num ? xValue.toDouble() : null;
+      if (x == null || !x.isFinite || !canJumpToXIndex(x.round())) continue;
+      final noteValue = item['note'];
+      _observations.add(
+        PlotObservation(
+          cursor: _buildImportedObservationCursorAtX(x),
+          note: noteValue is String ? noteValue : '',
+          locked: item['locked'] == true,
+        ),
+      );
+    }
+  }
+
+  CursorState _buildImportedObservationCursorAtX(double x) {
+    final index = x.round();
+    if ((x - index).abs() > 0.000001 || !canJumpToXIndex(index)) {
+      return CursorState(x: x, hasData: false);
+    }
+    final valueCount = _parsedHistory.valueCountAt(index);
+    if (valueCount <= 0) return CursorState(x: x, hasData: false);
+    return CursorState(
+      x: x,
+      channelValues: [
+        for (var channel = 0; channel < valueCount; channel++)
+          _parsedHistory.valueAt(index, channel),
+      ],
+      hasData: true,
+    );
   }
 
   List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {

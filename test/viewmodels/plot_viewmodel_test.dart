@@ -72,6 +72,7 @@ void main() {
         ParserConfig.maxZobowChannelCount,
         DataType.int16,
       );
+      settings.channelPresetBindings = [];
       settings.fixedFrameChannelTypes = List.filled(
         SendProtocolConfig.maxChannelCount,
         DataType.uint16,
@@ -896,6 +897,33 @@ void main() {
       expect(imported.dataPoints[1].values, [3.5, 4.5]);
     });
 
+    test('BIN 导入导出保留观察位置备注和锁定状态', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_observation_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n2,5,6\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+      vm.updateFollowCursor(1, 0, const Offset(1, 1));
+      vm.addObservation();
+      vm.updateObservationNote(0, 'manual note');
+      vm.setObservationLocked(0, true);
+
+      final binPath = '${dir.path}/plot.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+      expect(imported.observations, hasLength(1));
+      expect(imported.observations.single.x, 1);
+      expect(imported.observations.single.note, 'manual note');
+      expect(imported.observations.single.locked, isTrue);
+      expect(imported.observations.single.channelValues, [3, 4]);
+    });
+
     test('CSV 和 BIN 导出支持范围并重新编号X', () async {
       final dir = await Directory.systemTemp.createTemp(
         'vscope_export_range_test_',
@@ -905,6 +933,8 @@ void main() {
       final csv = File('${dir.path}/input.csv');
       await csv.writeAsString('x,y1,y2\n0,10,20\n1,11,21\n2,12,22\n3,13,23\n');
       expect(await vm.importFromCsv(csv.path), isNull);
+      vm.updateFollowCursor(2, 0, const Offset(1, 1));
+      vm.addObservation();
 
       final outCsvPath = '${dir.path}/range.csv';
       expect(
@@ -919,6 +949,10 @@ void main() {
         '0,11.000000,21.000000',
         '1,12.000000,22.000000',
       ]);
+      expect(
+        await File(outCsvPath).readAsString(),
+        isNot(contains('observations')),
+      );
 
       final outBinPath = '${dir.path}/range.bin';
       expect(
@@ -1018,14 +1052,33 @@ void main() {
       expect(restored.parserConfig.zobowChannelTypes[1], DataType.uint16);
     });
 
+    test('众邦快捷配置带入的通道名称会重启恢复', () {
+      vm.setParserType(ParserType.zobow);
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '主轴角度', address: 0x00000095),
+      );
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+      restored.setParserType(ParserType.zobow);
+
+      expect(restored.parserConfig.zobowChannelIds[0], 0x00000095);
+      expect(restored.channels[0].alias, '主轴角度');
+    });
+
     test('手动修改众邦通道地址会清空快捷配置带入的通道名称', () {
       vm.setParserType(ParserType.zobow);
-      vm.channels[0].alias = '主轴角度';
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '主轴角度', address: 0x00000095),
+      );
 
       vm.setZobowChannelId(0, 0x00000096);
 
       expect(vm.parserConfig.zobowChannelIds[0], 0x00000096);
       expect(vm.channels[0].alias, isEmpty);
+      expect(AppSettings().channelPresetBindings, isEmpty);
     });
 
     test('固定帧逐通道数据类型会写入设置并可重启恢复', () async {
@@ -1825,6 +1878,31 @@ void main() {
       expect(vm.rChannelAddresses.take(2), ['16', '0x10']);
       expect(vm.channels[0].alias, '十进制');
       expect(vm.channelConfigRevision, greaterThan(revisionBefore));
+    });
+
+    test('r协议快捷配置带入的通道名称会重启恢复并在地址改变时清空', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '十进制',
+          address: 16,
+          addressFormat: AddressValueFormat.decimal,
+        ),
+      );
+
+      final restored = PlotViewModel(serialService);
+      addTearDown(restored.dispose);
+
+      expect(restored.rChannelAddresses[0], '16');
+      expect(restored.channels[0].alias, '十进制');
+
+      restored.setRChannelAddress(0, '0x10');
+      expect(restored.channels[0].alias, '十进制');
+
+      restored.setRChannelAddress(0, '17');
+      expect(restored.channels[0].alias, isEmpty);
+      expect(AppSettings().channelPresetBindings, isEmpty);
     });
 
     test('绘图运行中锁定R和Zobow地址但允许修改名称', () {

@@ -8,6 +8,7 @@ import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
@@ -15,6 +16,19 @@ import 'package:vscope_serial/views/widgets/common_widgets.dart';
 
 void main() {
   final serialService = SerialService();
+
+  setUp(() {
+    final settings = AppSettings();
+    settings.parserType = 'fireWater';
+    settings.sendProtocolType = 'none';
+    settings.rChannelAddresses = List.filled(16, '');
+    settings.rProtocolLooseChannelSettings = false;
+    settings.zobowChannelIds = List.generate(
+      ParserConfig.maxZobowChannelCount,
+      (index) => index + 1,
+    );
+    settings.channelPresetBindings = [];
+  });
 
   tearDownAll(serialService.dispose);
 
