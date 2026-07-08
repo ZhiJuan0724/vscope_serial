@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
+import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/plot/plot_viewport.dart';
 
 void main() {
@@ -303,5 +304,103 @@ void main() {
     expect(commitX, greaterThan(initialHoverX));
     expect(commitX, hoverX);
     expect(viewportChanged, isFalse);
+  });
+
+  Future<void> pumpObservationGestureHarness(
+    WidgetTester tester, {
+    required bool locked,
+    required void Function(int index, double x) onDrag,
+    required void Function(int index) onDelete,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              observations: [
+                PlotObservation(cursor: CursorState(x: 500), locked: locked),
+              ],
+              onObservationDrag: onDrag,
+              onObservationDelete: onDelete,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('锁定观察在绘图区不能右键删除也不能拖动', (tester) async {
+    var dragCount = 0;
+    var deleteCount = 0;
+    await pumpObservationGestureHarness(
+      tester,
+      locked: true,
+      onDrag: (_, _) => dragCount++,
+      onDelete: (_) => deleteCount++,
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final observationHandle = topLeft + const Offset(400, 20);
+
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: observationHandle);
+    await secondary.down(observationHandle);
+    await secondary.up();
+    await secondary.removePointer();
+
+    final primary = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await primary.addPointer(location: observationHandle);
+    await primary.down(observationHandle);
+    await primary.moveTo(observationHandle + const Offset(80, 0));
+    await primary.up();
+    await primary.removePointer();
+    await tester.pump();
+
+    expect(deleteCount, 0);
+    expect(dragCount, 0);
+  });
+
+  testWidgets('未锁定观察在绘图区仍可右键删除和拖动', (tester) async {
+    var dragCount = 0;
+    var deleteCount = 0;
+    await pumpObservationGestureHarness(
+      tester,
+      locked: false,
+      onDrag: (_, _) => dragCount++,
+      onDelete: (_) => deleteCount++,
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final observationHandle = topLeft + const Offset(400, 20);
+
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: observationHandle);
+    await secondary.down(observationHandle);
+    await secondary.up();
+    await secondary.removePointer();
+
+    final primary = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await primary.addPointer(location: observationHandle);
+    await primary.down(observationHandle);
+    await primary.moveTo(observationHandle + const Offset(80, 0));
+    await primary.up();
+    await primary.removePointer();
+    await tester.pump();
+
+    expect(deleteCount, 1);
+    expect(dragCount, greaterThan(0));
   });
 }

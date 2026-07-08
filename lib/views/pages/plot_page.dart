@@ -3301,7 +3301,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                       SizedBox(width: 84, child: Text('X')),
                                       Expanded(child: Text('备注')),
                                       SizedBox(
-                                        width: 88,
+                                        width: 128,
                                         child: Align(
                                           alignment: Alignment.center,
                                           child: Text('操作'),
@@ -3378,11 +3378,29 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                               ),
                                             ),
                                             SizedBox(
-                                              width: 88,
+                                              width: 128,
                                               child: Row(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment.center,
                                                 children: [
+                                                  IconButton(
+                                                    tooltip:
+                                                        observation.locked
+                                                            ? '解除锁定'
+                                                            : '锁定',
+                                                    onPressed: () {
+                                                      vm.setObservationLocked(
+                                                        index,
+                                                        !observation.locked,
+                                                      );
+                                                      setDialogState(() {});
+                                                    },
+                                                    icon: Icon(
+                                                      observation.locked
+                                                          ? Icons.lock
+                                                          : Icons.lock_open,
+                                                    ),
+                                                  ),
                                                   IconButton(
                                                     tooltip: '跳转',
                                                     onPressed: () {

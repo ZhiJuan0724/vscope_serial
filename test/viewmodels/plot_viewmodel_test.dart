@@ -305,6 +305,76 @@ void main() {
       expect(vm.observations.single.x, 35);
     });
 
+    test('手动观察在当前窗口外时保留目标X且不伪造吸附数据', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.setObservationClickToPlace(true);
+
+      vm.startObservationPlacement();
+      vm.commitObservationPlacement(8);
+
+      expect(vm.observations.single.x, 8);
+      expect(vm.observations.single.locked, isFalse);
+      expect(vm.observations.single.hasData, isFalse);
+      expect(vm.observations.single.channelValues, isNull);
+
+      vm.updateObservation(0, 9);
+
+      expect(vm.observations.single.x, 9);
+      expect(vm.observations.single.hasData, isFalse);
+    });
+
+    test('观察锁定后不能拖动位置但仍可在管理逻辑中删除', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.addObservation();
+
+      expect(vm.observations.single.locked, isFalse);
+      vm.setObservationLocked(0, true);
+      expect(vm.observations.single.locked, isTrue);
+
+      final beforeX = vm.observations.single.x;
+      vm.updateObservation(0, 5);
+      expect(vm.observations.single.x, beforeX);
+
+      vm.setObservationLocked(0, false);
+      vm.updateObservation(0, 5);
+      expect(vm.observations.single.x, 5);
+
+      vm.setObservationLocked(0, true);
+      vm.removeObservation(0);
+      expect(vm.observations, isEmpty);
+    });
+
+    test('当前窗口外的观察可一键跳转到对应X位置', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 20));
+      vm.setObservationClickToPlace(true);
+      vm.startObservationPlacement();
+      vm.commitObservationPlacement(80);
+
+      expect(vm.observations.single.x, 80);
+      expect(vm.viewport.isVisibleX(vm.observations.single.x), isFalse);
+
+      vm.jumpToObservation(0);
+
+      expect(vm.observations.single.x, 80);
+      expect(vm.viewport.isVisibleX(80), isTrue);
+      expect(vm.viewport.xMin, 70);
+      expect(vm.viewport.xMax, 90);
+    });
+
     test('触发关闭时不检测条件', () {
       vm.updateTriggerConfig(
         PlotTriggerConfig(
@@ -505,6 +575,29 @@ void main() {
 
       expect(vm.observations.map((item) => item.x), [0, 1, 2]);
       expect(vm.observations.first.note, contains('触发于 2026-07-07 15:04:05'));
+    });
+
+    test('触发观察保留触发点X而不吸附到当前可见窗口旧点', () {
+      for (var i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([7], bytesConsumed: 1));
+
+      expect(vm.observations.single.x, 10);
+      expect(vm.observations.single.locked, isTrue);
+      expect(vm.observations.single.channelValues, [7]);
+      expect(vm.observations.single.note, contains('第 1 次触发'));
     });
 
     test('观察上限限制手动和触发新增并在第100条备注记录上限', () {

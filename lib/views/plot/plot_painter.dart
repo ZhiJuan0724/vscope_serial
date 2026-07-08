@@ -40,8 +40,13 @@ class CursorState {
 class PlotObservation {
   final CursorState cursor;
   final String note;
+  final bool locked;
 
-  const PlotObservation({required this.cursor, this.note = ''});
+  const PlotObservation({
+    required this.cursor,
+    this.note = '',
+    this.locked = false,
+  });
 
   double get x => cursor.x;
   double? get y => cursor.y;
@@ -49,10 +54,11 @@ class PlotObservation {
   List<double>? get channelValues => cursor.channelValues;
   bool get hasData => cursor.hasData;
 
-  PlotObservation copyWith({CursorState? cursor, String? note}) {
+  PlotObservation copyWith({CursorState? cursor, String? note, bool? locked}) {
     return PlotObservation(
       cursor: cursor ?? this.cursor,
       note: note ?? this.note,
+      locked: locked ?? this.locked,
     );
   }
 }

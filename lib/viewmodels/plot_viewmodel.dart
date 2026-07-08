@@ -4006,12 +4006,12 @@ class PlotViewModel extends BaseViewModel {
         return;
       case PlotTriggerObservationMode.triggerPoint:
         if (hitPoints.isNotEmpty) {
-          _addObservationAtX(hitPoints.last.index.toDouble(), note: note);
+          _addObservationFromPoint(hitPoints.last, note: note);
         }
         break;
       case PlotTriggerObservationMode.allHits:
         for (final point in hitPoints) {
-          if (!_addObservationAtX(point.index.toDouble(), note: note)) break;
+          if (!_addObservationFromPoint(point, note: note)) break;
         }
         break;
     }
@@ -4113,8 +4113,9 @@ class PlotViewModel extends BaseViewModel {
 
   void updateObservation(int index, double x) {
     if (index < 0 || index >= _observations.length) return;
+    if (_observations[index].locked) return;
     _observations[index] = _observations[index].copyWith(
-      cursor: _buildCursorAtX(x),
+      cursor: _buildObservationCursorAtX(x),
     );
     _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
@@ -4123,6 +4124,14 @@ class PlotViewModel extends BaseViewModel {
   void updateObservationNote(int index, String note) {
     if (index < 0 || index >= _observations.length) return;
     _observations[index] = _observations[index].copyWith(note: note);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void setObservationLocked(int index, bool locked) {
+    if (index < 0 || index >= _observations.length) return;
+    if (_observations[index].locked == locked) return;
+    _observations[index] = _observations[index].copyWith(locked: locked);
     _markOverlayChanged();
     scheduleMicrotask(notifyListeners);
   }
@@ -4162,7 +4171,27 @@ class PlotViewModel extends BaseViewModel {
       nextNote = _appendObservationLimitNote(nextNote);
     }
     _observations.add(
-      PlotObservation(cursor: _buildCursorAtX(x), note: nextNote),
+      PlotObservation(cursor: _buildObservationCursorAtX(x), note: nextNote),
+    );
+    return true;
+  }
+
+  bool _addObservationFromPoint(PlotDataPoint point, {String note = ''}) {
+    if (_observations.length >= maxObservationCount) return false;
+    var nextNote = note;
+    if (_observations.length + 1 == maxObservationCount) {
+      nextNote = _appendObservationLimitNote(nextNote);
+    }
+    _observations.add(
+      PlotObservation(
+        cursor: CursorState(
+          x: point.index.toDouble(),
+          channelValues: List<double>.from(point.values),
+          hasData: true,
+        ),
+        note: nextNote,
+        locked: true,
+      ),
     );
     return true;
   }
@@ -4189,6 +4218,21 @@ class PlotViewModel extends BaseViewModel {
       screenPosition: screenPosition,
       channelValues: channelValues,
       hasData: hasData,
+    );
+  }
+
+  CursorState _buildObservationCursorAtX(double x) {
+    if (!viewport.isVisibleX(x)) {
+      return CursorState(x: x, hasData: false);
+    }
+    final point = _nearestVisiblePointByX(x);
+    if (point == null) {
+      return CursorState(x: x, hasData: false);
+    }
+    return CursorState(
+      x: point.index.toDouble(),
+      channelValues: List<double>.from(point.values),
+      hasData: true,
     );
   }
 

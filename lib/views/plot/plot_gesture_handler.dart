@@ -512,7 +512,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 否则根据框选模式开始框选或平移。
   void _handlePointerDown(PointerDownEvent event) {
     if (event.buttons == kSecondaryButton) {
-      final observationHit = _hitTestObservation(event.localPosition);
+      final observationHit = _hitTestObservation(
+        event.localPosition,
+        includeLocked: false,
+      );
       if (observationHit != null) {
         widget.onObservationDelete?.call(observationHit);
       }
@@ -533,7 +536,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       return;
     }
 
-    final observationHit = _hitTestObservation(event.localPosition);
+    final observationHit = _hitTestObservation(
+      event.localPosition,
+      includeLocked: false,
+    );
     if (observationHit != null) {
       _dragTarget = _DragTarget.observation;
       _observationIndex = observationHit;
@@ -758,7 +764,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 检测点击位置是否在通道偏移标签上
   ///
   /// 返回命中的通道索引，未命中返回 null。
-  int? _hitTestObservation(Offset pos) {
+  int? _hitTestObservation(Offset pos, {bool includeLocked = true}) {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return null;
 
@@ -769,6 +775,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (pos.dx < plotLeft || pos.dx > plotRight) return null;
 
     for (int i = widget.observations.length - 1; i >= 0; i--) {
+      if (!includeLocked && widget.observations[i].locked) continue;
       final sx = widget.viewport.dataToScreenX(
         widget.observations[i].x,
         size.width,
