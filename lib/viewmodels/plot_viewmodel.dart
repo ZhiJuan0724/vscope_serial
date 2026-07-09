@@ -777,6 +777,14 @@ class PlotViewModel extends BaseViewModel {
     return _cachedDisplayChannels!;
   }
 
+  List<ChannelConfig> get triggerCandidateChannels {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    return channels
+        .take(rawCount)
+        .where((channel) => channel.visible)
+        .toList(growable: false);
+  }
+
   List<PlotDataPoint> get displayDataPoints {
     if (!mathChannels.any((channel) => channel.enabled)) return _dataPoints;
     final rawCount = rawDisplayChannelCount;
@@ -3223,9 +3231,14 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void updateTriggerConfig(PlotTriggerConfig config) {
+    final candidates = triggerCandidateChannels;
+    final normalizedChannelIndex =
+        candidates.any((channel) => channel.index == config.channelIndex)
+            ? config.channelIndex
+            : (candidates.isNotEmpty ? candidates.first.index : 0);
     _triggerConfig
-      ..enabled = config.enabled
-      ..channelIndex = config.channelIndex.clamp(0, 15).toInt()
+      ..enabled = config.enabled && candidates.isNotEmpty
+      ..channelIndex = normalizedChannelIndex
       ..comparison = config.comparison
       ..targetValue = config.targetValue
       ..hitThreshold = math.max(1, config.hitThreshold)
@@ -3244,6 +3257,14 @@ class PlotViewModel extends BaseViewModel {
     if (value && !_triggerConfigured) {
       showStatusMessage('请先右键触发按钮配置触发条件');
       return;
+    }
+    if (value && !_canUseTriggerChannel(_triggerConfig.channelIndex)) {
+      final candidates = triggerCandidateChannels;
+      if (candidates.isEmpty) {
+        showStatusMessage('当前没有打开的普通通道，无法开启触发');
+        return;
+      }
+      _triggerConfig.channelIndex = candidates.first.index;
     }
     if (_triggerConfig.enabled == value) return;
     _triggerConfig.enabled = value;
@@ -4121,9 +4142,10 @@ class PlotViewModel extends BaseViewModel {
   }
 
   bool _canUseTriggerChannel(int index) {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
     return index >= 0 &&
+        index < rawCount &&
         index < channels.length &&
-        index < 16 &&
         channels[index].visible;
   }
 

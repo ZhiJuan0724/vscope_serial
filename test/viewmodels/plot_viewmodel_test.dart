@@ -492,6 +492,49 @@ void main() {
       expect(vm.triggeredCount, 0);
     });
 
+    test('触发通道候选按当前协议实际普通通道数过滤', () {
+      vm.setParserType(ParserType.zobow);
+
+      expect(vm.triggerCandidateChannels.map((channel) => channel.index), [
+        0,
+        1,
+        2,
+        3,
+      ]);
+
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(
+          type: ParserType.zobow,
+          channelCount: ParserConfig.maxZobowChannelCount,
+        ),
+      );
+      vm.setChannelVisible(2, false);
+
+      expect(vm.triggerCandidateChannels.map((channel) => channel.index), [
+        0,
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+      ]);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 15,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      expect(vm.triggerConfig.channelIndex, 0);
+      expect(vm.triggerEnabled, isTrue);
+    });
+
     test('触发工具默认隐藏且关闭入口会关闭触发模式', () {
       expect(vm.triggerToolbarEnabled, isFalse);
 

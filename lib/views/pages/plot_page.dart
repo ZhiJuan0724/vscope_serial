@@ -2956,9 +2956,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   void _showTriggerConfigDialog(BuildContext context, PlotViewModel vm) {
     final initial = vm.triggerConfig;
-    final visibleRawChannels = vm.channels
-        .where((channel) => channel.index < 16 && channel.visible)
-        .toList(growable: false);
+    final visibleRawChannels = vm.triggerCandidateChannels;
     var enabled = initial.enabled;
     var channelIndex =
         visibleRawChannels.any(
