@@ -184,27 +184,33 @@ class AppLogger {
     await _fileOutput.close();
   }
 
-  void _log(String level, String msg, {String? category}) {
+  void _log(
+    String level,
+    String msg, {
+    String? category,
+    dynamic error,
+    StackTrace? stackTrace,
+  }) {
     if (!_initialized) return; // 未初始化时静默丢弃（避免单元测试报错）
     final formatted = category != null ? '[$category] $msg' : msg;
     switch (level) {
       case 'T':
-        _logger.t(formatted);
+        _logger.t(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'D':
-        _logger.d(formatted);
+        _logger.d(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'I':
-        _logger.i(formatted);
+        _logger.i(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'W':
-        _logger.w(formatted);
+        _logger.w(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'E':
-        _logger.e(formatted);
+        _logger.e(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'F':
-        _logger.f(formatted);
+        _logger.f(formatted, error: error, stackTrace: stackTrace);
         break;
     }
   }
@@ -222,11 +228,13 @@ class AppLogger {
     String? category,
     dynamic error,
     StackTrace? stackTrace,
-  }) => _log('E', msg, category: category);
+  }) =>
+      _log('E', msg, category: category, error: error, stackTrace: stackTrace);
   void fatal(
     String msg, {
     String? category,
     dynamic error,
     StackTrace? stackTrace,
-  }) => _log('F', msg, category: category);
+  }) =>
+      _log('F', msg, category: category, error: error, stackTrace: stackTrace);
 }

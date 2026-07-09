@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -33,6 +34,24 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    AppLogger().error(
+      'Flutter 框架异常: ${details.exceptionAsString()}',
+      category: 'APP',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
+  ui.PlatformDispatcher.instance.onError = (error, stackTrace) {
+    AppLogger().error(
+      'Flutter 平台异常: $error',
+      category: 'APP',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    return false;
+  };
   await AppSettings().init();
   SerialService().loadSettings();
   SerialService().initializePortDiscovery();
