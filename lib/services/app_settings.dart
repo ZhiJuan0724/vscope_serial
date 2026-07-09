@@ -65,6 +65,10 @@ class AppSettings {
 
   /// 每次开始绘图时丢弃的前置有效数据包数量，范围 0~10000。
   int discardInitialPacketCount = 0;
+
+  /// 开始新一轮绘图时是否保留上一轮绘图数据并继续追加。
+  bool keepPlotOnRestart = false;
+
   bool snapHighlightEnabled = true;
   double snapHighlightDiameter = 8.0;
   String snapHighlightColorMode = 'cursor';
@@ -254,6 +258,7 @@ class AppSettings {
     plotFontSizeDelta = 0;
     maxVisiblePoints = 1000000;
     discardInitialPacketCount = 0;
+    keepPlotOnRestart = false;
     snapHighlightEnabled = true;
     snapHighlightDiameter = 8.0;
     snapHighlightColorMode = 'cursor';
@@ -349,6 +354,7 @@ class AppSettings {
           ((json['discardInitialPacketCount'] as num?)?.toInt() ?? 0)
               .clamp(0, 10000)
               .toInt();
+      keepPlotOnRestart = json['keepPlotOnRestart'] as bool? ?? false;
       snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
       snapHighlightDiameter =
           ((json['snapHighlightDiameter'] as num?)?.toDouble() ?? 8.0).clamp(
@@ -493,6 +499,7 @@ class AppSettings {
       'plotFontSizeDelta': plotFontSizeDelta,
       'maxVisiblePoints': maxVisiblePoints,
       'discardInitialPacketCount': discardInitialPacketCount,
+      'keepPlotOnRestart': keepPlotOnRestart,
       'snapHighlightEnabled': snapHighlightEnabled,
       'snapHighlightDiameter': snapHighlightDiameter,
       'snapHighlightColorMode': snapHighlightColorMode,

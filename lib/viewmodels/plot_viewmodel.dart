@@ -351,6 +351,7 @@ class PlotViewModel extends BaseViewModel {
   String _snapHighlightColorMode = 'cursor';
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
+  bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
   bool _followEnabled = false;
@@ -578,6 +579,7 @@ class PlotViewModel extends BaseViewModel {
     _snapHighlightColorMode = settings.snapHighlightColorMode;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
     _triggerToolbarEnabled = settings.triggerToolbarEnabled;
+    _keepPlotOnRestart = settings.keepPlotOnRestart;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
@@ -662,6 +664,7 @@ class PlotViewModel extends BaseViewModel {
     settings.snapHighlightColorMode = _snapHighlightColorMode;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.triggerToolbarEnabled = _triggerToolbarEnabled;
+    settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
     settings.plotBackground = _plotBackground;
@@ -904,6 +907,7 @@ class PlotViewModel extends BaseViewModel {
   PlotTriggerConfig get triggerConfig => _triggerConfig.copy();
   bool get triggerEnabled => _triggerConfig.enabled;
   bool get triggerConfigured => _triggerConfigured;
+  bool get keepPlotOnRestart => _keepPlotOnRestart;
   int get triggerHitCount => _triggerHitCount;
   int get triggeredCount => _triggeredCount;
   int? get triggerStopPacketsRemaining => _triggerStopPacketsRemaining;
@@ -1835,43 +1839,7 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
-    // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
-    _dataPoints.clear();
-    _parsedHistory.clear();
-    _lodIndex.clear();
-    _zobowRawFrames.clear();
-    _fixedFrameRawFrames.clear();
-    _importedChannelAddresses = null;
-    _visibleStartIndex = 0;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-    _resetRateState();
-    _nextIndex = 0;
-    _activeChannelCount = 0;
-    _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
-    _discardedInitialPacketCount = 0;
-    _resetTriggerRuntimeState();
-    _startTime = DateTime.now();
-
-    // 重置速率统计
-    _lastRateLogTime = null;
-    _lastRateLogIndex = 0;
-    _totalReceivedBytes = 0;
-    _lastRateLogBytes = 0;
-
-    // 保留上一轮缩放比例；首次启动仍使用默认视口。
-    if (_hasStartedPlottingOnce) {
-      final xRange = viewport.xRange;
-      _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
-    } else {
-      _setViewport(viewport.reset());
-      _hasStartedPlottingOnce = true;
-    }
-    _viewportHistory.clear();
-
-    _resetCursorPositions();
+    _prepareHistoryForStart();
 
     // 创建解析器
     _parser = _createParser();
@@ -2094,6 +2062,49 @@ class PlotViewModel extends BaseViewModel {
     _viewportHistory.clear();
     _resetCursorPositions();
     Future.microtask(() => notifyListeners());
+  }
+
+  void _prepareHistoryForStart() {
+    if (!_keepPlotOnRestart) {
+      // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
+      // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
+      _dataPoints.clear();
+      _parsedHistory.clear();
+      _lodIndex.clear();
+      _zobowRawFrames.clear();
+      _fixedFrameRawFrames.clear();
+      _importedChannelAddresses = null;
+      _visibleStartIndex = 0;
+      _dataRevision++;
+      _invalidateDisplayCaches();
+      _resetObservedValueMetadata();
+      _nextIndex = 0;
+      _activeChannelCount = 0;
+
+      // 保留上一轮缩放比例；首次启动仍使用默认视口。
+      if (_hasStartedPlottingOnce) {
+        final xRange = viewport.xRange;
+        _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
+      } else {
+        _setViewport(viewport.reset());
+        _hasStartedPlottingOnce = true;
+      }
+      _viewportHistory.clear();
+      _resetCursorPositions();
+    } else {
+      _importedChannelAddresses = null;
+      _hasStartedPlottingOnce = true;
+    }
+
+    _resetRateState();
+    _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
+    _discardedInitialPacketCount = 0;
+    _resetTriggerRuntimeState();
+    _startTime = DateTime.now();
+    _lastRateLogTime = null;
+    _lastRateLogIndex = _nextIndex;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
   }
 
   // ========== 数据接收 ==========
@@ -3813,6 +3824,13 @@ class PlotViewModel extends BaseViewModel {
       _resetTriggerRuntimeState();
       _markOverlayChanged();
     }
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setKeepPlotOnRestart(bool value) {
+    if (_keepPlotOnRestart == value) return;
+    _keepPlotOnRestart = value;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

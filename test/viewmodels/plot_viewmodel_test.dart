@@ -56,6 +56,7 @@ void main() {
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
+      settings.keepPlotOnRestart = false;
       settings.plotLegendPanelRight = null;
       settings.plotLegendPanelTop = null;
       settings.plotLiveValuesPanelRight = null;
@@ -765,6 +766,33 @@ void main() {
 
       expect(vm.dataPoints.isEmpty, true);
       expect(vm.pointCount, 0);
+    });
+
+    test('开始绘图默认清空旧数据，开启保持绘图后继续追加', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      await vm.startPlotting();
+      vm.ingestParsedResultForTest(ParseResult.ok([3], bytesConsumed: 1));
+
+      expect(vm.dataPoints.map((point) => point.index), [0]);
+      expect(vm.pointCount, 1);
+
+      await vm.stopPlotting();
+
+      vm.setKeepPlotOnRestart(true);
+      await vm.startPlotting();
+      vm.ingestParsedResultForTest(ParseResult.ok([4], bytesConsumed: 1));
+
+      expect(vm.dataPoints.map((point) => point.index), [0, 1]);
+      expect(vm.dataPoints.map((point) => point.values.single), [3, 4]);
+      expect(vm.pointCount, 2);
+
+      await vm.stopPlotting();
     });
 
     test('数学通道追加到显示数据且无效求值为NaN', () {

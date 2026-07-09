@@ -13,6 +13,7 @@ void main() {
             ..plotFontSizeDelta = 4
             ..maxVisiblePoints = 40000000
             ..discardInitialPacketCount = 8
+            ..keepPlotOnRestart = true
             ..snapHighlightEnabled = false
             ..snapHighlightDiameter = 12
             ..snapHighlightColorMode = 'channel'
@@ -68,6 +69,7 @@ void main() {
       expect(settings.plotFontSizeDelta, 0);
       expect(settings.maxVisiblePoints, 1000000);
       expect(settings.discardInitialPacketCount, 0);
+      expect(settings.keepPlotOnRestart, isFalse);
       expect(settings.snapHighlightEnabled, isTrue);
       expect(settings.snapHighlightDiameter, 8);
       expect(settings.snapHighlightColorMode, 'cursor');

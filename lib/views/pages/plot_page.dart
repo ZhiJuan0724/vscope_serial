@@ -4198,6 +4198,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
+                                      AppStrings.plot.keepPlotOnRestart,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.keepPlotOnRestartHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.keepPlotOnRestart,
+                                onChanged: (value) {
+                                  vm.setKeepPlotOnRestart(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
                                       AppStrings.plot.triggerFeatureToggle,
                                       style: const TextStyle(fontSize: 14),
                                     ),

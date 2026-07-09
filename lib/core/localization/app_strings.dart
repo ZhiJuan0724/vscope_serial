@@ -195,6 +195,9 @@ final class _PlotStrings {
   String get statsFeatureHelp => '开启后在工具栏添加测量统计入口，点击工具栏按钮后才启用统计';
   String get triggerFeatureToggle => '显示触发工具';
   String get triggerFeatureHelp => '开启后在工具栏添加触发入口，左键启停触发，右键配置触发条件';
+  String get keepPlotOnRestart => '保持绘图';
+  String get keepPlotOnRestartHelp =>
+      '开启后停止绘图再开始时不自动清空旧数据，新数据会在原有绘图后继续追加。';
   String get snapHighlight => '吸附点高亮';
   String get snapHighlightColorMode => '吸附点颜色';
   String get snapHighlightColorCursor => '跟随光标线';
