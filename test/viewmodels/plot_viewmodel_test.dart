@@ -1106,6 +1106,32 @@ void main() {
       expect(imported.parserConfig.zobowChannelIds[1], 0x12345678);
     });
 
+    test('BIN 导入导出保留 r 协议通道地址', () async {
+      final dir = await Directory.systemTemp.createTemp('vscope_r_bin_test_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setRChannelAddress(0, '16');
+      vm.setRChannelAddress(1, '0x20');
+      vm.setChannelAlias(0, '主轴角度');
+      vm.setChannelAlias(1, '速度');
+
+      final binPath = '${dir.path}/plot.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+
+      expect(imported.sendProtocolType, SendProtocolType.rProtocol);
+      expect(imported.rChannelAddresses.take(2), ['16', '0x20']);
+      expect(imported.channels[0].alias, '主轴角度');
+      expect(imported.channels[1].alias, '速度');
+    });
+
     test('众邦通道地址和通道数据类型会写入设置并可重启恢复', () async {
       vm.setParserType(ParserType.zobow);
       vm.setZobowChannelId(0, 0x00000095);

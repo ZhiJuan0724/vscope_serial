@@ -341,6 +341,12 @@ extension PlotViewModelImportExport on PlotViewModel {
           .map((id) => id & 0xFFFFFFFF)
           .toList(growable: false);
     }
+    if (_sendProtocolType == SendProtocolType.rProtocol) {
+      metadata['sendProtocolType'] = SendProtocolType.rProtocol.name;
+      metadata['rChannelAddresses'] = List<String>.from(
+        _sendProtocolConfig.rChannelAddresses,
+      );
+    }
     if (includeObservations && _observations.isNotEmpty) {
       metadata['observations'] = _observations
           .map(
@@ -914,6 +920,30 @@ extension PlotViewModelImportExport on PlotViewModel {
               : ParserConfig.minZobowChannelCount;
       _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
       AppSettings().parserType = ParserType.zobow.name;
+      _saveSettings();
+    }
+
+    final rAddresses = metadata['rChannelAddresses'];
+    if (metadata['sendProtocolType'] == SendProtocolType.rProtocol.name &&
+        rAddresses is List) {
+      final restoredAddresses = List<String>.filled(
+        SendProtocolConfig.maxChannelCount,
+        '',
+      );
+      for (
+        var i = 0;
+        i < rAddresses.length && i < restoredAddresses.length;
+        i++
+      ) {
+        final address = rAddresses[i];
+        if (address is String) restoredAddresses[i] = address.trim();
+      }
+      _sendProtocolType = SendProtocolType.rProtocol;
+      _sendProtocolConfig
+        ..type = SendProtocolType.rProtocol
+        ..source = ProtocolSource.builtIn
+        ..customProtocolId = null
+        ..rChannelAddresses = restoredAddresses;
       _saveSettings();
     }
 
