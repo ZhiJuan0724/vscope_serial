@@ -1020,6 +1020,14 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
       );
       _selectedRowIndex = _rows.length - 1;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_presetListScrollController.hasClients) return;
+      _presetListScrollController.animateTo(
+        _presetListScrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   _PresetRow _rowFromPreset(AddressChannelPreset preset) {
