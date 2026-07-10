@@ -2889,8 +2889,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _importCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
       dialogTitle: AppStrings.plot.chooseCsvFile,
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
+      type: FileType.any,
       allowMultiple: false,
     );
     if (result == null || result.files.isEmpty) return;
@@ -2912,8 +2911,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _importBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
       dialogTitle: AppStrings.plot.chooseBinFile,
-      type: FileType.custom,
-      allowedExtensions: ['bin'],
+      type: FileType.any,
       allowMultiple: false,
     );
     if (result == null || result.files.isEmpty) return;

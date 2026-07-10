@@ -8,6 +8,11 @@ extension PlotViewModelImportExport on PlotViewModel {
   static const int _binExportBatchSize = 65536;
   static const int _csvExportBatchSize = 8192;
 
+  static String _ensureExportExtension(String path, String extension) {
+    final suffix = '.${extension.toLowerCase()}';
+    return path.toLowerCase().endsWith(suffix) ? path : '$path$suffix';
+  }
+
   // ========== 导出 ==========
   /// 导出数据到 CSV 文件
   ///
@@ -30,7 +35,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
 
       if (selectedPath != null) {
-        path = selectedPath;
+        path = _ensureExportExtension(selectedPath, 'csv');
       } else {
         final exeDir = File(Platform.resolvedExecutable).parent;
         final dir = Directory('${exeDir.path}/exports');
@@ -139,7 +144,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       final pointCount = exportRange.$2;
 
       if (selectedPath != null) {
-        path = selectedPath;
+        path = _ensureExportExtension(selectedPath, 'bin');
       } else {
         final exeDir = File(Platform.resolvedExecutable).parent;
         final dir = Directory('${exeDir.path}/exports');

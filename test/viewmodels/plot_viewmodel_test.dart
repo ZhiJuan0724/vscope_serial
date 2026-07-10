@@ -968,7 +968,7 @@ void main() {
       expect(imported.dataPoints[1].values, [3.5, 4.5]);
     });
 
-    test('BIN 导入导出保留观察位置备注和锁定状态', () async {
+    test('BIN 导出会补全缺失后缀并保留观察位置备注和锁定状态', () async {
       final dir = await Directory.systemTemp.createTemp(
         'vscope_bin_observation_test_',
       );
@@ -982,12 +982,14 @@ void main() {
       vm.updateObservationNote(0, 'manual note');
       vm.setObservationLocked(0, true);
 
-      final binPath = '${dir.path}/plot.bin';
-      expect(await vm.exportToBin(binPath), binPath);
+      final binPath = '${dir.path}/plot';
+      final exportedPath = '$binPath.bin';
+      expect(await vm.exportToBin(binPath), exportedPath);
+      expect(File(exportedPath).existsSync(), isTrue);
 
       final imported = PlotViewModel(serialService);
       addTearDown(imported.dispose);
-      expect(await imported.importFromBin(binPath), isNull);
+      expect(await imported.importFromBin(exportedPath), isNull);
       expect(imported.observations, hasLength(1));
       expect(imported.observations.single.x, 1);
       expect(imported.observations.single.note, 'manual note');
