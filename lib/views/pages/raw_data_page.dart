@@ -1094,8 +1094,6 @@ class _RawDataPageState extends State<RawDataPage> {
     final key = event.logicalKey;
     final ctrl = keyboard.isControlPressed;
     final shift = keyboard.isShiftPressed;
-    final alt = keyboard.isAltPressed;
-    final meta = keyboard.isMetaPressed;
 
     if (ctrl && shift && key == LogicalKeyboardKey.keyC) {
       _copyTerminalSelection();
@@ -1110,63 +1108,8 @@ class _RawDataPageState extends State<RawDataPage> {
       return KeyEventResult.handled;
     }
 
-    final bytes = _shellBytesForKey(
-      event,
-      vm,
-      ctrl: ctrl,
-      alt: alt,
-      meta: meta,
-    );
-    if (bytes == null || bytes.isEmpty) return KeyEventResult.handled;
-    vm.sendShellBytes(bytes);
-    return KeyEventResult.handled;
-  }
-
-  Uint8List? _shellBytesForKey(
-    KeyEvent event,
-    RawDataViewModel vm, {
-    required bool ctrl,
-    required bool alt,
-    required bool meta,
-  }) {
-    final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.enter) {
-      return Uint8List.fromList(const [0x0D]);
-    }
-    if (key == LogicalKeyboardKey.backspace) {
-      return Uint8List.fromList(const [0x7F]);
-    }
-    if (key == LogicalKeyboardKey.tab) {
-      return Uint8List.fromList(const [0x09]);
-    }
-    if (key == LogicalKeyboardKey.escape) {
-      return Uint8List.fromList(const [0x1B]);
-    }
-    if (ctrl && !alt && !meta) {
-      final controlByte = _controlByteForKey(key);
-      if (controlByte != null) return Uint8List.fromList([controlByte]);
-    }
-    if (ctrl || alt || meta) return null;
-
-    final character = event.character;
-    if (character == null || character.isEmpty) return null;
-    return vm.encodeText(character);
-  }
-
-  int? _controlByteForKey(LogicalKeyboardKey key) {
-    final label = key.keyLabel;
-    if (label.length == 1) {
-      final code = label.toUpperCase().codeUnitAt(0);
-      if (code >= 0x41 && code <= 0x5A) return code - 0x40;
-    }
-    return switch (key) {
-      LogicalKeyboardKey.bracketLeft => 0x1B,
-      LogicalKeyboardKey.backslash => 0x1C,
-      LogicalKeyboardKey.bracketRight => 0x1D,
-      LogicalKeyboardKey.digit6 => 0x1E,
-      LogicalKeyboardKey.minus => 0x1F,
-      _ => null,
-    };
+    // 交由 xterm 转换为与当前终端状态一致的控制序列，例如方向键和 Tab。
+    return KeyEventResult.ignored;
   }
 
   Future<void> _copyTerminalSelection() async {

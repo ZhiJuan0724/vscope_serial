@@ -1,11 +1,12 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
+import 'package:xterm/xterm.dart';
 
 void main() {
   testWidgets('无原始数据时禁用保存按钮，收到数据后恢复', (tester) async {
@@ -168,6 +169,41 @@ void main() {
 
     service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Shell逐键模式将方向键和Tab交给终端编码', (tester) async {
+    final service = SerialService()..isConnected = true;
+    service.setRawDataShellEnabled(true);
+    service.setRawDataShellMode(true);
+    service.setRawShellInputMode(RawShellInputMode.key);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+    await tester.pump();
+
+    final terminal =
+        tester.widget<TerminalView>(find.byType(TerminalView)).terminal;
+    final output = <String>[];
+    terminal.onOutput = output.add;
+    await tester.tap(find.byType(TerminalView));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+
+    expect(output, ['\x1b[A', '\x1b[B', '\x1b[D', '\x1b[C', '\t']);
+
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+    service.isConnected = false;
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
