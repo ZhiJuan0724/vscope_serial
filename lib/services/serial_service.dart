@@ -954,6 +954,9 @@ class SerialService extends ChangeNotifier {
   String _decodeBytes(Uint8List data) =>
       _decodeBytesWithEncoding(data, _textEncoding);
 
+  /// 使用当前文本编码解码数据，供 Shell 等原始文本显示复用。
+  String decodeText(Uint8List data) => _decodeBytes(data);
+
   /// 添加一行接收数据显示
   void _addRawDataLine(DateTime timestamp, Uint8List data) {
     if (receiveHex) {

@@ -93,6 +93,12 @@ void main() {
       expect(service.encodeText('中文'), gbk.encode('中文'));
     });
 
+    test('Shell文本解码使用当前设置中的编码', () {
+      service.setTextEncoding('GBK');
+
+      expect(service.decodeText(Uint8List.fromList(gbk.encode('中文'))), '中文');
+    });
+
     test('hex send appends CRC using selected byte order', () {
       service.sendHex = true;
       service.enableCrc = true;

@@ -222,6 +222,8 @@ class RawDataViewModel extends BaseViewModel {
     await serialService.sendRawBytes(data);
   }
 
+  String decodeText(Uint8List data) => serialService.decodeText(data);
+
   Uint8List encodeText(String text) => serialService.encodeText(text);
 
   Future<void> sendYmodemFile(

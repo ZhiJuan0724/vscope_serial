@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart' as file_picker;
@@ -195,7 +194,7 @@ class _RawDataPageState extends State<RawDataPage> {
     _shellVm = vm;
     _shellSubscription = vm.shellDataStream.listen((data) {
       if (vm.isYmodemActive) return;
-      _terminal.write(utf8.decode(data, allowMalformed: true));
+      _terminal.write(vm.decodeText(data));
       _terminal.write('\x1b[?25l');
       _scrollTerminalToBottom();
     });
