@@ -22,6 +22,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_locator_bar.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
@@ -92,6 +93,7 @@ typedef _PlotToolbarSelection =
       bool statsToolbarEnabled,
       bool statsEnabled,
       bool statsRangeEnabled,
+      bool previewToolbarEnabled,
       bool followEnabled,
       bool showGrid,
       String gridDensity,
@@ -170,6 +172,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 是否显示最新通道值浮窗
   bool _liveValuesVisible = false;
+  bool _previewVisible = false;
 
   OverlayEntry? _channelContextMenuEntry;
   Rect? _channelContextMenuRect;
@@ -249,6 +252,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       statsToolbarEnabled: vm.statsToolbarEnabled,
       statsEnabled: vm.statsEnabled,
       statsRangeEnabled: vm.statsRangeEnabled,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
       followEnabled: vm.followEnabled,
       showGrid: vm.showGrid,
       gridDensity: vm.gridDensity,
@@ -1086,6 +1090,35 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ),
           ),
         ),
+        if (vm.previewToolbarEnabled)
+          Tooltip(
+            message: AppStrings.plot.previewTooltip,
+            child: TextButton.icon(
+              onPressed:
+                  () => setState(() => _previewVisible = !_previewVisible),
+              icon: Icon(
+                Icons.preview,
+                size: 18,
+                color: _previewVisible ? Colors.teal : null,
+              ),
+              label: Text(
+                AppStrings.plot.preview,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'SarasaUiSC',
+                  color: _previewVisible ? Colors.teal : null,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                backgroundColor:
+                    _previewVisible
+                        ? Colors.teal.withValues(alpha: 0.12)
+                        : null,
+              ),
+            ),
+          ),
         if (vm.statsToolbarEnabled || vm.statsEnabled) ...[
           Tooltip(
             message: AppStrings.plot.statsTooltip,
@@ -1898,99 +1931,143 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           );
         }
 
+        const locatorBarHeight = 44.0;
+        final previewPanelHeight =
+            _previewVisible && vm.previewToolbarEnabled
+                ? locatorBarHeight
+                : 0.0;
         return Stack(
           children: [
-            PlotGestureHandler(
-              viewport: renderViewport,
-              vCursorEnabled: vm.vCursorEnabled,
-              boxZoomEnabled: vm.boxZoomEnabled,
-              refreshFps: vm.effectiveRefreshFps,
-              plotFontSizeDelta: vm.plotFontSizeDelta,
-              channels: displayChannels,
-              activeChannelCount: activeChannelCount,
-              data: displayDataPoints,
-              observations: vm.observations,
-              onObservationDrag: (index, x) => vm.updateObservation(index, x),
-              onObservationDelete: (index) => vm.removeObservation(index),
-              observationPlacementActive: vm.observationPlacementActive,
-              onObservationPlacementHover: vm.updateObservationPlacement,
-              onObservationPlacementCommit: vm.commitObservationPlacement,
-              onViewportChanged:
-                  (viewport, {fromDrag = false}) =>
-                      vm.updateViewport(viewport, fromDrag: fromDrag),
-              onDragEnd: vm.saveDragViewport,
-              onCursorChanged: (cursor) {
-                if (cursor != null) {
-                  vm.updateFollowCursor(
-                    cursor.x,
-                    cursor.y ?? 0,
-                    cursor.screenPosition ?? Offset.zero,
-                  );
-                } else {
-                  vm.updateCursor(null);
-                }
-              },
-              // 测量线位置
-              xCursor1: vm.xCursor1,
-              xCursor2: vm.xCursor2,
-              yCursor1: vm.yCursor1,
-              yCursor2: vm.yCursor2,
-              // 测量线拖动回调
-              onXCursor1Drag:
-                  vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
-              onXCursor2Drag:
-                  vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
-              onYCursor1Drag:
-                  vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
-              onYCursor2Drag:
-                  vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
-              // 统计范围位置
-              statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
-              statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
-              // 统计范围拖动回调
-              onStatsX1Drag:
-                  vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
-              onStatsX2Drag:
-                  vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
-              // 通道偏移拖动回调
-              onChannelOffsetDrag:
-                  (index, yOffset) => vm.setChannelYOffset(index, yOffset),
-              // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
-              onChannelYScaleZoom:
-                  (index, scaleDelta) =>
-                      vm.zoomChannelYScale(index, scaleDelta),
+            Positioned.fill(
+              bottom: previewPanelHeight,
               child: Stack(
-                fit: StackFit.expand,
                 children: [
-                  buildLayer(PlotPaintLayer.background),
-                  buildLayer(PlotPaintLayer.data),
-                  buildLayer(PlotPaintLayer.axis),
-                  buildLayer(PlotPaintLayer.overlay),
+                  PlotGestureHandler(
+                    viewport: renderViewport,
+                    vCursorEnabled: vm.vCursorEnabled,
+                    boxZoomEnabled: vm.boxZoomEnabled,
+                    refreshFps: vm.effectiveRefreshFps,
+                    plotFontSizeDelta: vm.plotFontSizeDelta,
+                    channels: displayChannels,
+                    activeChannelCount: activeChannelCount,
+                    data: displayDataPoints,
+                    observations: vm.observations,
+                    onObservationDrag:
+                        (index, x) => vm.updateObservation(index, x),
+                    onObservationDelete: (index) => vm.removeObservation(index),
+                    observationPlacementActive: vm.observationPlacementActive,
+                    onObservationPlacementHover: vm.updateObservationPlacement,
+                    onObservationPlacementCommit: vm.commitObservationPlacement,
+                    onViewportChanged:
+                        (viewport, {fromDrag = false}) =>
+                            vm.updateViewport(viewport, fromDrag: fromDrag),
+                    onDragEnd: vm.saveDragViewport,
+                    onCursorChanged: (cursor) {
+                      if (cursor != null) {
+                        vm.updateFollowCursor(
+                          cursor.x,
+                          cursor.y ?? 0,
+                          cursor.screenPosition ?? Offset.zero,
+                        );
+                      } else {
+                        vm.updateCursor(null);
+                      }
+                    },
+                    // 测量线位置
+                    xCursor1: vm.xCursor1,
+                    xCursor2: vm.xCursor2,
+                    yCursor1: vm.yCursor1,
+                    yCursor2: vm.yCursor2,
+                    // 测量线拖动回调
+                    onXCursor1Drag:
+                        vm.xMeasurementEnabled
+                            ? (x) => vm.setXCursor1(x)
+                            : null,
+                    onXCursor2Drag:
+                        vm.xMeasurementEnabled
+                            ? (x) => vm.setXCursor2(x)
+                            : null,
+                    onYCursor1Drag:
+                        vm.yMeasurementEnabled
+                            ? (y) => vm.setYCursor1(y)
+                            : null,
+                    onYCursor2Drag:
+                        vm.yMeasurementEnabled
+                            ? (y) => vm.setYCursor2(y)
+                            : null,
+                    // 统计范围位置
+                    statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
+                    statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
+                    // 统计范围拖动回调
+                    onStatsX1Drag:
+                        vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
+                    onStatsX2Drag:
+                        vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+                    // 通道偏移拖动回调
+                    onChannelOffsetDrag:
+                        (index, yOffset) =>
+                            vm.setChannelYOffset(index, yOffset),
+                    // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
+                    onChannelYScaleZoom:
+                        (index, scaleDelta) =>
+                            vm.zoomChannelYScale(index, scaleDelta),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        buildLayer(PlotPaintLayer.background),
+                        buildLayer(PlotPaintLayer.data),
+                        buildLayer(PlotPaintLayer.axis),
+                        buildLayer(PlotPaintLayer.overlay),
+                      ],
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Stack(
+                          children: _buildObservationWidgets(
+                            context,
+                            vm,
+                            renderViewport,
+                            Size(constraints.maxWidth, constraints.maxHeight),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
+                  if (vm.measurementText != null || vm.statsText != null)
+                    _buildCombinedInfoBox(context, vm),
+                  if (_legendVisible) _buildLegendBox(vm),
+                  if (_liveValuesVisible) _buildLiveValuesBox(vm),
                 ],
               ),
             ),
-            Positioned.fill(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return Stack(
-                    children: _buildObservationWidgets(
-                      context,
-                      vm,
-                      renderViewport,
-                      Size(constraints.maxWidth, constraints.maxHeight),
-                    ),
-                  );
-                },
+            if (_previewVisible && vm.previewToolbarEnabled)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: previewPanelHeight,
+                child: _buildLocatorBar(context, vm),
               ),
-            ),
-            // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
-            if (vm.measurementText != null || vm.statsText != null)
-              _buildCombinedInfoBox(context, vm),
-            if (_legendVisible) _buildLegendBox(vm),
-            if (_liveValuesVisible) _buildLiveValuesBox(vm),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildLocatorBar(BuildContext context, PlotViewModel vm) {
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: PlotLocatorBar(
+        pointCount: vm.pointCount,
+        viewport: vm.viewport,
+        onNavigate:
+            (centerX, {required fromDrag}) =>
+                vm.movePreviewViewportTo(centerX, fromDrag: fromDrag),
+        onDragEnd: vm.saveDragViewport,
+      ),
     );
   }
 
@@ -4214,6 +4291,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 value: vm.keepPlotOnRestart,
                                 onChanged: (value) {
                                   vm.setKeepPlotOnRestart(value);
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                          const Divider(),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.plot.previewFeatureToggle,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      AppStrings.plot.previewFeatureHelp,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: vm.previewToolbarEnabled,
+                                onChanged: (value) {
+                                  vm.setPreviewToolbarEnabled(value);
+                                  if (!value) _previewVisible = false;
                                   setState(() {});
                                 },
                               ),

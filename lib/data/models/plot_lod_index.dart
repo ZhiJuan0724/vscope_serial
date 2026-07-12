@@ -69,7 +69,9 @@ class PlotLodIndex {
 
   bool canQuery(double visiblePointCount, double plotWidth) {
     if (_length == 0 || plotWidth <= 0 || visiblePointCount <= 0) return false;
-    return visiblePointCount / plotWidth >= minBucketSize;
+    // 首层 LOD 桶为 64 点；一旦数据密度超过像素宽度，直接使用桶摘要，
+    // 避免在中等规模窗口中每帧重新扫描全部点构建临时 min/max 桶。
+    return visiblePointCount > plotWidth;
   }
 
   PlotLodSeries? query({
@@ -95,6 +97,27 @@ class PlotLodIndex {
     );
     final level = _selectLevel(targetBucketSize);
     return level.query(channelIndex, xMin, xMax);
+  }
+
+  /// 概览使用的全范围查询。即使数据量小于像素桶阈值，也返回桶级摘要。
+  PlotLodSeries? queryOverview({
+    required int channelIndex,
+    required double xMin,
+    required double xMax,
+    required double plotWidth,
+  }) {
+    if (channelIndex < 0 ||
+        channelIndex >= maxChannels ||
+        channelIndex >= _maxChannelCount ||
+        plotWidth <= 0 ||
+        xMax <= xMin) {
+      return null;
+    }
+    final targetBucketSize = math.max(
+      minBucketSize,
+      ((xMax - xMin) / plotWidth).ceil(),
+    );
+    return _selectLevel(targetBucketSize).query(channelIndex, xMin, xMax);
   }
 
   _LodLevel _selectLevel(int targetBucketSize) {

@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
@@ -351,6 +352,7 @@ class PlotViewModel extends BaseViewModel {
   String _snapHighlightColorMode = 'cursor';
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
+  bool _previewToolbarEnabled = false;
   bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
@@ -502,6 +504,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// 兜底定时器：确保数据流中断时 UI 仍能刷新。
   Timer? _notifyTimer;
+  bool _dragViewportNotifyScheduled = false;
+  int _dragViewportNotifyGeneration = 0;
 
   // ========== 接收速率调试统计 ==========
   /// 上次日志报告时间
@@ -579,6 +583,7 @@ class PlotViewModel extends BaseViewModel {
     _snapHighlightColorMode = settings.snapHighlightColorMode;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
     _triggerToolbarEnabled = settings.triggerToolbarEnabled;
+    _previewToolbarEnabled = settings.previewToolbarEnabled;
     _keepPlotOnRestart = settings.keepPlotOnRestart;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
@@ -664,6 +669,7 @@ class PlotViewModel extends BaseViewModel {
     settings.snapHighlightColorMode = _snapHighlightColorMode;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.triggerToolbarEnabled = _triggerToolbarEnabled;
+    settings.previewToolbarEnabled = _previewToolbarEnabled;
     settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
@@ -848,6 +854,7 @@ class PlotViewModel extends BaseViewModel {
   bool get statsRangeEnabled => _statsRangeEnabled;
   bool get statsToolbarEnabled => _statsToolbarEnabled;
   bool get triggerToolbarEnabled => _triggerToolbarEnabled;
+  bool get previewToolbarEnabled => _previewToolbarEnabled;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
@@ -2851,6 +2858,7 @@ class PlotViewModel extends BaseViewModel {
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
     // 保存当前的偏移通道列宽，避免 copy() 丢失
     final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
+    if (!fromDrag) _cancelPendingDragViewportNotification();
     if (fromDrag && _followEnabled) {
       _followEnabled = false;
     }
@@ -2862,7 +2870,7 @@ class PlotViewModel extends BaseViewModel {
     if (!fromDrag) {
       _loadWindowForViewport();
     }
-    _refreshSnapHighlightColors();
+    if (!fromDrag) _refreshSnapHighlightColors();
     if (!fromDrag) {
       _saveSettings();
       AppLogger().trace(
@@ -2871,8 +2879,7 @@ class PlotViewModel extends BaseViewModel {
       );
     }
     if (fromDrag) {
-      // 拖动时同步通知，避免微任务堆积
-      notifyListeners();
+      _notifyDragViewportAtNextFrame();
     } else {
       Future.microtask(() => notifyListeners());
     }
@@ -2883,6 +2890,7 @@ class PlotViewModel extends BaseViewModel {
   /// 在 PlotGestureHandler._handlePointerUp 中调用，将拖动期间的
   /// 最终视口保存到配置和历史记录。
   void saveDragViewport() {
+    _cancelPendingDragViewportNotification();
     _saveViewport();
     _loadWindowForViewport();
     _refreshSnapHighlightColors();
@@ -2892,6 +2900,29 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 指针事件可能高于显示器刷新率；拖动时只在下一帧通知 UI，
+  /// 始终使用此帧收到的最新视口，避免主图重绘任务堆积。
+  void _notifyDragViewportAtNextFrame() {
+    if (_dragViewportNotifyScheduled) return;
+    _dragViewportNotifyScheduled = true;
+    final generation = _dragViewportNotifyGeneration;
+    SchedulerBinding.instance.scheduleFrame();
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (_disposed ||
+          generation != _dragViewportNotifyGeneration ||
+          !_dragViewportNotifyScheduled) {
+        return;
+      }
+      _dragViewportNotifyScheduled = false;
+      notifyListeners();
+    });
+  }
+
+  void _cancelPendingDragViewportNotification() {
+    _dragViewportNotifyGeneration++;
+    _dragViewportNotifyScheduled = false;
   }
 
   /// 重置视口到默认值并保存历史记录
@@ -3712,7 +3743,6 @@ class PlotViewModel extends BaseViewModel {
       final visibleCount = _dataPoints.length;
       final stopwatch = Stopwatch()..start();
       _lodIndex.clear();
-
       const batchSize = 4096;
       for (int packetIndex = 0; packetIndex < total; packetIndex++) {
         final frame = _zobowRawFrames.readPacket(packetIndex);
@@ -3826,6 +3856,25 @@ class PlotViewModel extends BaseViewModel {
     }
     _saveSettings();
     Future.microtask(() => notifyListeners());
+  }
+
+  void setPreviewToolbarEnabled(bool value) {
+    if (_previewToolbarEnabled == value) return;
+    _previewToolbarEnabled = value;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void movePreviewViewportTo(double centerX, {bool fromDrag = false}) {
+    final maxX = math.max(0, _historyPointCount - 1).toDouble();
+    final range = math.min(viewport.xRange, math.max(1.0, maxX));
+    final minX =
+        (centerX - range / 2)
+            .clamp(0.0, math.max(0.0, maxX - range))
+            .toDouble();
+    final next = viewport.copyWith(xMin: minX, xMax: minX + range);
+    if (_followEnabled) _followEnabled = false;
+    updateViewport(next, fromDrag: fromDrag);
   }
 
   void setKeepPlotOnRestart(bool value) {
@@ -4814,6 +4863,7 @@ class PlotViewModel extends BaseViewModel {
   @override
   void dispose() {
     _disposed = true;
+    _cancelPendingDragViewportNotification();
     _parseSubscription?.cancel();
     _parseSubscription = null;
     _sourceManager.stop();

@@ -104,6 +104,22 @@ void main() {
       expect(vm.cursor, null);
     });
 
+    test('预览导航限制在完整数据范围内并退出跟随', () {
+      for (var i = 0; i < 2000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 200, xMax: 400));
+      vm.setFollowEnabled(true);
+
+      vm.movePreviewViewportTo(0);
+
+      expect(vm.viewport.xMin, 0);
+      expect(vm.viewport.xMax, 200);
+      expect(vm.followEnabled, isFalse);
+    });
+
     test('解析历史按实际通道数分配存储空间', () {
       for (var i = 0; i < 5000; i++) {
         vm.ingestParsedResultForTest(
@@ -197,6 +213,29 @@ void main() {
       expect(vm.viewport, isNot(oldViewport));
       expect(vm.viewport.xMin, 100.0);
       expect(vm.viewport.xMax, 500.0);
+    });
+
+    testWidgets('拖动视口在同一帧内只通知一次', (tester) async {
+      var notifications = 0;
+      vm.addListener(() => notifications++);
+
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 10, xMax: 110),
+        fromDrag: true,
+      );
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 20, xMax: 120),
+        fromDrag: true,
+      );
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: 30, xMax: 130),
+        fromDrag: true,
+      );
+
+      expect(vm.viewport.xMin, 30.0);
+      expect(notifications, 0);
+      await tester.pump();
+      expect(notifications, 1);
     });
 
     test('jumpToXIndex 保持当前范围并移动视口中心', () {

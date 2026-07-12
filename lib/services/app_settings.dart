@@ -74,6 +74,7 @@ class AppSettings {
   String snapHighlightColorMode = 'cursor';
   bool statsToolbarEnabled = false;
   bool triggerToolbarEnabled = false;
+  bool previewToolbarEnabled = false;
 
   /// 是否显示网格
   bool showGrid = true;
@@ -264,6 +265,7 @@ class AppSettings {
     snapHighlightColorMode = 'cursor';
     statsToolbarEnabled = false;
     triggerToolbarEnabled = false;
+    previewToolbarEnabled = false;
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
@@ -366,6 +368,7 @@ class AppSettings {
           snapColorMode == 'channel' ? 'channel' : 'cursor';
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       triggerToolbarEnabled = json['triggerToolbarEnabled'] as bool? ?? false;
+      previewToolbarEnabled = json['previewToolbarEnabled'] as bool? ?? false;
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       final background = json['plotBackground'] as String?;
@@ -505,6 +508,7 @@ class AppSettings {
       'snapHighlightColorMode': snapHighlightColorMode,
       'statsToolbarEnabled': statsToolbarEnabled,
       'triggerToolbarEnabled': triggerToolbarEnabled,
+      'previewToolbarEnabled': previewToolbarEnabled,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'plotBackground': plotBackground,

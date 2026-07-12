@@ -19,6 +19,7 @@ void main() {
             ..snapHighlightColorMode = 'channel'
             ..statsToolbarEnabled = true
             ..triggerToolbarEnabled = true
+            ..previewToolbarEnabled = true
             ..showGrid = false
             ..gridDensity = 'dense'
             ..plotBackground = 'light'
@@ -75,6 +76,7 @@ void main() {
       expect(settings.snapHighlightColorMode, 'cursor');
       expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.triggerToolbarEnabled, isFalse);
+      expect(settings.previewToolbarEnabled, isFalse);
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');

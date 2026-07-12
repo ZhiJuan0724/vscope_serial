@@ -80,5 +80,39 @@ void main() {
         isNotNull,
       );
     });
+
+    test('medium density query uses LOD instead of scanning every point', () {
+      final index = PlotLodIndex();
+      for (var i = 0; i < 30000; i++) {
+        index.add(i, [i.isEven ? 1.0 : -1.0]);
+      }
+
+      final series = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 29999,
+        plotWidth: 1200,
+      );
+
+      expect(series, isNotNull);
+      expect(series!.length, lessThan(2000));
+    });
+
+    test('overview query returns bounded bucket samples for long history', () {
+      final index = PlotLodIndex();
+      for (var i = 0; i < 100000; i++) {
+        index.addSampled(i, [i.toDouble()], 64);
+      }
+
+      final series = index.queryOverview(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 99999,
+        plotWidth: 400,
+      );
+
+      expect(series, isNotNull);
+      expect(series!.length, lessThan(4000));
+    });
   });
 }
