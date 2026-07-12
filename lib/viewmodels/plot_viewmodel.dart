@@ -2908,8 +2908,17 @@ class PlotViewModel extends BaseViewModel {
     if (_dragViewportNotifyScheduled) return;
     _dragViewportNotifyScheduled = true;
     final generation = _dragViewportNotifyGeneration;
-    SchedulerBinding.instance.scheduleFrame();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
+    final SchedulerBinding binding;
+    try {
+      binding = SchedulerBinding.instance;
+    } on FlutterError {
+      // 纯 ViewModel 测试不会创建 Flutter binding，保留视口更新语义。
+      _dragViewportNotifyScheduled = false;
+      notifyListeners();
+      return;
+    }
+    binding.scheduleFrame();
+    binding.addPostFrameCallback((_) {
       if (_disposed ||
           generation != _dragViewportNotifyGeneration ||
           !_dragViewportNotifyScheduled) {
