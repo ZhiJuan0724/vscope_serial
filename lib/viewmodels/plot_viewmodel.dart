@@ -2072,7 +2072,15 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _prepareHistoryForStart() {
-    if (!_keepPlotOnRestart) {
+    final retainedHistoryIsCompatible = _isRetainedHistoryCompatible();
+    final clearIncompatibleHistory =
+        _keepPlotOnRestart && !retainedHistoryIsCompatible;
+    if (!_keepPlotOnRestart || clearIncompatibleHistory) {
+      if (clearIncompatibleHistory) {
+        const message = '接收协议已变化，已清空不兼容的历史绘图数据';
+        AppLogger().warning(message, category: 'PLOT');
+        showStatusMessage(message);
+      }
       // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
       // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
       _dataPoints.clear();
@@ -2112,6 +2120,24 @@ class PlotViewModel extends BaseViewModel {
     _lastRateLogIndex = _nextIndex;
     _totalReceivedBytes = 0;
     _lastRateLogBytes = 0;
+  }
+
+  bool _isRetainedHistoryCompatible() {
+    if (_nextIndex == 0) return true;
+    return switch (_parserType) {
+      ParserType.fireWater || ParserType.justFloat =>
+        _parsedHistory.length == _nextIndex &&
+            _zobowRawFrames.isEmpty &&
+            _fixedFrameRawFrames.isEmpty,
+      ParserType.zobow =>
+        _zobowRawFrames.packetCount == _nextIndex &&
+            _parsedHistory.isEmpty &&
+            _fixedFrameRawFrames.isEmpty,
+      ParserType.fixedFrame =>
+        _fixedFrameRawFrames.packetCount == _nextIndex &&
+            _parsedHistory.isEmpty &&
+            _zobowRawFrames.isEmpty,
+    };
   }
 
   // ========== 数据接收 ==========

@@ -1,7 +1,11 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/plot_data.dart';
+import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/plot/plot_viewport.dart';
 
@@ -212,6 +216,40 @@ void main() {
       expect(sparse, greaterThan(normal));
       expect(normal, greaterThan(dense));
       expect(xGridCount, 10);
+    });
+
+    testWidgets('精确窗口为空时仍使用LOD绘制数据', (tester) async {
+      final lod = PlotLodIndex();
+      for (var i = 0; i < 20000; i++) {
+        lod.add(i, [math.sin(i / 31) * 40 + 50]);
+      }
+
+      final paintedPixels = await tester.runAsync(() async {
+        const size = Size(280, 120);
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.data,
+          viewport: PlotViewport(xMin: 3500, xMax: 16500, yMin: 0, yMax: 100),
+          data: const [],
+          lodIndex: lod,
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(280, 120);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        var count = 0;
+        for (var i = 3; i < bytes!.lengthInBytes; i += 4) {
+          if (bytes.getUint8(i) != 0) count++;
+        }
+        image.dispose();
+        return count;
+      });
+
+      expect(paintedPixels, greaterThan(0));
     });
   });
 }

@@ -834,6 +834,30 @@ void main() {
       await vm.stopPlotting();
     });
 
+    test('保持绘图不会跨协议保留不兼容历史', () async {
+      vm.setParserType(ParserType.fixedFrame);
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1], rawBytes: Uint8List(10)),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([2], rawBytes: Uint8List(10)),
+      );
+      expect(vm.pointCount, 2);
+
+      vm.setKeepPlotOnRestart(true);
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+
+      await vm.startPlotting();
+
+      expect(vm.pointCount, 0);
+      expect(vm.visiblePointCount, 0);
+      expect(vm.lodIndex.isEmpty, isTrue);
+
+      await vm.stopPlotting();
+    });
+
     test('数学通道追加到显示数据且无效求值为NaN', () {
       vm.ingestParsedResultForTest(ParseResult.ok([10, 2], bytesConsumed: 8));
       vm.ingestParsedResultForTest(ParseResult.ok([8, 0], bytesConsumed: 8));

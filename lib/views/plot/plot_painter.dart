@@ -601,7 +601,7 @@ class PlotLayerPainter extends CustomPainter {
   /// 2. 根据像素宽度计算降采样步长
   /// 3. 逐通道批量绘制（Path + 点）
   void _drawChannels(Canvas canvas, Size size) {
-    if (data.isEmpty) return;
+    if (data.isEmpty && (lodIndex == null || lodIndex!.isEmpty)) return;
 
     // 找到可见范围内的数据索引（缓存）
     final visibleIndices = _getVisibleRange();
