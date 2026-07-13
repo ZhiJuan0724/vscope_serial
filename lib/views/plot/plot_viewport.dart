@@ -23,7 +23,9 @@ class PlotViewport {
   bool autoScaleY;
 
   /// 绘图区域左边距（留给 Y 轴刻度）
-  final double marginLeft = 60;
+  static const double defaultMarginLeft = 60;
+
+  final double marginLeft;
 
   /// 绘图区域基础右边距
   static const double _baseMarginRight = 20;
@@ -100,6 +102,7 @@ class PlotViewport {
     this.yMin = 0,
     this.yMax = 32768,
     this.autoScaleY = false,
+    this.marginLeft = defaultMarginLeft,
   });
 
   /// X 轴显示范围宽度
@@ -211,6 +214,7 @@ class PlotViewport {
       yMin: 0,
       yMax: 32768,
       autoScaleY: autoScaleY,
+      marginLeft: marginLeft,
     );
   }
 
@@ -258,6 +262,7 @@ class PlotViewport {
     double? yMin,
     double? yMax,
     bool? autoScaleY,
+    double? marginLeft,
   }) {
     return PlotViewport(
       xMin: xMin ?? this.xMin,
@@ -265,6 +270,7 @@ class PlotViewport {
       yMin: yMin ?? this.yMin,
       yMax: yMax ?? this.yMax,
       autoScaleY: autoScaleY ?? this.autoScaleY,
+      marginLeft: marginLeft ?? this.marginLeft,
     );
   }
 
@@ -276,6 +282,7 @@ class PlotViewport {
       yMin: yMin,
       yMax: yMax,
       autoScaleY: autoScaleY,
+      marginLeft: marginLeft,
     );
     vp.setOffsetAxisColumnWidths(_offsetAxisColumnWidths);
     return vp;

@@ -29,6 +29,7 @@ void main() {
         canvasHeight: 600,
         gridDensity: GridDensity.normal,
         plotFontSizeDelta: 0,
+        plotFontBold: false,
         yValuesAreInteger: true,
       );
 
@@ -195,8 +196,65 @@ void main() {
       }
     });
 
-    test('网格密度只改变Y刻度步长且不会被nice number合并', () {
+    test('X轴按规则数值生成刻度并随范围移动', () {
+      expect(PlotLayerPainter.debugXTickValuesFor(0, 9, 720), [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+      ]);
+      expect(PlotLayerPainter.debugXTickValuesFor(0, 90, 720), [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+      ]);
+      expect(PlotLayerPainter.debugXTickValuesFor(10, 18, 320), [
+        10,
+        12,
+        14,
+        16,
+        18,
+      ]);
+      expect(PlotLayerPainter.debugXTickValuesFor(13, 93, 720), [
+        20,
+        30,
+        40,
+        50,
+        60,
+        70,
+        80,
+        90,
+      ]);
+    });
+
+    test('网格密度通过调整规则刻度间距改变格子数量', () {
       final xGridCount = PlotLayerPainter.debugXGridCountFor(800);
+      final sparseX = PlotLayerPainter.debugXTickValuesFor(
+        0,
+        100,
+        800,
+        gridDensity: GridDensity.sparse,
+      );
+      final normalX = PlotLayerPainter.debugXTickValuesFor(0, 100, 800);
+      final denseX = PlotLayerPainter.debugXTickValuesFor(
+        0,
+        100,
+        800,
+        gridDensity: GridDensity.dense,
+      );
       final sparse = PlotLayerPainter.debugYTickStepFor(
         32768,
         510,
@@ -215,7 +273,98 @@ void main() {
 
       expect(sparse, greaterThan(normal));
       expect(normal, greaterThan(dense));
+      expect(sparseX.length, lessThan(normalX.length));
+      expect(normalX.length, lessThan(denseX.length));
       expect(xGridCount, 10);
+    });
+
+    test('大范围X轴向上调整规则步长避免长标签重叠', () {
+      final ticks = PlotLayerPainter.debugXTickValuesFor(
+        0,
+        250000,
+        1545,
+        gridDensity: GridDensity.dense,
+        minimumSpacing: 48,
+      );
+
+      expect(ticks[1] - ticks[0], 10000);
+      final pixelSpacing = 1545 * (ticks[1] - ticks[0]) / 250000;
+      expect(pixelSpacing, greaterThanOrEqualTo(48));
+    });
+
+    test('偏置Y轴在通道原始值域生成整数规则刻度', () {
+      final ticks = PlotLayerPainter.debugOffsetAxisTickValuesFor(
+        viewport: PlotViewport(yMin: 0, yMax: 20),
+        channel: ChannelConfig(
+          index: 0,
+          color: Colors.red,
+          yScale: 3,
+          yOffset: 0.7,
+          offsetEnabled: true,
+        ),
+        plotHeight: 500,
+      );
+
+      expect(ticks, [0, 1, 2, 3, 4, 5, 6]);
+      expect(ticks.every((value) => value == value.roundToDouble()), isTrue);
+    });
+
+    test('浮点通道主Y轴最大放大时仍使用整数步长', () {
+      final step = PlotLayerPainter.debugYTickStepFor(
+        1,
+        510,
+        GridDensity.dense,
+        yValuesAreInteger: true,
+      );
+
+      expect(step, 1);
+    });
+
+    test('左侧Y轴宽度随刻度文本和字体大小自适应', () {
+      final viewport = PlotViewport(yMin: -100000000, yMax: 100000000);
+      final smallWidth = PlotLayerPainter.calculateLeftAxisWidth(
+        viewport: viewport,
+        canvasHeight: 600,
+        gridDensity: GridDensity.normal,
+        plotFontSizeDelta: -3,
+        plotFontBold: false,
+      );
+      final largeWidth = PlotLayerPainter.calculateLeftAxisWidth(
+        viewport: viewport,
+        canvasHeight: 600,
+        gridDensity: GridDensity.normal,
+        plotFontSizeDelta: 6,
+        plotFontBold: false,
+      );
+
+      expect(smallWidth, greaterThanOrEqualTo(PlotViewport.defaultMarginLeft));
+      expect(largeWidth, greaterThan(smallWidth));
+    });
+
+    test('左侧Y轴宽度会计入粗体文本宽度', () {
+      final viewport = PlotViewport(yMin: -100000000, yMax: 100000000);
+      final normalWidth = PlotLayerPainter.calculateLeftAxisWidth(
+        viewport: viewport,
+        canvasHeight: 600,
+        gridDensity: GridDensity.normal,
+        plotFontSizeDelta: 1,
+        plotFontBold: false,
+      );
+      final boldWidth = PlotLayerPainter.calculateLeftAxisWidth(
+        viewport: viewport,
+        canvasHeight: 600,
+        gridDensity: GridDensity.normal,
+        plotFontSizeDelta: 1,
+        plotFontBold: true,
+      );
+
+      expect(boldWidth, greaterThanOrEqualTo(normalWidth));
+    });
+
+    test('绘图字号在用户选择值基础上内部增加1', () {
+      expect(PlotLayerPainter.debugFontSizeFor(12, -1), 12);
+      expect(PlotLayerPainter.debugFontSizeFor(12, 0), 13);
+      expect(PlotLayerPainter.debugFontSizeFor(12, 1), 14);
     });
 
     testWidgets('精确窗口为空时仍使用LOD绘制数据', (tester) async {

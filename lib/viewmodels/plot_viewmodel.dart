@@ -329,6 +329,9 @@ class PlotViewModel extends BaseViewModel {
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int _plotFontSizeDelta = 0;
 
+  /// 绘图界面文本是否使用粗体。
+  bool _plotFontBold = false;
+
   /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
   String _gridDensity = 'normal';
 
@@ -561,6 +564,7 @@ class PlotViewModel extends BaseViewModel {
     final settings = AppSettings();
     _refreshFps = settings.refreshFps;
     _plotFontSizeDelta = settings.plotFontSizeDelta.clamp(-3, 6);
+    _plotFontBold = settings.plotFontBold;
     _maxVisiblePoints = settings.maxVisiblePoints.clamp(
       minVisiblePoints,
       maxVisiblePointsLimit,
@@ -662,6 +666,7 @@ class PlotViewModel extends BaseViewModel {
     final settings = AppSettings();
     settings.refreshFps = _refreshFps;
     settings.plotFontSizeDelta = _plotFontSizeDelta;
+    settings.plotFontBold = _plotFontBold;
     settings.maxVisiblePoints = _maxVisiblePoints;
     settings.discardInitialPacketCount = _discardInitialPacketCount;
     settings.snapHighlightEnabled = _snapHighlightEnabled;
@@ -742,6 +747,7 @@ class PlotViewModel extends BaseViewModel {
       _highRateMode ? _highRateRefreshFps : _refreshFps;
   bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
+  bool get plotFontBold => _plotFontBold;
   String get gridDensity => _gridDensity;
   String get plotBackground => _plotBackground;
   double get floatingPanelOpacity => _floatingPanelOpacity;
@@ -3942,6 +3948,14 @@ class PlotViewModel extends BaseViewModel {
   /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
   void setPlotFontSizeDelta(int delta) {
     _plotFontSizeDelta = delta.clamp(-3, 6);
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setPlotFontBold(bool enabled) {
+    if (_plotFontBold == enabled) return;
+    _plotFontBold = enabled;
     _markChannelConfigChanged();
     _saveSettings();
     Future.microtask(() => notifyListeners());

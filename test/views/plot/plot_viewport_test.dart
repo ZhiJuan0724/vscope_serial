@@ -101,18 +101,26 @@ void main() {
     });
 
     test('copy创建完整副本', () {
-      final vp = PlotViewport(xMin: 100, xMax: 500, yMin: 200, yMax: 800);
+      final vp = PlotViewport(
+        xMin: 100,
+        xMax: 500,
+        yMin: 200,
+        yMax: 800,
+        marginLeft: 96,
+      );
       final copy = vp.copy();
 
       expect(copy.xMin, vp.xMin);
       expect(copy.xMax, vp.xMax);
       expect(copy.yMin, vp.yMin);
       expect(copy.yMax, vp.yMax);
+      expect(copy.marginLeft, 96);
 
       // 修改副本不影响原实例
       final modified = copy.copyWith(xMin: 999);
       expect(vp.xMin, 100.0);
       expect(modified.xMin, 999.0);
+      expect(modified.marginLeft, 96);
     });
 
     test('offset axis column widths adjust margin and survive copy', () {

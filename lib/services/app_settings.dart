@@ -60,6 +60,9 @@ class AppSettings {
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int plotFontSizeDelta = 0;
 
+  /// 绘图界面文本是否使用粗体。
+  bool plotFontBold = false;
+
   /// 绘图窗口点数上限，范围 1000000~40000000
   int maxVisiblePoints = 1000000;
 
@@ -257,6 +260,7 @@ class AppSettings {
 
     refreshFps = 60;
     plotFontSizeDelta = 0;
+    plotFontBold = false;
     maxVisiblePoints = 1000000;
     discardInitialPacketCount = 0;
     keepPlotOnRestart = false;
@@ -349,6 +353,7 @@ class AppSettings {
       // 绘图设置
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
       plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
+      plotFontBold = json['plotFontBold'] as bool? ?? false;
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
               1000000)
           .clamp(1000000, 40000000);
@@ -500,6 +505,7 @@ class AppSettings {
       // 绘图设置
       'refreshFps': refreshFps,
       'plotFontSizeDelta': plotFontSizeDelta,
+      'plotFontBold': plotFontBold,
       'maxVisiblePoints': maxVisiblePoints,
       'discardInitialPacketCount': discardInitialPacketCount,
       'keepPlotOnRestart': keepPlotOnRestart,

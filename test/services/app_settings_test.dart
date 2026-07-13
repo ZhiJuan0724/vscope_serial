@@ -11,6 +11,7 @@ void main() {
             ..baudRate = 9600
             ..refreshFps = 30
             ..plotFontSizeDelta = 4
+            ..plotFontBold = true
             ..maxVisiblePoints = 40000000
             ..discardInitialPacketCount = 8
             ..keepPlotOnRestart = true
@@ -68,6 +69,7 @@ void main() {
       expect(settings.baudRate, 115200);
       expect(settings.refreshFps, 60);
       expect(settings.plotFontSizeDelta, 0);
+      expect(settings.plotFontBold, isFalse);
       expect(settings.maxVisiblePoints, 1000000);
       expect(settings.discardInitialPacketCount, 0);
       expect(settings.keepPlotOnRestart, isFalse);

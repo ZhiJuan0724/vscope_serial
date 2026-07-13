@@ -1873,6 +1873,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       builder: (context, constraints) {
         final gridDensity = _parseGridDensity(vm.gridDensity);
         final plotBackground = _parsePlotBackground(vm.plotBackground);
+        final leftAxisWidth = PlotLayerPainter.calculateLeftAxisWidth(
+          viewport: vm.viewport,
+          canvasHeight: constraints.maxHeight,
+          gridDensity: gridDensity,
+          plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+          plotFontBold: vm.plotFontBold,
+        );
         final offsetAxisColumnWidths =
             PlotLayerPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
@@ -1881,11 +1888,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
               plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+              plotFontBold: vm.plotFontBold,
               yValuesAreInteger: vm.displayYValuesAreInteger,
             );
-        final renderViewport =
-            vm.viewport.copy()
-              ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+        final renderViewport = vm.viewport.copyWith(marginLeft: leftAxisWidth)
+          ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
 
         PlotLayerPainter createPainter(PlotPaintLayer layer) {
           return PlotLayerPainter(
@@ -1918,6 +1925,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             antiAliasEnabled: vm.antiAliasEnabled,
             yValuesAreInteger: vm.displayYValuesAreInteger,
             plotFontSizeDelta: vm.plotFontSizeDelta,
+            plotFontBold: vm.plotFontBold,
           );
         }
 
@@ -2072,7 +2080,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   double _plotFontSize(PlotViewModel vm, double base) {
-    return (base + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+    return (base + 1 + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   List<Widget> _buildObservationWidgets(
@@ -2265,6 +2273,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               color: _floatingSubtleTextColor(vm),
               fontSize: _plotFontSize(vm, 11),
               fontFamily: 'SarasaUiSC',
+              fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
             ),
           ),
         ),
@@ -2323,7 +2332,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       final value = formatPlotValue(latestPoint.values[i]);
       contentWidth = math.max(
         contentWidth,
-        14 + _measureFloatingTextWidth('$name: $value', fontSize: fontSize),
+        14 +
+            _measureFloatingTextWidth(
+              '$name: $value',
+              fontSize: fontSize,
+              fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+            ),
       );
       rows.add(
         Padding(
@@ -2362,6 +2376,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             color: _floatingSubtleTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
             fontFamily: 'SarasaUiSC',
+            fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       );
@@ -2402,6 +2417,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       color: color,
       fontSize: _plotFontSize(vm, 12),
       fontFamily: 'SarasaUiSC',
+      fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -2499,6 +2515,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           style: TextStyle(
                             color: _floatingTextColor(vm),
                             fontSize: _plotFontSize(vm, 12),
+                            fontWeight:
+                                vm.plotFontBold
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
                           ),
                         ),
                       ),
@@ -3782,6 +3802,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 12),
             fontFamily: 'SarasaUiSC',
+            fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
             height: 1.5,
           ),
         ),
@@ -3859,6 +3880,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           color: _floatingTextColor(vm),
           fontSize: _plotFontSize(vm, 11),
           fontFamily: 'SarasaUiSC',
+          fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
           height: 1.5,
         ),
       );
@@ -3889,6 +3911,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             color: _floatingTextColor(vm),
             fontSize: _plotFontSize(vm, 11),
             fontFamily: 'SarasaUiSC',
+            fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
             height: 1.5,
           ),
         ),
@@ -4174,6 +4197,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 style: TextStyle(
                                   fontSize: _plotFontSize(vm, 14),
                                   fontFamily: 'SarasaUiSC',
+                                  fontWeight:
+                                      vm.plotFontBold
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
                                   color:
                                       Theme.of(
                                         context,
@@ -4195,6 +4222,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                     : '${vm.plotFontSizeDelta}',
                             onChanged: (value) {
                               vm.setPlotFontSizeDelta(value.round());
+                              setState(() {});
+                            },
+                          ),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: Text(AppStrings.plot.plotFontBold),
+                            value: vm.plotFontBold,
+                            onChanged: (value) {
+                              vm.setPlotFontBold(value);
                               setState(() {});
                             },
                           ),

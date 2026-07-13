@@ -193,6 +193,8 @@ class PlotLayerPainter extends CustomPainter {
   /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
   final int plotFontSizeDelta;
 
+  final bool plotFontBold;
+
   PlotLayerPainter({
     required this.layer,
     required this.viewport,
@@ -223,13 +225,14 @@ class PlotLayerPainter extends CustomPainter {
     this.antiAliasEnabled = true,
     this.yValuesAreInteger = false,
     this.plotFontSizeDelta = 0,
+    this.plotFontBold = false,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
          0,
          channels.length,
        );
 
   double _fontSize(double base) {
-    return (base + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+    return (base + 1 + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   bool get _isLightBackground => backgroundStyle == PlotBackgroundStyle.light;
@@ -275,7 +278,59 @@ class PlotLayerPainter extends CustomPainter {
   }
 
   static double _fontSizeFor(double base, double delta) {
-    return (base + delta).clamp(6.0, 24.0).toDouble();
+    return (base + 1 + delta).clamp(6.0, 24.0).toDouble();
+  }
+
+  static double debugFontSizeFor(double base, double delta) {
+    return _fontSizeFor(base, delta);
+  }
+
+  static double calculateLeftAxisWidth({
+    required PlotViewport viewport,
+    required double canvasHeight,
+    required GridDensity gridDensity,
+    required double plotFontSizeDelta,
+    required bool plotFontBold,
+  }) {
+    final plotHeight = viewport.plotHeight(canvasHeight);
+    if (plotHeight <= 0 || viewport.yRange <= 0) {
+      return PlotViewport.defaultMarginLeft;
+    }
+
+    final step = _calculateYTickStepFor(
+      viewport.yRange,
+      plotHeight,
+      gridDensity,
+      yValuesAreInteger: true,
+    );
+    final tickValues = _tickValuesForRange(viewport.yMin, viewport.yMax, step);
+    final textStyle = TextStyle(
+      fontSize: _fontSizeFor(12, plotFontSizeDelta),
+      fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
+    );
+    var maxTextWidth = 0.0;
+    for (final value in tickValues) {
+      maxTextWidth = math.max(
+        maxTextWidth,
+        _measureRawTextWidth(_formatNumberFor(value, true), textStyle),
+      );
+    }
+    if (viewport.yMin <= 0 && viewport.yMax >= 0) {
+      maxTextWidth = math.max(
+        maxTextWidth,
+        _measureRawTextWidth(
+          '0',
+          textStyle.copyWith(fontWeight: FontWeight.bold),
+        ),
+      );
+    }
+
+    const tickAndPadding = 16.0;
+    return math.max(
+      PlotViewport.defaultMarginLeft,
+      maxTextWidth + tickAndPadding,
+    );
   }
 
   static List<double> calculateOffsetAxisColumnWidths({
@@ -285,43 +340,34 @@ class PlotLayerPainter extends CustomPainter {
     required double canvasHeight,
     required GridDensity gridDensity,
     required double plotFontSizeDelta,
+    required bool plotFontBold,
     required bool yValuesAreInteger,
   }) {
     final plotH = viewport.plotHeight(canvasHeight);
     if (plotH <= 0) return const [];
 
-    final step = _calculateYTickStepFor(
-      viewport.yRange,
-      plotH,
-      gridDensity,
-      yValuesAreInteger: yValuesAreInteger,
-    );
-    if (step <= 0) return const [];
-
     final textStyle = TextStyle(
       fontSize: _fontSizeFor(11, plotFontSizeDelta),
       fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
-    final zeroTextStyle = textStyle.copyWith(fontWeight: FontWeight.bold);
     final widths = <double>[];
 
     for (final ch in _visibleOffsetAxisChannels(channels, activeChannelCount)) {
       var maxTextWidth = 0.0;
-      final startValue = (viewport.yMin / step).floor() * step;
-      final drawnValues = <double>{};
+      final tickValues = _offsetAxisTickValuesFor(
+        viewport,
+        ch,
+        plotH,
+        gridDensity,
+      );
 
-      for (
-        double value = startValue;
-        value <= viewport.yMax + step * 0.5;
-        value += step
-      ) {
-        if (value < viewport.yMin || value > viewport.yMax) continue;
-        final y = viewport.dataToScreenY(value, canvasHeight);
+      for (final originalValue in tickValues) {
+        final displayValue = originalValue * ch.yScale + ch.yOffset;
+        final y = viewport.dataToScreenY(displayValue, canvasHeight);
         if (y < viewport.marginTop || y > viewport.marginTop + plotH) {
           continue;
         }
-        drawnValues.add(value);
-        final originalValue = (value - ch.yOffset) / ch.yScale;
         maxTextWidth = math.max(
           maxTextWidth,
           _measureRawTextWidth(
@@ -331,25 +377,35 @@ class PlotLayerPainter extends CustomPainter {
         );
       }
 
-      final zeroScreenY = viewport.dataToScreenY(0, canvasHeight);
-      if (zeroScreenY >= viewport.marginTop &&
-          zeroScreenY <= viewport.marginTop + plotH &&
-          !drawnValues.contains(0.0)) {
-        final originalZeroValue = (0.0 - ch.yOffset) / ch.yScale;
-        maxTextWidth = math.max(
-          maxTextWidth,
-          _measureRawTextWidth(
-            _formatNumberFor(originalZeroValue, true),
-            zeroTextStyle,
-          ),
-        );
-      }
-
       const tickAndPadding = 14.0;
       widths.add(maxTextWidth + tickAndPadding);
     }
 
     return widths;
+  }
+
+  static List<double> _offsetAxisTickValuesFor(
+    PlotViewport viewport,
+    ChannelConfig channel,
+    double plotHeight,
+    GridDensity gridDensity,
+  ) {
+    final scale = channel.yScale;
+    if (!scale.isFinite || scale == 0 || !channel.yOffset.isFinite) {
+      return const [];
+    }
+
+    final first = (viewport.yMin - channel.yOffset) / scale;
+    final second = (viewport.yMax - channel.yOffset) / scale;
+    final minValue = math.min(first, second);
+    final maxValue = math.max(first, second);
+    final step = _calculateYTickStepFor(
+      maxValue - minValue,
+      plotHeight,
+      gridDensity,
+      yValuesAreInteger: true,
+    );
+    return _tickValuesForRange(minValue, maxValue, step);
   }
 
   static List<ChannelConfig> _visibleOffsetAxisChannels(
@@ -375,6 +431,7 @@ class PlotLayerPainter extends CustomPainter {
         a.xMax == b.xMax &&
         a.yMin == b.yMin &&
         a.yMax == b.yMax &&
+        a.marginLeft == b.marginLeft &&
         _doubleListsEqual(a.offsetAxisColumnWidths, b.offsetAxisColumnWidths);
   }
 
@@ -469,9 +526,9 @@ class PlotLayerPainter extends CustomPainter {
     // 批量绘制网格线：先收集所有线，用 drawRawPoints 或 Path 优化
     final gridPath = Path();
 
-    // 垂直网格线：复用 X 轴刻度比例，确保网格线和刻度标签对齐。
-    for (final ratio in _xTickRatios(size)) {
-      final x = viewport.marginLeft + plotW * ratio;
+    // 垂直网格线：按绝对 X 值生成 nice number 刻度，平移时网格随数据移动。
+    for (final value in _xTickValues(size)) {
+      final x = viewport.dataToScreenX(value, size.width);
       gridPath.moveTo(x, viewport.marginTop);
       gridPath.lineTo(x, viewport.marginTop + plotH);
     }
@@ -486,10 +543,25 @@ class PlotLayerPainter extends CustomPainter {
     canvas.drawPath(gridPath, paint);
   }
 
-  List<double> _xTickRatios(Size size) {
+  List<double> _xTickValues(Size size) {
     final plotW = viewport.plotWidth(size.width);
-    final xGridCount = _calculateGridCountFor(plotW, GridDensity.normal);
-    return List<double>.generate(xGridCount + 1, (i) => i / xGridCount);
+    if (plotW <= 0 || viewport.xRange <= 0) return const [];
+    final textStyle = TextStyle(
+      fontSize: _fontSize(12),
+      fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
+    );
+    final widestLabel = math.max(
+      _measureRawTextWidth(_formatNumber(viewport.xMin, false), textStyle),
+      _measureRawTextWidth(_formatNumber(viewport.xMax, false), textStyle),
+    );
+    final step = _calculateXTickStepFor(
+      viewport.xRange,
+      plotW,
+      gridDensity,
+      minimumSpacing: widestLabel + 12,
+    );
+    return _tickValuesForRange(viewport.xMin, viewport.xMax, step);
   }
 
   List<double> _yTickValues(Size size, {required bool includeZero}) {
@@ -499,7 +571,7 @@ class PlotLayerPainter extends CustomPainter {
       viewport.yRange,
       plotH,
       gridDensity,
-      yValuesAreInteger: yValuesAreInteger,
+      yValuesAreInteger: true,
     );
     if (step <= 0) return const [];
 
@@ -530,16 +602,77 @@ class PlotLayerPainter extends CustomPainter {
   }
 
   static int _calculateGridCountFor(double length, GridDensity gridDensity) {
-    final densitySpacing = switch (gridDensity) {
+    return _calculateGridCountWithSpacing(length, _gridSpacingFor(gridDensity));
+  }
+
+  static double _gridSpacingFor(GridDensity gridDensity) {
+    return switch (gridDensity) {
       GridDensity.sparse => 160.0,
       GridDensity.normal => 80.0,
       GridDensity.dense => 40.0,
     };
-    return _calculateGridCountWithSpacing(length, densitySpacing);
   }
 
   static int debugXGridCountFor(double length) {
     return _calculateGridCountFor(length, GridDensity.normal);
+  }
+
+  static List<double> debugXTickValuesFor(
+    double xMin,
+    double xMax,
+    double plotWidth, {
+    GridDensity gridDensity = GridDensity.normal,
+    double minimumSpacing = 0,
+  }) {
+    final range = xMax - xMin;
+    final step = _calculateXTickStepFor(
+      range,
+      plotWidth,
+      gridDensity,
+      minimumSpacing: minimumSpacing,
+    );
+    return _tickValuesForRange(xMin, xMax, step);
+  }
+
+  static double _calculateXTickStepFor(
+    double xRange,
+    double plotWidth,
+    GridDensity gridDensity, {
+    double minimumSpacing = 0,
+  }) {
+    if (xRange <= 0 || plotWidth <= 0) return 0;
+    final effectiveSpacing = math.max(
+      _gridSpacingFor(gridDensity),
+      minimumSpacing,
+    );
+    final targetCount = _calculateGridCountWithSpacing(
+      plotWidth,
+      effectiveSpacing,
+    );
+    // X 轴必须向上选择规则步长，防止取到更小步长后文字间距低于目标值。
+    return math.max(1.0, _niceNumberFor(xRange / targetCount, false));
+  }
+
+  static List<double> _tickValuesForRange(
+    double minValue,
+    double maxValue,
+    double step,
+  ) {
+    if (step <= 0 || maxValue < minValue) return const [];
+    final firstTick = (minValue / step).ceil();
+    final lastTick = (maxValue / step).floor();
+    if (lastTick < firstTick) return const [];
+
+    final values = <double>[];
+    for (
+      var tick = firstTick;
+      tick <= lastTick && values.length < 100;
+      tick++
+    ) {
+      final value = tick * step;
+      values.add(value == 0 ? 0 : value);
+    }
+    return values;
   }
 
   static double debugYTickStepFor(
@@ -554,6 +687,15 @@ class PlotLayerPainter extends CustomPainter {
       gridDensity,
       yValuesAreInteger: yValuesAreInteger,
     );
+  }
+
+  static List<double> debugOffsetAxisTickValuesFor({
+    required PlotViewport viewport,
+    required ChannelConfig channel,
+    required double plotHeight,
+    GridDensity gridDensity = GridDensity.normal,
+  }) {
+    return _offsetAxisTickValuesFor(viewport, channel, plotHeight, gridDensity);
   }
 
   static double _calculateYTickStepFor(
@@ -1091,7 +1233,7 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     final sx = viewport.dataToScreenX(x, size.width);
     final sy = viewport.dataToScreenY(y, size.height);
-    final plotLeft = PlotViewport().marginLeft;
+    final plotLeft = viewport.marginLeft;
     final plotRight = size.width - viewport.marginRight;
     final plotTop = PlotViewport().marginTop;
     final plotBottom = size.height - PlotViewport().marginBottom;
@@ -1126,9 +1268,9 @@ class PlotLayerPainter extends CustomPainter {
       color: palette.axis,
       fontSize: _fontSize(12),
       fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
 
-    final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
 
     // X 轴
@@ -1148,10 +1290,9 @@ class PlotLayerPainter extends CustomPainter {
       axisPaint,
     );
 
-    // X 轴刻度
-    for (final xRatio in _xTickRatios(size)) {
-      final x = viewport.marginLeft + plotW * xRatio;
-      final xValue = viewport.xMin + viewport.xRange * xRatio;
+    // X 轴刻度使用绝对 nice number 值，避免固定等分产生混乱标签。
+    for (final xValue in _xTickValues(size)) {
+      final x = viewport.dataToScreenX(xValue, size.width);
 
       // 刻度线
       canvas.drawLine(
@@ -1236,7 +1377,7 @@ class PlotLayerPainter extends CustomPainter {
   void _drawChannelOffsetBaselines(Canvas canvas, Size size) {
     final plotW = viewport.plotWidth(size.width);
     final plotH = viewport.plotHeight(size.height);
-    final left = PlotViewport().marginLeft;
+    final left = viewport.marginLeft;
     final right = left + plotW;
 
     // 收集所有可见且开启偏移的通道，分配列索引。绑定组只占用一列。
@@ -1366,14 +1507,12 @@ class PlotLayerPainter extends CustomPainter {
     final top = PlotViewport().marginTop;
     final bottom = top + plotH;
 
-    // 计算 nice number 步长
-    final step = _calculateYTickStepFor(
-      viewport.yRange,
+    final tickValues = _offsetAxisTickValuesFor(
+      viewport,
+      ch,
       plotH,
       gridDensity,
-      yValuesAreInteger: yValuesAreInteger,
     );
-    if (step <= 0) return;
     final channelColor = _plotChannelColor(ch.color);
 
     final tickPaint =
@@ -1385,67 +1524,19 @@ class PlotLayerPainter extends CustomPainter {
       color: channelColor,
       fontSize: _fontSize(11),
       fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
 
-    // 第一个刻度值：从 yMin 向上取整到 step 的倍数
-    final startValue = (viewport.yMin / step).floor() * step;
-    final Set<double> drawnValues = {};
-
-    for (
-      double value = startValue;
-      value <= viewport.yMax + step * 0.5;
-      value += step
-    ) {
-      if (value < viewport.yMin || value > viewport.yMax) continue;
-
-      // 该刻度值对应的屏幕 Y（数据坐标 → 屏幕坐标）
-      final y = viewport.dataToScreenY(value, size.height);
+    for (final originalValue in tickValues) {
+      final displayValue = originalValue * ch.yScale + ch.yOffset;
+      final y = viewport.dataToScreenY(displayValue, size.height);
       if (y < top || y > bottom) continue;
-
-      drawnValues.add(value);
-
-      // 还原为原始数据值：(显示值 - yOffset) / yScale
-      final originalValue = (value - ch.yOffset) / ch.yScale;
 
       // 刻度线（向右伸出）
       canvas.drawLine(Offset(axisX, y), Offset(axisX + 5, y), tickPaint);
 
       // 刻度值
       _drawOffsetAxisText(canvas, originalValue, axisX, y, textStyle);
-    }
-
-    // 常驻 Y=0 刻度（强制绘制，即使 0 不在 nice number 序列中）
-    // 注意：这里判断的是"显示值"0（即数据值 y=0 在视口坐标系中的位置）
-    // 而不是原始数据值 0，因为偏置通道的刻度显示的是视口坐标系中的值
-    final zeroScreenY = viewport.dataToScreenY(0, size.height);
-    if (zeroScreenY >= top &&
-        zeroScreenY <= bottom &&
-        !drawnValues.contains(0.0)) {
-      // 还原为原始数据值
-      final originalZeroValue = (0.0 - ch.yOffset) / ch.yScale;
-
-      // 刻度线（稍长，突出显示）
-      canvas.drawLine(
-        Offset(axisX, zeroScreenY),
-        Offset(axisX + 8, zeroScreenY),
-        tickPaint,
-      );
-
-      // 刻度值（加粗）
-      final zeroTextStyle = TextStyle(
-        color: channelColor,
-        fontSize: _fontSize(11),
-        fontFamily: 'SarasaUiSC',
-        fontWeight: FontWeight.bold,
-      );
-      _drawOffsetAxisText(
-        canvas,
-        originalZeroValue,
-        axisX,
-        zeroScreenY,
-        zeroTextStyle,
-        tickLength: 8,
-      );
     }
 
     // 绘制轴线
@@ -1496,6 +1587,7 @@ class PlotLayerPainter extends CustomPainter {
     final valueStyle = TextStyle(
       fontSize: _fontSize(12),
       fontFamily: 'SarasaUiSC',
+      fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
     final rows = <_CursorValueRow>[];
     if (values != null && values.isNotEmpty) {
@@ -1622,6 +1714,7 @@ class PlotLayerPainter extends CustomPainter {
         color: color,
         fontSize: _fontSize(12),
         fontFamily: 'SarasaUiSC',
+        fontWeight: plotFontBold ? FontWeight.bold : FontWeight.normal,
       );
       final valuePainter = TextPainter(
         text: TextSpan(text: rowValue.value, style: rowStyle),
@@ -1815,7 +1908,7 @@ class PlotLayerPainter extends CustomPainter {
     // 第一条线
     if (x1 != null) {
       final sx1 = viewport.dataToScreenX(x1, size.width);
-      if (sx1 >= PlotViewport().marginLeft &&
+      if (sx1 >= viewport.marginLeft &&
           sx1 <= size.width - viewport.marginRight) {
         canvas.drawLine(
           Offset(sx1, PlotViewport().marginTop),
@@ -1835,7 +1928,7 @@ class PlotLayerPainter extends CustomPainter {
     // 第二条线
     if (x2 != null) {
       final sx2 = viewport.dataToScreenX(x2, size.width);
-      if (sx2 >= PlotViewport().marginLeft &&
+      if (sx2 >= viewport.marginLeft &&
           sx2 <= size.width - viewport.marginRight) {
         canvas.drawLine(
           Offset(sx2, PlotViewport().marginTop),
@@ -1880,14 +1973,14 @@ class PlotLayerPainter extends CustomPainter {
       if (sy1 >= PlotViewport().marginTop &&
           sy1 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
-          Offset(PlotViewport().marginLeft, sy1),
-          Offset(PlotViewport().marginLeft + plotW, sy1),
+          Offset(viewport.marginLeft, sy1),
+          Offset(viewport.marginLeft + plotW, sy1),
           line1Paint,
         );
         _drawMeasurementLabel(
           canvas,
           'Y1',
-          PlotViewport().marginLeft - 18,
+          viewport.marginLeft - 18,
           sy1,
           _palette.measurementPrimary,
         );
@@ -1900,14 +1993,14 @@ class PlotLayerPainter extends CustomPainter {
       if (sy2 >= PlotViewport().marginTop &&
           sy2 <= size.height - PlotViewport().marginBottom) {
         canvas.drawLine(
-          Offset(PlotViewport().marginLeft, sy2),
-          Offset(PlotViewport().marginLeft + plotW, sy2),
+          Offset(viewport.marginLeft, sy2),
+          Offset(viewport.marginLeft + plotW, sy2),
           line2Paint,
         );
         _drawMeasurementLabel(
           canvas,
           'Y2',
-          PlotViewport().marginLeft - 18,
+          viewport.marginLeft - 18,
           sy2,
           _palette.measurementSecondary,
         );
@@ -2007,10 +2100,10 @@ class PlotLayerPainter extends CustomPainter {
   void _drawStatsRange(Canvas canvas, Size size) {
     final sx1 = viewport
         .dataToScreenX(statsX1!, size.width)
-        .clamp(PlotViewport().marginLeft, size.width - viewport.marginRight);
+        .clamp(viewport.marginLeft, size.width - viewport.marginRight);
     final sx2 = viewport
         .dataToScreenX(statsX2!, size.width)
-        .clamp(PlotViewport().marginLeft, size.width - viewport.marginRight);
+        .clamp(viewport.marginLeft, size.width - viewport.marginRight);
 
     if ((sx2 - sx1).abs() < 2) return;
 
@@ -2167,7 +2260,8 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.gridDensity != gridDensity ||
             oldDelegate.backgroundStyle != backgroundStyle ||
             oldDelegate.yValuesAreInteger != yValuesAreInteger ||
-            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta ||
+            oldDelegate.plotFontBold != plotFontBold,
       PlotPaintLayer.overlay =>
         viewportChanged ||
             oldDelegate.viewportRevision != viewportRevision ||
@@ -2175,7 +2269,8 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.backgroundStyle != backgroundStyle ||
             oldDelegate.floatingPanelOpacity != floatingPanelOpacity ||
-            oldDelegate.plotFontSizeDelta != plotFontSizeDelta,
+            oldDelegate.plotFontSizeDelta != plotFontSizeDelta ||
+            oldDelegate.plotFontBold != plotFontBold,
     };
   }
 }

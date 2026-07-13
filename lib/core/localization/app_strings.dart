@@ -189,6 +189,7 @@ final class _PlotStrings {
   String get densityDense => '密集';
   String get refreshFps => '绘图刷新帧率';
   String get plotFontSize => '绘图字体大小';
+  String get plotFontBold => '加粗绘图字体';
   String get defaultValue => '默认';
   String get fontPreview => '参考字体';
   String get statsFeatureToggle => '显示测量统计工具';

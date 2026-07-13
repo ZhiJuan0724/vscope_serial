@@ -228,7 +228,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   int _targetFps = 30;
 
   double _fontSize(double base) {
-    return (base + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+    return (base + 1 + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   double _snapXToNearestVisiblePoint(double x) {
@@ -710,7 +710,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // Y-Y 测量：检测 Y1/Y2 标签（标签在测量线左侧）
     if (widget.yCursor1 != null || widget.yCursor2 != null) {
-      final leftX = PlotViewport().marginLeft - 18;
+      final leftX = widget.viewport.marginLeft - 18;
       if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
         if (widget.yCursor1 != null) {
           final sy1 = widget.viewport.dataToScreenY(
@@ -770,7 +770,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final plotTop = PlotViewport().marginTop;
     final plotBottom = size.height - PlotViewport().marginBottom;
-    final plotLeft = PlotViewport().marginLeft;
+    final plotLeft = widget.viewport.marginLeft;
     final plotRight = size.width - widget.viewport.marginRight;
     if (pos.dx < plotLeft || pos.dx > plotRight) return null;
 
@@ -796,7 +796,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return null;
 
-    final left = PlotViewport().marginLeft;
+    final left = widget.viewport.marginLeft;
 
     for (final ch in _visibleOffsetAxisChannels()) {
       // 计算标签位置（与 PlotLayerPainter 中一致）
@@ -848,7 +848,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 偏置 Y 轴列位于绘图区右侧，每列宽度为 [PlotViewport.offsetAxisColumnWidth]。
   int? _hitTestOffsetAxisColumn(Offset pos, Size size) {
     final plotW = widget.viewport.plotWidth(size.width);
-    final left = PlotViewport().marginLeft;
+    final left = widget.viewport.marginLeft;
     final right = left + plotW;
 
     // 收集可见且开启偏移的通道。绑定组只命中一列。
@@ -1007,7 +1007,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         if (widget.onXCursor1Drag != null && widget.xCursor1 != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
-              PlotViewport().marginLeft,
+              widget.viewport.marginLeft,
               size.width - widget.viewport.marginRight,
             ),
             size.width,
@@ -1019,7 +1019,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         if (widget.onXCursor2Drag != null && widget.xCursor2 != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
-              PlotViewport().marginLeft,
+              widget.viewport.marginLeft,
               size.width - widget.viewport.marginRight,
             ),
             size.width,
@@ -1041,7 +1041,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         if (widget.onStatsX1Drag != null && widget.statsX1 != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
-              PlotViewport().marginLeft,
+              widget.viewport.marginLeft,
               size.width - widget.viewport.marginRight,
             ),
             size.width,
@@ -1053,7 +1053,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         if (widget.onStatsX2Drag != null && widget.statsX2 != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
-              PlotViewport().marginLeft,
+              widget.viewport.marginLeft,
               size.width - widget.viewport.marginRight,
             ),
             size.width,
@@ -1081,7 +1081,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         if (widget.onObservationDrag != null && _observationIndex >= 0) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
-              PlotViewport().marginLeft,
+              widget.viewport.marginLeft,
               size.width - widget.viewport.marginRight,
             ),
             size.width,
@@ -1124,14 +1124,14 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       // 计算框选区域的数据坐标
       final x1 = widget.viewport.screenToDataX(
         _boxStart!.dx.clamp(
-          PlotViewport().marginLeft,
+          widget.viewport.marginLeft,
           size.width - widget.viewport.marginRight,
         ),
         size.width,
       );
       final x2 = widget.viewport.screenToDataX(
         _boxEnd!.dx.clamp(
-          PlotViewport().marginLeft,
+          widget.viewport.marginLeft,
           size.width - widget.viewport.marginRight,
         ),
         size.width,
