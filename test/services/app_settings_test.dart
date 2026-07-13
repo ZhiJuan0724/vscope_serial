@@ -12,6 +12,7 @@ void main() {
             ..refreshFps = 30
             ..plotFontSizeDelta = 4
             ..plotFontBold = true
+            ..lastMainPage = 'plot'
             ..maxVisiblePoints = 40000000
             ..discardInitialPacketCount = 8
             ..keepPlotOnRestart = true
@@ -70,6 +71,7 @@ void main() {
       expect(settings.refreshFps, 60);
       expect(settings.plotFontSizeDelta, 0);
       expect(settings.plotFontBold, isFalse);
+      expect(settings.lastMainPage, 'rawData');
       expect(settings.maxVisiblePoints, 1000000);
       expect(settings.discardInitialPacketCount, 0);
       expect(settings.keepPlotOnRestart, isFalse);

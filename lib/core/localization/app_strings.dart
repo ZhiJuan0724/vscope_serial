@@ -213,7 +213,7 @@ final class _PlotStrings {
   String get unitPacket => '包';
 
   String get refreshFpsHelp => '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率';
-  String get plotFontSizeHelp => '范围: -3~+6，基于默认字号调整，影响绘图区坐标轴、光标、观察、测量和统计文本';
+  String get plotFontSizeHelp => '范围: -3~+6，影响绘图区坐标轴及所有悬浮窗字体大小';
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
 
   String plotWindowLimitHelp({

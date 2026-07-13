@@ -63,6 +63,9 @@ class AppSettings {
   /// 绘图界面文本是否使用粗体。
   bool plotFontBold = false;
 
+  /// 主窗口上次停留的页面。
+  String lastMainPage = 'rawData';
+
   /// 绘图窗口点数上限，范围 1000000~40000000
   int maxVisiblePoints = 1000000;
 
@@ -261,6 +264,7 @@ class AppSettings {
     refreshFps = 60;
     plotFontSizeDelta = 0;
     plotFontBold = false;
+    lastMainPage = 'rawData';
     maxVisiblePoints = 1000000;
     discardInitialPacketCount = 0;
     keepPlotOnRestart = false;
@@ -354,6 +358,8 @@ class AppSettings {
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
       plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
       plotFontBold = json['plotFontBold'] as bool? ?? false;
+      final savedMainPage = json['lastMainPage'] as String?;
+      lastMainPage = savedMainPage == 'plot' ? 'plot' : 'rawData';
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
               1000000)
           .clamp(1000000, 40000000);
@@ -506,6 +512,7 @@ class AppSettings {
       'refreshFps': refreshFps,
       'plotFontSizeDelta': plotFontSizeDelta,
       'plotFontBold': plotFontBold,
+      'lastMainPage': lastMainPage,
       'maxVisiblePoints': maxVisiblePoints,
       'discardInitialPacketCount': discardInitialPacketCount,
       'keepPlotOnRestart': keepPlotOnRestart,

@@ -16,7 +16,6 @@ import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'views/pages/plot_page.dart';
-import 'views/pages/protocol_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
@@ -120,6 +119,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    final savedPage = AppSettings().lastMainPage;
+    final savedIndex = _tabs.indexWhere((tab) => tab.id == savedPage);
+    _currentIndex = savedIndex < 0 ? 0 : savedIndex;
     WidgetsBinding.instance.addObserver(this);
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
@@ -192,23 +194,30 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     }
   }
 
-  final List<({String label, IconData icon, Widget page})> _tabs = [
+  final List<({String id, String label, IconData icon, Widget page})> _tabs = [
     (
+      id: 'rawData',
       label: AppStrings.nav.rawData,
       icon: Icons.terminal,
       page: const RawDataPage(),
     ),
     (
+      id: 'plot',
       label: AppStrings.nav.plot,
       icon: Icons.show_chart,
       page: const PlotPage(),
     ),
-    (
-      label: AppStrings.nav.protocol,
-      icon: Icons.settings_ethernet,
-      page: const ProtocolPage(),
-    ),
   ];
+
+  void _selectTab(int index) {
+    if (index == _currentIndex) return;
+    setState(() {
+      _currentIndex = index;
+    });
+    final settings = AppSettings();
+    settings.lastMainPage = _tabs[index].id;
+    unawaited(settings.save());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -227,85 +236,67 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                 bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
             ),
-            child: Row(
-              children:
-                  _tabs.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final tab = entry.value;
-                    final isSelected = index == _currentIndex;
-                    // 绘图开启时禁止切换页面：非绘图页 Tab 置灰且不可点击
-                    final isPlotTab = tab.label == AppStrings.nav.plot;
-                    final canSwitch = !isPlotting || isPlotTab;
-                    return Expanded(
-                      child: InkWell(
-                        onTap:
-                            canSwitch
-                                ? () {
-                                  setState(() {
-                                    _currentIndex = index;
-                                  });
-                                }
-                                : null,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color:
-                                    isSelected
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Colors.transparent,
-                                width: 2,
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children:
+                      _tabs.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final tab = entry.value;
+                        final isSelected = index == _currentIndex;
+                        final canSwitch = !isPlotting || tab.id == 'plot';
+                        final colorScheme = Theme.of(context).colorScheme;
+                        final foreground =
+                            isSelected
+                                ? colorScheme.primary
+                                : canSwitch
+                                ? colorScheme.onSurfaceVariant
+                                : colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.3,
+                                );
+                        const tabRadius = BorderRadius.vertical(
+                          top: Radius.circular(7),
+                        );
+                        return SizedBox(
+                          width: 180,
+                          height: 35,
+                          child: Material(
+                            color:
+                                isSelected
+                                    ? colorScheme.surface
+                                    : Colors.transparent,
+                            borderRadius: tabRadius,
+                            child: InkWell(
+                              borderRadius: tabRadius,
+                              onTap: canSwitch ? () => _selectTab(index) : null,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(tab.icon, size: 16, color: foreground),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    tab.label,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight:
+                                          isSelected
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
+                                      color: foreground,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                tab.icon,
-                                size: 16,
-                                color:
-                                    isSelected
-                                        ? Theme.of(context).colorScheme.primary
-                                        : canSwitch
-                                        ? Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withValues(alpha: 0.3),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                tab.label,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight:
-                                      isSelected
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                  color:
-                                      isSelected
-                                          ? Theme.of(
-                                            context,
-                                          ).colorScheme.primary
-                                          : canSwitch
-                                          ? Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant
-                                              .withValues(alpha: 0.3),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
+                        );
+                      }).toList(),
+                ),
+              ),
             ),
           ),
           // 页面内容
