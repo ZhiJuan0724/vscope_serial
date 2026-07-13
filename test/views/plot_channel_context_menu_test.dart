@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
+import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
@@ -23,6 +24,7 @@ void main() {
     settings.sendProtocolType = 'none';
     settings.rChannelAddresses = List.filled(16, '');
     settings.rProtocolLooseChannelSettings = false;
+    settings.mathChannels = MathChannelConfig.createDefaults();
     settings.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
       (index) => index + 1,
@@ -31,6 +33,53 @@ void main() {
   });
 
   tearDownAll(serialService.dispose);
+
+  testWidgets('导出窗口同时选择范围和普通数学通道', (tester) async {
+    final vm = PlotViewModel(serialService);
+    vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+    expect(
+      vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+      isTrue,
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip(AppStrings.plot.exportDataTooltip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(AppStrings.plot.csvText));
+    await tester.pumpAndSettle();
+
+    expect(find.text('导出范围与通道'), findsOneWidget);
+    expect(find.text('起始点'), findsOneWidget);
+    expect(find.text('结束点'), findsOneWidget);
+    expect(find.text('Ch0'), findsWidgets);
+    expect(find.text('CH0 + CH1'), findsOneWidget);
+    expect(
+      tester
+          .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+          .every((tile) => tile.value == true),
+      isTrue,
+    );
+
+    await tester.tap(find.text('清空'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('继续'));
+    await tester.pumpAndSettle();
+    expect(find.text('请至少选择 1 个通道'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
 
   testWidgets('普通通道右键菜单可打开通道高级设置', (tester) async {
     final vm = PlotViewModel(serialService);

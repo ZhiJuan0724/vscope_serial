@@ -2721,8 +2721,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
-    final range = await _showPlotExportRangeDialog(context, vm);
-    if (range == null || !context.mounted) return;
+    final options = await _showPlotExportOptionsDialog(context, vm);
+    if (options == null || !context.mounted) return;
 
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveCsvFile,
@@ -2740,8 +2740,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       exportFile:
           ({onProgress, cancelToken}) => vm.exportToCsv(
             result,
-            startIndex: range.startIndex,
-            endIndex: range.endIndex,
+            startIndex: options.startIndex,
+            endIndex: options.endIndex,
+            channelIndices: options.channelIndices,
             onProgress: onProgress,
             cancelToken: cancelToken,
           ),
@@ -2749,8 +2750,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
-    final range = await _showPlotExportRangeDialog(context, vm);
-    if (range == null || !context.mounted) return;
+    final options = await _showPlotExportOptionsDialog(context, vm);
+    if (options == null || !context.mounted) return;
 
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveBinFile,
@@ -2768,25 +2769,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       exportFile:
           ({onProgress, cancelToken}) => vm.exportToBin(
             result,
-            startIndex: range.startIndex,
-            endIndex: range.endIndex,
+            startIndex: options.startIndex,
+            endIndex: options.endIndex,
+            channelIndices: options.channelIndices,
             onProgress: onProgress,
             cancelToken: cancelToken,
           ),
     );
   }
 
-  Future<_PlotExportRange?> _showPlotExportRangeDialog(
+  Future<_PlotExportOptions?> _showPlotExportOptionsDialog(
     BuildContext context,
     PlotViewModel vm,
   ) async {
     final maxIndex = vm.pointCount - 1;
     if (maxIndex < 0) return null;
+    final candidateChannels = vm.exportCandidateChannels;
+    if (candidateChannels.isEmpty) return null;
     final startController = TextEditingController(text: '0');
     final endController = TextEditingController(text: maxIndex.toString());
+    final selectedChannelIndices = <int>{
+      for (final channel in candidateChannels) channel.index,
+    };
     String? errorText;
 
-    return showDialog<_PlotExportRange>(
+    return showDialog<_PlotExportOptions>(
       context: context,
       builder:
           (dialogContext) => StatefulBuilder(
@@ -2812,15 +2819,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   );
                   return;
                 }
-                Navigator.of(
-                  dialogContext,
-                ).pop(_PlotExportRange(startIndex: start, endIndex: end));
+                if (selectedChannelIndices.isEmpty) {
+                  setDialogState(() => errorText = '请至少选择 1 个通道');
+                  return;
+                }
+                if (selectedChannelIndices.length > 20) {
+                  setDialogState(() => errorText = '最多可同时导出 20 个通道');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(
+                  _PlotExportOptions(
+                    startIndex: start,
+                    endIndex: end,
+                    channelIndices: [
+                      for (final channel in candidateChannels)
+                        if (selectedChannelIndices.contains(channel.index))
+                          channel.index,
+                    ],
+                  ),
+                );
               }
 
               return AlertDialog(
-                title: const Text('导出范围'),
+                title: const Text('导出范围与通道'),
                 content: SizedBox(
-                  width: 360,
+                  width: 440,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2880,6 +2903,88 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                         ),
                       ],
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              '导出通道',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          Text(
+                            '已选 ${selectedChannelIndices.length}/20',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedChannelIndices.clear();
+                                errorText = null;
+                              });
+                            },
+                            child: const Text('清空'),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        height: math.min(240, candidateChannels.length * 48),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        ),
+                        child: ListView.builder(
+                          itemCount: candidateChannels.length,
+                          itemBuilder: (context, index) {
+                            final channel = candidateChannels[index];
+                            final selected = selectedChannelIndices.contains(
+                              channel.index,
+                            );
+                            final atLimit =
+                                selectedChannelIndices.length >= 20 &&
+                                !selected;
+                            return CheckboxListTile(
+                              dense: true,
+                              value: selected,
+                              title: Text(vm.displayChannelName(channel.index)),
+                              subtitle:
+                                  channel.index >= 16
+                                      ? Text(
+                                        vm
+                                            .mathChannels[channel.index - 16]
+                                            .expression,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      )
+                                      : Text('Ch${channel.index}'),
+                              onChanged:
+                                  atLimit
+                                      ? null
+                                      : (value) {
+                                        setDialogState(() {
+                                          if (value ?? false) {
+                                            selectedChannelIndices.add(
+                                              channel.index,
+                                            );
+                                          } else {
+                                            selectedChannelIndices.remove(
+                                              channel.index,
+                                            );
+                                          }
+                                          errorText = null;
+                                        });
+                                      },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '数学通道导出表达式计算后的实际值。',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ],
                   ),
                 ),
@@ -2898,8 +3003,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             },
           ),
     ).whenComplete(() {
-      startController.dispose();
-      endController.dispose();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        startController.dispose();
+        endController.dispose();
+      });
     });
   }
 

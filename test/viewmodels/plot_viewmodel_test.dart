@@ -46,6 +46,47 @@ Future<void> _writeLegacyDat(File file) async {
   await file.writeAsBytes(bytes);
 }
 
+Future<void> _writeLegacyV2PlotBin(
+  File file, {
+  required List<List<double>> rows,
+  required Map<String, dynamic> metadata,
+}) async {
+  final channelCount = rows.first.length;
+  final rowLength = 8 + channelCount * 8;
+  final payload = ByteData(rows.length * rowLength);
+  var offset = 0;
+  for (var pointIndex = 0; pointIndex < rows.length; pointIndex++) {
+    payload.setFloat64(offset, pointIndex.toDouble(), Endian.little);
+    offset += 8;
+    for (final value in rows[pointIndex]) {
+      payload.setFloat64(offset, value, Endian.little);
+      offset += 8;
+    }
+  }
+  final metadataBytes = utf8.encode(jsonEncode(metadata));
+  final payloadBytes = payload.buffer.asUint8List();
+  final crc =
+      CrcCalculator(crc32Polys['CRC-32']!)
+        ..add(metadataBytes)
+        ..add(payloadBytes);
+  final header = ByteData(28);
+  const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
+  for (var i = 0; i < magic.length; i++) {
+    header.setUint8(i, magic[i]);
+  }
+  header.setUint16(8, 2, Endian.little);
+  header.setUint16(10, channelCount, Endian.little);
+  header.setUint32(12, rows.length, Endian.little);
+  header.setUint32(16, payloadBytes.length, Endian.little);
+  header.setUint32(20, crc.digest, Endian.little);
+  header.setUint32(24, metadataBytes.length, Endian.little);
+  await file.writeAsBytes([
+    ...header.buffer.asUint8List(),
+    ...metadataBytes,
+    ...payloadBytes,
+  ]);
+}
+
 void main() {
   group('PlotViewModel', () {
     late SerialService serialService;
@@ -1162,7 +1203,7 @@ void main() {
         (lines) => lines.where((line) => !line.startsWith('#')),
       );
       expect(outLines.toList(), [
-        'x,y1,y2',
+        'x,Ch0,Ch1',
         '0,11.000000,21.000000',
         '1,12.000000,22.000000',
       ]);
@@ -1184,6 +1225,209 @@ void main() {
       expect(imported.dataPoints[0].values, [12, 22]);
       expect(imported.dataPoints[1].timestamp, 1);
       expect(imported.dataPoints[1].values, [13, 23]);
+    });
+
+    test('CSV 只导出所选数据列并使用数学表达式作为表头', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_math_export_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0[1]', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([20], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([30], bytesConsumed: 1));
+
+      final path = '${dir.path}/selected.csv';
+      expect(
+        await vm.exportToCsv(
+          path,
+          startIndex: 1,
+          endIndex: 2,
+          channelIndices: [16],
+        ),
+        path,
+      );
+
+      expect(await File(path).readAsLines(), [
+        'x,CH0[1]',
+        '0,10.000000',
+        '1,20.000000',
+      ]);
+      expect(await File(path).readAsString(), isNot(contains('#')));
+    });
+
+    test('CSV 导出和导入保留全NaN数学通道', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_non_finite_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 * CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(1, 'CH1[999]', vm.mathChannels[1].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1e308, 1e308], bytesConsumed: 1),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([double.infinity, 0], bytesConsumed: 1),
+      );
+
+      final path = '${dir.path}/non_finite.csv';
+      expect(await vm.exportToCsv(path, channelIndices: [16, 17]), path);
+      final lines = await File(path).readAsLines();
+      expect(lines.first, 'x,CH0 * CH1,CH1[999]');
+      expect(
+        lines
+            .skip(1)
+            .every(
+              (line) => line
+                  .split(',')
+                  .skip(1)
+                  .every((value) => double.parse(value).isNaN),
+            ),
+        isTrue,
+      );
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromCsv(path), isNull);
+      expect(
+        imported.dataPoints.every(
+          (point) => point.values.every((value) => value.isNaN),
+        ),
+        isTrue,
+      );
+      expect(imported.viewport.yMin.isFinite, isTrue);
+      expect(imported.viewport.yMax.isFinite, isTrue);
+      expect(
+        imported.mathChannels.every((channel) => !channel.enabled),
+        isTrue,
+      );
+    });
+
+    test('BIN 导出所选普通和数学通道的实际值', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_math_export_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.setChannelAlias(1, '速度');
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 4], bytesConsumed: 1));
+
+      final path = '${dir.path}/selected.bin';
+      expect(await vm.exportToBin(path, channelIndices: [1, 16]), path);
+
+      final imported = PlotViewModel(serialService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(path), isNull);
+      expect(imported.dataPoints[0].values, [2, 3]);
+      expect(imported.dataPoints[1].values, [4, 7]);
+      expect(imported.channels[0].alias, '速度');
+      expect(imported.channels[1].alias, 'Math1');
+      expect(
+        imported.mathChannels.every((channel) => !channel.enabled),
+        isTrue,
+      );
+    });
+
+    test('CSV和BIN最多可同时导出16个普通通道和4个数学通道', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_export_twenty_channels_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      for (var i = 0; i < vm.mathChannels.length; i++) {
+        expect(
+          vm.configureMathChannel(i, 'CH$i + 1', vm.mathChannels[i].display),
+          isTrue,
+        );
+      }
+      vm.ingestParsedResultForTest(
+        ParseResult.ok(
+          List<double>.generate(16, (index) => index.toDouble()),
+          bytesConsumed: 1,
+        ),
+      );
+      expect(vm.exportCandidateChannels, hasLength(20));
+
+      final csvPath = '${dir.path}/twenty.csv';
+      expect(await vm.exportToCsv(csvPath), csvPath);
+      expect(
+        (await File(csvPath).readAsLines()).first.split(','),
+        hasLength(21),
+      );
+      final csvImported = PlotViewModel(serialService);
+      addTearDown(csvImported.dispose);
+      expect(await csvImported.importFromCsv(csvPath), isNull);
+      expect(csvImported.dataPoints.single.values, hasLength(16));
+      expect(csvImported.displayDataPoints.single.values, hasLength(20));
+      expect(csvImported.displayDataPoints.single.values.skip(16), [
+        1,
+        2,
+        3,
+        4,
+      ]);
+
+      final binPath = '${dir.path}/twenty.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+      final header = ByteData.sublistView(
+        await File(binPath).readAsBytes(),
+        0,
+        28,
+      );
+      expect(header.getUint16(10, Endian.little), 20);
+      final binImported = PlotViewModel(serialService);
+      addTearDown(binImported.dispose);
+      expect(await binImported.importFromBin(binPath), isNull);
+      expect(binImported.dataPoints.single.values, hasLength(16));
+      expect(binImported.displayDataPoints.single.values, hasLength(20));
+      expect(binImported.displayDataPoints.single.values.skip(16), [
+        1,
+        2,
+        3,
+        4,
+      ]);
+    });
+
+    test('旧BIN仍按原始普通数据恢复数学通道表达式', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_legacy_bin_math_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/legacy.bin');
+      await _writeLegacyV2PlotBin(
+        file,
+        rows: const [
+          [1, 2],
+          [3, 4],
+        ],
+        metadata: {
+          'channelNames': ['Ch0', 'Ch1'],
+          'mathChannels': [
+            {'index': 0, 'enabled': true, 'expression': 'CH0 + CH1'},
+          ],
+        },
+      );
+
+      expect(await vm.importFromBin(file.path), isNull);
+      expect(vm.dataPoints[0].values, [1, 2]);
+      expect(vm.mathChannels[0].enabled, isTrue);
+      expect(vm.mathChannels[0].expression, 'CH0 + CH1');
+      expect(vm.displayDataPoints[0].values, [1, 2, 3]);
     });
 
     test('BIN 导出取消后删除半成品', () async {

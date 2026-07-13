@@ -3,11 +3,16 @@ part of '../plot_page.dart';
 /// 绘图页面的文件导入导出辅助 UI，包括格式枚举和文件进度弹窗。
 enum _PlotFileFormat { csv, bin, legacyDat }
 
-class _PlotExportRange {
+class _PlotExportOptions {
   final int startIndex;
   final int endIndex;
+  final List<int> channelIndices;
 
-  const _PlotExportRange({required this.startIndex, required this.endIndex});
+  const _PlotExportOptions({
+    required this.startIndex,
+    required this.endIndex,
+    required this.channelIndices,
+  });
 
   int get count => endIndex - startIndex + 1;
 }

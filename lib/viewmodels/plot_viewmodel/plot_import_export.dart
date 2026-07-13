@@ -2,11 +2,30 @@ part of '../plot_viewmodel.dart';
 
 class _PlotExportCancelled implements Exception {}
 
+class _PlotExportColumn {
+  final int channelIndex;
+  final String name;
+
+  const _PlotExportColumn({required this.channelIndex, required this.name});
+
+  bool get isMath => channelIndex >= 16;
+}
+
 /// PlotViewModel 的数据导入导出能力，包含 CSV、BIN 和旧版 DAT 格式。
 extension PlotViewModelImportExport on PlotViewModel {
   static const int _binMaxUint32 = 0xFFFFFFFF;
   static const int _binExportBatchSize = 65536;
   static const int _csvExportBatchSize = 8192;
+  static const int _maxExportChannelCount = 20;
+
+  List<ChannelConfig> get exportCandidateChannels {
+    final rawCount = _exportChannelCount.clamp(0, channels.length).toInt();
+    return [
+      ...channels.take(rawCount),
+      for (final channel in mathChannels)
+        if (channel.enabled) channel.display,
+    ];
+  }
 
   static String _ensureExportExtension(String path, String extension) {
     final suffix = '.${extension.toLowerCase()}';
@@ -22,6 +41,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     String? selectedPath, {
     int? startIndex,
     int? endIndex,
+    List<int>? channelIndices,
     PlotExportProgressCallback? onProgress,
     PlotExportCancelToken? cancelToken,
   }) async {
@@ -33,6 +53,8 @@ extension PlotViewModelImportExport on PlotViewModel {
         AppLogger().warning('无数据可导出', category: 'PLOT');
         return null;
       }
+      final exportColumns = _normalizeExportColumns(channelIndices);
+      if (exportColumns == null) return null;
 
       if (selectedPath != null) {
         path = _ensureExportExtension(selectedPath, 'csv');
@@ -43,19 +65,19 @@ extension PlotViewModelImportExport on PlotViewModel {
         final timestamp = DateTime.now().millisecondsSinceEpoch;
         path = '${dir.path}/vscope_plot_$timestamp.csv';
       }
-      final maxChannels = _exportChannelCount;
       final sourceStart = exportRange.$1;
       final pointCount = exportRange.$2;
       final file = File(path);
       sink = file.openWrite();
       final startedAt = DateTime.now();
       var writtenBytes = 0;
-      sink.writeln(
-        '# vscope_plot_meta=${jsonEncode(_buildExportMetadata(maxChannels))}',
-      );
       final header = StringBuffer('x');
-      for (int i = 0; i < maxChannels; i++) {
-        header.write(',y${i + 1}');
+      for (final column in exportColumns) {
+        header.write(
+          column.isMath
+              ? ',${mathChannels[column.channelIndex - 16].expression}'
+              : ',Ch${column.channelIndex}',
+        );
       }
       sink.writeln(header);
       writtenBytes += header.length + 1;
@@ -68,25 +90,18 @@ extension PlotViewModelImportExport on PlotViewModel {
         if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
         final batchEnd = math.min(batchStart + _csvExportBatchSize, pointCount);
         final buffer = StringBuffer();
+        final decodedCache = <int, List<double>>{};
         for (
           var exportIndex = batchStart;
           exportIndex < batchEnd;
           exportIndex++
         ) {
           final pointIndex = sourceStart + exportIndex;
-          final values =
-              _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
-          final valueCount =
-              values?.length ?? _parsedHistory.valueCountAt(pointIndex);
           buffer.write(exportIndex);
-          for (var channel = 0; channel < maxChannels; channel++) {
+          for (final column in exportColumns) {
             buffer.write(',');
-            if (channel < valueCount) {
-              final value =
-                  values?[channel] ??
-                  _parsedHistory.valueAt(pointIndex, channel);
-              buffer.write(value.toStringAsFixed(6));
-            }
+            final value = _exportValueAt(pointIndex, column, decodedCache);
+            buffer.write(value.toStringAsFixed(6));
           }
           buffer.writeln();
         }
@@ -129,6 +144,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     String? selectedPath, {
     int? startIndex,
     int? endIndex,
+    List<int>? channelIndices,
     PlotExportProgressCallback? onProgress,
     PlotExportCancelToken? cancelToken,
   }) async {
@@ -142,6 +158,8 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
       final sourceStart = exportRange.$1;
       final pointCount = exportRange.$2;
+      final exportColumns = _normalizeExportColumns(channelIndices);
+      if (exportColumns == null) return null;
 
       if (selectedPath != null) {
         path = _ensureExportExtension(selectedPath, 'bin');
@@ -153,7 +171,7 @@ extension PlotViewModelImportExport on PlotViewModel {
         path = '${dir.path}/vscope_plot_$timestamp.bin';
       }
 
-      final channelCount = _exportChannelCount;
+      final channelCount = exportColumns.length;
       final rowLength = 8 + channelCount * 8;
       final payloadLength = pointCount * rowLength;
       if (pointCount > _binMaxUint32 || payloadLength > _binMaxUint32) {
@@ -167,7 +185,12 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
       final metadataBytes = utf8.encode(
         jsonEncode(
-          _buildExportMetadata(channelCount, includeObservations: true),
+          _buildExportMetadata(
+            exportColumns,
+            sourceStart: sourceStart,
+            pointCount: pointCount,
+            includeObservations: true,
+          ),
         ),
       );
       final crc = CrcCalculator(crc32Polys['CRC-32']!)..add(metadataBytes);
@@ -186,6 +209,7 @@ extension PlotViewModelImportExport on PlotViewModel {
         if (cancelToken?.isCancelled ?? false) throw _PlotExportCancelled();
         final batchEnd = math.min(batchStart + _binExportBatchSize, pointCount);
         final bytes = ByteData((batchEnd - batchStart) * rowLength);
+        final decodedCache = <int, List<double>>{};
         var offset = 0;
         for (
           var exportIndex = batchStart;
@@ -193,19 +217,10 @@ extension PlotViewModelImportExport on PlotViewModel {
           exportIndex++
         ) {
           final pointIndex = sourceStart + exportIndex;
-          final values =
-              _exportsParsedHistory ? null : _decodeExportValuesAt(pointIndex);
-          final valueCount =
-              values?.length ?? _parsedHistory.valueCountAt(pointIndex);
           bytes.setFloat64(offset, exportIndex.toDouble(), Endian.little);
           offset += 8;
-          for (var channel = 0; channel < channelCount; channel++) {
-            final value =
-                channel < valueCount
-                    ? values == null
-                        ? _parsedHistory.valueAt(pointIndex, channel)
-                        : values[channel]
-                    : 0.0;
+          for (final column in exportColumns) {
+            final value = _exportValueAt(pointIndex, column, decodedCache);
             bytes.setFloat64(offset, value, Endian.little);
             offset += 8;
           }
@@ -257,6 +272,91 @@ extension PlotViewModelImportExport on PlotViewModel {
       AppLogger().error('BIN 导出失败: $e', category: 'PLOT');
       return null;
     }
+  }
+
+  List<_PlotExportColumn>? _normalizeExportColumns(List<int>? channelIndices) {
+    final candidates = exportCandidateChannels;
+    final byIndex = <int, ChannelConfig>{
+      for (final channel in candidates) channel.index: channel,
+    };
+    final requested =
+        channelIndices ?? [for (final channel in candidates) channel.index];
+    final unique = <int>[];
+    final seen = <int>{};
+    for (final index in requested) {
+      if (seen.add(index)) unique.add(index);
+    }
+    if (unique.isEmpty) {
+      const message = '导出失败：请至少选择 1 个通道';
+      showStatusMessage(message, duration: const Duration(seconds: 4));
+      AppLogger().warning(message, category: 'PLOT');
+      return null;
+    }
+    if (unique.length > _maxExportChannelCount) {
+      const message = '导出失败：当前格式最多支持同时导出 20 个通道';
+      showStatusMessage(message, duration: const Duration(seconds: 4));
+      AppLogger().warning(message, category: 'PLOT');
+      return null;
+    }
+    for (final index in unique) {
+      if (!byIndex.containsKey(index)) {
+        final message = '导出失败：通道 $index 不可用';
+        showStatusMessage(message, duration: const Duration(seconds: 4));
+        AppLogger().warning(message, category: 'PLOT');
+        return null;
+      }
+    }
+    return [
+      for (final index in unique)
+        _PlotExportColumn(channelIndex: index, name: displayChannelName(index)),
+    ];
+  }
+
+  double _exportValueAt(
+    int pointIndex,
+    _PlotExportColumn column,
+    Map<int, List<double>> decodedCache,
+  ) {
+    if (!column.isMath) {
+      return _exportRawValueAt(pointIndex, column.channelIndex, decodedCache);
+    }
+    final mathIndex = column.channelIndex - 16;
+    if (mathIndex < 0 || mathIndex >= mathChannels.length) return double.nan;
+    final expression = _compiledMathExpressions[mathIndex];
+    if (expression == null) return double.nan;
+    return expression.evaluateWithContext(
+      MathEvalContext(
+        currentIndex: pointIndex,
+        pointCount: _exportPointCount,
+        valueAt:
+            (sourcePointIndex, sourceChannelIndex) => _exportRawValueAt(
+              sourcePointIndex,
+              sourceChannelIndex,
+              decodedCache,
+            ),
+      ),
+    );
+  }
+
+  double _exportRawValueAt(
+    int pointIndex,
+    int channelIndex,
+    Map<int, List<double>> decodedCache,
+  ) {
+    if (pointIndex < 0 || pointIndex >= _exportPointCount || channelIndex < 0) {
+      return double.nan;
+    }
+    if (_exportsParsedHistory) {
+      final valueCount = _parsedHistory.valueCountAt(pointIndex);
+      return channelIndex < valueCount
+          ? _parsedHistory.valueAt(pointIndex, channelIndex)
+          : double.nan;
+    }
+    final values = decodedCache.putIfAbsent(
+      pointIndex,
+      () => _decodeExportValuesAt(pointIndex),
+    );
+    return channelIndex < values.length ? values[channelIndex] : double.nan;
   }
 
   int get _exportChannelCount {
@@ -318,35 +418,49 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   Map<String, dynamic> _buildExportMetadata(
-    int channelCount, {
+    List<_PlotExportColumn> columns, {
+    required int sourceStart,
+    required int pointCount,
     bool includeObservations = false,
   }) {
-    final names = List<String>.generate(channelCount, (i) {
-      if (i >= channels.length) return 'Ch$i';
-      return channels[i].alias.isNotEmpty ? channels[i].alias : 'Ch$i';
-    }, growable: false);
-    final metadata = <String, dynamic>{'channelNames': names};
-    final enabledMathChannels = mathChannels
-        .where((channel) => channel.enabled)
-        .map((channel) => channel.toJson())
-        .toList(growable: false);
-    if (enabledMathChannels.isNotEmpty) {
-      metadata['mathChannels'] = enabledMathChannels;
-    }
-    if (_importedChannelAddresses != null) {
+    final metadata = <String, dynamic>{
+      'channelNames': [for (final column in columns) column.name],
+      'exportChannels': [
+        for (final column in columns)
+          <String, dynamic>{
+            'type': column.isMath ? 'math' : 'raw',
+            'sourceIndex': column.channelIndex,
+            'name': column.name,
+            if (column.isMath)
+              'expression': mathChannels[column.channelIndex - 16].expression,
+          },
+      ],
+    };
+    final rawColumns = columns.takeWhile((column) => !column.isMath).toList();
+    final hasOnlyTrailingMath = columns
+        .skip(rawColumns.length)
+        .every((column) => column.isMath);
+    final preservesRawPrefix =
+        hasOnlyTrailingMath &&
+        rawColumns.indexed.every((entry) => entry.$2.channelIndex == entry.$1);
+    final restoresProtocolMetadata =
+        preservesRawPrefix &&
+        (rawColumns.length == columns.length || rawColumns.length == 16);
+    if (restoresProtocolMetadata && _importedChannelAddresses != null) {
       metadata['channelAddresses'] = _importedChannelAddresses!
-          .take(channelCount)
+          .take(rawColumns.length)
           .map((id) => id & 0xFFFFFFFF)
           .toList(growable: false);
     }
-    if (_parserType == ParserType.zobow) {
+    if (restoresProtocolMetadata && _parserType == ParserType.zobow) {
       metadata['parserType'] = ParserType.zobow.name;
       metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
-          .take(channelCount)
+          .take(rawColumns.length)
           .map((id) => id & 0xFFFFFFFF)
           .toList(growable: false);
     }
-    if (_sendProtocolType == SendProtocolType.rProtocol) {
+    if (restoresProtocolMetadata &&
+        _sendProtocolType == SendProtocolType.rProtocol) {
       metadata['sendProtocolType'] = SendProtocolType.rProtocol.name;
       metadata['rChannelAddresses'] = List<String>.from(
         _sendProtocolConfig.rChannelAddresses,
@@ -354,9 +468,14 @@ extension PlotViewModelImportExport on PlotViewModel {
     }
     if (includeObservations && _observations.isNotEmpty) {
       metadata['observations'] = _observations
+          .where(
+            (observation) =>
+                observation.x >= sourceStart &&
+                observation.x < sourceStart + pointCount,
+          )
           .map(
             (observation) => <String, dynamic>{
-              'x': observation.x,
+              'x': observation.x - sourceStart,
               if (observation.note.isNotEmpty) 'note': observation.note,
               if (observation.locked) 'locked': true,
             },
@@ -477,8 +596,8 @@ extension PlotViewModelImportExport on PlotViewModel {
       if (channelCount < 1) {
         return '至少需要 1 个数据列';
       }
-      if (channelCount > 16) {
-        return '通道数超过限制（最大16通道）';
+      if (channelCount > 20) {
+        return '通道数超过限制（最大20通道）';
       }
 
       // 解析数据行
@@ -563,9 +682,21 @@ extension PlotViewModelImportExport on PlotViewModel {
         return '未找到有效数据行';
       }
 
+      var normalizedPoints = importedPoints;
+      var normalizedChannelCount = channelCount;
+      if (channelCount > 16) {
+        final expressions = _csvTrailingMathExpressions(headerParts);
+        if (expressions == null) {
+          return '超过16列的 CSV 必须按 Ch0..Ch15 加数学表达式列排列';
+        }
+        normalizedPoints = _takeRawImportColumns(importedPoints);
+        normalizedChannelCount = 16;
+        metadata['mathChannels'] = _mathChannelMetadata(expressions);
+      }
+
       await _replaceImportedPoints(
-        importedPoints,
-        channelCount,
+        normalizedPoints,
+        normalizedChannelCount,
         metadata: metadata,
         onProgress: onProgress,
       );
@@ -620,7 +751,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       final expectedChecksum = header.getUint32(20, Endian.little);
 
       if (version != 1 && version != 2) return '不支持的 BIN 版本: $version';
-      if (channelCount < 1 || channelCount > 16) return '通道数无效';
+      if (channelCount < 1 || channelCount > 20) return '通道数无效';
       final headerLength = version == 2 ? 28 : 24;
       if (bytes.length < headerLength) return 'BIN 文件头不完整';
       final metadataLength =
@@ -690,9 +821,21 @@ extension PlotViewModelImportExport on PlotViewModel {
         return '未找到有效数据行';
       }
 
+      var normalizedPoints = importedPoints;
+      var normalizedChannelCount = channelCount;
+      if (channelCount > 16) {
+        final expressions = _binTrailingMathExpressions(metadata, channelCount);
+        if (expressions == null) {
+          return '超过16列的 BIN 缺少完整的普通/数学通道描述';
+        }
+        normalizedPoints = _takeRawImportColumns(importedPoints);
+        normalizedChannelCount = 16;
+        metadata['mathChannels'] = _mathChannelMetadata(expressions);
+      }
+
       await _replaceImportedPoints(
-        importedPoints,
-        channelCount,
+        normalizedPoints,
+        normalizedChannelCount,
         metadata: metadata,
         onProgress: onProgress,
       );
@@ -817,6 +960,76 @@ extension PlotViewModelImportExport on PlotViewModel {
     }
   }
 
+  List<String>? _csvTrailingMathExpressions(List<String> headerParts) {
+    final channelCount = headerParts.length - 1;
+    if (channelCount <= 16 || channelCount > 20) return null;
+    for (var i = 0; i < 16; i++) {
+      if (headerParts[i + 1].trim().toLowerCase() != 'ch$i') return null;
+    }
+    final expressions = <String>[];
+    for (final value in headerParts.skip(17)) {
+      final expression = value.trim();
+      try {
+        MathExpression.parse(expression);
+      } catch (_) {
+        return null;
+      }
+      expressions.add(expression);
+    }
+    return expressions;
+  }
+
+  List<String>? _binTrailingMathExpressions(
+    Map<String, dynamic> metadata,
+    int channelCount,
+  ) {
+    final descriptors = metadata['exportChannels'];
+    if (descriptors is! List || descriptors.length != channelCount) return null;
+    for (var i = 0; i < 16; i++) {
+      final descriptor = descriptors[i];
+      if (descriptor is! Map ||
+          descriptor['type'] != 'raw' ||
+          (descriptor['sourceIndex'] as num?)?.toInt() != i) {
+        return null;
+      }
+    }
+    final expressions = <String>[];
+    for (final descriptor in descriptors.skip(16)) {
+      if (descriptor is! Map || descriptor['type'] != 'math') return null;
+      final expression = descriptor['expression'];
+      if (expression is! String) return null;
+      try {
+        MathExpression.parse(expression);
+      } catch (_) {
+        return null;
+      }
+      expressions.add(expression);
+    }
+    return expressions;
+  }
+
+  List<Map<String, dynamic>> _mathChannelMetadata(List<String> expressions) {
+    return [
+      for (var i = 0; i < expressions.length; i++)
+        <String, dynamic>{
+          'index': i,
+          'enabled': true,
+          'expression': expressions[i],
+        },
+    ];
+  }
+
+  List<PlotDataPoint> _takeRawImportColumns(List<PlotDataPoint> points) {
+    return [
+      for (final point in points)
+        PlotDataPoint(
+          index: point.index,
+          timestamp: point.timestamp,
+          values: point.values.take(16).toList(growable: false),
+        ),
+    ];
+  }
+
   Future<void> _replaceImportedPoints(
     List<PlotDataPoint> importedPoints,
     int channelCount, {
@@ -836,6 +1049,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       _parsedHistory.add(point.values);
       _lodIndex.add(point.index, point.values);
       for (final value in point.values) {
+        if (!value.isFinite) continue;
         if (value < minY) minY = value;
         if (value > maxY) maxY = value;
       }
@@ -891,6 +1105,12 @@ extension PlotViewModelImportExport on PlotViewModel {
     Map<String, dynamic>? metadata,
     int channelCount,
   ) {
+    final importedMathChannels = metadata?['mathChannels'];
+    _replaceMathChannels(
+      importedMathChannels is List
+          ? MathChannelConfig.normalizeList(importedMathChannels)
+          : MathChannelConfig.createDefaults(),
+    );
     if (metadata == null || metadata.isEmpty) return;
 
     final names = metadata['channelNames'];
@@ -950,13 +1170,6 @@ extension PlotViewModelImportExport on PlotViewModel {
         ..customProtocolId = null
         ..rChannelAddresses = restoredAddresses;
       _saveSettings();
-    }
-
-    final importedMathChannels = metadata['mathChannels'];
-    if (importedMathChannels is List) {
-      _replaceMathChannels(
-        MathChannelConfig.normalizeList(importedMathChannels),
-      );
     }
   }
 
