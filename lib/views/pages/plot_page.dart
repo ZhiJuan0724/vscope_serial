@@ -3051,15 +3051,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   void _showTriggerConfigDialog(BuildContext context, PlotViewModel vm) {
     final initial = vm.triggerConfig;
-    final visibleRawChannels = vm.triggerCandidateChannels;
+    final triggerChannels = vm.triggerCandidateChannels;
     var enabled = initial.enabled;
     var channelIndex =
-        visibleRawChannels.any(
-              (channel) => channel.index == initial.channelIndex,
-            )
+        triggerChannels.any((channel) => channel.index == initial.channelIndex)
             ? initial.channelIndex
-            : (visibleRawChannels.isNotEmpty
-                ? visibleRawChannels.first.index
+            : (triggerChannels.isNotEmpty
+                ? triggerChannels.first.index
                 : initial.channelIndex);
     var comparison = initial.comparison;
     var action = initial.action;
@@ -3098,7 +3096,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               Switch(
                                 value: enabled,
                                 onChanged:
-                                    visibleRawChannels.isEmpty
+                                    triggerChannels.isEmpty
                                         ? null
                                         : (value) => setDialogState(
                                           () => enabled = value,
@@ -3109,11 +3107,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const SizedBox(height: 8),
                           const Divider(height: 1),
                           const SizedBox(height: 14),
-                          if (visibleRawChannels.isEmpty)
+                          if (triggerChannels.isEmpty)
                             const Padding(
                               padding: EdgeInsets.only(bottom: 8),
                               child: Text(
-                                '当前没有打开的普通通道，无法选择触发通道。',
+                                '当前没有可用的普通或数学通道，无法选择触发通道。',
                                 style: TextStyle(color: Colors.redAccent),
                               ),
                             ),
@@ -3122,7 +3120,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               Expanded(
                                 child: DropdownButtonFormField<int>(
                                   initialValue:
-                                      visibleRawChannels.isEmpty
+                                      triggerChannels.isEmpty
                                           ? null
                                           : channelIndex,
                                   decoration: const InputDecoration(
@@ -3131,7 +3129,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                     isDense: true,
                                   ),
                                   items: [
-                                    for (final channel in visibleRawChannels)
+                                    for (final channel in triggerChannels)
                                       DropdownMenuItem(
                                         value: channel.index,
                                         child: Text(
@@ -3140,7 +3138,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                       ),
                                   ],
                                   onChanged:
-                                      visibleRawChannels.isEmpty
+                                      triggerChannels.isEmpty
                                           ? null
                                           : (value) => setDialogState(
                                             () => channelIndex = value ?? 0,
@@ -3197,6 +3195,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 ),
                               ),
                             ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '数学通道按表达式原始值触发；包含 CHn[...] 数据偏移的数学通道暂不支持。',
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
                           Row(
@@ -3317,7 +3320,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       onPressed: () {
                         vm.updateTriggerConfig(
                           PlotTriggerConfig(
-                            enabled: enabled && visibleRawChannels.isNotEmpty,
+                            enabled: enabled && triggerChannels.isNotEmpty,
                             channelIndex: channelIndex,
                             comparison: comparison,
                             targetValue:

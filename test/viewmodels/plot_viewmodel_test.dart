@@ -9,6 +9,7 @@ import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
+import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
@@ -56,6 +57,7 @@ void main() {
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
+      settings.mathChannels = MathChannelConfig.createDefaults();
       settings.keepPlotOnRestart = false;
       settings.plotLegendPanelRight = null;
       settings.plotLegendPanelTop = null;
@@ -573,6 +575,85 @@ void main() {
 
       expect(vm.triggerConfig.channelIndex, 0);
       expect(vm.triggerEnabled, isTrue);
+    });
+
+    test('无数据偏移的数学通道可按表达式原始值触发', () {
+      final display = vm.mathChannels[0].display.copyWith(
+        yOffset: 1000,
+        yScale: 0.25,
+      );
+      expect(vm.configureMathChannel(0, 'CH0 + CH1', display), isTrue);
+      expect(
+        vm.triggerCandidateChannels.map((channel) => channel.index),
+        contains(16),
+      );
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 16,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+          includeSystemTimeInNote: false,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([4, 7], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 1);
+      expect(vm.observations, hasLength(1));
+      expect(vm.observations.single.x, 0);
+      expect(vm.observations.single.channelValues, [4, 7, 11]);
+      expect(vm.observations.single.note, contains('Math1'));
+    });
+
+    test('数学通道支持跨越触发判定', () {
+      expect(
+        vm.configureMathChannel(0, 'CH0 - CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 16,
+          comparison: PlotTriggerComparison.crossUp,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 2], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('含数据偏移或不可见的数学通道不可用于触发', () {
+      expect(
+        vm.configureMathChannel(0, 'CH0[1]', vm.mathChannels[0].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(1, 'CH0[-1]', vm.mathChannels[1].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(2, 'CH0 + 1', vm.mathChannels[2].display),
+        isTrue,
+      );
+      vm.updateMathChannelDisplay(
+        2,
+        vm.mathChannels[2].display.copyWith(visible: false),
+      );
+
+      final candidates =
+          vm.triggerCandidateChannels.map((channel) => channel.index).toSet();
+      expect(candidates, isNot(contains(16)));
+      expect(candidates, isNot(contains(17)));
+      expect(candidates, isNot(contains(18)));
     });
 
     test('触发工具默认隐藏且关闭入口会关闭触发模式', () {

@@ -396,7 +396,7 @@ class PlotViewModel extends BaseViewModel {
   CursorState? _observationPreview;
   final PlotTriggerConfig _triggerConfig = PlotTriggerConfig();
   final List<PlotDataPoint> _triggerHitPoints = [];
-  final List<double?> _triggerPreviousValues = List<double?>.filled(16, null);
+  double? _triggerPreviousValue;
   int _triggerHitCount = 0;
   int _triggeredCount = 0;
   int? _triggerStopPacketsRemaining;
@@ -794,10 +794,19 @@ class PlotViewModel extends BaseViewModel {
 
   List<ChannelConfig> get triggerCandidateChannels {
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
-    return channels
-        .take(rawCount)
-        .where((channel) => channel.visible)
-        .toList(growable: false);
+    return [
+      ...channels.take(rawCount).where((channel) => channel.visible),
+      for (final channel in mathChannels)
+        if (_canUseMathChannelForTrigger(channel)) channel.display,
+    ];
+  }
+
+  bool _canUseMathChannelForTrigger(MathChannelConfig channel) {
+    final expression = _compiledMathExpressions[channel.index];
+    return channel.enabled &&
+        channel.display.visible &&
+        expression != null &&
+        !expression.hasChannelOffset;
   }
 
   List<PlotDataPoint> get displayDataPoints {
@@ -3344,7 +3353,7 @@ class PlotViewModel extends BaseViewModel {
     if (value && !_canUseTriggerChannel(_triggerConfig.channelIndex)) {
       final candidates = triggerCandidateChannels;
       if (candidates.isEmpty) {
-        showStatusMessage('当前没有打开的普通通道，无法开启触发');
+        showStatusMessage('当前没有可用的普通或数学通道，无法开启触发');
         return;
       }
       _triggerConfig.channelIndex = candidates.first.index;
@@ -4180,18 +4189,11 @@ class PlotViewModel extends BaseViewModel {
 
   void _handleTriggerForPoint(PlotDataPoint point, DateTime now) {
     final triggerChannelIndex = _triggerConfig.channelIndex;
-    final currentValue =
-        triggerChannelIndex >= 0 && triggerChannelIndex < point.values.length
-            ? point.values[triggerChannelIndex]
-            : null;
-    final previousValue =
-        triggerChannelIndex >= 0 &&
-                triggerChannelIndex < _triggerPreviousValues.length
-            ? _triggerPreviousValues[triggerChannelIndex]
-            : null;
+    final currentValue = _triggerValueForPoint(point, triggerChannelIndex);
+    final previousValue = _triggerPreviousValue;
 
     if (_triggerStopPacketsRemaining != null) {
-      _recordTriggerPreviousValue(point);
+      _recordTriggerPreviousValue(currentValue);
       final remaining = _triggerStopPacketsRemaining! - 1;
       if (remaining <= 0) {
         _triggerStopPacketsRemaining = null;
@@ -4203,21 +4205,21 @@ class PlotViewModel extends BaseViewModel {
     }
 
     if (!_triggerConfig.enabled || _triggerStopRequested) {
-      _recordTriggerPreviousValue(point);
+      _recordTriggerPreviousValue(currentValue);
       return;
     }
 
     if (!_canUseTriggerChannel(triggerChannelIndex) || currentValue == null) {
-      _recordTriggerPreviousValue(point);
+      _recordTriggerPreviousValue(currentValue);
       return;
     }
 
     if (!_matchesTriggerCondition(currentValue, previousValue)) {
-      _recordTriggerPreviousValue(point);
+      _recordTriggerPreviousValue(currentValue);
       return;
     }
 
-    _recordTriggerPreviousValue(point);
+    _recordTriggerPreviousValue(currentValue);
 
     _triggerHitCount++;
     _triggerHitPoints.add(point);
@@ -4259,10 +4261,27 @@ class PlotViewModel extends BaseViewModel {
 
   bool _canUseTriggerChannel(int index) {
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
-    return index >= 0 &&
-        index < rawCount &&
-        index < channels.length &&
-        channels[index].visible;
+    if (index >= 0 && index < rawCount && index < channels.length) {
+      return channels[index].visible;
+    }
+    final mathIndex = index - 16;
+    return mathIndex >= 0 &&
+        mathIndex < mathChannels.length &&
+        _canUseMathChannelForTrigger(mathChannels[mathIndex]);
+  }
+
+  double? _triggerValueForPoint(PlotDataPoint point, int channelIndex) {
+    if (channelIndex >= 0 && channelIndex < 16) {
+      if (channelIndex >= point.values.length) return null;
+      final value = point.values[channelIndex];
+      return value.isFinite ? value : null;
+    }
+    final mathIndex = channelIndex - 16;
+    if (mathIndex < 0 || mathIndex >= mathChannels.length) return null;
+    final channel = mathChannels[mathIndex];
+    if (!_canUseMathChannelForTrigger(channel)) return null;
+    final value = _compiledMathExpressions[mathIndex]!.evaluate(point.values);
+    return value.isFinite ? value : null;
   }
 
   bool _matchesTriggerCondition(double value, double? previousValue) {
@@ -4283,11 +4302,8 @@ class PlotViewModel extends BaseViewModel {
     };
   }
 
-  void _recordTriggerPreviousValue(PlotDataPoint point) {
-    final count = math.min(point.values.length, _triggerPreviousValues.length);
-    for (int i = 0; i < count; i++) {
-      _triggerPreviousValues[i] = point.values[i];
-    }
+  void _recordTriggerPreviousValue(double? value) {
+    _triggerPreviousValue = value;
   }
 
   void _addTriggerObservations(List<PlotDataPoint> hitPoints, String note) {
@@ -4340,7 +4356,7 @@ class PlotViewModel extends BaseViewModel {
     _triggerHitCount = 0;
     _triggeredCount = 0;
     _triggerHitPoints.clear();
-    _triggerPreviousValues.fillRange(0, _triggerPreviousValues.length, null);
+    _triggerPreviousValue = null;
     _triggerStopPacketsRemaining = null;
     _triggerStopRequested = false;
   }
@@ -4476,7 +4492,7 @@ class PlotViewModel extends BaseViewModel {
       PlotObservation(
         cursor: CursorState(
           x: point.index.toDouble(),
-          channelValues: List<double>.from(point.values),
+          channelValues: _buildTriggerObservationValues(point),
           hasData: true,
         ),
         note: nextNote,
@@ -4484,6 +4500,25 @@ class PlotViewModel extends BaseViewModel {
       ),
     );
     return true;
+  }
+
+  List<double> _buildTriggerObservationValues(PlotDataPoint point) {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    final values = List<double>.generate(
+      rawCount,
+      (index) => index < point.values.length ? point.values[index] : double.nan,
+      growable: true,
+    );
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      final expression = _compiledMathExpressions[channel.index];
+      if (expression == null || expression.hasChannelOffset) {
+        values.add(double.nan);
+        continue;
+      }
+      values.add(expression.evaluate(point.values));
+    }
+    return values;
   }
 
   String _appendObservationLimitNote(String note) {
