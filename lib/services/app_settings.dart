@@ -83,6 +83,10 @@ class AppSettings {
   bool triggerToolbarEnabled = false;
   bool previewToolbarEnabled = false;
 
+  /// 大范围绘图 LOD 策略：performance、balanced 或 qualityHigh。
+  /// quality 是两档版本遗留值，加载时迁移为 balanced。
+  String plotLodQuality = 'performance';
+
   /// 是否显示网格
   bool showGrid = true;
 
@@ -281,6 +285,7 @@ class AppSettings {
     statsToolbarEnabled = false;
     triggerToolbarEnabled = false;
     previewToolbarEnabled = false;
+    plotLodQuality = 'performance';
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
@@ -391,6 +396,12 @@ class AppSettings {
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       triggerToolbarEnabled = json['triggerToolbarEnabled'] as bool? ?? false;
       previewToolbarEnabled = json['previewToolbarEnabled'] as bool? ?? false;
+      final savedLodQuality = json['plotLodQuality'] as String?;
+      plotLodQuality = switch (savedLodQuality) {
+        'balanced' || 'quality' => 'balanced',
+        'qualityHigh' => 'qualityHigh',
+        _ => 'performance',
+      };
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       final background = json['plotBackground'] as String?;
@@ -542,6 +553,7 @@ class AppSettings {
       'statsToolbarEnabled': statsToolbarEnabled,
       'triggerToolbarEnabled': triggerToolbarEnabled,
       'previewToolbarEnabled': previewToolbarEnabled,
+      'plotLodQuality': plotLodQuality,
       'showGrid': showGrid,
       'gridDensity': gridDensity,
       'plotBackground': plotBackground,

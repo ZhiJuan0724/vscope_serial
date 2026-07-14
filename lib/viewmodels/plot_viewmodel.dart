@@ -366,6 +366,7 @@ class PlotViewModel extends BaseViewModel {
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
+  PlotLodQuality _lodQuality = PlotLodQuality.performance;
   bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
@@ -598,6 +599,11 @@ class PlotViewModel extends BaseViewModel {
     _statsToolbarEnabled = settings.statsToolbarEnabled;
     _triggerToolbarEnabled = settings.triggerToolbarEnabled;
     _previewToolbarEnabled = settings.previewToolbarEnabled;
+    _lodQuality = switch (settings.plotLodQuality) {
+      'balanced' => PlotLodQuality.balanced,
+      'qualityHigh' => PlotLodQuality.quality,
+      _ => PlotLodQuality.performance,
+    };
     _keepPlotOnRestart = settings.keepPlotOnRestart;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
@@ -687,6 +693,11 @@ class PlotViewModel extends BaseViewModel {
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.triggerToolbarEnabled = _triggerToolbarEnabled;
     settings.previewToolbarEnabled = _previewToolbarEnabled;
+    settings.plotLodQuality = switch (_lodQuality) {
+      PlotLodQuality.performance => 'performance',
+      PlotLodQuality.balanced => 'balanced',
+      PlotLodQuality.quality => 'qualityHigh',
+    };
     settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
@@ -884,6 +895,7 @@ class PlotViewModel extends BaseViewModel {
   bool get statsToolbarEnabled => _statsToolbarEnabled;
   bool get triggerToolbarEnabled => _triggerToolbarEnabled;
   bool get previewToolbarEnabled => _previewToolbarEnabled;
+  PlotLodQuality get lodQuality => _lodQuality;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
@@ -3938,6 +3950,13 @@ class PlotViewModel extends BaseViewModel {
   void setPreviewToolbarEnabled(bool value) {
     if (_previewToolbarEnabled == value) return;
     _previewToolbarEnabled = value;
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setLodQuality(PlotLodQuality value) {
+    if (_lodQuality == value) return;
+    _lodQuality = value;
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

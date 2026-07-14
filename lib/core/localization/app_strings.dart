@@ -188,6 +188,11 @@ final class _PlotStrings {
   String get densityNormal => '普通';
   String get densityDense => '密集';
   String get refreshFps => '绘图刷新帧率';
+  String get lodQuality => '大范围绘图质量';
+  String get lodQualityPerformance => '性能优先';
+  String get lodQualityBalanced => '均衡';
+  String get lodQualityQuality => '质量优先';
+  String get lodQualityHelp => '更高的绘图质量会增加绘图性能开销。';
   String get plotFontSize => '绘图字体大小';
   String get plotFontBold => '加粗绘图字体';
   String get defaultValue => '默认';

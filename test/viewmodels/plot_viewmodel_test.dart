@@ -13,6 +13,7 @@ import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
+import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -98,6 +99,7 @@ void main() {
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
+      settings.plotLodQuality = 'performance';
       settings.mathChannels = MathChannelConfig.createDefaults();
       settings.keepPlotOnRestart = false;
       settings.plotLegendPanelRight = null;
@@ -1695,6 +1697,20 @@ void main() {
       expect(vm.statsToolbarEnabled, true);
       expect(vm.statsEnabled, false);
       expect(vm.statsRangeEnabled, false);
+    });
+
+    test('LOD质量档位切换后保存到应用设置', () {
+      expect(vm.lodQuality, PlotLodQuality.performance);
+
+      vm.setLodQuality(PlotLodQuality.balanced);
+
+      expect(vm.lodQuality, PlotLodQuality.balanced);
+      expect(AppSettings().plotLodQuality, 'balanced');
+
+      vm.setLodQuality(PlotLodQuality.quality);
+
+      expect(vm.lodQuality, PlotLodQuality.quality);
+      expect(AppSettings().plotLodQuality, 'qualityHigh');
     });
 
     test('拖动画布时自动关闭跟随', () {

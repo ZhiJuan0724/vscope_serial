@@ -9,6 +9,7 @@ import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -25,6 +26,7 @@ void main() {
     settings.sendProtocolType = 'none';
     settings.rChannelAddresses = List.filled(16, '');
     settings.rProtocolLooseChannelSettings = false;
+    settings.plotLodQuality = 'performance';
     settings.mathChannels = MathChannelConfig.createDefaults();
     settings.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
@@ -34,6 +36,43 @@ void main() {
   });
 
   tearDownAll(serialService.dispose);
+
+  testWidgets('高级设置可切换大范围绘图质量', (tester) async {
+    final vm = PlotViewModel(serialService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    expect(find.textContaining('FPS:'), findsOneWidget);
+
+    await tester.tap(find.byTooltip(AppStrings.common.advancedSettings).last);
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
+    expect(find.text(AppStrings.plot.lodQualityBalanced), findsOneWidget);
+    final qualitySelector = find.byKey(
+      const ValueKey('plotLodQualitySelector'),
+    );
+    final initialWidth = tester.getSize(qualitySelector).width;
+
+    await tester.tap(find.text(AppStrings.plot.lodQualityBalanced));
+    await tester.pumpAndSettle();
+
+    expect(vm.lodQuality, PlotLodQuality.balanced);
+    expect(tester.getSize(qualitySelector).width, initialWidth);
+
+    await tester.tap(find.text(AppStrings.plot.lodQualityQuality));
+    await tester.pumpAndSettle();
+
+    expect(vm.lodQuality, PlotLodQuality.quality);
+    expect(tester.getSize(qualitySelector).width, initialWidth);
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
 
   testWidgets('导出窗口同时选择范围和普通数学通道', (tester) async {
     final vm = PlotViewModel(serialService);

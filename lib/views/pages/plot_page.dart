@@ -16,6 +16,7 @@ import '../../core/utils/plot_performance_metrics.dart';
 import '../../core/localization/app_strings.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
+import '../../data/models/plot_lod_index.dart';
 import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../services/app_settings.dart';
@@ -113,6 +114,7 @@ typedef _PlotAreaSelection =
       int overlayRevision,
       String plotBackground,
       double floatingPanelOpacity,
+      PlotLodQuality lodQuality,
     });
 
 int? _parseCompactCount(String input) {
@@ -274,6 +276,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       overlayRevision: vm.overlayRevision,
       plotBackground: vm.plotBackground,
       floatingPanelOpacity: vm.floatingPanelOpacity,
+      lodQuality: vm.lodQuality,
     );
   }
 
@@ -1900,6 +1903,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             viewportRevision: vm.viewportRevision,
             overlayRevision: vm.overlayRevision,
             lodIndex: vm.lodIndex,
+            lodQuality: vm.lodQuality,
             channels: displayChannels,
             activeChannelCount: activeChannelCount,
             showGrid: vm.showGrid,
@@ -4280,6 +4284,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Text(
                             AppStrings.plot.refreshFpsHelp,
                             style: TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                          const Divider(),
+                          Text(
+                            AppStrings.plot.lodQuality,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 6),
+                          SegmentedButton<PlotLodQuality>(
+                            key: const ValueKey('plotLodQualitySelector'),
+                            // 占满对话框可用宽度，避免选中图标切换到短标签时
+                            // SegmentedButton 按固有内容宽度重新收缩。
+                            expandedInsets: EdgeInsets.zero,
+                            segments: [
+                              ButtonSegment<PlotLodQuality>(
+                                value: PlotLodQuality.performance,
+                                label: Text(
+                                  AppStrings.plot.lodQualityPerformance,
+                                ),
+                              ),
+                              ButtonSegment<PlotLodQuality>(
+                                value: PlotLodQuality.balanced,
+                                label: Text(AppStrings.plot.lodQualityBalanced),
+                              ),
+                              ButtonSegment<PlotLodQuality>(
+                                value: PlotLodQuality.quality,
+                                label: Text(AppStrings.plot.lodQualityQuality),
+                              ),
+                            ],
+                            selected: {vm.lodQuality},
+                            onSelectionChanged: (values) {
+                              vm.setLodQuality(values.first);
+                              setState(() {});
+                            },
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.plot.lodQualityHelp,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
                           ),
                           const Divider(),
                           Text(

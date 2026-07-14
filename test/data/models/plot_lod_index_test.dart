@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
 
@@ -96,6 +98,42 @@ void main() {
 
       expect(series, isNotNull);
       expect(series!.length, lessThan(2000));
+    });
+
+    test('balanced and quality select progressively finer LOD levels', () {
+      final index = PlotLodIndex();
+      for (var i = 0; i < 100000; i++) {
+        index.add(i, [math.sin(i / 31)]);
+      }
+
+      final performance = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 99999,
+        plotWidth: 400,
+      );
+      final balanced = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 99999,
+        plotWidth: 400,
+        quality: PlotLodQuality.balanced,
+      );
+      final quality = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 99999,
+        plotWidth: 400,
+        quality: PlotLodQuality.quality,
+      );
+
+      expect(performance, isNotNull);
+      expect(balanced, isNotNull);
+      expect(quality, isNotNull);
+      expect(balanced!.length, greaterThan(performance!.length));
+      expect(quality!.length, greaterThan(balanced.length));
+      // 最细 64 点桶可输出首尾及极值，结果仍受像素宽度的常数倍约束。
+      expect(quality.length, lessThanOrEqualTo(400 * 12 + 8));
     });
 
     test('overview query returns bounded bucket samples for long history', () {

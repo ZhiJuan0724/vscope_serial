@@ -22,6 +22,7 @@ void main() {
             ..statsToolbarEnabled = true
             ..triggerToolbarEnabled = true
             ..previewToolbarEnabled = true
+            ..plotLodQuality = 'quality'
             ..showGrid = false
             ..gridDensity = 'dense'
             ..plotBackground = 'light'
@@ -82,6 +83,7 @@ void main() {
       expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.triggerToolbarEnabled, isFalse);
       expect(settings.previewToolbarEnabled, isFalse);
+      expect(settings.plotLodQuality, 'performance');
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');

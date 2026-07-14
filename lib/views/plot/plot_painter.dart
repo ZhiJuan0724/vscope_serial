@@ -137,6 +137,9 @@ class PlotLayerPainter extends CustomPainter {
   /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
   final PlotLodIndex? lodIndex;
 
+  /// 大范围历史绘制时使用的 LOD 质量策略。
+  final PlotLodQuality lodQuality;
+
   /// 通道配置列表
   final List<ChannelConfig> channels;
 
@@ -205,6 +208,7 @@ class PlotLayerPainter extends CustomPainter {
     this.viewportRevision = 0,
     this.overlayRevision = 0,
     this.lodIndex,
+    this.lodQuality = PlotLodQuality.performance,
     required this.channels,
     int? activeChannelCount,
     this.showGrid = true,
@@ -752,7 +756,20 @@ class PlotLayerPainter extends CustomPainter {
     // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
     final viewportDataCount = math.max(0.0, viewport.xRange);
+
+    // 三档只改变绘制阶段的数据选择，不改变接收阶段的增量 LOD 索引：
+    // - 性能优先：密度超过 1 点/逻辑像素后直接查询标准 LOD。
+    // - 均衡：完整精确窗口在 32 点/逻辑像素以内时按像素聚合；
+    //   其余范围查询细一级 LOD，在绘制质量与输出点数间折中。
+    // - 质量优先：精确窗口处理与均衡相同；查询历史时比均衡再细一级
+    //   LOD。输出点数更多，但仍不会无上限扫描当前窗口或全量历史。
+    final useExactQualityBuckets = _canUseExactQualityBuckets(
+      visibleIndices,
+      viewportDataCount,
+      plotW,
+    );
     final canUseLod =
+        !useExactQualityBuckets &&
         lodIndex?.canQuery(viewportDataCount, plotW) == true &&
         activeChannelCount > 0;
     final dataCount = visibleIndices.end - visibleIndices.start;
@@ -778,6 +795,41 @@ class PlotLayerPainter extends CustomPainter {
         canUseLod,
       );
     }
+  }
+
+  bool _canUseExactQualityBuckets(
+    _Range visibleRange,
+    double viewportDataCount,
+    double plotWidth,
+  ) {
+    if (lodQuality == PlotLodQuality.performance ||
+        plotWidth <= 0 ||
+        viewportDataCount >
+            plotWidth * PlotConfiguration.lodQualityExactMaxPointsPerPixel ||
+        visibleRange.start >= visibleRange.end) {
+      return false;
+    }
+
+    final historyLength = lodIndex?.length ?? data.length;
+    if (historyLength <= 0) return false;
+    final expectedStart = viewport.xMin.ceil().clamp(0, historyLength - 1);
+    final expectedEnd = viewport.xMax.floor().clamp(0, historyLength - 1);
+    if (expectedEnd < expectedStart) return false;
+
+    final firstIndex = data[visibleRange.start].index;
+    final lastIndex = data[visibleRange.end - 1].index;
+    final visibleCount = visibleRange.end - visibleRange.start;
+    return firstIndex <= expectedStart &&
+        lastIndex >= expectedEnd &&
+        visibleCount >= expectedEnd - expectedStart + 1;
+  }
+
+  bool debugUsesExactQualityBuckets(Size size) {
+    return _canUseExactQualityBuckets(
+      _findVisibleRange(),
+      math.max(0.0, viewport.xRange),
+      viewport.plotWidth(size.width),
+    );
   }
 
   /// 获取可见数据范围（带缓存）
@@ -826,6 +878,7 @@ class PlotLayerPainter extends CustomPainter {
                 xMin: viewport.xMin,
                 xMax: viewport.xMax,
                 plotWidth: viewport.plotWidth(size.width),
+                quality: lodQuality,
               )
               : null;
       if (lodSeries != null && lodSeries.isNotEmpty) {
@@ -877,6 +930,7 @@ class PlotLayerPainter extends CustomPainter {
         xMin: viewport.xMin,
         xMax: viewport.xMax,
         plotWidth: viewport.plotWidth(size.width),
+        quality: lodQuality,
       );
       if (lodSeries != null && lodSeries.isNotEmpty) {
         final channelColor = _plotChannelColor(channel.color);
@@ -2250,6 +2304,7 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.viewportRevision != viewportRevision ||
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.lodIndex != lodIndex ||
+            oldDelegate.lodQuality != lodQuality ||
             oldDelegate.activeChannelCount != activeChannelCount ||
             oldDelegate.backgroundStyle != backgroundStyle ||
             oldDelegate.antiAliasEnabled != antiAliasEnabled,

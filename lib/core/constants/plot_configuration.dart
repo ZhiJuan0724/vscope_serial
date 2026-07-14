@@ -108,6 +108,17 @@ abstract final class PlotConfiguration {
   /// 开始绘图时允许丢弃的前置有效数据包上限。
   static const int maxDiscardInitialPacketCount = 10000;
 
+  /// 均衡和质量优先模式允许使用精确像素桶绘制的数据密度上限。
+  ///
+  /// 该限制让精确扫描量继续受绘图区宽度约束，避免大范围视口拖慢绘制。
+  static const double lodQualityExactMaxPointsPerPixel = 32;
+
+  /// 均衡模式查询大范围历史时相对性能优先细化的 LOD 层数。
+  static const int lodBalancedFinerLevelCount = 1;
+
+  /// 质量优先模式查询大范围历史时相对性能优先细化的 LOD 层数。
+  static const int lodQualityFinerLevelCount = 2;
+
   /// 内置随机源生成数值时使用的默认下限。
   static const double randomSourceDefaultMin = 0;
 

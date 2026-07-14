@@ -3,6 +3,29 @@ import 'dart:typed_data';
 
 import '../../core/constants/plot_configuration.dart';
 
+/// 主绘图区使用 LOD 历史时的质量策略。
+enum PlotLodQuality {
+  /// 性能优先：数据密度超过 1 点/逻辑像素后直接使用标准 LOD 层级。
+  ///
+  /// 目标桶宽按“可见点数 / 绘图区逻辑像素宽度”选择，且最细为
+  /// 64 点/桶，保持原有查询输出量和绘制开销。
+  performance,
+
+  /// 均衡：优先使用完整精确窗口，并适度提高大范围 LOD 细节。
+  ///
+  /// 精确窗口完整覆盖视口且密度不超过配置上限时，由 Painter 按逻辑
+  /// 像素生成 min/max 桶；超过上限或窗口不完整时仍查询 LOD，但相对
+  /// 性能优先选择更细一级已有层级。不会新增索引层或回扫全量历史。
+  balanced,
+
+  /// 质量优先：使用精确像素桶，并进一步提高大范围 LOD 细节。
+  ///
+  /// 精确窗口的绘制方式与均衡档相同；必须查询历史 LOD 时，相对性能
+  /// 优先选择更细两级、即比均衡档再细一级的已有层级。输出点数增加，
+  /// 但仍受 LOD 桶约束，不会扫描全量历史或增加接收阶段的索引开销。
+  quality,
+}
+
 /// 大规模绘图历史数据的内存级 LOD 索引。
 ///
 /// 每个桶从 64 个点开始分层。较小可见范围仍使用精确点窗口；
@@ -81,6 +104,7 @@ class PlotLodIndex {
     required double xMin,
     required double xMax,
     required double plotWidth,
+    PlotLodQuality quality = PlotLodQuality.performance,
   }) {
     if (channelIndex < 0 ||
         channelIndex >= maxChannels ||
@@ -97,7 +121,15 @@ class PlotLodIndex {
       minBucketSize,
       (visibleCount / plotWidth).ceil(),
     );
-    final level = _selectLevel(targetBucketSize);
+    final finerLevelCount = switch (quality) {
+      PlotLodQuality.performance => 0,
+      PlotLodQuality.balanced => PlotConfiguration.lodBalancedFinerLevelCount,
+      PlotLodQuality.quality => PlotConfiguration.lodQualityFinerLevelCount,
+    };
+    final level = _selectLevel(
+      targetBucketSize,
+      finerLevelCount: finerLevelCount,
+    );
     return level.query(channelIndex, xMin, xMax);
   }
 
@@ -122,9 +154,12 @@ class PlotLodIndex {
     return _selectLevel(targetBucketSize).query(channelIndex, xMin, xMax);
   }
 
-  _LodLevel _selectLevel(int targetBucketSize) {
-    for (final level in _levels) {
-      if (level.bucketSize >= targetBucketSize) return level;
+  _LodLevel _selectLevel(int targetBucketSize, {int finerLevelCount = 0}) {
+    for (var index = 0; index < _levels.length; index++) {
+      if (_levels[index].bucketSize >= targetBucketSize) {
+        final selectedIndex = math.max(0, index - finerLevelCount);
+        return _levels[selectedIndex];
+      }
     }
     return _levels.last;
   }
