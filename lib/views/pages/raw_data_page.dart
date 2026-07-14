@@ -784,10 +784,7 @@ class _RawDataPageState extends State<RawDataPage> {
                   _buildToolbarIconAction(
                     tooltip: AppStrings.raw.clearScreen,
                     icon: Icons.clear,
-                    onPressed: () {
-                      _terminal.write('\x1b[2J\x1b[H\x1b[?25l');
-                      _scrollTerminalToBottom();
-                    },
+                    onPressed: _clearShellTerminal,
                   ),
                   _buildToolbarIconAction(
                     key: const ValueKey('raw-shell-export-button'),
@@ -2247,13 +2244,27 @@ class _RawDataPageState extends State<RawDataPage> {
     final text = _shellLineController.text;
     if (text.isEmpty) return;
     try {
+      // 命令必须先本地回显再发送，避免设备快速响应后回显插到响应末尾。
+      // clear 单独执行完整本地清屏，设备随后只需输出新的提示符。
+      if (text.trim() == 'clear') {
+        _clearShellTerminal();
+      } else {
+        _terminal.write('$text\r\n');
+      }
       await vm.sendShellText(text);
-      _terminal.write('$text\r\n');
       _shellLineController.clear();
     } catch (e) {
       if (!mounted) return;
       _showSnackBar(context, e.toString());
     }
+  }
+
+  void _clearShellTerminal() {
+    // 3J 清除滚动历史，2J 清除当前屏幕，H 将后续提示符移回左上角。
+    // 仅使用 2J 会让 clear 前的内容仍可被滚动控制器带回可视区域。
+    _terminal.write('\x1b[3J\x1b[2J\x1b[H\x1b[?25l');
+    _terminalController.clearSelection();
+    _scrollTerminalToBottom();
   }
 
   void _formatHexInput(String value) {

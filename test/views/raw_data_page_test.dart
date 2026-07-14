@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
 import 'package:xterm/xterm.dart';
@@ -296,6 +297,40 @@ void main() {
     expect(find.text('发送文件'), findsNothing);
     expect(find.text('接收文件'), findsNothing);
     expect(find.text('取消传输'), findsNothing);
+
+    service.setRawDataShellMode(false);
+    service.setRawDataShellEnabled(false);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Shell清屏同时移除可视内容和滚动历史', (tester) async {
+    final service = SerialService();
+    service.setRawDataShellEnabled(true);
+    service.setRawDataShellMode(true);
+    service.setRawShellInputMode(RawShellInputMode.line);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+    await tester.pump();
+
+    final terminal =
+        tester.widget<TerminalView>(find.byType(TerminalView)).terminal;
+    for (var i = 0; i < 40; i++) {
+      terminal.write('old output $i\r\n');
+    }
+    await tester.pump();
+    expect(terminal.buffer.getText(), contains('old output'));
+
+    await tester.tap(find.byTooltip(AppStrings.raw.clearScreen));
+    await tester.pump();
+
+    expect(terminal.buffer.getText(), isNot(contains('old output')));
+    expect(terminal.buffer.cursorX, 0);
+    expect(terminal.buffer.cursorY, 0);
 
     service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
