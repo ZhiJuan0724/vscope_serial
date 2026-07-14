@@ -230,12 +230,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
           // 顶部 Tab 切换栏
           Container(
             height: 40,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              border: Border(
-                bottom: BorderSide(color: Theme.of(context).dividerColor),
-              ),
-            ),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: Align(
               alignment: Alignment.bottomLeft,
               child: Padding(
@@ -267,8 +262,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                           child: Material(
                             color:
                                 isSelected
-                                    ? colorScheme.surface
+                                    ? Theme.of(context).scaffoldBackgroundColor
                                     : Colors.transparent,
+                            surfaceTintColor: Colors.transparent,
                             borderRadius: tabRadius,
                             child: InkWell(
                               borderRadius: tabRadius,

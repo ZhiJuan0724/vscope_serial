@@ -306,6 +306,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return Container(
       width: kCollapsedPanelWidth,
       decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -445,7 +446,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -498,7 +499,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           bottom: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -1446,6 +1447,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     return Container(
       decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -1461,7 +1463,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   kChannelPanelListRightPadding,
             ),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: Theme.of(context).scaffoldBackgroundColor,
               border: Border(
                 bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
@@ -1838,7 +1840,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (vm.dataPoints.isEmpty) {
       return ColoredBox(
         key: const ValueKey('plot-empty-background'),
-        color: _plotBackgroundColor(vm.plotBackground),
+        color: Colors.white,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -3798,13 +3800,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return switch (background) {
       'light' => PlotBackgroundStyle.light,
       _ => PlotBackgroundStyle.dark,
-    };
-  }
-
-  Color _plotBackgroundColor(String background) {
-    return switch (background) {
-      'light' => const Color(0xFFF8FAFC),
-      _ => const Color(0xFF1A1A2E),
     };
   }
 

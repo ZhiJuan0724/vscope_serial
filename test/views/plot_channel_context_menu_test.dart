@@ -13,6 +13,7 @@ import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
+import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/widgets/common_widgets.dart';
 
 void main() {
@@ -535,7 +536,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   });
 
-  testWidgets('未开始绘图时背景跟随暗色和亮色设置', (tester) async {
+  testWidgets('无数据时空态为白色，收到数据后应用暗色背景', (tester) async {
     final vm = PlotViewModel(serialService);
     vm.setPlotBackground('dark');
 
@@ -552,12 +553,23 @@ void main() {
       find.byKey(const ValueKey('plot-empty-background')),
     );
 
-    expect(emptyBackground().color, const Color(0xFF1A1A2E));
+    expect(emptyBackground().color, Colors.white);
 
-    vm.setPlotBackground('light');
-    await tester.pumpAndSettle();
+    vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+    vm.notifyListeners();
+    await tester.pump();
 
-    expect(emptyBackground().color, const Color(0xFFF8FAFC));
+    expect(find.byKey(const ValueKey('plot-empty-background')), findsNothing);
+    final backgroundPaint = tester.widget<CustomPaint>(
+      find.descendant(
+        of: find.byKey(const ValueKey('plot-layer-background')),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    expect(
+      (backgroundPaint.painter! as PlotLayerPainter).backgroundStyle,
+      PlotBackgroundStyle.dark,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
