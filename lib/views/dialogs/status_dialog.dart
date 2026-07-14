@@ -65,13 +65,21 @@ class _StatusDialogState extends State<StatusDialog> {
                         ),
                         items:
                             displayedPorts.map((port) {
+                              final displayLabel = service.portDisplayLabel(
+                                port,
+                                showDetails: _showPortDetails,
+                              );
+                              final unavailable = service.isPortUnavailable(
+                                port,
+                              );
                               return DropdownMenuItem(
                                 value: port,
                                 child: Text(
-                                  service.portDisplayLabel(
-                                    port,
-                                    showDetails: _showPortDetails,
-                                  ),
+                                  unavailable
+                                      ? AppStrings.serial.portUnavailable(
+                                        displayLabel,
+                                      )
+                                      : displayLabel,
                                 ),
                               );
                             }).toList(),
@@ -331,10 +339,13 @@ class _StatusDialogState extends State<StatusDialog> {
               )
             else
               ElevatedButton.icon(
-                onPressed: () {
-                  service.connect();
-                  Navigator.of(context).pop();
-                },
+                onPressed:
+                    service.canConnectSelectedPort
+                        ? () {
+                          service.connect();
+                          Navigator.of(context).pop();
+                        }
+                        : null,
                 icon: const Icon(Icons.play_arrow),
                 label: Text(AppStrings.serial.connect),
                 style: ElevatedButton.styleFrom(

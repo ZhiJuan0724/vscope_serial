@@ -80,4 +80,26 @@ void main() {
     expect(detailCalls, 1);
     expect(find.text('COM7: USB Serial Port'), findsOneWidget);
   });
+
+  testWidgets('历史串口刷新后不存在时明确标注并禁用连接', (tester) async {
+    service
+      ..config = SerialConfig(port: 'COM9')
+      ..debugPortEnumerator = () async => const [];
+
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: StatusDialog())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('COM9（当前不存在）'), findsOneWidget);
+    final connectButton = tester.widget<ElevatedButton>(
+      find.widgetWithText(ElevatedButton, AppStrings.serial.connect),
+    );
+    expect(connectButton.onPressed, isNull);
+  });
 }

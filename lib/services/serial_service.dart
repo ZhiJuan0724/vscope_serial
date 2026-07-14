@@ -274,6 +274,25 @@ class SerialService extends ChangeNotifier {
   bool get isRefreshingPorts =>
       _portCatalog.isRefreshing || _isRefreshingPortDetails;
 
+  /// 最近至少成功枚举过一次，当前端口目录可以用于判断设备是否存在。
+  bool get hasSuccessfulPortRefresh => _portCatalog.lastSuccessAt != null;
+
+  /// 已选历史端口在最近一次成功枚举结果中不存在。
+  ///
+  /// 枚举失败时沿用最后一次成功结果，不把暂时无法查询误判为设备拔出。
+  bool isPortUnavailable(String port) {
+    return hasSuccessfulPortRefresh && !availablePorts.contains(port);
+  }
+
+  /// 连接弹窗中的当前选择是否具备明确可连接状态。
+  bool get canConnectSelectedPort {
+    final port = config.port;
+    return port != null &&
+        port.isNotEmpty &&
+        !isRefreshingPorts &&
+        !isPortUnavailable(port);
+  }
+
   String portDisplayLabel(String port, {required bool showDetails}) {
     if (!showDetails) return port;
     final name = _portFriendlyNames[port];

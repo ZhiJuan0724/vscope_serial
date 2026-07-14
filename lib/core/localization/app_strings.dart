@@ -56,6 +56,7 @@ final class _SerialStrings {
   String get showPortDetails => '显示详细信息';
   String get selectPortHint => '选择串口';
   String get port => '串口';
+  String portUnavailable(String port) => '$port（当前不存在）';
   String get baudRate => '波特率';
   String get dataBits => '数据位';
   String get stopBits => '停止位';
