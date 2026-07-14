@@ -10,6 +10,7 @@ import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../core/constants/window_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/crc.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
@@ -84,7 +85,15 @@ class RawDataPage extends StatefulWidget {
 }
 
 class _RawDataPageState extends State<RawDataPage> {
-  static const double _baseMinimumWindowWidth = 1000;
+  /// 等待原生窗口尺寸同步到 Flutter 布局时的轮询间隔。
+  static const Duration _windowLayoutSyncInterval = Duration(milliseconds: 16);
+
+  /// 等待原生窗口尺寸同步到 Flutter 布局时的最大轮询次数。
+  static const int _windowLayoutSyncMaxAttempts = 60;
+
+  /// 判断 Flutter 布局宽度已同步到目标宽度时允许的像素误差。
+  static const double _windowLayoutSyncTolerance = 2;
+
   static const TextStyle _receiveLineStyle = TextStyle(
     fontFamily: 'SarasaUiSC',
     fontSize: 13,
@@ -126,10 +135,10 @@ class _RawDataPageState extends State<RawDataPage> {
   _MultiSendPanelState _multiSendPanelState = _MultiSendPanelState.closed;
   Rect? _multiSendOriginalBounds;
   bool _multiSendWasMaximized = false;
-  double _multiSendPanelWidth = 380;
-  double _multiSendMinimumWindowWidth = _baseMinimumWindowWidth;
-  double _multiSendTransitionContentWidth = _baseMinimumWindowWidth;
-  double _rawPageLayoutWidth = _baseMinimumWindowWidth;
+  double _multiSendPanelWidth = WindowConfiguration.multiSendPanelWidth;
+  double _multiSendMinimumWindowWidth = WindowConfiguration.minWidth;
+  double _multiSendTransitionContentWidth = WindowConfiguration.minWidth;
+  double _rawPageLayoutWidth = WindowConfiguration.minWidth;
   MultiSendViewModel? _multiSendVm;
 
   bool get _multiSendVisible =>
@@ -196,13 +205,16 @@ class _RawDataPageState extends State<RawDataPage> {
       await windowManager.setBounds(expanded, animate: false);
       await _waitForWindowLayoutWidth(targetLayoutWidth, expanding: true);
       await windowManager.setMinimumSize(
-        Size(_multiSendMinimumWindowWidth, 600),
+        Size(_multiSendMinimumWindowWidth, WindowConfiguration.minHeight),
       );
       opened = true;
     } catch (_) {
       try {
         await windowManager.setMinimumSize(
-          const Size(_baseMinimumWindowWidth, 600),
+          const Size(
+            WindowConfiguration.minWidth,
+            WindowConfiguration.minHeight,
+          ),
         );
         final originalBounds = _multiSendOriginalBounds;
         if (originalBounds != null) {
@@ -224,7 +236,7 @@ class _RawDataPageState extends State<RawDataPage> {
 
   Future<void> _closeMultiSendBeforePageLeave({bool updateUi = true}) async {
     while (_multiSendTransitioning) {
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      await Future<void>.delayed(_windowLayoutSyncInterval);
     }
     await _closeMultiSendPanel(updateUi: updateUi);
   }
@@ -257,7 +269,7 @@ class _RawDataPageState extends State<RawDataPage> {
     }
     try {
       await windowManager.setMinimumSize(
-        const Size(_baseMinimumWindowWidth, 600),
+        const Size(WindowConfiguration.minWidth, WindowConfiguration.minHeight),
       );
     } catch (_) {
       // 后续仍尝试恢复窗口几何。
@@ -271,7 +283,7 @@ class _RawDataPageState extends State<RawDataPage> {
           currentBounds.left,
           currentBounds.top,
           math.max(
-            _baseMinimumWindowWidth,
+            WindowConfiguration.minWidth,
             currentBounds.width - _multiSendPanelWidth,
           ),
           currentBounds.height,
@@ -287,8 +299,8 @@ class _RawDataPageState extends State<RawDataPage> {
     } finally {
       _multiSendOriginalBounds = null;
       _multiSendWasMaximized = false;
-      _multiSendPanelWidth = 380;
-      _multiSendMinimumWindowWidth = _baseMinimumWindowWidth;
+      _multiSendPanelWidth = WindowConfiguration.multiSendPanelWidth;
+      _multiSendMinimumWindowWidth = WindowConfiguration.minWidth;
       if (updateUi && mounted) {
         setState(() {
           _multiSendPanelState = _MultiSendPanelState.closed;
@@ -303,12 +315,18 @@ class _RawDataPageState extends State<RawDataPage> {
     double targetWidth, {
     required bool expanding,
   }) async {
-    for (var attempt = 0; attempt < 60 && mounted; attempt++) {
+    for (
+      var attempt = 0;
+      attempt < _windowLayoutSyncMaxAttempts && mounted;
+      attempt++
+    ) {
       final width = _windowLayoutWidth;
-      if (expanding ? width >= targetWidth - 2 : width <= targetWidth + 2) {
+      if (expanding
+          ? width >= targetWidth - _windowLayoutSyncTolerance
+          : width <= targetWidth + _windowLayoutSyncTolerance) {
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      await Future<void>.delayed(_windowLayoutSyncInterval);
     }
   }
 
@@ -338,8 +356,15 @@ class _RawDataPageState extends State<RawDataPage> {
       size.width,
       size.height,
     );
-    final leftContentWidth = math.max(1000.0, bounds.width);
-    _multiSendPanelWidth = leftContentWidth + 380 <= workArea.width ? 380 : 320;
+    final leftContentWidth = math.max(
+      WindowConfiguration.minWidth,
+      bounds.width,
+    );
+    _multiSendPanelWidth =
+        leftContentWidth + WindowConfiguration.multiSendPanelWidth <=
+                workArea.width
+            ? WindowConfiguration.multiSendPanelWidth
+            : WindowConfiguration.multiSendPanelMinWidth;
     _multiSendMinimumWindowWidth = math.min(
       leftContentWidth + _multiSendPanelWidth,
       workArea.width,
@@ -348,7 +373,10 @@ class _RawDataPageState extends State<RawDataPage> {
       _multiSendPanelWidth,
       workArea.width,
     );
-    final height = bounds.height.clamp(600.0, workArea.height);
+    final height = bounds.height.clamp(
+      WindowConfiguration.minHeight,
+      workArea.height,
+    );
     final left = (bounds.left + width > workArea.right
             ? workArea.right - width
             : bounds.left)

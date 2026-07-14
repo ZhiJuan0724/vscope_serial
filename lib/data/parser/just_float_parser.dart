@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../../core/constants/plot_configuration.dart';
 import '../../core/utils/app_logger.dart';
 import '../models/parse_result.dart';
 import '../models/parser_config.dart';
@@ -89,7 +90,7 @@ class JustFloatParser extends IDataParser {
             ? payload.length ~/ 4
             : configuredChannelCount;
 
-    if (channelCount < 1 || channelCount > 16) {
+    if (channelCount < 1 || channelCount > PlotConfiguration.rawChannelCount) {
       return ParseResult.fail('JustFloat通道数异常: $channelCount');
     }
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/constants/plot_configuration.dart';
+
 const Object _unset = Object();
 
 /// 数据类型枚举
@@ -179,10 +181,10 @@ class ChannelConfig {
     return colors.indexWhere((preset) => preset.toARGB32() == value);
   }
 
-  /// 创建默认 16 通道配置
+  /// 创建默认普通通道配置。
   static List<ChannelConfig> createDefaults() {
     return List.generate(
-      16,
+      PlotConfiguration.rawChannelCount,
       (i) => ChannelConfig(index: i, color: colorForIndex(i, 'dark')),
     );
   }

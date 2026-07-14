@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../core/constants/plot_configuration.dart';
 import 'channel_config.dart';
 
 class MathChannelConfig {
-  static const int maxCount = 4;
+  static const int maxCount = PlotConfiguration.mathChannelCount;
 
   final int index;
   bool enabled;
@@ -18,8 +19,11 @@ class MathChannelConfig {
   }) : display =
            display ??
            ChannelConfig(
-             index: 16 + index,
-             color: ChannelConfig.colorForIndex(16 + index, 'dark'),
+             index: PlotConfiguration.rawChannelCount + index,
+             color: ChannelConfig.colorForIndex(
+               PlotConfiguration.rawChannelCount + index,
+               'dark',
+             ),
              alias: 'Math${index + 1}',
            );
 
@@ -45,13 +49,16 @@ class MathChannelConfig {
     );
     final colorValue =
         (json['color'] as num?)?.toInt() ??
-        ChannelConfig.colorForIndex(16 + index, 'dark').toARGB32();
+        ChannelConfig.colorForIndex(
+          PlotConfiguration.rawChannelCount + index,
+          'dark',
+        ).toARGB32();
     return MathChannelConfig(
       index: index,
       enabled: json['enabled'] as bool? ?? false,
       expression: json['expression'] as String? ?? '',
       display: ChannelConfig(
-        index: 16 + index,
+        index: PlotConfiguration.rawChannelCount + index,
         color: Color(colorValue),
         alias: 'Math${index + 1}',
         visible: json['visible'] as bool? ?? true,

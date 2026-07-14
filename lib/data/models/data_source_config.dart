@@ -1,3 +1,5 @@
+import '../../core/constants/plot_configuration.dart';
+
 /// 数据源配置模型
 class DataSourceConfig {
   /// 使用串口数据源
@@ -25,8 +27,8 @@ class DataSourceConfig {
     this.useSerial = true,
     this.useRandom = false,
     this.randomChannelCount = 4,
-    this.randomMinValue = 0.0,
-    this.randomMaxValue = 32768.0,
+    this.randomMinValue = PlotConfiguration.randomSourceDefaultMin,
+    this.randomMaxValue = PlotConfiguration.randomSourceDefaultMax,
     int? randomIntervalMs,
     double? randomFrequencyHz,
   }) : randomIntervalMs = randomIntervalMs ?? 100,

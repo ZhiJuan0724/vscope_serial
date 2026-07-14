@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/plot_configuration.dart';
 import '../../core/utils/crc.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../core/utils/plot_performance_metrics.dart';
@@ -59,20 +60,6 @@ class _PlotPageContent extends StatefulWidget {
   @override
   State<_PlotPageContent> createState() => _PlotPageContentState();
 }
-
-/// 通道面板尺寸常量
-const double kMinChannelPanelWidth = 260;
-const double kCompactChannelPanelWidth = 212;
-const double kMaxChannelPanelWidth = 400;
-const double kDefaultChannelPanelWidth = 260;
-const double kCollapsedPanelWidth = 26;
-const double kRProtocolAddressWidth = 108;
-const double kRProtocolAddressMinWidth = 54;
-const double kRProtocolAddressMaxWidth = 112;
-const double kFixedFrameConfigLabelWidth = 72;
-const double kDataTypeDropdownWidth = 148;
-const double kChannelPanelHorizontalPadding = 6;
-const double kChannelPanelListRightPadding = 12;
 
 typedef _PlotToolbarSelection =
     ({
@@ -162,7 +149,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   bool _isPanelCollapsed = false;
 
   /// 面板宽度（展开时）
-  double _panelWidth = kDefaultChannelPanelWidth;
+  double _panelWidth = PlotConfiguration.channelPanelDefaultWidth;
 
   /// 是否正在拖动调整宽度
   bool _isResizing = false;
@@ -304,7 +291,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 折叠后的窄条（32px）
   Widget _buildCollapsedPanel(BuildContext context) {
     return Container(
-      width: kCollapsedPanelWidth,
+      width: PlotConfiguration.channelPanelCollapsedWidth,
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
@@ -356,7 +343,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children: [
         // 通道面板内容
         SizedBox(
-          width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
+          width: _panelWidth.clamp(
+            minPanelWidth,
+            PlotConfiguration.channelPanelMaxWidth,
+          ),
           child: _buildChannelPanelContent(context, vm),
         ),
         // 右边缘拖动条
@@ -371,7 +361,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 _panelWidth += details.delta.dx;
                 _panelWidth = _panelWidth.clamp(
                   minPanelWidth,
-                  kMaxChannelPanelWidth,
+                  PlotConfiguration.channelPanelMaxWidth,
                 );
               });
             },
@@ -407,14 +397,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   double _minimumChannelPanelWidth(PlotViewModel vm) {
     if (vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
-      return kCompactChannelPanelWidth;
+      return PlotConfiguration.channelPanelCompactWidth;
     }
-    if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
+    if (vm.parserType != ParserType.zobow) {
+      return PlotConfiguration.channelPanelMinWidth;
+    }
     final channelCount = vm.parserConfig.zobowChannelCount;
     final allShort = vm.parserConfig.zobowChannelIds
         .take(channelCount)
         .every((address) => (address & 0xFFFF0000) == 0);
-    return allShort ? kCompactChannelPanelWidth : kMinChannelPanelWidth;
+    return allShort
+        ? PlotConfiguration.channelPanelCompactWidth
+        : PlotConfiguration.channelPanelMinWidth;
   }
 
   // ========== 工具栏 ==========
@@ -1457,10 +1451,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Container(
             height: 36,
             padding: const EdgeInsets.only(
-              left: kChannelPanelHorizontalPadding,
+              left: PlotConfiguration.channelPanelHorizontalPadding,
               right:
-                  kChannelPanelHorizontalPadding +
-                  kChannelPanelListRightPadding,
+                  PlotConfiguration.channelPanelHorizontalPadding +
+                  PlotConfiguration.channelPanelListRightPadding,
             ),
             decoration: BoxDecoration(
               color: Theme.of(context).scaffoldBackgroundColor,
@@ -1536,7 +1530,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               },
               child: ListView.builder(
                 padding: const EdgeInsets.only(
-                  right: kChannelPanelListRightPadding,
+                  right: PlotConfiguration.channelPanelListRightPadding,
                 ),
                 itemCount: displayCount + 1,
                 itemBuilder: (context, index) {
@@ -1941,10 +1935,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           );
         }
 
-        const locatorBarHeight = 44.0;
         final previewPanelHeight =
             _previewVisible && vm.previewToolbarEnabled
-                ? locatorBarHeight
+                ? PlotConfiguration.locatorBarHeight
                 : 0.0;
         return Stack(
           children: [
@@ -2825,8 +2818,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   setDialogState(() => errorText = '请至少选择 1 个通道');
                   return;
                 }
-                if (selectedChannelIndices.length > 20) {
-                  setDialogState(() => errorText = '最多可同时导出 20 个通道');
+                if (selectedChannelIndices.length >
+                    PlotConfiguration.totalChannelCount) {
+                  setDialogState(
+                    () =>
+                        errorText =
+                            '最多可同时导出 '
+                            '${PlotConfiguration.totalChannelCount} 个通道',
+                  );
                   return;
                 }
                 Navigator.of(dialogContext).pop(
@@ -2915,7 +2914,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Text(
-                            '已选 ${selectedChannelIndices.length}/20',
+                            '已选 ${selectedChannelIndices.length}/'
+                            '${PlotConfiguration.totalChannelCount}',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(width: 8),
@@ -2945,17 +2945,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               channel.index,
                             );
                             final atLimit =
-                                selectedChannelIndices.length >= 20 &&
+                                selectedChannelIndices.length >=
+                                    PlotConfiguration.totalChannelCount &&
                                 !selected;
                             return CheckboxListTile(
                               dense: true,
                               value: selected,
                               title: Text(vm.displayChannelName(channel.index)),
                               subtitle:
-                                  channel.index >= 16
+                                  channel.index >=
+                                          PlotConfiguration.rawChannelCount
                                       ? Text(
                                         vm
-                                            .mathChannels[channel.index - 16]
+                                            .mathChannels[channel.index -
+                                                PlotConfiguration
+                                                    .rawChannelCount]
                                             .expression,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,

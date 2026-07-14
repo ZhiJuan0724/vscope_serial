@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../../core/constants/plot_configuration.dart';
 import 'data_source.dart';
 
 /// 内部随机数据源
@@ -40,8 +41,8 @@ class RandomDataSource implements IDataSource {
 
   RandomDataSource({
     this.channelCount = 4,
-    this.minValue = 0.0,
-    this.maxValue = 32768.0,
+    this.minValue = PlotConfiguration.randomSourceDefaultMin,
+    this.maxValue = PlotConfiguration.randomSourceDefaultMax,
     double? frequencyHz,
     int? intervalMs,
   }) : frequencyHz = (frequencyHz ??

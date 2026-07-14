@@ -4,7 +4,7 @@ part of '../plot_viewmodel.dart';
 /// - 当前绘图窗口需要回看时，通过 [valuesAt] 临时还原单点 List。
 class _ParsedValueHistory {
   static const int _chunkPointCount = 4096;
-  static const int _maxChannels = 16;
+  static const int _maxChannels = PlotConfiguration.rawChannelCount;
 
   final List<_ParsedValueChunk> _chunks = [];
 
@@ -18,7 +18,10 @@ class _ParsedValueHistory {
       _chunks.fold(0, (total, chunk) => total + chunk.allocatedValueSlots);
 
   @visibleForTesting
-  void debugSetLengthForTest(int length, {int maxChannelCount = 16}) {
+  void debugSetLengthForTest(
+    int length, {
+    int maxChannelCount = PlotConfiguration.rawChannelCount,
+  }) {
     _chunks.clear();
     _length = length;
     _maxChannelCount = maxChannelCount.clamp(0, _maxChannels).toInt();
@@ -72,7 +75,7 @@ class _ParsedValueHistory {
 }
 
 /// 一个历史值块。稳定通道协议只按实际通道数分配；同一块内通道数增加时
-/// 才扩容并重排已有数据，避免少通道场景长期浪费 16 通道空间。
+/// 才扩容并重排已有数据，避免少通道场景长期按普通通道上限分配空间。
 class _ParsedValueChunk {
   final int pointCapacity;
   int channelCapacity;

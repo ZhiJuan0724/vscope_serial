@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../core/constants/plot_configuration.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../core/utils/plot_performance_metrics.dart';
 import '../../data/models/channel_config.dart';
@@ -1480,8 +1481,8 @@ class PlotLayerPainter extends CustomPainter {
   }
 
   String _shortChannelName(ChannelConfig channel) {
-    return channel.index >= 16
-        ? 'Math${channel.index - 15}'
+    return channel.index >= PlotConfiguration.rawChannelCount
+        ? 'Math${channel.index - PlotConfiguration.rawChannelCount + 1}'
         : 'Ch${channel.index}';
   }
 

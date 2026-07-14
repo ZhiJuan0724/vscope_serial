@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/constants/window_configuration.dart';
 import 'core/localization/app_strings.dart';
 import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
@@ -19,15 +21,6 @@ import 'views/pages/plot_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
-
-/// 主窗口最小宽度：保证收发页工具栏可以完整显示。
-const double kMinWindowWidth = 1000;
-
-/// 主窗口默认宽度
-const double kDefaultWindowWidth = 1000;
-
-/// 主窗口默认高度
-const double kDefaultWindowHeight = 700;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,8 +52,14 @@ void main() async {
   // 初始化窗口管理
   await windowManager.ensureInitialized();
   final windowOptions = WindowOptions(
-    size: const Size(kDefaultWindowWidth, kDefaultWindowHeight),
-    minimumSize: const Size(kMinWindowWidth, 600),
+    size: const Size(
+      WindowConfiguration.defaultWidth,
+      WindowConfiguration.defaultHeight,
+    ),
+    minimumSize: const Size(
+      WindowConfiguration.minWidth,
+      WindowConfiguration.minHeight,
+    ),
     center: true,
     title: AppStrings.appName,
   );
@@ -69,7 +68,12 @@ void main() async {
     await windowManager.focus();
   });
 
-  runApp(const MyApp());
+  Widget app = const MyApp();
+  if (Platform.isWindows) {
+    // Work around Flutter's Windows Tooltip AXTree update error flood.
+    app = ExcludeSemantics(child: app);
+  }
+  runApp(app);
 }
 
 class MyApp extends StatelessWidget {

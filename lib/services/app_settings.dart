@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../core/constants/plot_configuration.dart';
 import '../data/models/address_config_profile.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
@@ -66,10 +67,10 @@ class AppSettings {
   /// 主窗口上次停留的页面。
   String lastMainPage = 'rawData';
 
-  /// 绘图窗口点数上限，范围 1000000~40000000
-  int maxVisiblePoints = 1000000;
+  /// 绘图窗口点数上限。
+  int maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
 
-  /// 每次开始绘图时丢弃的前置有效数据包数量，范围 0~10000。
+  /// 每次开始绘图时丢弃的前置有效数据包数量。
   int discardInitialPacketCount = 0;
 
   /// 开始新一轮绘图时是否保留上一轮绘图数据并继续追加。
@@ -130,7 +131,10 @@ class AppSettings {
   String sendCustomProtocolId = '';
 
   /// r 协议通道地址文本。保留十进制或 0x 十六进制输入形式。
-  List<String> rChannelAddresses = List.filled(16, '');
+  List<String> rChannelAddresses = List.filled(
+    PlotConfiguration.rawChannelCount,
+    '',
+  );
 
   /// r 协议宽松通道设置：启动时将非空地址压紧到前面的槽位。
   bool rProtocolLooseChannelSettings = false;
@@ -218,16 +222,16 @@ class AppSettings {
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
-  double xMin = 0;
+  double xMin = PlotConfiguration.viewportDefaultXMin;
 
   /// 视口 X 轴最大值
-  double xMax = 1000;
+  double xMax = PlotConfiguration.viewportDefaultXMax;
 
   /// 视口 Y 轴最小值
-  double yMin = 0;
+  double yMin = PlotConfiguration.viewportDefaultYMin;
 
   /// 视口 Y 轴最大值
-  double yMax = 32768;
+  double yMax = PlotConfiguration.viewportDefaultYMax;
 
   /// 初始化：创建配置目录并加载配置文件
   ///
@@ -268,7 +272,7 @@ class AppSettings {
     plotFontSizeDelta = 0;
     plotFontBold = false;
     lastMainPage = 'rawData';
-    maxVisiblePoints = 1000000;
+    maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
     discardInitialPacketCount = 0;
     keepPlotOnRestart = false;
     snapHighlightEnabled = true;
@@ -296,7 +300,7 @@ class AppSettings {
     sendProtocolType = 'none';
     receiveCustomProtocolId = '';
     sendCustomProtocolId = '';
-    rChannelAddresses = List.filled(16, '');
+    rChannelAddresses = List.filled(PlotConfiguration.rawChannelCount, '');
     rProtocolLooseChannelSettings = false;
     justFloatChannelCount = 0;
     zobowChannelIds = List.generate(
@@ -332,10 +336,10 @@ class AppSettings {
     ymodemSaveDirectoryPolicy = 'exports';
     rawMultiSendProfileId = '';
 
-    xMin = 0;
-    xMax = 1000;
-    yMin = 0;
-    yMax = 32768;
+    xMin = PlotConfiguration.viewportDefaultXMin;
+    xMax = PlotConfiguration.viewportDefaultXMax;
+    yMin = PlotConfiguration.viewportDefaultYMin;
+    yMax = PlotConfiguration.viewportDefaultYMax;
   }
 
   /// 从配置文件加载所有设置
@@ -365,11 +369,14 @@ class AppSettings {
       final savedMainPage = json['lastMainPage'] as String?;
       lastMainPage = savedMainPage == 'plot' ? 'plot' : 'rawData';
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
-              1000000)
-          .clamp(1000000, 40000000);
+              PlotConfiguration.defaultVisiblePointCount)
+          .clamp(
+            PlotConfiguration.minVisiblePointCount,
+            PlotConfiguration.maxVisiblePointCount,
+          );
       discardInitialPacketCount =
           ((json['discardInitialPacketCount'] as num?)?.toInt() ?? 0)
-              .clamp(0, 10000)
+              .clamp(0, PlotConfiguration.maxDiscardInitialPacketCount)
               .toInt();
       keepPlotOnRestart = json['keepPlotOnRestart'] as bool? ?? false;
       snapHighlightEnabled = json['snapHighlightEnabled'] as bool? ?? true;
@@ -431,7 +438,7 @@ class AppSettings {
           json['rProtocolLooseChannelSettings'] as bool? ?? false;
       justFloatChannelCount =
           ((json['justFloatChannelCount'] as num?)?.toInt() ?? 0)
-              .clamp(0, 16)
+              .clamp(0, PlotConfiguration.rawChannelCount)
               .toInt();
       zobowChannelIds = _normalizeZobowChannelIds(json['zobowChannelIds']);
       zobowChannelTypes = _normalizeDataTypeList(
@@ -488,10 +495,18 @@ class AppSettings {
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
 
       // 视口设置
-      xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
-      xMax = (json['xMax'] as num?)?.toDouble() ?? 1000;
-      yMin = (json['yMin'] as num?)?.toDouble() ?? 0;
-      yMax = (json['yMax'] as num?)?.toDouble() ?? 32768;
+      xMin =
+          (json['xMin'] as num?)?.toDouble() ??
+          PlotConfiguration.viewportDefaultXMin;
+      xMax =
+          (json['xMax'] as num?)?.toDouble() ??
+          PlotConfiguration.viewportDefaultXMax;
+      yMin =
+          (json['yMin'] as num?)?.toDouble() ??
+          PlotConfiguration.viewportDefaultYMin;
+      yMax =
+          (json['yMax'] as num?)?.toDouble() ??
+          PlotConfiguration.viewportDefaultYMax;
     } catch (e) {
       // 配置文件损坏，使用默认值
     }
@@ -590,10 +605,10 @@ class AppSettings {
         value is List
             ? value.whereType<String>().map((item) => item.trim()).toList()
             : <String>[];
-    while (values.length < 16) {
+    while (values.length < PlotConfiguration.rawChannelCount) {
       values.add('');
     }
-    return values.take(16).toList();
+    return values.take(PlotConfiguration.rawChannelCount).toList();
   }
 
   static double? _nullableNonNegativeDouble(Object? value) {

@@ -1,3 +1,5 @@
+import '../../core/constants/plot_configuration.dart';
+
 /// 绘图视口管理
 ///
 /// 管理可见的数据区域和屏幕/数据坐标转换。
@@ -23,15 +25,16 @@ class PlotViewport {
   bool autoScaleY;
 
   /// 绘图区域左边距（留给 Y 轴刻度）
-  static const double defaultMarginLeft = 60;
+  static const double defaultMarginLeft = PlotConfiguration.viewportMarginLeft;
 
   final double marginLeft;
 
   /// 绘图区域基础右边距
-  static const double _baseMarginRight = 20;
+  static const double _baseMarginRight = PlotConfiguration.viewportMarginRight;
 
   /// 每列偏移 Y 轴宽度
-  static const double offsetAxisColumnWidth = 42;
+  static const double offsetAxisColumnWidth =
+      PlotConfiguration.offsetAxisColumnMinWidth;
 
   /// 偏移 Y 轴列最小宽度
   static const double minOffsetAxisColumnWidth = offsetAxisColumnWidth;
@@ -55,7 +58,7 @@ class PlotViewport {
 
   /// 设置偏移通道数量
   void setOffsetChannelCount(int count) {
-    _offsetChannelCount = count.clamp(0, 20);
+    _offsetChannelCount = count.clamp(0, PlotConfiguration.totalChannelCount);
     _offsetAxisColumnWidths = List<double>.filled(
       _offsetChannelCount,
       minOffsetAxisColumnWidth,
@@ -65,7 +68,7 @@ class PlotViewport {
   /// 设置偏移通道列宽。列宽会根据刻度文本动态变化，但保留最小交互宽度。
   void setOffsetAxisColumnWidths(List<double> widths) {
     final normalized = widths
-        .take(20)
+        .take(PlotConfiguration.totalChannelCount)
         .map(
           (width) =>
               width < minOffsetAxisColumnWidth
@@ -78,29 +81,29 @@ class PlotViewport {
   }
 
   /// 绘图区域上边距
-  final double marginTop = 20;
+  final double marginTop = PlotConfiguration.viewportMarginTop;
 
   /// 绘图区域下边距（留给 X 轴刻度）
-  final double marginBottom = 40;
+  final double marginBottom = PlotConfiguration.viewportMarginBottom;
 
   /// X 轴最小显示范围
-  static const double minXRange = 10;
+  static const double minXRange = PlotConfiguration.viewportMinXRange;
 
   /// X 轴最大显示范围
-  static const double maxXRange = 40000000;
+  static const double maxXRange = PlotConfiguration.viewportMaxXRange;
 
   /// Y 轴最小显示范围
-  static const double minYRange = 1;
+  static const double minYRange = PlotConfiguration.viewportMinYRange;
 
   /// Y 轴最大显示范围
-  static const double maxYRange = 1000000000;
+  static const double maxYRange = PlotConfiguration.viewportMaxYRange;
 
-  /// 创建视口，使用默认值（X: 0~1000, Y: 0~32768）
+  /// 使用 [PlotConfiguration] 中的默认坐标范围创建视口。
   PlotViewport({
-    this.xMin = 0,
-    this.xMax = 1000,
-    this.yMin = 0,
-    this.yMax = 32768,
+    this.xMin = PlotConfiguration.viewportDefaultXMin,
+    this.xMax = PlotConfiguration.viewportDefaultXMax,
+    this.yMin = PlotConfiguration.viewportDefaultYMin,
+    this.yMax = PlotConfiguration.viewportDefaultYMax,
     this.autoScaleY = false,
     this.marginLeft = defaultMarginLeft,
   });
@@ -206,13 +209,13 @@ class PlotViewport {
     return copyWith(yMin: yMin + dy, yMax: yMax + dy);
   }
 
-  /// 重置为默认视图（X: 0~1000, Y: 0~32768），返回新的视口
+  /// 重置为 [PlotConfiguration] 定义的默认视图。
   PlotViewport reset() {
     return PlotViewport(
-      xMin: 0,
-      xMax: 1000,
-      yMin: 0,
-      yMax: 32768,
+      xMin: PlotConfiguration.viewportDefaultXMin,
+      xMax: PlotConfiguration.viewportDefaultXMax,
+      yMin: PlotConfiguration.viewportDefaultYMin,
+      yMax: PlotConfiguration.viewportDefaultYMax,
       autoScaleY: autoScaleY,
       marginLeft: marginLeft,
     );

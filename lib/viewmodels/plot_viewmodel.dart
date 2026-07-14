@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../core/constants/plot_configuration.dart';
 import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
@@ -198,11 +199,14 @@ class PlotViewModel extends BaseViewModel {
   final PlotLodIndex _lodIndex = PlotLodIndex();
 
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
-  static const int maxObservationCount = 100;
-  static const int minVisiblePoints = 1000000;
-  static const int defaultVisiblePoints = 1000000;
-  static const int maxVisiblePointsLimit = 40000000;
-  static const int maxDiscardInitialPacketCount = 10000;
+  static const int maxObservationCount = PlotConfiguration.maxObservationCount;
+  static const int minVisiblePoints = PlotConfiguration.minVisiblePointCount;
+  static const int defaultVisiblePoints =
+      PlotConfiguration.defaultVisiblePointCount;
+  static const int maxVisiblePointsLimit =
+      PlotConfiguration.maxVisiblePointCount;
+  static const int maxDiscardInitialPacketCount =
+      PlotConfiguration.maxDiscardInitialPacketCount;
   int _maxVisiblePoints = defaultVisiblePoints;
   int _discardInitialPacketCount = 0;
   int _activeDiscardInitialPacketLimit = 0;
@@ -213,8 +217,14 @@ class PlotViewModel extends BaseViewModel {
   int _overlayRevision = 0;
 
   /// 各显示通道是否已经观察到有限小数值，避免 Painter 每帧扫描窗口。
-  final List<bool> _observedChannelValues = List<bool>.filled(20, false);
-  final List<bool> _observedFractionalValues = List<bool>.filled(20, false);
+  final List<bool> _observedChannelValues = List<bool>.filled(
+    PlotConfiguration.totalChannelCount,
+    false,
+  );
+  final List<bool> _observedFractionalValues = List<bool>.filled(
+    PlotConfiguration.totalChannelCount,
+    false,
+  );
 
   /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
   ///
@@ -274,10 +284,10 @@ class PlotViewModel extends BaseViewModel {
   // ========== 视口 ==========
   /// 当前绘图视口，定义可见的 X/Y 数据范围
   PlotViewport viewport = PlotViewport(
-    xMin: 0,
-    xMax: 1000,
-    yMin: 0,
-    yMax: 32768,
+    xMin: PlotConfiguration.viewportDefaultXMin,
+    xMax: PlotConfiguration.viewportDefaultXMax,
+    yMin: PlotConfiguration.viewportDefaultYMin,
+    yMax: PlotConfiguration.viewportDefaultYMax,
   );
 
   // ========== 视口历史记录（用于撤回） ==========
@@ -657,7 +667,9 @@ class PlotViewModel extends BaseViewModel {
     _rProtocolLooseChannelSettings = settings.rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       _parserConfig.channelCount =
-          settings.justFloatChannelCount.clamp(0, 16).toInt();
+          settings.justFloatChannelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
   }
 
@@ -704,7 +716,9 @@ class PlotViewModel extends BaseViewModel {
     settings.rProtocolLooseChannelSettings = _rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       settings.justFloatChannelCount =
-          _parserConfig.channelCount.clamp(0, 16).toInt();
+          _parserConfig.channelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
     settings.zobowChannelIds = List.from(_parserConfig.zobowChannelIds);
     settings.zobowChannelTypes = List.from(_parserConfig.zobowChannelTypes);
@@ -887,7 +901,9 @@ class PlotViewModel extends BaseViewModel {
     final channel = displayChannelByIndex(index);
     if (channel == null) return 'Ch$index';
     if (channel.alias.isNotEmpty) return channel.alias;
-    return index >= 16 ? 'Math${index - 15}' : 'Ch$index';
+    return index >= PlotConfiguration.rawChannelCount
+        ? 'Math${index - PlotConfiguration.rawChannelCount + 1}'
+        : 'Ch$index';
   }
 
   bool canConfigureOffsetBinding(int index) {
@@ -1580,7 +1596,9 @@ class PlotViewModel extends BaseViewModel {
       _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
     } else if (type == ParserType.justFloat) {
       _parserConfig.channelCount =
-          AppSettings().justFloatChannelCount.clamp(0, 16).toInt();
+          AppSettings().justFloatChannelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
 
     if (type != ParserType.fireWater && _useRandomSource) {
@@ -1597,7 +1615,9 @@ class PlotViewModel extends BaseViewModel {
     settings.parserType = type.name;
     if (type == ParserType.justFloat) {
       settings.justFloatChannelCount =
-          _parserConfig.channelCount.clamp(0, 16).toInt();
+          _parserConfig.channelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
     settings.save();
 
@@ -1678,7 +1698,10 @@ class PlotViewModel extends BaseViewModel {
         _rProtocolLooseChannelSettings
             ? _rConfiguredAddressCount()
             : _rContinuousAddressCount(throwOnGap: false);
-    return math.max(1, math.min(16, configured + 1));
+    return math.max(
+      1,
+      math.min(PlotConfiguration.rawChannelCount, configured + 1),
+    );
   }
 
   bool get _usesAutoDetectedReceiveChannels {
@@ -3665,8 +3688,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// 设置通道 Y 轴偏移
   void setChannelYOffset(int index, double offset) {
-    if (index >= 16 && index < 16 + mathChannels.length) {
-      final mathChannel = mathChannels[index - 16];
+    if (index >= PlotConfiguration.rawChannelCount &&
+        index < PlotConfiguration.rawChannelCount + mathChannels.length) {
+      final mathChannel =
+          mathChannels[index - PlotConfiguration.rawChannelCount];
       final groupId = mathChannel.display.offsetBindingGroupId;
       if (groupId != null) {
         _setOffsetBindingGroupOffset(groupId, offset);
@@ -3719,8 +3744,10 @@ class PlotViewModel extends BaseViewModel {
 
   /// 缩放通道 Y 轴（滚轮缩放，按比例调整）
   void zoomChannelYScale(int index, double scaleDelta) {
-    if (index >= 16 && index < 16 + mathChannels.length) {
-      final display = mathChannels[index - 16].display;
+    if (index >= PlotConfiguration.rawChannelCount &&
+        index < PlotConfiguration.rawChannelCount + mathChannels.length) {
+      final display =
+          mathChannels[index - PlotConfiguration.rawChannelCount].display;
       final newScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
       final groupId = display.offsetBindingGroupId;
       if (groupId != null) {
@@ -3970,7 +3997,7 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置绘图窗口点数上限（1000000~40000000）
+  /// 设置绘图窗口点数上限，范围由 [PlotConfiguration] 统一约束。
   void setMaxVisiblePoints(int points) {
     final next = points.clamp(minVisiblePoints, maxVisiblePointsLimit).toInt();
     if (next == _maxVisiblePoints) return;
@@ -4264,19 +4291,19 @@ class PlotViewModel extends BaseViewModel {
     if (index >= 0 && index < rawCount && index < channels.length) {
       return channels[index].visible;
     }
-    final mathIndex = index - 16;
+    final mathIndex = index - PlotConfiguration.rawChannelCount;
     return mathIndex >= 0 &&
         mathIndex < mathChannels.length &&
         _canUseMathChannelForTrigger(mathChannels[mathIndex]);
   }
 
   double? _triggerValueForPoint(PlotDataPoint point, int channelIndex) {
-    if (channelIndex >= 0 && channelIndex < 16) {
+    if (channelIndex >= 0 && channelIndex < PlotConfiguration.rawChannelCount) {
       if (channelIndex >= point.values.length) return null;
       final value = point.values[channelIndex];
       return value.isFinite ? value : null;
     }
-    final mathIndex = channelIndex - 16;
+    final mathIndex = channelIndex - PlotConfiguration.rawChannelCount;
     if (mathIndex < 0 || mathIndex >= mathChannels.length) return null;
     final channel = mathChannels[mathIndex];
     if (!_canUseMathChannelForTrigger(channel)) return null;

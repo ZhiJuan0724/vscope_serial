@@ -216,8 +216,8 @@ class _ChannelItemState extends State<_ChannelItem> {
       textDirection: Directionality.of(context),
     )..layout();
     return (textPainter.width + 14).clamp(
-      kRProtocolAddressMinWidth,
-      kRProtocolAddressMaxWidth,
+      PlotConfiguration.rProtocolAddressMinWidth,
+      PlotConfiguration.rProtocolAddressMaxWidth,
     );
   }
 
@@ -252,7 +252,7 @@ class _ChannelItemState extends State<_ChannelItem> {
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
       padding: const EdgeInsets.symmetric(
-        horizontal: kChannelPanelHorizontalPadding,
+        horizontal: PlotConfiguration.channelPanelHorizontalPadding,
         vertical: 4,
       ),
       decoration: BoxDecoration(
@@ -317,7 +317,7 @@ class _ChannelItemState extends State<_ChannelItem> {
                             : usesShortZobowAddress &&
                                 !_addressFocusNode.hasFocus
                             ? 58
-                            : kRProtocolAddressWidth,
+                            : PlotConfiguration.rProtocolAddressWidth,
                     height: 26,
                     alignment: Alignment.centerLeft,
                     child: Focus(
@@ -387,7 +387,10 @@ class _ChannelItemState extends State<_ChannelItem> {
                   _buildPresetButton(context),
                 ] else if (reservesRAddressSpace) ...[
                   const SizedBox(width: 6),
-                  const SizedBox(width: kRProtocolAddressMinWidth, height: 26),
+                  const SizedBox(
+                    width: PlotConfiguration.rProtocolAddressMinWidth,
+                    height: 26,
+                  ),
                 ],
               ],
             ),
@@ -504,7 +507,7 @@ class _MathChannelItem extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(minHeight: 40),
       padding: const EdgeInsets.symmetric(
-        horizontal: kChannelPanelHorizontalPadding,
+        horizontal: PlotConfiguration.channelPanelHorizontalPadding,
         vertical: 4,
       ),
       decoration: BoxDecoration(
@@ -1161,7 +1164,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   Row(
                     children: [
                       SizedBox(
-                        width: kDataTypeDropdownWidth,
+                        width: PlotConfiguration.dataTypeDropdownWidth,
                         child: NoAnimDropdown<DataType>(
                           value: _zobowDataType,
                           hint: AppStrings.plot.typeHint,
@@ -1207,7 +1210,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
-                    width: kDataTypeDropdownWidth,
+                    width: PlotConfiguration.dataTypeDropdownWidth,
                     child: NoAnimDropdown<DataType>(
                       value: _zobowDataType,
                       hint: AppStrings.plot.typeHint,

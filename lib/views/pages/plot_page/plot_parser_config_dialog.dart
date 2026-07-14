@@ -311,12 +311,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           Row(
             children: [
               SizedBox(
-                width: kFixedFrameConfigLabelWidth,
+                width: PlotConfiguration.fixedFrameConfigLabelWidth,
                 child: Text(AppStrings.plot.channelType, softWrap: false),
               ),
               const SizedBox(width: 8),
               SizedBox(
-                width: kDataTypeDropdownWidth,
+                width: PlotConfiguration.dataTypeDropdownWidth,
                 child: NoAnimDropdown<bool>(
                   value: _config.fixedFrameUniformDataType,
                   hint: AppStrings.plot.channelTypeModeHint,
@@ -356,12 +356,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             Row(
               children: [
                 SizedBox(
-                  width: kFixedFrameConfigLabelWidth,
+                  width: PlotConfiguration.fixedFrameConfigLabelWidth,
                   child: Text('${AppStrings.plot.dataType}:', softWrap: false),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: kDataTypeDropdownWidth,
+                  width: PlotConfiguration.dataTypeDropdownWidth,
                   child: NoAnimDropdown<DataType>(
                     value: _config.dataType,
                     hint: AppStrings.plot.typeHint,

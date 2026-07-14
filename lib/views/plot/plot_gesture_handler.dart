@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+
+import '../../core/constants/plot_configuration.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/utils/app_logger.dart';
@@ -906,8 +908,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   }
 
   String _shortChannelName(ChannelConfig channel) {
-    return channel.index >= 16
-        ? 'Math${channel.index - 15}'
+    return channel.index >= PlotConfiguration.rawChannelCount
+        ? 'Math${channel.index - PlotConfiguration.rawChannelCount + 1}'
         : 'Ch${channel.index}';
   }
 

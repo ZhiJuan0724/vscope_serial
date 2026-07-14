@@ -1,12 +1,14 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import '../../core/constants/plot_configuration.dart';
+
 /// 大规模绘图历史数据的内存级 LOD 索引。
 ///
 /// 每个桶从 64 个点开始分层。较小可见范围仍使用精确点窗口；
 /// 较大范围可以绘制数量受控的最小/最大采样点，避免每帧扫描全部可见点。
 class PlotLodIndex {
-  static const int maxChannels = 16;
+  static const int maxChannels = PlotConfiguration.rawChannelCount;
   static const int minBucketSize = 64;
   static const int _minLevel = 6; // 2^6 = 64
   static const int _maxLevel = 23;
