@@ -1,19 +1,24 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart' as file_picker;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:screen_retriever/screen_retriever.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/crc.dart';
+import '../../viewmodels/multi_send_viewmodel.dart';
 import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/multi_send_panel.dart';
 
 enum _FileTransferDirection {
   send('发送'),
@@ -31,6 +36,8 @@ enum _ShellFileTransferProtocol {
 }
 
 enum _RawDataExportFormat { text, rawBytes }
+
+enum _MultiSendPanelState { closed, opening, open, closing }
 
 typedef _ReceiveAreaState =
     ({
@@ -77,6 +84,7 @@ class RawDataPage extends StatefulWidget {
 }
 
 class _RawDataPageState extends State<RawDataPage> {
+  static const double _baseMinimumWindowWidth = 1000;
   static const TextStyle _receiveLineStyle = TextStyle(
     fontFamily: 'SarasaUiSC',
     fontSize: 13,
@@ -115,6 +123,21 @@ class _RawDataPageState extends State<RawDataPage> {
   Rect? _terminalCursorRect;
   Size? _terminalCellSize;
   bool _terminalCursorUpdateScheduled = false;
+  _MultiSendPanelState _multiSendPanelState = _MultiSendPanelState.closed;
+  Rect? _multiSendOriginalBounds;
+  bool _multiSendWasMaximized = false;
+  double _multiSendPanelWidth = 380;
+  double _multiSendMinimumWindowWidth = _baseMinimumWindowWidth;
+  double _multiSendTransitionContentWidth = _baseMinimumWindowWidth;
+  double _rawPageLayoutWidth = _baseMinimumWindowWidth;
+  MultiSendViewModel? _multiSendVm;
+
+  bool get _multiSendVisible =>
+      _multiSendPanelState != _MultiSendPanelState.closed;
+
+  bool get _multiSendTransitioning =>
+      _multiSendPanelState == _MultiSendPanelState.opening ||
+      _multiSendPanelState == _MultiSendPanelState.closing;
 
   @override
   void initState() {
@@ -126,6 +149,9 @@ class _RawDataPageState extends State<RawDataPage> {
 
   @override
   void dispose() {
+    if (_multiSendVisible || _multiSendOriginalBounds != null) {
+      unawaited(_closeMultiSendBeforePageLeave(updateUi: false));
+    }
     _terminal.removeListener(_scheduleTerminalCursorUpdate);
     _terminalScrollController.removeListener(_scheduleTerminalCursorUpdate);
     _sendController.dispose();
@@ -136,6 +162,199 @@ class _RawDataPageState extends State<RawDataPage> {
     _shellLineFocusNode.dispose();
     _shellSubscription?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openMultiSendPanel(MultiSendViewModel multiSendVm) async {
+    if (_multiSendPanelState != _MultiSendPanelState.closed) return;
+    _multiSendVm = multiSendVm;
+    _multiSendTransitionContentWidth = _rawPageLayoutWidth;
+    if (mounted) {
+      setState(() {
+        _multiSendPanelState = _MultiSendPanelState.opening;
+      });
+    } else {
+      _multiSendPanelState = _MultiSendPanelState.opening;
+    }
+    var opened = false;
+    try {
+      await _multiSendVm!.initialize();
+      _multiSendWasMaximized = await windowManager.isMaximized();
+      if (_multiSendWasMaximized) {
+        await windowManager.unmaximize();
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      _multiSendOriginalBounds = await windowManager.getBounds();
+      final bounds = _multiSendOriginalBounds!;
+      final expanded = await _multiSendExpandedBounds(bounds);
+      _multiSendTransitionContentWidth = _rawPageLayoutWidth;
+      if (mounted) {
+        setState(() {});
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      final targetLayoutWidth =
+          _windowLayoutWidth + expanded.width - bounds.width;
+      await windowManager.setBounds(expanded, animate: false);
+      await _waitForWindowLayoutWidth(targetLayoutWidth, expanding: true);
+      await windowManager.setMinimumSize(
+        Size(_multiSendMinimumWindowWidth, 600),
+      );
+      opened = true;
+    } catch (_) {
+      try {
+        await windowManager.setMinimumSize(
+          const Size(_baseMinimumWindowWidth, 600),
+        );
+        final originalBounds = _multiSendOriginalBounds;
+        if (originalBounds != null) {
+          await windowManager.setBounds(originalBounds, animate: false);
+        }
+      } catch (_) {
+        // 回滚失败时仍需结束过渡状态。
+      }
+    } finally {
+      final nextState =
+          opened ? _MultiSendPanelState.open : _MultiSendPanelState.closed;
+      if (mounted) {
+        setState(() => _multiSendPanelState = nextState);
+      } else {
+        _multiSendPanelState = nextState;
+      }
+    }
+  }
+
+  Future<void> _closeMultiSendBeforePageLeave({bool updateUi = true}) async {
+    while (_multiSendTransitioning) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+    await _closeMultiSendPanel(updateUi: updateUi);
+  }
+
+  Future<void> _closeMultiSendPanel({bool updateUi = true}) async {
+    if (_multiSendPanelState != _MultiSendPanelState.open &&
+        _multiSendOriginalBounds == null) {
+      return;
+    }
+    final currentLayoutWidth = _windowLayoutWidth;
+    _multiSendTransitionContentWidth = math.max(
+      0.0,
+      _rawPageLayoutWidth - _multiSendPanelWidth,
+    );
+    if (updateUi && mounted) {
+      setState(() {
+        _multiSendPanelState = _MultiSendPanelState.closing;
+      });
+      await WidgetsBinding.instance.endOfFrame;
+    } else {
+      _multiSendPanelState = _MultiSendPanelState.closing;
+    }
+    _multiSendVm?.stop();
+    final restoreMaximized = _multiSendWasMaximized;
+    Rect? currentBounds;
+    try {
+      currentBounds = await windowManager.getBounds();
+    } catch (_) {
+      // 即使边界读取失败，也必须继续恢复普通窗口最小宽度。
+    }
+    try {
+      await windowManager.setMinimumSize(
+        const Size(_baseMinimumWindowWidth, 600),
+      );
+    } catch (_) {
+      // 后续仍尝试恢复窗口几何。
+    }
+    try {
+      if (restoreMaximized) {
+        await windowManager.maximize();
+        await WidgetsBinding.instance.endOfFrame;
+      } else if (currentBounds != null) {
+        final collapsedBounds = Rect.fromLTWH(
+          currentBounds.left,
+          currentBounds.top,
+          math.max(
+            _baseMinimumWindowWidth,
+            currentBounds.width - _multiSendPanelWidth,
+          ),
+          currentBounds.height,
+        );
+        await windowManager.setBounds(collapsedBounds, animate: false);
+        await _waitForWindowLayoutWidth(
+          currentLayoutWidth - _multiSendPanelWidth,
+          expanding: false,
+        );
+      }
+    } catch (_) {
+      // 面板仍需正常关闭，窗口管理失败不阻止用户继续收发。
+    } finally {
+      _multiSendOriginalBounds = null;
+      _multiSendWasMaximized = false;
+      _multiSendPanelWidth = 380;
+      _multiSendMinimumWindowWidth = _baseMinimumWindowWidth;
+      if (updateUi && mounted) {
+        setState(() {
+          _multiSendPanelState = _MultiSendPanelState.closed;
+        });
+      } else {
+        _multiSendPanelState = _MultiSendPanelState.closed;
+      }
+    }
+  }
+
+  Future<void> _waitForWindowLayoutWidth(
+    double targetWidth, {
+    required bool expanding,
+  }) async {
+    for (var attempt = 0; attempt < 60 && mounted; attempt++) {
+      final width = _windowLayoutWidth;
+      if (expanding ? width >= targetWidth - 2 : width <= targetWidth + 2) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+  }
+
+  double get _windowLayoutWidth {
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    return view.physicalSize.width / view.devicePixelRatio;
+  }
+
+  Future<Rect> _multiSendExpandedBounds(Rect bounds) async {
+    final displays = await screenRetriever.getAllDisplays();
+    final center = bounds.center;
+    final display = displays.firstWhere((item) {
+      final position = item.visiblePosition ?? Offset.zero;
+      final size = item.visibleSize ?? item.size;
+      return Rect.fromLTWH(
+        position.dx,
+        position.dy,
+        size.width,
+        size.height,
+      ).contains(center);
+    }, orElse: () => displays.first);
+    final position = display.visiblePosition ?? Offset.zero;
+    final size = display.visibleSize ?? display.size;
+    final workArea = Rect.fromLTWH(
+      position.dx,
+      position.dy,
+      size.width,
+      size.height,
+    );
+    final leftContentWidth = math.max(1000.0, bounds.width);
+    _multiSendPanelWidth = leftContentWidth + 380 <= workArea.width ? 380 : 320;
+    _multiSendMinimumWindowWidth = math.min(
+      leftContentWidth + _multiSendPanelWidth,
+      workArea.width,
+    );
+    final width = _multiSendMinimumWindowWidth.clamp(
+      _multiSendPanelWidth,
+      workArea.width,
+    );
+    final height = bounds.height.clamp(600.0, workArea.height);
+    final left = (bounds.left + width > workArea.right
+            ? workArea.right - width
+            : bounds.left)
+        .clamp(workArea.left, workArea.right - width);
+    final top = bounds.top.clamp(workArea.top, workArea.bottom - height);
+    return Rect.fromLTWH(left, top, width, height);
   }
 
   void _scrollToBottom(RawDataViewModel vm) {
@@ -1129,8 +1348,11 @@ class _RawDataPageState extends State<RawDataPage> {
   @override
   Widget build(BuildContext context) {
     final service = Provider.of<SerialService>(context, listen: false);
-    return ChangeNotifierProvider(
-      create: (_) => RawDataViewModel(service),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => RawDataViewModel(service)),
+        ChangeNotifierProvider(create: (_) => MultiSendViewModel(service)),
+      ],
       child: Selector<RawDataViewModel, bool>(
         selector: (_, vm) => vm.shellMode,
         builder: (context, shellMode, child) {
@@ -1139,6 +1361,11 @@ class _RawDataPageState extends State<RawDataPage> {
           _syncShellFocus(vm);
           _scrollToBottom(vm);
           if (shellMode) {
+            if (_multiSendVisible) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) unawaited(_closeMultiSendPanel());
+              });
+            }
             return Consumer<RawDataViewModel>(
               builder: (_, shellVm, _) {
                 _syncShellSubscription(shellVm);
@@ -1147,79 +1374,143 @@ class _RawDataPageState extends State<RawDataPage> {
               },
             );
           }
-          return Column(
-            children: [
-              SizedBox(
-                height: MediaQuery.of(context).size.height * _splitRatio,
-                child: Selector<RawDataViewModel, _ReceiveAreaState>(
-                  selector:
-                      (_, value) => (
-                        displayRevision: value.displayRevision,
-                        connected: value.isConnected,
-                        receiving: value.isRawReceiving,
-                        receiveHex: value.receiveHex,
-                        showTimestamp: value.showTimestamp,
-                        autoScroll: value.autoScroll,
-                        shellEnabled: value.shellEnabled,
-                        hasRawData: value.hasRawData,
-                        textEncoding: value.textEncoding,
-                      ),
-                  builder: (context, _, _) {
-                    final receiveVm = context.read<RawDataViewModel>();
-                    _scrollToBottom(receiveVm);
-                    return _buildReceiveArea(receiveVm);
-                  },
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              _rawPageLayoutWidth = constraints.maxWidth;
+              final contentWidth = switch (_multiSendPanelState) {
+                _MultiSendPanelState.closed => constraints.maxWidth,
+                _MultiSendPanelState.opening || _MultiSendPanelState.closing =>
+                  _multiSendTransitionContentWidth,
+                _MultiSendPanelState.open => math.max(
+                  0.0,
+                  constraints.maxWidth - _multiSendPanelWidth,
                 ),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onVerticalDragUpdate: (details) {
-                  setState(() {
-                    final delta =
-                        details.delta.dy / MediaQuery.of(context).size.height;
-                    _splitRatio = (_splitRatio + delta).clamp(0.2, 0.8);
-                  });
-                },
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.resizeRow,
-                  child: Container(
-                    height: 8,
-                    color: Theme.of(
-                      context,
-                    ).dividerColor.withValues(alpha: 0.5),
-                    child: Center(
-                      child: Container(
-                        width: 40,
-                        height: 3,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.outline,
-                          borderRadius: BorderRadius.circular(2),
+              };
+              return ClipRect(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: contentWidth,
+                      child: SizedBox(
+                        key: const ValueKey('raw-data-main-content'),
+                        child: Column(
+                          children: [
+                            SizedBox(
+                              height:
+                                  MediaQuery.of(context).size.height *
+                                  _splitRatio,
+                              child:
+                                  Selector<RawDataViewModel, _ReceiveAreaState>(
+                                    selector:
+                                        (_, value) => (
+                                          displayRevision:
+                                              value.displayRevision,
+                                          connected: value.isConnected,
+                                          receiving: value.isRawReceiving,
+                                          receiveHex: value.receiveHex,
+                                          showTimestamp: value.showTimestamp,
+                                          autoScroll: value.autoScroll,
+                                          shellEnabled: value.shellEnabled,
+                                          hasRawData: value.hasRawData,
+                                          textEncoding: value.textEncoding,
+                                        ),
+                                    builder: (context, _, _) {
+                                      final receiveVm =
+                                          context.read<RawDataViewModel>();
+                                      _scrollToBottom(receiveVm);
+                                      return _buildReceiveArea(receiveVm);
+                                    },
+                                  ),
+                            ),
+                            GestureDetector(
+                              behavior: HitTestBehavior.translucent,
+                              onVerticalDragUpdate: (details) {
+                                setState(() {
+                                  final delta =
+                                      details.delta.dy /
+                                      MediaQuery.of(context).size.height;
+                                  _splitRatio = (_splitRatio + delta).clamp(
+                                    0.2,
+                                    0.8,
+                                  );
+                                });
+                              },
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.resizeRow,
+                                child: Container(
+                                  height: 8,
+                                  color: Theme.of(
+                                    context,
+                                  ).dividerColor.withValues(alpha: 0.5),
+                                  child: Center(
+                                    child: Container(
+                                      width: 40,
+                                      height: 3,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.outline,
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: Selector<RawDataViewModel, _SendAreaState>(
+                                selector:
+                                    (_, value) => (
+                                      connected: value.isConnected,
+                                      keepText: value.keepSendText,
+                                      appendLineEnding: value.appendLineEnding,
+                                      lineEnding: value.lineEnding,
+                                      sendHex: value.sendHex,
+                                      enableCrc: value.enableCrc,
+                                      crcType: value.crcType,
+                                      crcPolyName: value.crcPolyName,
+                                      crcByteOrder: value.crcByteOrder,
+                                    ),
+                                builder:
+                                    (context, _, _) => _buildSendArea(
+                                      context.read<RawDataViewModel>(),
+                                      context.read<MultiSendViewModel>(),
+                                    ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: Selector<RawDataViewModel, _SendAreaState>(
-                  selector:
-                      (_, value) => (
-                        connected: value.isConnected,
-                        keepText: value.keepSendText,
-                        appendLineEnding: value.appendLineEnding,
-                        lineEnding: value.lineEnding,
-                        sendHex: value.sendHex,
-                        enableCrc: value.enableCrc,
-                        crcType: value.crcType,
-                        crcPolyName: value.crcPolyName,
-                        crcByteOrder: value.crcByteOrder,
+                    if (_multiSendVisible)
+                      Positioned(
+                        left: contentWidth,
+                        top: 0,
+                        bottom: 0,
+                        width: _multiSendPanelWidth,
+                        child: Container(
+                          key: const ValueKey('multi-send-panel'),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              left: BorderSide(
+                                color: Theme.of(context).dividerColor,
+                              ),
+                            ),
+                          ),
+                          child: MultiSendPanel(
+                            onClose: () => unawaited(_closeMultiSendPanel()),
+                          ),
+                        ),
                       ),
-                  builder:
-                      (context, _, _) =>
-                          _buildSendArea(context.read<RawDataViewModel>()),
+                  ],
                 ),
-              ),
-            ],
+              );
+            },
           );
         },
       ),
@@ -1464,180 +1755,218 @@ class _RawDataPageState extends State<RawDataPage> {
     );
   }
 
-  Widget _buildSendArea(RawDataViewModel vm) {
+  Widget _buildSendArea(RawDataViewModel vm, MultiSendViewModel multiSendVm) {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Column(
         children: [
-          // 工具栏：发送HEX + CRC 放同一行
+          // 左侧标题固定左对齐，右侧选项在空间不足时独立换行。
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                AppStrings.raw.sendData,
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const Spacer(),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Checkbox(
-                    value: vm.keepSendText,
-                    onChanged: (value) => vm.setKeepSendText(value!),
+                  Text(
+                    AppStrings.raw.sendData,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  Text(AppStrings.raw.keepAfterSend),
-                ],
-              ),
-              const SizedBox(width: 8),
-              if (!vm.sendHex) ...[
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Checkbox(
-                      value: vm.appendLineEnding,
-                      onChanged: (value) => vm.setAppendLineEnding(value!),
-                    ),
-                    Text(AppStrings.raw.appendLineEnding),
-                  ],
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 90,
-                  child: NoAnimDropdown<String>(
-                    value: vm.lineEnding,
-                    hint: AppStrings.raw.lineEndingHint,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: '\r', child: Text(r'\r')),
-                      DropdownMenuItem(value: '\n', child: Text(r'\n')),
-                      DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
-                    ],
+                  const SizedBox(width: 10),
+                  Checkbox(
+                    key: const ValueKey('multi-send-toggle'),
+                    value: _multiSendVisible,
                     onChanged:
-                        vm.appendLineEnding
-                            ? (value) {
-                              if (value != null) vm.setLineEnding(value);
-                            }
-                            : null,
+                        _multiSendTransitioning
+                            ? null
+                            : (value) {
+                              if (value ?? false) {
+                                unawaited(_openMultiSendPanel(multiSendVm));
+                              } else {
+                                unawaited(_closeMultiSendPanel());
+                              }
+                            },
                   ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Checkbox(
-                    value: vm.sendHex,
-                    onChanged: (value) => vm.setSendHex(value!),
-                  ),
-                  Text(AppStrings.raw.sendHex),
+                  const Text('扩展'),
                 ],
               ),
-              if (vm.sendHex) ...[
-                const SizedBox(width: 8),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Checkbox(
-                      value: vm.enableCrc,
-                      onChanged: (value) => vm.setEnableCrc(value!),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: vm.keepSendText,
+                          onChanged: (value) => vm.setKeepSendText(value!),
+                        ),
+                        Text(AppStrings.raw.keepAfterSend),
+                      ],
                     ),
-                    const Text('CRC'),
-                  ],
-                ),
-                if (vm.enableCrc) ...[
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    width: 90,
-                    child: NoAnimDropdown<CrcType>(
-                      value: vm.crcType,
-                      hint: AppStrings.raw.crcTypeHint,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        isDense: true,
+                    const SizedBox(width: 8),
+                    if (!vm.sendHex) ...[
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Checkbox(
+                            value: vm.appendLineEnding,
+                            onChanged:
+                                (value) => vm.setAppendLineEnding(value!),
+                          ),
+                          Text(AppStrings.raw.appendLineEnding),
+                        ],
                       ),
-                      items: [
-                        DropdownMenuItem(
-                          value: CrcType.crc8,
-                          child: Text('CRC-8'),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 90,
+                        child: NoAnimDropdown<String>(
+                          value: vm.lineEnding,
+                          hint: AppStrings.raw.lineEndingHint,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            isDense: true,
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: '\r', child: Text(r'\r')),
+                            DropdownMenuItem(value: '\n', child: Text(r'\n')),
+                            DropdownMenuItem(
+                              value: '\r\n',
+                              child: Text(r'\r\n'),
+                            ),
+                          ],
+                          onChanged:
+                              vm.appendLineEnding
+                                  ? (value) {
+                                    if (value != null) {
+                                      vm.setLineEnding(value);
+                                    }
+                                  }
+                                  : null,
                         ),
-                        DropdownMenuItem(
-                          value: CrcType.crc16,
-                          child: Text('CRC-16'),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: vm.sendHex,
+                          onChanged: (value) => vm.setSendHex(value!),
                         ),
-                        DropdownMenuItem(
-                          value: CrcType.crc32,
-                          child: Text('CRC-32'),
+                        Text(AppStrings.raw.sendHex),
+                      ],
+                    ),
+                    if (vm.sendHex) ...[
+                      const SizedBox(width: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Checkbox(
+                            value: vm.enableCrc,
+                            onChanged: (value) => vm.setEnableCrc(value!),
+                          ),
+                          const Text('CRC'),
+                        ],
+                      ),
+                      if (vm.enableCrc) ...[
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 90,
+                          child: NoAnimDropdown<CrcType>(
+                            value: vm.crcType,
+                            hint: AppStrings.raw.crcTypeHint,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              isDense: true,
+                            ),
+                            items: [
+                              DropdownMenuItem(
+                                value: CrcType.crc8,
+                                child: Text('CRC-8'),
+                              ),
+                              DropdownMenuItem(
+                                value: CrcType.crc16,
+                                child: Text('CRC-16'),
+                              ),
+                              DropdownMenuItem(
+                                value: CrcType.crc32,
+                                child: Text('CRC-32'),
+                              ),
+                            ],
+                            onChanged: (value) => vm.setCrcType(value!),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 140,
+                          child: NoAnimDropdown<String>(
+                            value: vm.crcPolyName,
+                            hint: AppStrings.raw.crcPolynomialHint,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              isDense: true,
+                            ),
+                            items:
+                                getPolysByType(vm.crcType).keys.map((name) {
+                                  return DropdownMenuItem(
+                                    value: name,
+                                    child: Tooltip(
+                                      message: name,
+                                      child: Text(
+                                        name,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                            onChanged: (value) => vm.setCrcPolyName(value!),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 92,
+                          child: NoAnimDropdown<CrcByteOrder>(
+                            value: vm.crcByteOrder,
+                            hint: AppStrings.raw.byteOrderHint,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              isDense: true,
+                            ),
+                            items:
+                                CrcByteOrder.values.map((order) {
+                                  return DropdownMenuItem(
+                                    value: order,
+                                    child: Text(order.label),
+                                  );
+                                }).toList(),
+                            onChanged: (value) => vm.setCrcByteOrder(value!),
+                          ),
                         ),
                       ],
-                      onChanged: (value) => vm.setCrcType(value!),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    width: 140,
-                    child: NoAnimDropdown<String>(
-                      value: vm.crcPolyName,
-                      hint: AppStrings.raw.crcPolynomialHint,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        isDense: true,
-                      ),
-                      items:
-                          getPolysByType(vm.crcType).keys.map((name) {
-                            return DropdownMenuItem(
-                              value: name,
-                              child: Tooltip(
-                                message: name,
-                                child: Text(
-                                  name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            );
-                          }).toList(),
-                      onChanged: (value) => vm.setCrcPolyName(value!),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    width: 92,
-                    child: NoAnimDropdown<CrcByteOrder>(
-                      value: vm.crcByteOrder,
-                      hint: AppStrings.raw.byteOrderHint,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                        isDense: true,
-                      ),
-                      items:
-                          CrcByteOrder.values.map((order) {
-                            return DropdownMenuItem(
-                              value: order,
-                              child: Text(order.label),
-                            );
-                          }).toList(),
-                      onChanged: (value) => vm.setCrcByteOrder(value!),
-                    ),
-                  ),
-                ],
-              ],
+                    ],
+                  ],
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 4),
@@ -1758,39 +2087,28 @@ class _RawDataPageState extends State<RawDataPage> {
               borderRadius: BorderRadius.circular(4),
             ),
             title: Text(AppStrings.raw.saveDataTitle),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(AppStrings.raw.chooseSaveFormat),
-                const SizedBox(height: 8),
-                ...vm.dataStats.entries.map(
-                  (e) => Text(
-                    '${e.key}: ${e.value}',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ),
-              ],
-            ),
+            content: Text(AppStrings.raw.chooseSaveFormat),
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(dialogContext).pop(),
                 child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton.icon(
+                key: const ValueKey('raw-data-export-text-option'),
                 onPressed:
-                    () => _runDataExport(
+                    () => _startRawDataExport(
                       context,
                       dialogContext,
                       vm,
                       _RawDataExportFormat.text,
                     ),
-                icon: const Icon(Icons.text_snippet),
+                icon: const Icon(Icons.description),
                 label: Text(AppStrings.raw.textFileFormat),
               ),
               ElevatedButton.icon(
+                key: const ValueKey('raw-data-export-bin-option'),
                 onPressed:
-                    () => _runDataExport(
+                    () => _startRawDataExport(
                       context,
                       dialogContext,
                       vm,
@@ -1804,100 +2122,93 @@ class _RawDataPageState extends State<RawDataPage> {
     );
   }
 
-  Future<void> _runDataExport(
+  Future<void> _startRawDataExport(
     BuildContext pageContext,
     BuildContext formatDialogContext,
     RawDataViewModel vm,
     _RawDataExportFormat format,
   ) async {
     Navigator.of(formatDialogContext).pop();
-    await Future<void>.delayed(Duration.zero);
-    if (!pageContext.mounted || !vm.hasRawData) return;
-
     final outputPath = await file_picker.FilePicker.getDirectoryPath(
       dialogTitle: AppStrings.raw.chooseExportDirectory,
     );
+    if (!pageContext.mounted || !vm.hasRawData) return;
     if (outputPath == null || !pageContext.mounted || !vm.hasRawData) return;
-    final outputDirectory = Directory(outputPath);
 
     final progress = ValueNotifier<double>(0);
     final progressDialog = showDialog<void>(
       context: pageContext,
       barrierDismissible: false,
       builder:
-          (context) => PopScope(
-            canPop: false,
-            child: AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
-              title: Text(AppStrings.raw.exportingData),
-              content: SizedBox(
-                width: 360,
-                child: ValueListenableBuilder<double>(
-                  valueListenable: progress,
-                  builder: (context, value, child) {
-                    final stage =
-                        value < 0.25
-                            ? AppStrings.raw.preparingExport
-                            : value < 0.75
-                            ? format == _RawDataExportFormat.text
-                                ? AppStrings.raw.decodingExportText
-                                : AppStrings.raw.buildingRawExport
-                            : AppStrings.raw.writingExportFile;
-                    return Column(
+          (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.raw.exportingData),
+            content: SizedBox(
+              width: 360,
+              child: ValueListenableBuilder<double>(
+                valueListenable: progress,
+                builder:
+                    (context, value, _) => Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         LinearProgressIndicator(value: value),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(child: Text(stage)),
-                            Text(AppStrings.raw.exportProgressPercent(value)),
-                          ],
+                        Text(
+                          value < 0.05
+                              ? AppStrings.raw.preparingExport
+                              : value < 0.2
+                              ? format == _RawDataExportFormat.text
+                                  ? AppStrings.raw.decodingExportText
+                                  : AppStrings.raw.buildingRawExport
+                              : AppStrings.raw.writingExportFile,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          AppStrings.raw.exportProgressPercent(value),
+                          textAlign: TextAlign.right,
                         ),
                       ],
-                    );
-                  },
-                ),
+                    ),
               ),
             ),
           ),
     );
 
-    // 确保进度弹窗先完成首帧绘制，再开始复制大块原始数据。
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    String? path;
     try {
-      void updateProgress(double value) {
-        progress.value = value.clamp(0, 1);
-      }
-
-      path =
+      final directory = Directory(outputPath);
+      final path =
           format == _RawDataExportFormat.text
               ? await vm.exportAsText(
-                outputDirectory: outputDirectory,
-                onProgress: updateProgress,
+                outputDirectory: directory,
+                onProgress: (value) => progress.value = value,
               )
               : await vm.exportAsRawBytes(
-                outputDirectory: outputDirectory,
-                onProgress: updateProgress,
+                outputDirectory: directory,
+                onProgress: (value) => progress.value = value,
               );
+      if (!pageContext.mounted) return;
+      if (path != null) {
+        _showSnackBar(
+          pageContext,
+          format == _RawDataExportFormat.text
+              ? '${AppStrings.raw.savedTextPrefix}: $path'
+              : '${AppStrings.raw.savedRawPrefix}: $path',
+        );
+      }
+    } catch (error) {
+      if (pageContext.mounted) {
+        _showSnackBar(pageContext, error.toString());
+      }
     } finally {
+      progress.dispose();
       if (pageContext.mounted) {
         Navigator.of(pageContext, rootNavigator: true).pop();
       }
       await progressDialog;
-      progress.dispose();
     }
-
-    if (!pageContext.mounted || path == null) return;
-    final prefix =
-        format == _RawDataExportFormat.text
-            ? AppStrings.raw.savedTextPrefix
-            : AppStrings.raw.savedRawPrefix;
-    _showSnackBar(pageContext, '$prefix: $path');
   }
 
   void _showSnackBar(BuildContext context, String message) {
@@ -2399,30 +2710,22 @@ class _RawDataPageState extends State<RawDataPage> {
   /// 构建下拉菜单项
   Widget _buildMenuItem({required IconData icon, required String label}) {
     return Row(
-      children: [
-        Icon(icon, size: 18),
-        const SizedBox(width: 8),
-        Text(label, style: const TextStyle(fontSize: 13)),
-      ],
+      children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
     );
   }
 }
 
-/// HEX 输入格式化器：只允许 0-9、A-F、a-f 和空格。
+/// HEX输入格式化器 - 只允许十六进制字符和空格
 class _HexInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // 只允许 HEX 字符和空格。
     final filtered = newValue.text.replaceAll(RegExp(r'[^0-9A-Fa-f ]'), '');
-    if (filtered != newValue.text) {
-      return TextEditingValue(
-        text: filtered,
-        selection: TextSelection.collapsed(offset: filtered.length),
-      );
-    }
-    return newValue;
+    return TextEditingValue(
+      text: filtered,
+      selection: TextSelection.collapsed(offset: filtered.length),
+    );
   }
 }

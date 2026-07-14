@@ -20,8 +20,8 @@ import 'views/pages/raw_data_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
 
-/// 主窗口最小宽度：保证左侧控件 + 一个下拉菜单按钮能放下
-const double kMinWindowWidth = 650;
+/// 主窗口最小宽度：保证收发页工具栏可以完整显示。
+const double kMinWindowWidth = 1000;
 
 /// 主窗口默认宽度
 const double kDefaultWindowWidth = 1000;
@@ -300,7 +300,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             ),
           ),
           // 页面内容
-          Expanded(child: _tabs[_currentIndex].page),
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: _tabs.map((tab) => tab.page).toList(),
+            ),
+          ),
           // 底部共享状态栏
           const StatusBar(),
         ],

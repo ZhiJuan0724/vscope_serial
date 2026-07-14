@@ -213,6 +213,9 @@ class AppSettings {
   /// 文本解码方式，默认 UTF-8。
   String rawDataEncoding = 'UTF-8';
 
+  /// 当前选择的多条发送配置文件。
+  String rawMultiSendProfileId = '';
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = 0;
@@ -327,6 +330,7 @@ class AppSettings {
     rawDataShellTheme = 'light';
     rawDataShellCursor = 'verticalBar';
     ymodemSaveDirectoryPolicy = 'exports';
+    rawMultiSendProfileId = '';
 
     xMin = 0;
     xMax = 1000;
@@ -481,6 +485,7 @@ class AppSettings {
           cursor == 'block' || cursor == 'underline' ? cursor! : 'verticalBar';
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
+      rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
 
       // 视口设置
       xMin = (json['xMin'] as num?)?.toDouble() ?? 0;
@@ -567,6 +572,7 @@ class AppSettings {
       'rawDataShellCursor': rawDataShellCursor,
       'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
       'rawDataEncoding': rawDataEncoding,
+      'rawMultiSendProfileId': rawMultiSendProfileId,
 
       // 视口设置
       'xMin': xMin,

@@ -205,6 +205,8 @@ class RawDataViewModel extends BaseViewModel {
 
   Uint8List? prepareSendData(String text) =>
       serialService.prepareSendData(text);
+  Uint8List? prepareMultiSendData(String text, {required bool isHex}) =>
+      serialService.prepareMultiSendData(text, isHex: isHex);
   void send(Uint8List data) {
     AppLogger().info('用户手动发送数据 ${data.length} bytes', category: 'DATA');
     serialService.send(data);

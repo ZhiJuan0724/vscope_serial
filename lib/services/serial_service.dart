@@ -1524,6 +1524,40 @@ class SerialService extends ChangeNotifier {
   @visibleForTesting
   Uint8List? prepareSendDataForTest(String text) => _prepareSendPayload(text);
 
+  /// 多条发送条目使用独立的有效载荷规则：不追加普通发送区的行尾或 CRC。
+  Uint8List? prepareMultiSendData(String text, {required bool isHex}) {
+    if (!isConnected || _nativeReader == null || text.isEmpty) return null;
+    try {
+      if (!isHex) return _encodeTextWithEncoding(text, _textEncoding);
+      final hex = text.replaceAll(RegExp(r'\s+'), '');
+      if (hex.isEmpty || hex.length.isOdd) return null;
+      final bytes = <int>[];
+      for (var index = 0; index < hex.length; index += 2) {
+        final value = int.tryParse(hex.substring(index, index + 2), radix: 16);
+        if (value == null) return null;
+        bytes.add(value);
+      }
+      return Uint8List.fromList(bytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  Uint8List? prepareMultiSendDataForTest(String text, {required bool isHex}) {
+    if (text.isEmpty) return null;
+    if (!isHex) return _encodeTextWithEncoding(text, _textEncoding);
+    final hex = text.replaceAll(RegExp(r'\s+'), '');
+    if (hex.isEmpty || hex.length.isOdd) return null;
+    final bytes = <int>[];
+    for (var index = 0; index < hex.length; index += 2) {
+      final value = int.tryParse(hex.substring(index, index + 2), radix: 16);
+      if (value == null) return null;
+      bytes.add(value);
+    }
+    return Uint8List.fromList(bytes);
+  }
+
   Uint8List? _prepareSendPayload(String text) {
     if (text.isEmpty) return null;
 

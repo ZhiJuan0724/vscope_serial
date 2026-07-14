@@ -59,6 +59,7 @@ void main() {
             ..rawDataShellTheme = 'dark'
             ..rawDataShellCursor = 'block'
             ..ymodemSaveDirectoryPolicy = 'custom'
+            ..rawMultiSendProfileId = 'multi-send'
             ..xMin = 10
             ..xMax = 20
             ..yMin = 30
@@ -118,6 +119,7 @@ void main() {
       expect(settings.rawDataShellTheme, 'light');
       expect(settings.rawDataShellCursor, 'verticalBar');
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
+      expect(settings.rawMultiSendProfileId, isEmpty);
       expect(settings.xMin, 0);
       expect(settings.xMax, 1000);
       expect(settings.yMin, 0);

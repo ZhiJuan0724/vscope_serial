@@ -116,6 +116,22 @@ void main() {
       expect(bigEndian.skip(2), littleEndian.skip(2).toList().reversed);
     });
 
+    test('多条发送不继承普通发送区的行尾或 CRC', () {
+      service.setTextEncoding('UTF-8');
+      service.appendLineEnding = true;
+      service.lineEnding = '\r\n';
+      service.sendHex = true;
+      service.enableCrc = true;
+
+      expect(
+        service.prepareMultiSendDataForTest('AT', isHex: false),
+        utf8.encode('AT'),
+      );
+      expect(service.prepareMultiSendDataForTest('01 02', isHex: true), [1, 2]);
+      expect(service.prepareMultiSendDataForTest('0', isHex: true), isNull);
+      expect(service.prepareMultiSendDataForTest('0G', isHex: true), isNull);
+    });
+
     test('plot binary send is marked and displayed as hex', () {
       service.sendHex = false;
       service.debugAddPlotSendDataForTest(
