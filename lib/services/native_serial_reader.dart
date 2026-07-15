@@ -201,6 +201,123 @@ List<NativeSerialPortDetail> _listNativePortDetails() {
 
 bool _checkNativeConnectionHealth() => _nsrIsConnectionHealthy() == 1;
 
+int _writeNativeBytes(Uint8List data) {
+  final ptr = calloc<Uint8>(data.length);
+  try {
+    ptr.asTypedList(data.length).setAll(0, data);
+    return _nsrWrite(ptr, data.length);
+  } finally {
+    calloc.free(ptr);
+  }
+}
+
+/// 常驻 isolate 的串口写入循环。
+///
+/// ReceivePort 按消息到达顺序逐条处理，保证普通发送、Shell 和文件传输
+/// 共用同一条有序写入链路，同时避免同步 FFI 写入阻塞 Flutter UI isolate。
+Future<void> _nativeWriteIsolateMain(SendPort readyPort) async {
+  final commands = ReceivePort();
+  readyPort.send(commands.sendPort);
+  await for (final message in commands) {
+    if (message is! List || message.length < 2) continue;
+    final replyPort = message[0] as SendPort;
+    final requestId = message[1] as int;
+    if (message.length == 2) {
+      replyPort.send(<Object?>[requestId, null, null]);
+      commands.close();
+      break;
+    }
+
+    try {
+      final data =
+          (message[2] as TransferableTypedData).materialize().asUint8List();
+      final written = _writeNativeBytes(data);
+      replyPort.send(<Object?>[requestId, written, null]);
+    } catch (error, stackTrace) {
+      replyPort.send(<Object?>[requestId, null, '$error\n$stackTrace']);
+    }
+  }
+}
+
+class _NativeSerialWriteQueue {
+  final ReceivePort _responses = ReceivePort();
+  final Map<int, Completer<int?>> _pending = <int, Completer<int?>>{};
+  Isolate? _isolate;
+  SendPort? _commands;
+  Future<void>? _starting;
+  int _nextRequestId = 1;
+  bool _closing = false;
+
+  _NativeSerialWriteQueue() {
+    _responses.listen((message) {
+      if (message is SendPort) {
+        _commands = message;
+        return;
+      }
+      if (message is! List || message.length < 3) return;
+      final requestId = message[0] as int;
+      final completer = _pending.remove(requestId);
+      if (completer == null) return;
+      final error = message[2];
+      if (error != null) {
+        completer.completeError(StateError(error as String));
+      } else {
+        completer.complete(message[1] as int?);
+      }
+    });
+  }
+
+  Future<void> _ensureStarted() {
+    final existing = _starting;
+    if (existing != null) return existing;
+    final completer = Completer<void>();
+    _starting = completer.future;
+    Isolate.spawn(_nativeWriteIsolateMain, _responses.sendPort).then((
+      isolate,
+    ) async {
+      _isolate = isolate;
+      while (_commands == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      completer.complete();
+    }, onError: completer.completeError);
+    return completer.future;
+  }
+
+  Future<int> write(Uint8List data) async {
+    if (_closing) throw StateError('串口写入队列正在关闭');
+    if (data.isEmpty) return 0;
+    await _ensureStarted();
+    final requestId = _nextRequestId++;
+    final completer = Completer<int?>();
+    _pending[requestId] = completer;
+    _commands!.send(<Object>[
+      _responses.sendPort,
+      requestId,
+      TransferableTypedData.fromList(<Uint8List>[data]),
+    ]);
+    return (await completer.future)!;
+  }
+
+  Future<void> close() async {
+    if (_closing) return;
+    _closing = true;
+    if (_starting == null) {
+      _responses.close();
+      return;
+    }
+    await _ensureStarted();
+    final requestId = _nextRequestId++;
+    final completer = Completer<int?>();
+    _pending[requestId] = completer;
+    _commands!.send(<Object>[_responses.sendPort, requestId]);
+    await completer.future;
+    _isolate?.kill(priority: Isolate.immediate);
+    _isolate = null;
+    _responses.close();
+  }
+}
+
 class NativeSerialPortDetail {
   final String port;
   final String name;
@@ -216,6 +333,7 @@ class NativeSerialReader {
   ReceivePort? _receivePort;
   bool _isOpen = false;
   bool _dartApiInitialized = false;
+  final _writeQueue = _NativeSerialWriteQueue();
 
   /// 初始化 Dart API（必须在其它操作前调用）。
   ///
@@ -265,9 +383,10 @@ class NativeSerialReader {
   }
 
   /// 关闭串口
-  void close() {
+  Future<void> close() async {
     stopReading();
-    _nsrClosePort();
+    await _writeQueue.close();
+    await Isolate.run(_closeNativePort);
     _isOpen = false;
   }
 
@@ -315,15 +434,7 @@ class NativeSerialReader {
   }
 
   /// 发送数据
-  int write(Uint8List data) {
-    final ptr = calloc<Uint8>(data.length);
-    try {
-      ptr.asTypedList(data.length).setAll(0, data);
-      return _nsrWrite(ptr, data.length);
-    } finally {
-      calloc.free(ptr);
-    }
-  }
+  Future<int> write(Uint8List data) => _writeQueue.write(data);
 
   /// 是否打开
   bool get isOpen => _nsrIsOpen() == 1;
@@ -372,12 +483,13 @@ class NativeSerialReader {
     _dataController.add(NativeSerialData(data: data, timestampUs: timestampUs));
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     // 先停止原生线程，再关闭 ReceivePort 和 stream controller。
     _nsrStopReading();
     _receivePort?.close();
     _receivePort = null;
-    _nsrClosePort();
+    await _writeQueue.close();
+    await Isolate.run(_closeNativePort);
     _isOpen = false;
     _dataController.close();
   }
@@ -422,6 +534,8 @@ bool _openNativePort(String portName, int baudRate) {
     calloc.free(namePtr);
   }
 }
+
+void _closeNativePort() => _nsrClosePort();
 
 /// 原生串口数据（带微秒级时间戳）
 class NativeSerialData {

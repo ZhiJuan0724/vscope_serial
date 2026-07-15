@@ -6,6 +6,645 @@ const double kSecondaryDialogFieldWidth = 140;
 /// 二级弹窗内较长选项输入框和下拉框的默认宽度。
 const double kSecondaryDialogWideFieldWidth = 220;
 
+/// 三个业务页面高级设置弹窗的统一内容宽度。
+const double kAdvancedSettingsDialogWidth = 420;
+
+/// 高级设置弹窗统一使用较小圆角，与绘图高级设置保持一致。
+const RoundedRectangleBorder kAdvancedSettingsDialogShape =
+    RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(4)));
+
+/// 高级设置滚动内容为右侧滚动条预留的统一间距。
+const EdgeInsets kAdvancedSettingsDialogScrollPadding = EdgeInsets.only(
+  right: 12,
+);
+
+/// 左侧分类导航 + 右侧连续内容设置弹窗的默认内容宽度。
+const double kSettingsNavigationDialogWidth = 660;
+
+/// 设置分类导航栏宽度，保持紧凑并为右侧表单保留主要空间。
+const double kSettingsNavigationWidth = 136;
+
+/// 绘图工具栏原有开始/停止按钮的最小高度，其他页面以此为视觉基准。
+const double kToolbarStartStopButtonMinHeight = 28;
+
+/// 页面工具栏统一高度。
+const double kToolbarHeight = 40;
+
+/// 工具栏图标按钮统一尺寸和点击区域。
+const double kToolbarControlExtent = 32;
+const double kToolbarIconSize = 18;
+
+/// 同组工具和左右工具组之间的统一间距。
+const double kToolbarItemSpacing = 4;
+const double kToolbarGroupSpacing = 12;
+
+/// 纯图标开始/停止按钮的最小宽度，与绘图按钮的最小高度一致。
+const double kToolbarStartStopIconButtonMinWidth = 28;
+
+/// 页面底部业务状态栏的统一高度。
+const double kPageStatusBarHeight = 24;
+
+/// 页面底部业务状态栏的统一水平留白。
+const EdgeInsets kPageStatusBarPadding = EdgeInsets.symmetric(horizontal: 8);
+
+/// 页面底部业务状态栏的统一文字样式。
+const TextStyle kPageStatusBarTextStyle = TextStyle(
+  fontSize: 11,
+  color: Colors.grey,
+);
+
+/// 设置导航项只保存显示名称和右侧内容锚点，不代表互斥页面。
+class SettingsNavigationItem {
+  const SettingsNavigationItem({required this.label, required this.anchorKey});
+
+  final String label;
+  final GlobalKey anchorKey;
+}
+
+/// 左侧分类导航、右侧连续滚动内容的统一设置布局。
+///
+/// 点击分类仅滚动到对应锚点；右侧所有内容始终存在，不按分类切换或
+/// 人为增加大段分隔空间，避免编辑中的控件状态被重建。
+class SettingsNavigationView extends StatefulWidget {
+  const SettingsNavigationView({
+    super.key,
+    required this.scrollController,
+    required this.items,
+    required this.child,
+    this.width = kSettingsNavigationDialogWidth,
+  });
+
+  final ScrollController scrollController;
+  final List<SettingsNavigationItem> items;
+  final Widget child;
+  final double width;
+
+  @override
+  State<SettingsNavigationView> createState() => _SettingsNavigationViewState();
+}
+
+class _SettingsNavigationViewState extends State<SettingsNavigationView> {
+  int _selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final height =
+        (MediaQuery.sizeOf(context).height * 0.72)
+            .clamp(360.0, 560.0)
+            .toDouble();
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return SizedBox(
+      key: const ValueKey('settings-navigation-view'),
+      width: widget.width,
+      height: height,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: kSettingsNavigationWidth,
+            child: ListView.builder(
+              padding: const EdgeInsets.only(right: 8),
+              itemCount: widget.items.length,
+              itemBuilder: (context, index) {
+                final item = widget.items[index];
+                final selected = index == _selectedIndex;
+                return TextButton(
+                  key: ValueKey('settings-navigation-item-$index'),
+                  style: TextButton.styleFrom(
+                    alignment: Alignment.centerLeft,
+                    foregroundColor:
+                        selected ? colorScheme.primary : colorScheme.onSurface,
+                    backgroundColor:
+                        selected
+                            ? colorScheme.primaryContainer.withValues(
+                              alpha: 0.5,
+                            )
+                            : Colors.transparent,
+                    minimumSize: const Size.fromHeight(34),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    shape: const RoundedRectangleBorder(),
+                  ),
+                  onPressed: () {
+                    setState(() => _selectedIndex = index);
+                    final anchorContext = item.anchorKey.currentContext;
+                    if (anchorContext == null) return;
+                    Scrollable.ensureVisible(
+                      anchorContext,
+                      alignment: 0,
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOut,
+                    );
+                  },
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              },
+            ),
+          ),
+          VerticalDivider(width: 1, color: colorScheme.outlineVariant),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Scrollbar(
+              controller: widget.scrollController,
+              child: SingleChildScrollView(
+                key: const ValueKey('settings-navigation-content'),
+                controller: widget.scrollController,
+                padding: kAdvancedSettingsDialogScrollPadding,
+                child: widget.child,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 工具栏项目折叠到“更多”菜单后对应的一项操作。
+class ToolbarOverflowAction {
+  const ToolbarOverflowAction({
+    this.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.selected = false,
+  });
+
+  final Key? key;
+  final Widget icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool selected;
+}
+
+/// 工具栏内可参与响应式折叠的布局项目。
+///
+/// [extent] 只用于决定何时折叠，不会强制修改子控件宽度；项目没有
+/// [overflowActions] 时始终保留在工具栏中。
+class ToolbarLayoutItem {
+  const ToolbarLayoutItem({
+    required this.child,
+    required this.extent,
+    this.overflowActions = const [],
+  });
+
+  final Widget child;
+  final double extent;
+  final List<ToolbarOverflowAction> overflowActions;
+}
+
+/// 页面共用工具栏，统一背景、边框、高度以及左右对齐方式。
+///
+/// 宽度不足时先从右侧最末项目开始折叠，再折叠左侧最末项目，所有被
+/// 折叠的操作进入右侧“更多”菜单，避免水平滚动或 RenderFlex 溢出。
+class UnifiedToolbar extends StatelessWidget {
+  const UnifiedToolbar({
+    super.key,
+    required this.leadingItems,
+    required this.trailingItems,
+    this.height = kToolbarHeight,
+  });
+
+  final List<ToolbarLayoutItem> leadingItems;
+  final List<ToolbarLayoutItem> trailingItems;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final leadingVisible = List<bool>.filled(leadingItems.length, true);
+          final trailingVisible = List<bool>.filled(trailingItems.length, true);
+
+          bool hasHiddenItems() =>
+              leadingVisible.contains(false) || trailingVisible.contains(false);
+
+          double usedWidth() {
+            final visible = <ToolbarLayoutItem>[
+              for (var i = 0; i < leadingItems.length; i++)
+                if (leadingVisible[i]) leadingItems[i],
+              for (var i = 0; i < trailingItems.length; i++)
+                if (trailingVisible[i]) trailingItems[i],
+            ];
+            var width = visible.fold<double>(
+              0,
+              (sum, item) => sum + item.extent,
+            );
+            if (visible.length > 1) {
+              width += (visible.length - 1) * kToolbarItemSpacing;
+            }
+            final hasLeading = leadingVisible.contains(true);
+            final hasTrailing = trailingVisible.contains(true);
+            if (hasLeading && (hasTrailing || hasHiddenItems())) {
+              width += kToolbarGroupSpacing - kToolbarItemSpacing;
+            }
+            if (hasHiddenItems()) {
+              width += kToolbarControlExtent + kToolbarItemSpacing;
+            }
+            return width;
+          }
+
+          bool hideLastOverflowable(
+            List<ToolbarLayoutItem> items,
+            List<bool> visible,
+          ) {
+            for (var index = items.length - 1; index >= 0; index--) {
+              if (visible[index] && items[index].overflowActions.isNotEmpty) {
+                visible[index] = false;
+                return true;
+              }
+            }
+            return false;
+          }
+
+          while (usedWidth() > constraints.maxWidth) {
+            if (hideLastOverflowable(trailingItems, trailingVisible)) continue;
+            if (hideLastOverflowable(leadingItems, leadingVisible)) continue;
+            break;
+          }
+
+          final hiddenActions = <ToolbarOverflowAction>[
+            for (var i = 0; i < leadingItems.length; i++)
+              if (!leadingVisible[i]) ...leadingItems[i].overflowActions,
+            for (var i = 0; i < trailingItems.length; i++)
+              if (!trailingVisible[i]) ...trailingItems[i].overflowActions,
+          ];
+          final leading = <Widget>[
+            for (var i = 0; i < leadingItems.length; i++)
+              if (leadingVisible[i]) leadingItems[i].child,
+          ];
+          final trailing = <Widget>[
+            for (var i = 0; i < trailingItems.length; i++)
+              if (trailingVisible[i]) trailingItems[i].child,
+            if (hiddenActions.isNotEmpty)
+              _ToolbarMoreButton(actions: hiddenActions),
+          ];
+
+          return Row(
+            children: [
+              ..._spacedToolbarChildren(leading),
+              if (leading.isNotEmpty && trailing.isNotEmpty)
+                const SizedBox(width: kToolbarGroupSpacing),
+              if (trailing.isNotEmpty) ...[
+                const Spacer(),
+                ..._spacedToolbarChildren(trailing),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+List<Widget> _spacedToolbarChildren(List<Widget> children) {
+  return [
+    for (var index = 0; index < children.length; index++) ...[
+      if (index > 0) const SizedBox(width: kToolbarItemSpacing),
+      children[index],
+    ],
+  ];
+}
+
+class _ToolbarMoreButton extends StatelessWidget {
+  const _ToolbarMoreButton({required this.actions});
+
+  final List<ToolbarOverflowAction> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: kToolbarControlExtent,
+      height: kToolbarControlExtent,
+      child: PopupMenuButton<int>(
+        key: const ValueKey('toolbar-more-button'),
+        tooltip: '更多',
+        padding: EdgeInsets.zero,
+        iconSize: kToolbarIconSize,
+        icon: const Icon(Icons.more_vert),
+        onSelected: (index) => actions[index].onPressed?.call(),
+        itemBuilder:
+            (context) => [
+              for (var index = 0; index < actions.length; index++)
+                PopupMenuItem<int>(
+                  key: actions[index].key,
+                  value: index,
+                  enabled: actions[index].onPressed != null,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 24,
+                        child: IconTheme.merge(
+                          data: IconThemeData(
+                            size: kToolbarIconSize,
+                            color:
+                                actions[index].selected
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                          ),
+                          child: actions[index].icon,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(actions[index].label)),
+                      if (actions[index].selected)
+                        Icon(
+                          Icons.check,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+      ),
+    );
+  }
+}
+
+/// 无状态的单图标工具栏按钮。
+class ToolbarIconButton extends StatelessWidget {
+  const ToolbarIconButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final Widget icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: kToolbarControlExtent,
+      height: kToolbarControlExtent,
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(
+          width: kToolbarControlExtent,
+          height: kToolbarControlExtent,
+        ),
+        // 合并 IconButton 提供的前景色，确保自定义 SVG 图标同步普通、悬停和禁用状态。
+        icon: IconTheme.merge(
+          data: const IconThemeData(size: kToolbarIconSize),
+          child: icon,
+        ),
+      ),
+    );
+  }
+}
+
+/// 带选中状态的单图标工具栏按钮。
+class ToolbarToggleIconButton extends StatelessWidget {
+  const ToolbarToggleIconButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onPressed,
+    this.activeColor,
+  });
+
+  final Widget icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback? onPressed;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = activeColor ?? Theme.of(context).colorScheme.primary;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: selected ? color.withValues(alpha: 0.12) : Colors.transparent,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: IconTheme.merge(
+        data: IconThemeData(color: selected ? color : null),
+        child: ToolbarIconButton(
+          icon: icon,
+          tooltip: tooltip,
+          onPressed: onPressed,
+        ),
+      ),
+    );
+  }
+}
+
+/// 带图标、文字、提示和选中状态的工具栏按钮。
+class ToolbarToggleTextButton extends StatelessWidget {
+  const ToolbarToggleTextButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.onPressed,
+    this.activeColor,
+  });
+
+  final Widget icon;
+  final String label;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback? onPressed;
+  final Color? activeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = activeColor ?? Theme.of(context).colorScheme.primary;
+    return Tooltip(
+      message: tooltip,
+      child: TextButton.icon(
+        onPressed: onPressed,
+        // 未选中时继承 TextButton 的前景色，选中时仅覆盖为业务状态色。
+        icon: IconTheme.merge(
+          data: IconThemeData(
+            size: kToolbarIconSize,
+            color: selected ? color : null,
+          ),
+          child: icon,
+        ),
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontFamily: 'SarasaUiSC',
+            color: selected ? color : null,
+          ),
+        ),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          minimumSize: const Size(0, 28),
+          backgroundColor:
+              selected ? color.withValues(alpha: 0.12) : Colors.transparent,
+        ),
+      ),
+    );
+  }
+}
+
+/// 工具栏统一下拉选择框。
+class ToolbarDropdown<T> extends StatelessWidget {
+  const ToolbarDropdown({
+    super.key,
+    required this.width,
+    required this.value,
+    required this.hint,
+    required this.items,
+    this.onChanged,
+    this.visibleFieldOffsetY = 1,
+  });
+
+  final double width;
+  final T? value;
+  final String hint;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?>? onChanged;
+
+  /// 可见输入框相对工具栏点击区域的垂直偏移，用于页面级视觉对齐。
+  final double visibleFieldOffsetY;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: kToolbarControlExtent,
+      // 点击布局保持 32px，内部可见字段与绘图原有开始按钮同为 28px。
+      child: Center(
+        // 开始按钮的阴影使可见填充区域视觉中心略低，字段边框同步下移。
+        child: Transform.translate(
+          offset: Offset(0, visibleFieldOffsetY),
+          child: SizedBox(
+            height: kToolbarStartStopButtonMinHeight,
+            child: NoAnimDropdown<T>(
+              value: value,
+              hint: hint,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 8),
+              ),
+              items: items,
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 数据收发、Shell 和绘图页面共用的开始/停止按钮。
+///
+/// 样式以绘图页面原有按钮为准：保留 ElevatedButton 的主题圆角和阴影，
+/// 仅统一状态颜色、内边距和最小高度。[label] 为空时显示纯图标。
+class ToolbarStartStopButton extends StatelessWidget {
+  const ToolbarStartStopButton({
+    super.key,
+    required this.onPressed,
+    required this.running,
+    this.busy = false,
+    this.label,
+    this.tooltip,
+  });
+
+  final VoidCallback? onPressed;
+  final bool running;
+  final bool busy;
+  final String? label;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon =
+        busy
+            ? Icons.hourglass_empty
+            : running
+            ? Icons.stop
+            : Icons.play_arrow;
+    final backgroundColor =
+        busy
+            ? Colors.grey
+            : running
+            ? Colors.red
+            : Colors.green;
+
+    final style = ElevatedButton.styleFrom(
+      backgroundColor: backgroundColor,
+      foregroundColor: Colors.white,
+      padding:
+          label == null
+              ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4)
+              : const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      minimumSize: Size(
+        label == null ? kToolbarStartStopIconButtonMinWidth : 0,
+        kToolbarStartStopButtonMinHeight,
+      ),
+    );
+    final button =
+        label == null
+            ? ElevatedButton(
+              onPressed: onPressed,
+              style: style,
+              child: Icon(icon, size: 16),
+            )
+            : ElevatedButton.icon(
+              onPressed: onPressed,
+              style: style,
+              icon: Icon(icon, size: 16),
+              label: Text(
+                label!,
+                style: const TextStyle(fontFamily: 'SarasaUiSC'),
+              ),
+            );
+
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
+  }
+}
+
+/// 数据收发、Shell 和绘图页面共用的高级设置入口。
+///
+/// 入口沿用绘图工具栏原有的调节图标，不显示文字，确保三个页面的尺寸、
+/// 点击区域和提示行为完全一致。
+class ToolbarAdvancedSettingsButton extends StatelessWidget {
+  const ToolbarAdvancedSettingsButton({
+    super.key,
+    required this.onPressed,
+    required this.tooltip,
+  });
+
+  final VoidCallback? onPressed;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return ToolbarIconButton(
+      onPressed: onPressed,
+      icon: const Icon(Icons.tune),
+      tooltip: tooltip,
+    );
+  }
+}
+
 /// 二级弹窗内单行输入框和下拉框的统一装饰。
 InputDecoration secondaryDialogFieldDecoration({
   String? hintText,
@@ -22,6 +661,26 @@ InputDecoration secondaryDialogFieldDecoration({
     suffixText: suffixText,
     counterText: counterText,
   );
+}
+
+/// 设置弹窗右下角的统一主操作按钮。
+///
+/// 数据收发与 Shell 等设置弹窗共用同一 ElevatedButton 样式，仅保留各自
+/// 的“确定”或“保存”语义，避免不同 Material 按钮类型产生圆角差异。
+class DialogPrimaryActionButton extends StatelessWidget {
+  const DialogPrimaryActionButton({
+    super.key,
+    required this.onPressed,
+    required this.label,
+  });
+
+  final VoidCallback? onPressed;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton(onPressed: onPressed, child: Text(label));
+  }
 }
 
 /// 无动画下拉选择框

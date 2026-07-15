@@ -27,6 +27,7 @@ void main() {
       final sentPackets = <Uint8List>[];
       var eotCount = 0;
       var headerSeen = false;
+      var firstDataBlockAttempts = 0;
 
       service = YmodemService(
         packetTimeout: const Duration(milliseconds: 200),
@@ -56,6 +57,10 @@ void main() {
                   ]),
                 );
               } else {
+                if (block == 1 && firstDataBlockAttempts++ == 0) {
+                  // 模拟数据块 ACK 丢失，发送端应超时后重发同一个块。
+                  return;
+                }
                 service.addIncomingBytes(
                   Uint8List.fromList([YmodemService.ack]),
                 );
@@ -70,9 +75,10 @@ void main() {
       await sendFuture;
 
       expect(service.status.phase, YmodemPhase.completed);
+      expect(service.status.retryCount, greaterThanOrEqualTo(1));
       expect(
-        sentPackets.any((packet) => packet.length > 1 && packet[1] == 1),
-        isTrue,
+        sentPackets.where((packet) => packet.length > 1 && packet[1] == 1),
+        hasLength(2),
       );
       expect(
         sentPackets.where(
@@ -253,6 +259,71 @@ void main() {
       expect(file!.readAsBytesSync(), [7, 8, 9]);
       expect(service.status.phase, YmodemPhase.completed);
     });
+
+    test(
+      'retries CRC errors and ACKs duplicate blocks without rewriting',
+      () async {
+        late YmodemService service;
+        final temp = await Directory.systemTemp.createTemp('ymodem-retry-');
+        addTearDown(() => temp.delete(recursive: true));
+        final payload = Uint8List(128)..fillRange(0, 128, YmodemService.eof);
+        payload.setRange(0, 4, [1, 2, 3, 4]);
+        final validPacket = YmodemService.buildDataPacketForTest(payload, 1);
+        final corruptPacket = Uint8List.fromList(validPacket)
+          ..[validPacket.length - 1] ^= 0xFF;
+        var ackCount = 0;
+        var corruptSent = false;
+        var validSent = false;
+
+        service = YmodemService(
+          packetTimeout: const Duration(milliseconds: 200),
+          sendBytes: (data) {
+            Future.microtask(() {
+              for (final byte in data) {
+                if (byte == YmodemService.crcRequest && ackCount == 0) {
+                  service.addIncomingBytes(
+                    YmodemService.buildHeaderPacketForTest('retry.bin', 4),
+                  );
+                } else if (byte == YmodemService.crcRequest && ackCount == 1) {
+                  corruptSent = true;
+                  service.addIncomingBytes(corruptPacket);
+                } else if (byte == YmodemService.crcRequest && ackCount >= 4) {
+                  service.addIncomingBytes(
+                    YmodemService.buildHeaderPacketForTest('', 0),
+                  );
+                } else if (byte == YmodemService.nak) {
+                  if (corruptSent && !validSent) {
+                    validSent = true;
+                    service.addIncomingBytes(validPacket);
+                  } else {
+                    service.addIncomingBytes(
+                      Uint8List.fromList([YmodemService.eot]),
+                    );
+                  }
+                } else if (byte == YmodemService.ack) {
+                  ackCount++;
+                  if (ackCount == 2) {
+                    // 模拟数据块 ACK 丢失，发送方重发同一个块。
+                    service.addIncomingBytes(validPacket);
+                  } else if (ackCount == 3) {
+                    service.addIncomingBytes(
+                      Uint8List.fromList([YmodemService.eot]),
+                    );
+                  }
+                }
+              }
+            });
+          },
+        );
+
+        final file = await service.receiveFile(temp);
+
+        expect(file, isNotNull);
+        expect(file!.readAsBytesSync(), [1, 2, 3, 4]);
+        expect(service.status.retryCount, greaterThanOrEqualTo(1));
+        expect(service.status.phase, YmodemPhase.completed);
+      },
+    );
 
     test('cancel sends CAN bytes and marks transfer cancelled', () async {
       late YmodemService service;

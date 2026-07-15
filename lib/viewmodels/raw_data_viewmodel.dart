@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../services/serial_service.dart';
-import '../services/ymodem_service.dart';
 import 'base_viewmodel.dart';
 
 /// 数据收发页面 ViewModel
@@ -20,13 +19,6 @@ class RawDataViewModel extends BaseViewModel {
   bool get receiveHex => serialService.receiveHex;
   bool get showTimestamp => serialService.showTimestamp;
   bool get autoScroll => serialService.autoScroll;
-  bool get shellMode => serialService.rawDataShellMode;
-  bool get shellEnabled => serialService.rawDataShellEnabled;
-  RawShellInputMode get shellInputMode => serialService.rawShellInputMode;
-  double get terminalFontSize => serialService.rawDataTerminalFontSize;
-  String get terminalFontFamily => serialService.rawDataTerminalFontFamily;
-  RawShellThemeMode get shellThemeMode => serialService.rawShellThemeMode;
-  RawShellCursorMode get shellCursorMode => serialService.rawShellCursorMode;
   bool get sendHex => serialService.sendHex;
   bool get keepSendText => serialService.keepSendText;
   bool get appendLineEnding => serialService.appendLineEnding;
@@ -40,11 +32,6 @@ class RawDataViewModel extends BaseViewModel {
   bool get hasRawData => serialService.hasRawData;
   int get timeWindowUs => serialService.timeWindowUs;
   int get displayLineLimit => serialService.displayLineLimit;
-  Stream<Uint8List> get shellDataStream => serialService.shellDataStream;
-  Stream<YmodemTransferStatus> get ymodemStatusStream =>
-      serialService.ymodemService.statusStream;
-  YmodemTransferStatus get ymodemStatus => serialService.ymodemService.status;
-  bool get isYmodemActive => ymodemStatus.isActive;
   String get textEncoding => serialService.textEncoding;
 
   /// 非 HEX 模式可选的文本收发编码。
@@ -90,34 +77,6 @@ class RawDataViewModel extends BaseViewModel {
     serialService.autoScroll = value;
     AppLogger().info('接收区自动滚动${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => serialService.notifyListeners());
-  }
-
-  void setShellMode(bool value) {
-    serialService.setRawDataShellMode(value);
-  }
-
-  void setShellEnabled(bool value) {
-    serialService.setRawDataShellEnabled(value);
-  }
-
-  void setShellInputMode(RawShellInputMode value) {
-    serialService.setRawShellInputMode(value);
-  }
-
-  void setTerminalFontSize(double value) {
-    serialService.setRawDataTerminalFontSize(value);
-  }
-
-  void setTerminalFontFamily(String value) {
-    serialService.setRawDataTerminalFontFamily(value);
-  }
-
-  void setShellThemeMode(RawShellThemeMode value) {
-    serialService.setRawShellThemeMode(value);
-  }
-
-  void setShellCursorMode(RawShellCursorMode value) {
-    serialService.setRawShellCursorMode(value);
   }
 
   void setSendHex(bool value) {
@@ -207,49 +166,9 @@ class RawDataViewModel extends BaseViewModel {
       serialService.prepareSendData(text);
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) =>
       serialService.prepareMultiSendData(text, isHex: isHex);
-  void send(Uint8List data) {
+  Future<void> send(Uint8List data) {
     AppLogger().info('用户手动发送数据 ${data.length} bytes', category: 'DATA');
-    serialService.send(data);
-  }
-
-  Future<void> sendShellText(String text) async {
-    if (text.isEmpty || isYmodemActive) return;
-    AppLogger().info('Shell命令行发送 ${text.length} 字符', category: 'DATA');
-    serialService.sendRawBytes(serialService.prepareShellTextData(text));
-  }
-
-  Future<void> sendShellBytes(Uint8List data) async {
-    if (data.isEmpty || isYmodemActive) return;
-    AppLogger().info('Shell逐键发送 ${data.length} bytes', category: 'DATA');
-    await serialService.sendRawBytes(data);
-  }
-
-  String decodeText(Uint8List data) => serialService.decodeText(data);
-
-  Uint8List encodeText(String text) => serialService.encodeText(text);
-
-  Future<void> sendYmodemFile(
-    File file, {
-    YmodemPacketSizeMode packetSizeMode = YmodemPacketSizeMode.auto,
-  }) {
-    AppLogger().info(
-      '开始YMODEM发送：${file.path}，分包=${packetSizeMode.name}',
-      category: 'DATA',
-    );
-    return serialService.ymodemService.sendFile(
-      file,
-      packetSizeMode: packetSizeMode,
-    );
-  }
-
-  Future<File?> receiveYmodemFile() {
-    AppLogger().info('开始YMODEM接收', category: 'DATA');
-    return serialService.receiveYmodemFile();
-  }
-
-  Future<void> cancelYmodem() {
-    AppLogger().info('用户取消YMODEM传输', category: 'DATA');
-    return serialService.ymodemService.cancel();
+    return serialService.send(data);
   }
 
   Future<String?> exportAsText({

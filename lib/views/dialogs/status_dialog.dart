@@ -326,8 +326,9 @@ class _StatusDialogState extends State<StatusDialog> {
               )
             else if (service.isConnected)
               ElevatedButton.icon(
-                onPressed: () {
-                  service.disconnect();
+                onPressed: () async {
+                  await service.disconnect();
+                  if (!context.mounted) return;
                   Navigator.of(context).pop();
                 },
                 icon: const Icon(Icons.stop),

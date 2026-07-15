@@ -33,7 +33,7 @@ void main() {
       vm.clearData();
 
       // 开始绘图
-      vm.startPlotting();
+      await vm.startPlotting();
       expect(vm.isPlotting, true);
 
       // 等待短窗口，降低测试耗时

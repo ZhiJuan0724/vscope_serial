@@ -93,8 +93,23 @@ class StatusBar extends StatelessWidget {
               ),
               const Spacer(),
               Tooltip(
+                message: AppStrings.common.advancedSettings,
+                child: IconButton(
+                  key: const ValueKey('app-advanced-settings-button'),
+                  onPressed: () => showAppAdvancedSettingsDialog(context),
+                  icon: const Icon(Icons.tune, size: 16),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  splashRadius: 14,
+                ),
+              ),
+              Tooltip(
                 message: AppStrings.status.appInfo,
                 child: IconButton(
+                  key: const ValueKey('app-info-button'),
                   onPressed: () => showAppInfoDialog(context),
                   icon: const Icon(Icons.info_outline, size: 16),
                   padding: EdgeInsets.zero,

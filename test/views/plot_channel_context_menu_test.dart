@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/core/theme/app_theme.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
@@ -48,9 +49,36 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: PlotPage())),
       ),
     );
+    final startButton = tester.widget<ElevatedButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey('plot-start-stop-button')),
+        matching: find.byType(ElevatedButton),
+      ),
+    );
+    expect(startButton.style?.minimumSize?.resolve({}), const Size(0, 28));
+    final startButtonFinder = find.descendant(
+      of: find.byKey(const ValueKey('plot-start-stop-button')),
+      matching: find.byType(ElevatedButton),
+    );
+    final parserField = find.descendant(
+      of: find.byKey(const ValueKey('plot-parser-selector')),
+      matching: find.byType(InputDecorator),
+    );
+    expect(
+      tester.getCenter(parserField).dy,
+      tester.getCenter(startButtonFinder).dy + 2,
+    );
     expect(find.textContaining('FPS:'), findsOneWidget);
+    expect(find.text(AppStrings.plot.advancedSettings), findsNothing);
+    expect(find.byIcon(Icons.tune), findsOneWidget);
 
-    await tester.tap(find.byTooltip(AppStrings.common.advancedSettings).last);
+    await tester.tap(find.byTooltip(AppStrings.plot.advancedSettings).last);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('settings-navigation-view')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('绘图性能'));
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
     expect(find.text(AppStrings.plot.lodQualityBalanced), findsOneWidget);
@@ -70,6 +98,34 @@ void main() {
 
     expect(vm.lodQuality, PlotLodQuality.quality);
     expect(tester.getSize(qualitySelector).width, initialWidth);
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
+  testWidgets('800px 绘图工具栏将右侧工具折叠到更多菜单且不溢出', (tester) async {
+    final vm = PlotViewModel(serialService);
+    await tester.binding.setSurfaceSize(const Size(800, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('plot-start-stop-button')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('toolbar-more-button')), findsWidgets);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('toolbar-more-button')).last);
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.fitAll), findsOneWidget);
+
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
   });
@@ -167,8 +223,10 @@ void main() {
       ),
     );
 
-    Finder configIconButton() =>
-        find.byKey(const ValueKey('send-protocol-config-button'));
+    Finder configIconButton() => find.descendant(
+      of: find.byKey(const ValueKey('send-protocol-config-button')),
+      matching: find.byType(IconButton),
+    );
 
     final configButton = tester.widget<IconButton>(configIconButton());
     expect(configButton.onPressed, isNull);
@@ -479,10 +537,16 @@ void main() {
     );
 
     IconButton importButton() => tester.widget<IconButton>(
-      find.byKey(const ValueKey('plot-import-data-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('plot-import-data-button')),
+        matching: find.byType(IconButton),
+      ),
     );
     IconButton exportButton() => tester.widget<IconButton>(
-      find.byKey(const ValueKey('plot-export-data-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('plot-export-data-button')),
+        matching: find.byType(IconButton),
+      ),
     );
 
     expect(importButton().onPressed, isNotNull);
@@ -524,24 +588,30 @@ void main() {
     T keyed<T extends Widget>(String key) =>
         tester.widget<T>(find.byKey(ValueKey(key)));
 
-    expect(keyed<Checkbox>('plot-random-source-checkbox').onChanged, isNotNull);
     expect(
-      keyed<NoAnimDropdown<ParserType>>('plot-parser-selector').onChanged,
+      keyed<ToolbarToggleTextButton>('plot-random-source-checkbox').onPressed,
       isNotNull,
     );
-    expect(keyed<IconButton>('plot-parser-config-button').onPressed, isNotNull);
     expect(
-      keyed<NoAnimDropdown<SendProtocolType>>(
+      keyed<ToolbarDropdown<ParserType>>('plot-parser-selector').onChanged,
+      isNotNull,
+    );
+    expect(
+      keyed<ToolbarIconButton>('plot-parser-config-button').onPressed,
+      isNotNull,
+    );
+    expect(
+      keyed<ToolbarDropdown<SendProtocolType>>(
         'plot-send-protocol-selector',
       ).onChanged,
       isNotNull,
     );
     expect(
-      keyed<IconButton>('send-protocol-config-button').onPressed,
+      keyed<ToolbarIconButton>('send-protocol-config-button').onPressed,
       isNotNull,
     );
     expect(
-      keyed<NoAnimDropdown<String?>>('plot-r-profile-selector').onChanged,
+      keyed<ToolbarDropdown<String?>>('plot-r-profile-selector').onChanged,
       isNotNull,
     );
 
@@ -549,33 +619,51 @@ void main() {
     vm.notifyListeners();
     await tester.pump();
 
-    expect(keyed<Checkbox>('plot-random-source-checkbox').onChanged, isNull);
     expect(
-      keyed<NoAnimDropdown<ParserType>>('plot-parser-selector').onChanged,
+      keyed<ToolbarToggleTextButton>('plot-random-source-checkbox').onPressed,
       isNull,
     );
-    expect(keyed<IconButton>('plot-parser-config-button').onPressed, isNull);
     expect(
-      keyed<NoAnimDropdown<SendProtocolType>>(
+      keyed<ToolbarDropdown<ParserType>>('plot-parser-selector').onChanged,
+      isNull,
+    );
+    expect(
+      keyed<ToolbarIconButton>('plot-parser-config-button').onPressed,
+      isNull,
+    );
+    expect(
+      keyed<ToolbarDropdown<SendProtocolType>>(
         'plot-send-protocol-selector',
       ).onChanged,
       isNull,
     );
-    expect(keyed<IconButton>('send-protocol-config-button').onPressed, isNull);
     expect(
-      keyed<NoAnimDropdown<String?>>('plot-r-profile-selector').onChanged,
+      keyed<ToolbarIconButton>('send-protocol-config-button').onPressed,
       isNull,
     );
-    expect(keyed<InkWell>('plot-create-r-profile-button').onTap, isNull);
-    expect(keyed<InkWell>('plot-edit-r-profile-button').onTap, isNull);
-    expect(keyed<InkWell>('plot-random-frequency-button').onTap, isNotNull);
+    expect(
+      keyed<ToolbarDropdown<String?>>('plot-r-profile-selector').onChanged,
+      isNull,
+    );
+    expect(
+      keyed<ToolbarIconButton>('plot-create-r-profile-button').onPressed,
+      isNull,
+    );
+    expect(
+      keyed<ToolbarIconButton>('plot-edit-r-profile-button').onPressed,
+      isNull,
+    );
+    expect(
+      keyed<ToolbarIconButton>('plot-random-frequency-button').onPressed,
+      isNotNull,
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
     await tester.pump(const Duration(milliseconds: 100));
   });
 
-  testWidgets('无数据时空态为白色，收到数据后应用暗色背景', (tester) async {
+  testWidgets('无数据时使用统一浅色空态，收到数据后应用暗色背景', (tester) async {
     final vm = PlotViewModel(serialService);
     vm.setPlotBackground('dark');
 
@@ -592,7 +680,7 @@ void main() {
       find.byKey(const ValueKey('plot-empty-background')),
     );
 
-    expect(emptyBackground().color, Colors.white);
+    expect(emptyBackground().color, AppTheme.pageBackgroundColor);
 
     vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
     vm.notifyListeners();

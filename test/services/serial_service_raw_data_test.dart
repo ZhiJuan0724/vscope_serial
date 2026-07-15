@@ -78,15 +78,17 @@ void main() {
 
     test('shell line send always appends configured line ending', () {
       service.appendLineEnding = false;
-      service.lineEnding = '\n';
+      service.shellLineEnding = '\n';
 
       expect(utf8.decode(service.prepareShellTextData('help')), 'help\n');
     });
 
     test('普通文本和Shell文本发送使用设置中的编码', () {
       service.setTextEncoding('GBK');
+      service.setShellEncoding('GBK');
       service.appendLineEnding = false;
       service.lineEnding = '\r\n';
+      service.shellLineEnding = '\r\n';
 
       expect(service.prepareTextSendData('中文'), gbk.encode('中文'));
       expect(service.prepareShellTextData('中文'), gbk.encode('中文\r\n'));
@@ -94,9 +96,12 @@ void main() {
     });
 
     test('Shell文本解码使用当前设置中的编码', () {
-      service.setTextEncoding('GBK');
+      service.setShellEncoding('GBK');
 
-      expect(service.decodeText(Uint8List.fromList(gbk.encode('中文'))), '中文');
+      expect(
+        service.decodeShellText(Uint8List.fromList(gbk.encode('中文'))),
+        '中文',
+      );
     });
 
     test('hex send appends CRC using selected byte order', () {

@@ -5,7 +5,6 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:charset/charset.dart';
 import 'package:flutter/material.dart';
 
 import '../core/utils/app_logger.dart';
@@ -19,6 +18,7 @@ import 'native_serial_reader.dart';
 import 'serial_port_catalog.dart';
 import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
+import 'windows_code_page_codec.dart';
 
 /// 支持 O(1) 头部淘汰的字符串列表。
 ///
@@ -136,6 +136,12 @@ class _IosStringSink implements Sink<String> {
 
 enum SendDisplaySource { user, plot }
 
+/// 当前独占串口接收链路的页面。
+///
+/// 同一时刻只能有一个页面消费串口数据，避免数据收发、Shell 与绘图
+/// 在切换页面后继续并行运行或争抢同一批字节。
+enum SerialActivityOwner { none, rawData, shell, plot }
+
 typedef ExportProgressCallback = void Function(double progress);
 
 String _decodeBytesWithEncoding(Uint8List data, String encoding) {
@@ -149,10 +155,12 @@ String _decodeBytesWithEncoding(Uint8List data, String encoding) {
 
   return switch (encoding) {
     'UTF-8' => utf8.decode(data, allowMalformed: true),
-    'GBK' => gbk.decode(data, allowMalformed: true),
-    'BIG5' => decodeOrFallback(CodePage('cp950', 'BIG5').decode),
-    'Shift_JIS' => decodeOrFallback(shiftJis.decode),
-    'EUC-KR' => decodeOrFallback(eucKr.decode),
+    'GBK' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 936)),
+    'BIG5' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 950)),
+    'Shift_JIS' => decodeOrFallback(
+      (bytes) => decodeWindowsCodePage(bytes, 932),
+    ),
+    'EUC-KR' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 949)),
     'Latin-1' => decodeOrFallback(latin1.decode),
     'ASCII' => decodeOrFallback(ascii.decode),
     _ => utf8.decode(data, allowMalformed: true),
@@ -162,10 +170,10 @@ String _decodeBytesWithEncoding(Uint8List data, String encoding) {
 Uint8List _encodeTextWithEncoding(String text, String encoding) {
   final bytes = switch (encoding) {
     'UTF-8' => utf8.encode(text),
-    'GBK' => gbk.encode(text),
-    'BIG5' => CodePage('cp950', 'BIG5').encode(text),
-    'Shift_JIS' => shiftJis.encode(text),
-    'EUC-KR' => eucKr.encode(text),
+    'GBK' => encodeWindowsCodePage(text, 936),
+    'BIG5' => encodeWindowsCodePage(text, 950),
+    'Shift_JIS' => encodeWindowsCodePage(text, 932),
+    'EUC-KR' => encodeWindowsCodePage(text, 949),
     'Latin-1' => latin1.encode(text),
     'ASCII' => ascii.encode(text),
     _ => utf8.encode(text),
@@ -370,13 +378,16 @@ class SerialService extends ChangeNotifier {
   bool receiveHex = false;
   bool showTimestamp = false;
   bool autoScroll = true;
-  bool rawDataShellMode = false;
   bool rawDataShellEnabled = false;
   RawShellInputMode rawShellInputMode = RawShellInputMode.line;
   double rawDataTerminalFontSize = 13.0;
   String rawDataTerminalFontFamily = 'Consolas';
   RawShellThemeMode rawShellThemeMode = RawShellThemeMode.light;
   RawShellCursorMode rawShellCursorMode = RawShellCursorMode.verticalBar;
+  String shellEncoding = 'UTF-8';
+  String shellLineEnding = '\r\n';
+  bool shellLocalEcho = true;
+  int shellScrollbackLines = 10000;
 
   // 文本收发编码（非 HEX 模式下生效）
   String _textEncoding = 'UTF-8';
@@ -409,6 +420,9 @@ class SerialService extends ChangeNotifier {
 
   // 原始数据接收开关（独立于串口连接和绘图状态）
   bool isRawReceiving = false;
+  SerialActivityOwner _activityOwner = SerialActivityOwner.none;
+  SerialActivityOwner get activityOwner => _activityOwner;
+  bool get isShellReceiving => _activityOwner == SerialActivityOwner.shell;
   late final YmodemService ymodemService = YmodemService(
     sendBytes: sendRawBytes,
   );
@@ -423,7 +437,6 @@ class SerialService extends ChangeNotifier {
       maxDisplayLineLimit,
     );
     rawDataShellEnabled = settings.rawDataShellEnabled;
-    rawDataShellMode = rawDataShellEnabled && settings.rawDataShellMode;
     rawShellInputMode = RawShellInputMode.fromString(
       settings.rawDataShellInputMode,
     );
@@ -438,6 +451,10 @@ class SerialService extends ChangeNotifier {
     rawShellCursorMode = RawShellCursorMode.fromString(
       settings.rawDataShellCursor,
     );
+    shellEncoding = settings.shellEncoding;
+    shellLineEnding = settings.shellLineEnding;
+    shellLocalEcho = settings.shellLocalEcho;
+    shellScrollbackLines = settings.shellScrollbackLines;
     ymodemService.attach(shellDataStream);
     _textEncoding = settings.rawDataEncoding;
   }
@@ -609,7 +626,7 @@ class SerialService extends ChangeNotifier {
     if (healthy) return true;
 
     AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
-    _cleanupPort();
+    unawaited(_cleanupPort());
 
     final reconnectPortsRefreshed = await refreshPorts(reason: '连接异常复查');
     if (!reconnectPortsRefreshed) return false;
@@ -677,7 +694,7 @@ class SerialService extends ChangeNotifier {
       );
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
-      _cleanupPort();
+      await _cleanupPort();
       AppNotifications.show('串口打开失败，请检查端口占用或设备状态');
     } finally {
       isConnecting = false;
@@ -730,7 +747,7 @@ class SerialService extends ChangeNotifier {
     if (!_nativeReader!.startReading(timeoutMs: 10)) {
       await _nativeSubscription?.cancel();
       _nativeSubscription = null;
-      _nativeReader!.close();
+      await _nativeReader!.close();
       _nativeReader = null;
       throw Exception('failed to start native serial read thread');
     }
@@ -738,45 +755,49 @@ class SerialService extends ChangeNotifier {
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
 
-  void disconnect() {
+  Future<void> disconnect() async {
     if (isConnecting) {
       AppLogger().warning('正在连接中，无法断开', category: 'SERIAL');
       return;
     }
-    _cleanupPort();
+    await _cleanupPort();
     AppLogger().info('串口已断开', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
   }
 
-  void _cleanupPort() {
+  Future<void> _cleanupPort() async {
     _flushReceiveLog();
     _flushSendLog();
-    _nativeSubscription?.cancel();
+    final subscription = _nativeSubscription;
     _nativeSubscription = null;
-    _nativeReader?.close();
+    final reader = _nativeReader;
     _nativeReader = null;
     isConnected = false;
-    // 断开串口时自动关闭原始数据接收
-    if (isRawReceiving) {
-      isRawReceiving = false;
-    }
+    _releaseAllActivities();
+    if (!_disposed) Future.microtask(notifyListeners);
+    await subscription?.cancel();
+    await reader?.close();
   }
 
   /// 原生串口数据接收回调
   void _onNativeDataReceived(NativeSerialData nativeData) {
     final data = nativeData.data;
+    final owner = _activityOwner;
     final shouldReceiveYmodem =
         isConnected &&
-        rawDataShellMode &&
-        ymodemService.isActive &&
-        !isPlotting;
-    final shouldReceiveRaw = isConnected && isRawReceiving && !isPlotting;
-    if (!isPlotting && !shouldReceiveRaw && !shouldReceiveYmodem) {
+        owner == SerialActivityOwner.shell &&
+        ymodemService.isActive;
+    final shouldReceiveRaw =
+        isConnected && owner == SerialActivityOwner.rawData;
+    final shouldReceiveShell =
+        isConnected && owner == SerialActivityOwner.shell;
+    if (owner == SerialActivityOwner.none) {
       return;
     }
 
-    if (isPlotting) {
+    if (owner == SerialActivityOwner.plot) {
       _dataController.add(DataPacket(data: data));
+      return;
     }
 
     if (shouldReceiveYmodem) {
@@ -789,11 +810,6 @@ class SerialService extends ChangeNotifier {
     if (shouldReceiveRaw) {
       _recordReceiveLog(data.length);
       _rawBytes.append(data);
-
-      if (rawDataShellMode) {
-        _shellDataController.add(data);
-        return;
-      }
 
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
@@ -813,6 +829,19 @@ class SerialService extends ChangeNotifier {
         // 文本模式不按底层回调分包，只按换行符更新显示行
         _addRawDataLine(receiveTime, data);
       }
+    }
+
+    if (shouldReceiveShell) {
+      _recordReceiveLog(data.length);
+      _shellDataController.add(data);
+    }
+  }
+
+  /// 测试独立 Shell 的接收调度，不绕过活动所有权约束。
+  @visibleForTesting
+  void debugAddShellData(Uint8List data) {
+    if (_activityOwner == SerialActivityOwner.shell) {
+      _shellDataController.add(data);
     }
   }
 
@@ -1213,35 +1242,19 @@ class SerialService extends ChangeNotifier {
     _scheduleDisplayNotify();
   }
 
-  void setRawDataShellMode(bool value) {
-    if (value && !rawDataShellEnabled) return;
-    if (rawDataShellMode == value) return;
-    rawDataShellMode = value;
-    _resetTextLineBuffers();
-    final settings = AppSettings();
-    settings.rawDataShellMode = value;
-    unawaited(settings.save());
-    AppLogger().info('Shell模式${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
-  }
-
   void setRawDataShellEnabled(bool value) {
     if (rawDataShellEnabled == value) return;
     rawDataShellEnabled = value;
-    if (!value) {
-      rawDataShellMode = false;
-      _resetTextLineBuffers();
-    }
     final settings = AppSettings();
     settings.rawDataShellEnabled = value;
-    settings.rawDataShellMode = rawDataShellMode;
+    settings.rawDataShellMode = false;
     unawaited(settings.save());
-    AppLogger().info(
-      'Shell入口${value ? '显示' : '隐藏'}，当前Shell模式=$rawDataShellMode',
-      category: 'DATA',
-    );
+    AppLogger().info('Shell页面${value ? '显示' : '隐藏'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
+
+  /// 设置独立 Shell 标签是否显示；保留旧字段名以兼容已有配置文件。
+  void setShellEnabled(bool value) => setRawDataShellEnabled(value);
 
   void setRawShellInputMode(RawShellInputMode value) {
     if (rawShellInputMode == value) return;
@@ -1250,6 +1263,39 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellInputMode = value.value;
     unawaited(settings.save());
     AppLogger().info('Shell输入模式切换为 ${value.label}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setShellEncoding(String value) {
+    if (shellEncoding == value) return;
+    shellEncoding = value;
+    final settings = AppSettings()..shellEncoding = value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setShellLineEnding(String value) {
+    if (shellLineEnding == value) return;
+    shellLineEnding = value;
+    final settings = AppSettings()..shellLineEnding = value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setShellLocalEcho(bool value) {
+    if (shellLocalEcho == value) return;
+    shellLocalEcho = value;
+    final settings = AppSettings()..shellLocalEcho = value;
+    unawaited(settings.save());
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setShellScrollbackLines(int value) {
+    final next = value.clamp(1000, 100000);
+    if (shellScrollbackLines == next) return;
+    shellScrollbackLines = next;
+    final settings = AppSettings()..shellScrollbackLines = next;
+    unawaited(settings.save());
     Future.microtask(() => notifyListeners());
   }
 
@@ -1632,34 +1678,38 @@ class SerialService extends ChangeNotifier {
   }
 
   Uint8List prepareShellTextData(String text) {
-    final content = '$text$lineEnding';
-    return _encodeTextWithEncoding(content, _textEncoding);
+    final content = '$text$shellLineEnding';
+    return _encodeTextWithEncoding(content, shellEncoding);
   }
+
+  Uint8List encodeShellText(String text) =>
+      _encodeTextWithEncoding(text, shellEncoding);
+
+  String decodeShellText(Uint8List data) =>
+      _decodeBytesWithEncoding(data, shellEncoding);
 
   Uint8List encodeText(String text) =>
       _encodeTextWithEncoding(text, _textEncoding);
 
-  void send(
+  Future<void> send(
     Uint8List data, {
     SendDisplaySource displaySource = SendDisplaySource.user,
     bool? displayAsHex,
-  }) {
-    _writeBytes(data);
+  }) async {
+    await _writeBytes(data);
     // 发送的数据也显示在数据窗口
     _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
   }
 
-  Future<void> sendRawBytes(Uint8List data) async {
-    _writeBytes(data);
-  }
+  Future<void> sendRawBytes(Uint8List data) => _writeBytes(data);
 
-  void _writeBytes(Uint8List data) {
+  Future<void> _writeBytes(Uint8List data) async {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
     }
     if (_nativeReader != null) {
-      final sent = _nativeReader!.write(data);
+      final sent = await _nativeReader!.write(data);
       if (sent != data.length) {
         _handleIoDisconnected(
           '发送失败，串口可能已断开: expected=${data.length}, sent=$sent',
@@ -1681,7 +1731,7 @@ class SerialService extends ChangeNotifier {
 
   void _handleIoDisconnected(String message) {
     AppLogger().warning(message, category: 'SERIAL');
-    _cleanupPort();
+    unawaited(_cleanupPort());
     Future.microtask(() => notifyListeners());
   }
 
@@ -1724,25 +1774,85 @@ class SerialService extends ChangeNotifier {
   // ========== 原始数据接收控制 ==========
 
   /// 开始接收原始数据
-  void startRawReceiving() {
+  bool startRawReceiving() {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法开始接收', category: 'SERIAL');
-      return;
+      return false;
     }
-    if (isPlotting) {
-      AppLogger().warning('正在绘图中，无法开始接收原始数据', category: 'SERIAL');
-      return;
+    if (!_tryAcquireActivity(SerialActivityOwner.rawData)) {
+      AppLogger().warning('其他页面正在接收，无法开始接收原始数据', category: 'SERIAL');
+      return false;
     }
     isRawReceiving = true;
     AppLogger().info('开始接收原始数据', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
+    return true;
   }
 
   /// 停止接收原始数据
   void stopRawReceiving() {
     isRawReceiving = false;
+    _releaseActivity(SerialActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 开始独立 Shell 会话。未成功取得接收所有权时不会进入运行状态。
+  bool startShellReceiving() {
+    if (!isConnected) {
+      AppLogger().warning('串口未连接，无法启动 Shell', category: 'SERIAL');
+      return false;
+    }
+    if (!_tryAcquireActivity(SerialActivityOwner.shell)) {
+      AppLogger().warning('其他页面正在接收，无法启动 Shell', category: 'SERIAL');
+      return false;
+    }
+    AppLogger().info('Shell 会话已启动', category: 'SERIAL');
+    Future.microtask(() => notifyListeners());
+    return true;
+  }
+
+  Future<void> stopShellReceiving() async {
+    if (ymodemService.isActive) {
+      await ymodemService.cancel();
+    }
+    _releaseActivity(SerialActivityOwner.shell);
+    AppLogger().info('Shell 会话已停止', category: 'SERIAL');
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 尝试原子取得串口活动所有权；同一所有者重复调用视为成功。
+  bool tryAcquireActivity(SerialActivityOwner owner) =>
+      _tryAcquireActivity(owner);
+
+  bool _tryAcquireActivity(SerialActivityOwner owner) {
+    if (owner == SerialActivityOwner.none) return false;
+    if (_activityOwner != SerialActivityOwner.none && _activityOwner != owner) {
+      return false;
+    }
+    _activityOwner = owner;
+    isRawReceiving = owner == SerialActivityOwner.rawData;
+    isPlotting = owner == SerialActivityOwner.plot;
+    return true;
+  }
+
+  void releaseActivity(SerialActivityOwner owner) {
+    _releaseActivity(owner);
+    Future.microtask(() => notifyListeners());
+  }
+
+  void _releaseActivity(SerialActivityOwner owner) {
+    if (_activityOwner != owner) return;
+    _activityOwner = SerialActivityOwner.none;
+    isRawReceiving = false;
+    isPlotting = false;
+  }
+
+  void _releaseAllActivities() {
+    _activityOwner = SerialActivityOwner.none;
+    isRawReceiving = false;
+    isPlotting = false;
+    if (ymodemService.isActive) ymodemService.abort('串口已断开');
   }
 
   @override
@@ -1762,7 +1872,9 @@ class SerialService extends ChangeNotifier {
     _portMonitor = null;
     _nativeSubscription?.cancel();
     _nativeSubscription = null;
-    _nativeReader?.dispose();
+    final nativeReader = _nativeReader;
+    _nativeReader = null;
+    if (nativeReader != null) unawaited(nativeReader.dispose());
     _nativeReader = null;
     isConnected = false;
     unawaited(ymodemService.dispose());

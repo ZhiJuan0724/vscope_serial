@@ -230,7 +230,7 @@ class MultiSendViewModel extends ChangeNotifier {
     if (data == null || data.isEmpty) {
       throw StateError('“${entry.name}”内容无效或串口未连接');
     }
-    _serialService.send(data, displayAsHex: entry.isHex);
+    await _serialService.send(data, displayAsHex: entry.isHex);
   }
 
   Future<void> _saveProfile(MultiSendProfile profile) async {

@@ -159,34 +159,39 @@ class YmodemService {
     if (isActive) throw const YmodemException('YMODEM 正在传输中');
     _resetIncomingBuffer();
     _cancelRequested = false;
+    RandomAccessFile? input;
     try {
-      final bytes = await file.readAsBytes();
+      final fileSize = await file.length();
+      input = await file.open();
       final fileName = file.uri.pathSegments.last;
       _setStatus(
         YmodemTransferStatus(
           direction: YmodemDirection.send,
           phase: YmodemPhase.waiting,
           fileName: fileName,
-          totalBytes: bytes.length,
+          totalBytes: fileSize,
           transferredBytes: 0,
           retryCount: 0,
           message: '等待接收方',
         ),
       );
       await _waitForByte(crcRequest, '等待接收方请求 CRC');
-      await _sendPacket(_buildHeaderPacket(fileName, bytes.length), 0);
+      await _sendPacket(_buildHeaderPacket(fileName, fileSize), 0);
       await _waitForByte(crcRequest, '等待数据请求');
 
       var block = 1;
       var offset = 0;
-      while (offset < bytes.length) {
+      while (offset < fileSize) {
         _throwIfCancelled();
-        final size = packetSizeMode.payloadSizeFor(bytes.length - offset);
-        final end = math.min(offset + size, bytes.length);
+        final size = packetSizeMode.payloadSizeFor(fileSize - offset);
+        final bytes = await input.read(size);
+        if (bytes.isEmpty) {
+          throw const YmodemException('发送文件读取提前结束');
+        }
         final payload = Uint8List(size)..fillRange(0, size, eof);
-        payload.setRange(0, end - offset, bytes, offset);
+        payload.setRange(0, bytes.length, bytes);
         await _sendPacket(_buildDataPacket(payload, block), block);
-        offset = end;
+        offset += bytes.length;
         _setStatus(
           _status.copyWith(
             phase: YmodemPhase.transferring,
@@ -220,6 +225,8 @@ class YmodemService {
         );
       }
       rethrow;
+    } finally {
+      await input?.close();
     }
   }
 
@@ -308,8 +315,25 @@ class YmodemService {
           );
           break;
         }
-        final packet = await _readPacket(firstByte: first);
-        if (packet.blockNumber != (expectedBlock & 0xFF)) {
+        late final _YmodemPacket packet;
+        try {
+          packet = await _readPacket(firstByte: first);
+        } on YmodemException {
+          await _sendByte(nak);
+          _setStatus(_status.copyWith(retryCount: _status.retryCount + 1));
+          if (_status.retryCount >= _maxRetries) {
+            throw const YmodemException('YMODEM 数据块连续校验失败');
+          }
+          continue;
+        }
+        final expected = expectedBlock & 0xFF;
+        final previous = (expectedBlock - 1) & 0xFF;
+        if (packet.blockNumber == previous) {
+          // ACK 丢失时发送方会重发上一块；只重新 ACK，不能重复写入文件。
+          await _sendByte(ack);
+          continue;
+        }
+        if (packet.blockNumber != expected) {
           await _sendByte(nak);
           _setStatus(_status.copyWith(retryCount: _status.retryCount + 1));
           continue;
@@ -359,8 +383,27 @@ class YmodemService {
       _pendingByte = null;
       pending.complete(can);
     }
-    await _sendBytes(Uint8List.fromList([can, can, can, can]));
+    try {
+      await _sendBytes(Uint8List.fromList([can, can, can, can]));
+    } catch (_) {
+      // 断线过程中无法通知对端，但本地等待仍必须可靠结束。
+    }
     _setStatus(_status.copyWith(phase: YmodemPhase.cancelled, message: '已取消'));
+  }
+
+  /// 串口断开时只终止本地状态，不再尝试向已失效的句柄发送 CAN。
+  void abort(String message) {
+    if (!isActive) return;
+    _cancelRequested = true;
+    final pending = _pendingByte;
+    if (pending != null && !pending.isCompleted) {
+      _pendingByte = null;
+      pending.complete(can);
+    }
+    _incoming.clear();
+    _setStatus(
+      _status.copyWith(phase: YmodemPhase.cancelled, message: message),
+    );
   }
 
   Future<void> dispose() async {

@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:xterm/xterm.dart';
 
 import '../../core/constants/window_configuration.dart';
 import '../../core/localization/app_strings.dart';
@@ -16,25 +15,9 @@ import '../../core/utils/crc.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
 import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
-import '../../services/ymodem_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/multi_send_panel.dart';
-
-enum _FileTransferDirection {
-  send('发送'),
-  receive('接收');
-
-  final String label;
-  const _FileTransferDirection(this.label);
-}
-
-enum _ShellFileTransferProtocol {
-  ymodem('YMODEM');
-
-  final String label;
-  const _ShellFileTransferProtocol(this.label);
-}
 
 enum _RawDataExportFormat { text, rawBytes }
 
@@ -48,7 +31,6 @@ typedef _ReceiveAreaState =
       bool receiveHex,
       bool showTimestamp,
       bool autoScroll,
-      bool shellEnabled,
       bool hasRawData,
       String textEncoding,
     });
@@ -65,16 +47,6 @@ typedef _SendAreaState =
       String crcPolyName,
       CrcByteOrder crcByteOrder,
     });
-
-extension on YmodemPacketSizeMode {
-  String get label {
-    return switch (this) {
-      YmodemPacketSizeMode.auto => '自动',
-      YmodemPacketSizeMode.bytes128 => '128 字节',
-      YmodemPacketSizeMode.bytes1024 => '1024 字节',
-    };
-  }
-}
 
 /// 数据收发页面
 class RawDataPage extends StatefulWidget {
@@ -94,44 +66,22 @@ class _RawDataPageState extends State<RawDataPage> {
   /// 判断 Flutter 布局宽度已同步到目标宽度时允许的像素误差。
   static const double _windowLayoutSyncTolerance = 2;
 
+  /// 发送区必须容纳设置行、输入框和发送按钮，拖动分隔条时不得低于该高度。
+  static const double _minimumSendAreaHeight = 200;
+
+  /// 接收区与发送区之间可拖动分隔条的固定高度。
+  static const double _splitDividerHeight = 8;
+
   static const TextStyle _receiveLineStyle = TextStyle(
     fontFamily: 'SarasaUiSC',
     fontSize: 13,
   );
 
-  static const List<String> _terminalFontFamilies = [
-    'Consolas',
-    'Cascadia Mono',
-    'Cascadia Code',
-    'Courier New',
-    'JetBrains Mono',
-    'Fira Code',
-    'Sarasa Mono SC',
-    'SarasaUiSC',
-  ];
-
   final TextEditingController _sendController = TextEditingController();
-  final TextEditingController _shellLineController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final ScrollController _terminalScrollController = ScrollController();
-  final Terminal _terminal = Terminal(maxLines: 10000);
-  final GlobalKey<TerminalViewState> _terminalViewKey =
-      GlobalKey<TerminalViewState>();
-  final TerminalController _terminalController = TerminalController();
-  final FocusNode _terminalFocusNode = FocusNode(
-    debugLabel: 'rawDataShellTerminal',
-  );
-  final FocusNode _shellLineFocusNode = FocusNode(
-    debugLabel: 'rawDataShellLineInput',
-  );
   bool _autoScrollScheduled = false;
   int _handledDisplayTrimRevision = 0;
   double _splitRatio = 0.65;
-  StreamSubscription<Uint8List>? _shellSubscription;
-  RawDataViewModel? _shellVm;
-  Rect? _terminalCursorRect;
-  Size? _terminalCellSize;
-  bool _terminalCursorUpdateScheduled = false;
   _MultiSendPanelState _multiSendPanelState = _MultiSendPanelState.closed;
   Rect? _multiSendOriginalBounds;
   bool _multiSendWasMaximized = false;
@@ -149,27 +99,12 @@ class _RawDataPageState extends State<RawDataPage> {
       _multiSendPanelState == _MultiSendPanelState.closing;
 
   @override
-  void initState() {
-    super.initState();
-    _terminal.write('\x1b[?25l');
-    _terminal.addListener(_scheduleTerminalCursorUpdate);
-    _terminalScrollController.addListener(_scheduleTerminalCursorUpdate);
-  }
-
-  @override
   void dispose() {
     if (_multiSendVisible || _multiSendOriginalBounds != null) {
       unawaited(_closeMultiSendBeforePageLeave(updateUi: false));
     }
-    _terminal.removeListener(_scheduleTerminalCursorUpdate);
-    _terminalScrollController.removeListener(_scheduleTerminalCursorUpdate);
     _sendController.dispose();
-    _shellLineController.dispose();
     _scrollController.dispose();
-    _terminalScrollController.dispose();
-    _terminalFocusNode.dispose();
-    _shellLineFocusNode.dispose();
-    _shellSubscription?.cancel();
     super.dispose();
   }
 
@@ -435,939 +370,10 @@ class _RawDataPageState extends State<RawDataPage> {
     });
   }
 
-  void _syncShellSubscription(RawDataViewModel vm) {
-    if (_shellVm == vm && _shellSubscription != null) return;
-    _shellSubscription?.cancel();
-    _shellVm = vm;
-    _shellSubscription = vm.shellDataStream.listen((data) {
-      if (vm.isYmodemActive) return;
-      _terminal.write(vm.decodeText(data));
-      _terminal.write('\x1b[?25l');
-      _scrollTerminalToBottom();
-    });
-    _terminal.onOutput = (output) {
-      if (!vm.shellMode ||
-          vm.shellInputMode != RawShellInputMode.key ||
-          vm.isYmodemActive) {
-        return;
-      }
-      vm.sendShellBytes(vm.encodeText(output));
-    };
-  }
-
-  void _scrollTerminalToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_terminalScrollController.hasClients) return;
-      _terminalScrollController.jumpTo(
-        _terminalScrollController.position.maxScrollExtent,
-      );
-      _scheduleTerminalCursorUpdate();
-    });
-  }
-
-  void _syncShellFocus(RawDataViewModel vm) {
-    _scheduleTerminalCursorUpdate();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (!vm.shellMode) {
-        _terminalFocusNode.unfocus();
-        _shellLineFocusNode.unfocus();
-        return;
-      }
-      if (vm.shellInputMode == RawShellInputMode.line) {
-        _terminalFocusNode.unfocus();
-      } else {
-        _shellLineFocusNode.unfocus();
-        if (!_terminalFocusNode.hasFocus) {
-          _terminalFocusNode.requestFocus();
-        }
-      }
-    });
-  }
-
-  void _scheduleTerminalCursorUpdate() {
-    if (_terminalCursorUpdateScheduled) return;
-    _terminalCursorUpdateScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _terminalCursorUpdateScheduled = false;
-      if (!mounted) return;
-      final viewRect = _terminalViewKey.currentState?.cursorRect;
-      final cellSize =
-          viewRect == null
-              ? _terminalCellSize
-              : Size(viewRect.width, viewRect.height);
-      if (cellSize == null || cellSize.width <= 0 || cellSize.height <= 0) {
-        return;
-      }
-      final scrollOffset =
-          _terminalScrollController.hasClients
-              ? _terminalScrollController.offset
-              : 0.0;
-      final rect = Rect.fromLTWH(
-        _terminal.buffer.cursorX * cellSize.width,
-        _terminal.buffer.absoluteCursorY * cellSize.height - scrollOffset,
-        cellSize.width,
-        cellSize.height,
-      );
-      if (rect == _terminalCursorRect) return;
-      setState(() {
-        _terminalCellSize = cellSize;
-        _terminalCursorRect = rect;
-      });
-    });
-  }
-
   int _getHexByteCount(String text) {
     final hexString = text.replaceAll(' ', '');
     if (hexString.isEmpty) return 0;
     return (hexString.length / 2).ceil();
-  }
-
-  ButtonStyle _toolbarElevatedStyle(Color backgroundColor) {
-    return ElevatedButton.styleFrom(
-      backgroundColor: backgroundColor,
-      foregroundColor: Colors.white,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      minimumSize: const Size(0, 32),
-    );
-  }
-
-  ButtonStyle _toolbarFlatButtonStyle() {
-    final overlay = Theme.of(
-      context,
-    ).colorScheme.primary.withValues(alpha: 0.08);
-    return TextButton.styleFrom(
-      overlayColor: overlay,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      minimumSize: const Size(0, 32),
-    );
-  }
-
-  Widget _buildToolbarIconAction({
-    Key? key,
-    required String tooltip,
-    required IconData icon,
-    required VoidCallback? onPressed,
-  }) {
-    final color =
-        onPressed == null
-            ? Theme.of(context).disabledColor
-            : IconTheme.of(context).color;
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          key: key,
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(4),
-          hoverColor: Theme.of(
-            context,
-          ).colorScheme.primary.withValues(alpha: 0.06),
-          highlightColor: Theme.of(
-            context,
-          ).colorScheme.primary.withValues(alpha: 0.12),
-          splashColor: Colors.transparent,
-          mouseCursor:
-              onPressed == null
-                  ? SystemMouseCursors.basic
-                  : SystemMouseCursors.click,
-          child: SizedBox(
-            width: 32,
-            height: 32,
-            child: Icon(icon, size: 20, color: color),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShellArea(RawDataViewModel vm) {
-    final terminalTheme = _shellTerminalTheme(vm);
-    return Column(
-      children: [
-        _buildShellToolbar(vm),
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: terminalTheme.background,
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  TerminalView(
-                    _terminal,
-                    key: _terminalViewKey,
-                    controller: _terminalController,
-                    scrollController: _terminalScrollController,
-                    theme: terminalTheme,
-                    focusNode: _terminalFocusNode,
-                    autofocus: false,
-                    readOnly: vm.shellInputMode == RawShellInputMode.line,
-                    hardwareKeyboardOnly: true,
-                    onKeyEvent:
-                        (node, event) =>
-                            _handleShellTerminalKey(node, event, vm),
-                    cursorType: TerminalCursorType.verticalBar,
-                    textStyle: TerminalStyle(
-                      fontFamily: vm.terminalFontFamily,
-                      fontSize: vm.terminalFontSize,
-                    ),
-                    onSecondaryTapDown: (details, offset) async {
-                      final selection = _terminalController.selection;
-                      if (selection != null) {
-                        final text = _terminal.buffer.getText(selection);
-                        _terminalController.clearSelection();
-                        await Clipboard.setData(ClipboardData(text: text));
-                      } else {
-                        final data = await Clipboard.getData('text/plain');
-                        final text = data?.text;
-                        if (text != null) {
-                          await vm.sendShellBytes(vm.encodeText(text));
-                        }
-                      }
-                    },
-                  ),
-                  _buildShellCursorOverlay(vm, terminalTheme),
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (vm.shellInputMode == RawShellInputMode.line)
-          _buildShellCommandLine(vm),
-      ],
-    );
-  }
-
-  Widget _buildShellCursorOverlay(
-    RawDataViewModel vm,
-    TerminalTheme terminalTheme,
-  ) {
-    final rect = _terminalCursorRect;
-    if (rect == null ||
-        !vm.shellMode ||
-        vm.shellInputMode != RawShellInputMode.key) {
-      return const SizedBox.shrink();
-    }
-    final color = terminalTheme.cursor;
-    final child = switch (vm.shellCursorMode) {
-      RawShellCursorMode.block => Container(
-        color: color.withValues(alpha: 0.35),
-      ),
-      RawShellCursorMode.underline => Align(
-        alignment: Alignment.bottomLeft,
-        child: Container(width: rect.width, height: 2, color: color),
-      ),
-      RawShellCursorMode.verticalBar => Align(
-        alignment: Alignment.centerLeft,
-        child: SizedBox(
-          width: 1,
-          height: rect.height,
-          child: ColoredBox(color: color),
-        ),
-      ),
-    };
-    return Positioned(
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
-      child: IgnorePointer(child: child),
-    );
-  }
-
-  TerminalTheme _shellTerminalTheme(RawDataViewModel vm) {
-    if (vm.shellThemeMode == RawShellThemeMode.dark) {
-      return TerminalThemes.defaultTheme;
-    }
-    return const TerminalTheme(
-      cursor: Color(0xFF2563EB),
-      selection: Color(0x663B82F6),
-      foreground: Color(0xFF202124),
-      background: Color(0xFFFFFFFF),
-      black: Color(0xFF202124),
-      red: Color(0xFFB3261E),
-      green: Color(0xFF0B6B3A),
-      yellow: Color(0xFF8A5A00),
-      blue: Color(0xFF1A5FB4),
-      magenta: Color(0xFF8E24AA),
-      cyan: Color(0xFF007C91),
-      white: Color(0xFFF1F3F4),
-      brightBlack: Color(0xFF5F6368),
-      brightRed: Color(0xFFD93025),
-      brightGreen: Color(0xFF188038),
-      brightYellow: Color(0xFFB06000),
-      brightBlue: Color(0xFF1967D2),
-      brightMagenta: Color(0xFF9C27B0),
-      brightCyan: Color(0xFF0097A7),
-      brightWhite: Color(0xFFFFFFFF),
-      searchHitBackground: Color(0xFFFFF59D),
-      searchHitBackgroundCurrent: Color(0xFFFFD54F),
-      searchHitForeground: Color(0xFF202124),
-    );
-  }
-
-  Widget _buildShellToolbar(RawDataViewModel vm) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final showInputMode = constraints.maxWidth >= 900;
-          return SizedBox(
-            height: 40,
-            child: ClipRect(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const Text(
-                    'Shell',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  FilterChip(
-                    label: Text(AppStrings.raw.normalIo),
-                    selected: false,
-                    onSelected: (_) => vm.setShellMode(false),
-                    avatar: const Icon(Icons.swap_horiz, size: 16),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    onPressed:
-                        vm.isRawReceiving
-                            ? () => vm.stopReceiving()
-                            : vm.isConnected
-                            ? () => vm.startReceiving()
-                            : null,
-                    icon: Icon(
-                      vm.isRawReceiving ? Icons.stop : Icons.play_arrow,
-                      size: 16,
-                    ),
-                    label: Text(
-                      vm.isRawReceiving
-                          ? AppStrings.raw.stopReceive
-                          : AppStrings.raw.startReceive,
-                    ),
-                    style: _toolbarElevatedStyle(
-                      vm.isRawReceiving ? Colors.red : Colors.green,
-                    ),
-                  ),
-                  if (showInputMode) ...[
-                    const SizedBox(width: 8),
-                    _buildShellInputModeSelector(vm),
-                  ],
-                  const Spacer(),
-                  Text(
-                    vm.isConnected
-                        ? AppStrings.status.connected
-                        : AppStrings.status.disconnected,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color:
-                          vm.isConnected
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _buildToolbarIconAction(
-                    tooltip: AppStrings.raw.clearScreen,
-                    icon: Icons.clear,
-                    onPressed: _clearShellTerminal,
-                  ),
-                  _buildToolbarIconAction(
-                    key: const ValueKey('raw-shell-export-button'),
-                    tooltip: AppStrings.common.save,
-                    icon: Icons.save,
-                    onPressed:
-                        vm.hasRawData
-                            ? () => _showExportDialog(context, vm)
-                            : null,
-                  ),
-                  _buildToolbarIconAction(
-                    tooltip: AppStrings.raw.shellSettings,
-                    icon: Icons.settings,
-                    onPressed:
-                        () => _showShellAdvancedSettingsDialog(context, vm),
-                  ),
-                  _buildShellMoreMenu(vm, showInputMode: showInputMode),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildShellInputModeSelector(RawDataViewModel vm) {
-    return SegmentedButton<RawShellInputMode>(
-      segments: [
-        ButtonSegment(
-          value: RawShellInputMode.line,
-          label: Text(AppStrings.raw.commandLine),
-          icon: const Icon(Icons.keyboard_return, size: 16),
-        ),
-        ButtonSegment(
-          value: RawShellInputMode.key,
-          label: Text(AppStrings.raw.keyByKey),
-          icon: const Icon(Icons.keyboard, size: 16),
-        ),
-      ],
-      selected: {vm.shellInputMode},
-      onSelectionChanged:
-          vm.isYmodemActive
-              ? null
-              : (values) => vm.setShellInputMode(values.single),
-      style: const ButtonStyle(
-        visualDensity: VisualDensity(horizontal: -2, vertical: -2),
-      ),
-    );
-  }
-
-  Widget _buildShellMoreMenu(
-    RawDataViewModel vm, {
-    required bool showInputMode,
-  }) {
-    return PopupMenuButton<String>(
-      tooltip: AppStrings.raw.moreOptions,
-      icon: const Icon(Icons.more_vert, size: 20),
-      splashRadius: 16,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-      itemBuilder: (context) {
-        final items = <PopupMenuEntry<String>>[];
-        if (!showInputMode) {
-          items.add(_buildMenuHeader(AppStrings.raw.inputMode));
-          items.add(
-            PopupMenuItem(
-              value: 'shell_line_input',
-              enabled: !vm.isYmodemActive,
-              onTap: () => vm.setShellInputMode(RawShellInputMode.line),
-              child: _buildMenuItem(
-                icon:
-                    vm.shellInputMode == RawShellInputMode.line
-                        ? Icons.radio_button_checked
-                        : Icons.keyboard_return,
-                label: AppStrings.raw.commandLine,
-              ),
-            ),
-          );
-          items.add(
-            PopupMenuItem(
-              value: 'shell_key_input',
-              enabled: !vm.isYmodemActive,
-              onTap: () => vm.setShellInputMode(RawShellInputMode.key),
-              child: _buildMenuItem(
-                icon:
-                    vm.shellInputMode == RawShellInputMode.key
-                        ? Icons.radio_button_checked
-                        : Icons.keyboard,
-                label: AppStrings.raw.keyByKey,
-              ),
-            ),
-          );
-        }
-
-        if (items.isNotEmpty) items.add(const PopupMenuDivider());
-        items.add(_buildMenuHeader(AppStrings.raw.moreFeatures));
-        items.add(
-          PopupMenuItem(
-            value: 'file_transfer',
-            enabled: vm.isConnected || vm.isYmodemActive,
-            onTap:
-                () => WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) _showFileTransferDialog(context, vm);
-                }),
-            child: _buildMenuItem(
-              icon: Icons.folder_open,
-              label: AppStrings.raw.fileTransfer,
-            ),
-          ),
-        );
-        return items;
-      },
-    );
-  }
-
-  Widget _buildShellCommandLine(RawDataViewModel vm) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _shellLineController,
-              focusNode: _shellLineFocusNode,
-              enabled: vm.isConnected && !vm.isYmodemActive,
-              decoration: InputDecoration(
-                hintText: AppStrings.raw.commandInputHint,
-                border: OutlineInputBorder(),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 10,
-                ),
-              ),
-              onSubmitted: (_) => _sendShellLine(vm),
-            ),
-          ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed:
-                vm.isConnected && !vm.isYmodemActive
-                    ? () => _sendShellLine(vm)
-                    : null,
-            icon: const Icon(Icons.send),
-            label: Text(AppStrings.raw.send),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showFileTransferDialog(BuildContext context, RawDataViewModel vm) {
-    var direction = _FileTransferDirection.send;
-    var protocol = _ShellFileTransferProtocol.ymodem;
-    var packetSizeMode = YmodemPacketSizeMode.auto;
-    File? selectedFile;
-    String? resultText;
-    String? errorText;
-    var running = false;
-    var hasStartedTransfer = false;
-    DateTime? transferStartedAt;
-    YmodemDirection? transferDirection;
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (
-                  context,
-                  setDialogState,
-                ) => StreamBuilder<YmodemTransferStatus>(
-                  stream: vm.ymodemStatusStream,
-                  initialData: vm.ymodemStatus,
-                  builder: (context, snapshot) {
-                    final status = snapshot.data ?? vm.ymodemStatus;
-                    final isActive = status.isActive || running;
-                    final visibleResultText =
-                        resultText ??
-                        (hasStartedTransfer
-                            ? _fileTransferCompletedText(status)
-                            : null);
-                    if (status.isActive && transferStartedAt == null) {
-                      transferStartedAt = DateTime.now();
-                      transferDirection = status.direction;
-                    }
-                    if (!status.isActive &&
-                        status.phase != YmodemPhase.completed &&
-                        status.phase != YmodemPhase.failed &&
-                        status.phase != YmodemPhase.cancelled) {
-                      transferStartedAt = null;
-                      transferDirection = null;
-                    }
-                    if (transferDirection != status.direction &&
-                        status.direction != null &&
-                        status.isActive) {
-                      transferStartedAt = DateTime.now();
-                      transferDirection = status.direction;
-                    }
-                    final speedText = _formatTransferSpeed(
-                      status,
-                      transferStartedAt,
-                    );
-                    final dialogWidth =
-                        (MediaQuery.sizeOf(context).width - 96)
-                            .clamp(280.0, 430.0)
-                            .toDouble();
-                    final canStart =
-                        vm.isConnected &&
-                        !isActive &&
-                        (direction == _FileTransferDirection.receive ||
-                            selectedFile != null);
-                    return AlertDialog(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      title: Text(AppStrings.raw.fileTransfer),
-                      content: SizedBox(
-                        width: dialogWidth,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SegmentedButton<_FileTransferDirection>(
-                              segments:
-                                  _FileTransferDirection.values
-                                      .map(
-                                        (value) => ButtonSegment(
-                                          value: value,
-                                          label: Text(value.label),
-                                        ),
-                                      )
-                                      .toList(),
-                              selected: {direction},
-                              onSelectionChanged:
-                                  isActive
-                                      ? null
-                                      : (values) => setDialogState(() {
-                                        direction = values.single;
-                                        resultText = null;
-                                        errorText = null;
-                                        hasStartedTransfer = false;
-                                        transferStartedAt = null;
-                                        transferDirection = null;
-                                      }),
-                            ),
-                            const SizedBox(height: 16),
-                            DropdownButtonFormField<_ShellFileTransferProtocol>(
-                              initialValue: protocol,
-                              decoration: secondaryDialogFieldDecoration(
-                                labelText: AppStrings.raw.transferProtocol,
-                              ),
-                              items:
-                                  _ShellFileTransferProtocol.values
-                                      .map(
-                                        (value) => DropdownMenuItem(
-                                          value: value,
-                                          child: Text(value.label),
-                                        ),
-                                      )
-                                      .toList(),
-                              onChanged:
-                                  isActive
-                                      ? null
-                                      : (value) => setDialogState(
-                                        () => protocol = value ?? protocol,
-                                      ),
-                            ),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<YmodemPacketSizeMode>(
-                              initialValue: packetSizeMode,
-                              decoration: secondaryDialogFieldDecoration(
-                                labelText: AppStrings.raw.packetSize,
-                              ),
-                              items:
-                                  YmodemPacketSizeMode.values
-                                      .map(
-                                        (value) => DropdownMenuItem(
-                                          value: value,
-                                          child: Text(value.label),
-                                        ),
-                                      )
-                                      .toList(),
-                              onChanged:
-                                  isActive ||
-                                          direction ==
-                                              _FileTransferDirection.receive
-                                      ? null
-                                      : (value) => setDialogState(
-                                        () =>
-                                            packetSizeMode =
-                                                value ?? packetSizeMode,
-                                      ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (direction == _FileTransferDirection.send)
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      selectedFile == null
-                                          ? AppStrings.raw.noFileSelected
-                                          : selectedFile!.path,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  OutlinedButton.icon(
-                                    onPressed:
-                                        isActive
-                                            ? null
-                                            : () async {
-                                              final result =
-                                                  await file_picker
-                                                      .FilePicker.pickFiles();
-                                              final path =
-                                                  result?.files.single.path;
-                                              if (path == null) return;
-                                              setDialogState(() {
-                                                selectedFile = File(path);
-                                                resultText = null;
-                                                errorText = null;
-                                              });
-                                            },
-                                    icon: const Icon(Icons.attach_file),
-                                    label: Text(AppStrings.raw.choose),
-                                  ),
-                                ],
-                              )
-                            else
-                              Text(
-                                AppStrings.raw.receiveFileSaveHint,
-                                style: TextStyle(
-                                  color:
-                                      Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            const SizedBox(height: 16),
-                            _buildFileTransferProgress(
-                              context,
-                              status,
-                              speedText: speedText,
-                            ),
-                            if (visibleResultText != null) ...[
-                              const SizedBox(height: 8),
-                              SelectableText(visibleResultText),
-                            ],
-                            if (errorText != null) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                errorText!,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      actionsOverflowAlignment: OverflowBarAlignment.end,
-                      actionsOverflowButtonSpacing: 8,
-                      actions: [
-                        TextButton(
-                          onPressed:
-                              isActive
-                                  ? () async {
-                                    await vm.cancelYmodem();
-                                    setDialogState(() => running = false);
-                                  }
-                                  : null,
-                          child: Text(AppStrings.raw.cancelTransfer),
-                        ),
-                        TextButton(
-                          onPressed:
-                              isActive
-                                  ? null
-                                  : () => Navigator.of(context).pop(),
-                          child: Text(AppStrings.common.close),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed:
-                              canStart
-                                  ? () async {
-                                    setDialogState(() {
-                                      running = true;
-                                      hasStartedTransfer = true;
-                                      transferStartedAt = DateTime.now();
-                                      transferDirection =
-                                          direction ==
-                                                  _FileTransferDirection.send
-                                              ? YmodemDirection.send
-                                              : YmodemDirection.receive;
-                                      resultText = null;
-                                      errorText = null;
-                                    });
-                                    try {
-                                      if (protocol ==
-                                          _ShellFileTransferProtocol.ymodem) {
-                                        if (direction ==
-                                            _FileTransferDirection.send) {
-                                          await vm.sendYmodemFile(
-                                            selectedFile!,
-                                            packetSizeMode: packetSizeMode,
-                                          );
-                                          resultText =
-                                              AppStrings.raw.sendCompleted;
-                                        } else {
-                                          final file =
-                                              await vm.receiveYmodemFile();
-                                          resultText =
-                                              file == null
-                                                  ? AppStrings
-                                                      .raw
-                                                      .noFileReceived
-                                                  : AppStrings.raw
-                                                      .receiveCompleted(
-                                                        file.path,
-                                                      );
-                                        }
-                                      }
-                                    } catch (error) {
-                                      errorText = error.toString();
-                                    } finally {
-                                      if (context.mounted) {
-                                        setDialogState(() => running = false);
-                                      }
-                                    }
-                                  }
-                                  : null,
-                          icon: Icon(
-                            direction == _FileTransferDirection.send
-                                ? Icons.upload_file
-                                : Icons.download,
-                          ),
-                          label: Text(direction.label),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-          ),
-    );
-  }
-
-  Widget _buildFileTransferProgress(
-    BuildContext context,
-    YmodemTransferStatus status, {
-    String? speedText,
-  }) {
-    final percent = status.totalBytes <= 0 ? 0.0 : status.progress * 100;
-    final direction = switch (status.direction) {
-      YmodemDirection.send => AppStrings.raw.send,
-      YmodemDirection.receive => AppStrings.raw.receive,
-      null => AppStrings.raw.wait,
-    };
-    final hasStatus = status.phase != YmodemPhase.idle;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LinearProgressIndicator(
-          value:
-              status.isActive && status.totalBytes <= 0
-                  ? null
-                  : status.progress,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          hasStatus
-              ? '$direction ${status.fileName ?? ''}'
-              : AppStrings.raw.waitingForTransfer,
-          overflow: TextOverflow.ellipsis,
-        ),
-        if (hasStatus) ...[
-          const SizedBox(height: 4),
-          Text(
-            '${_formatBytes(status.transferredBytes)} / '
-            '${_formatBytes(status.totalBytes)}  '
-            '${percent.toStringAsFixed(1)}%'
-            '${speedText == null ? '' : '  $speedText'}',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-        if (hasStatus && status.message.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(
-            status.message,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  String? _fileTransferCompletedText(YmodemTransferStatus status) {
-    if (status.phase != YmodemPhase.completed) return null;
-    return switch (status.direction) {
-      YmodemDirection.send => AppStrings.raw.sendCompleted,
-      YmodemDirection.receive =>
-        status.savedPath == null
-            ? AppStrings.raw.noFileReceived
-            : AppStrings.raw.receiveCompleted(status.savedPath!),
-      null => null,
-    };
-  }
-
-  String? _formatTransferSpeed(
-    YmodemTransferStatus status,
-    DateTime? transferStartedAt,
-  ) {
-    if (transferStartedAt == null || status.transferredBytes <= 0) {
-      return null;
-    }
-    final elapsedMs =
-        DateTime.now().difference(transferStartedAt).inMilliseconds;
-    if (elapsedMs <= 0) return null;
-    final bytesPerSecond = status.transferredBytes * 1000 / elapsedMs;
-    if (bytesPerSecond <= 0) return null;
-    return '${_formatBytes(bytesPerSecond)}/s';
-  }
-
-  String _formatBytes(num bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${bytes.toStringAsFixed(0)} B';
-  }
-
-  KeyEventResult _handleShellTerminalKey(
-    FocusNode node,
-    KeyEvent event,
-    RawDataViewModel vm,
-  ) {
-    if (!vm.shellMode || vm.shellInputMode != RawShellInputMode.key) {
-      return KeyEventResult.ignored;
-    }
-    if (vm.isYmodemActive || !vm.isConnected) return KeyEventResult.handled;
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-      return KeyEventResult.handled;
-    }
-
-    final keyboard = HardwareKeyboard.instance;
-    final key = event.logicalKey;
-    final ctrl = keyboard.isControlPressed;
-    final shift = keyboard.isShiftPressed;
-
-    if (ctrl && shift && key == LogicalKeyboardKey.keyC) {
-      _copyTerminalSelection();
-      return KeyEventResult.handled;
-    }
-    if (ctrl && key == LogicalKeyboardKey.keyV) {
-      _pasteShellClipboard(vm);
-      return KeyEventResult.handled;
-    }
-    if (ctrl && key == LogicalKeyboardKey.keyC) {
-      vm.sendShellBytes(Uint8List.fromList(const [0x03]));
-      return KeyEventResult.handled;
-    }
-
-    // 交由 xterm 转换为与当前终端状态一致的控制序列，例如方向键和 Tab。
-    return KeyEventResult.ignored;
-  }
-
-  Future<void> _copyTerminalSelection() async {
-    final selection = _terminalController.selection;
-    if (selection == null) return;
-    final text = _terminal.buffer.getText(selection);
-    _terminalController.clearSelection();
-    await Clipboard.setData(ClipboardData(text: text));
-  }
-
-  Future<void> _pasteShellClipboard(RawDataViewModel vm) async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
-    if (text == null || text.isEmpty) return;
-    await vm.sendShellBytes(vm.encodeText(text));
   }
 
   @override
@@ -1378,27 +384,10 @@ class _RawDataPageState extends State<RawDataPage> {
         ChangeNotifierProvider(create: (_) => RawDataViewModel(service)),
         ChangeNotifierProvider(create: (_) => MultiSendViewModel(service)),
       ],
-      child: Selector<RawDataViewModel, bool>(
-        selector: (_, vm) => vm.shellMode,
-        builder: (context, shellMode, child) {
+      child: Builder(
+        builder: (context) {
           final vm = context.read<RawDataViewModel>();
-          _syncShellSubscription(vm);
-          _syncShellFocus(vm);
           _scrollToBottom(vm);
-          if (shellMode) {
-            if (_multiSendVisible) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) unawaited(_closeMultiSendPanel());
-              });
-            }
-            return Consumer<RawDataViewModel>(
-              builder: (_, shellVm, _) {
-                _syncShellSubscription(shellVm);
-                _syncShellFocus(shellVm);
-                return _buildShellArea(shellVm);
-              },
-            );
-          }
           return LayoutBuilder(
             builder: (context, constraints) {
               _rawPageLayoutWidth = constraints.maxWidth;
@@ -1411,6 +400,19 @@ class _RawDataPageState extends State<RawDataPage> {
                   constraints.maxWidth - _multiSendPanelWidth,
                 ),
               };
+              final pageHeight = constraints.maxHeight;
+              final maximumReceiveHeight = math.max(
+                0.0,
+                pageHeight - _splitDividerHeight - _minimumSendAreaHeight,
+              );
+              final minimumReceiveHeight = math.min(
+                pageHeight * 0.2,
+                maximumReceiveHeight,
+              );
+              final receiveHeight = (pageHeight * _splitRatio).clamp(
+                minimumReceiveHeight,
+                maximumReceiveHeight,
+              );
               return ClipRect(
                 child: Stack(
                   fit: StackFit.expand,
@@ -1425,9 +427,8 @@ class _RawDataPageState extends State<RawDataPage> {
                         child: Column(
                           children: [
                             SizedBox(
-                              height:
-                                  MediaQuery.of(context).size.height *
-                                  _splitRatio,
+                              key: const ValueKey('raw-receive-area'),
+                              height: receiveHeight,
                               child:
                                   Selector<RawDataViewModel, _ReceiveAreaState>(
                                     selector:
@@ -1439,7 +440,6 @@ class _RawDataPageState extends State<RawDataPage> {
                                           receiveHex: value.receiveHex,
                                           showTimestamp: value.showTimestamp,
                                           autoScroll: value.autoScroll,
-                                          shellEnabled: value.shellEnabled,
                                           hasRawData: value.hasRawData,
                                           textEncoding: value.textEncoding,
                                         ),
@@ -1452,22 +452,23 @@ class _RawDataPageState extends State<RawDataPage> {
                                   ),
                             ),
                             GestureDetector(
+                              key: const ValueKey('raw-split-divider'),
                               behavior: HitTestBehavior.translucent,
                               onVerticalDragUpdate: (details) {
                                 setState(() {
-                                  final delta =
-                                      details.delta.dy /
-                                      MediaQuery.of(context).size.height;
+                                  final delta = details.delta.dy / pageHeight;
+                                  final maximumSplitRatio =
+                                      maximumReceiveHeight / pageHeight;
                                   _splitRatio = (_splitRatio + delta).clamp(
-                                    0.2,
-                                    0.8,
+                                    minimumReceiveHeight / pageHeight,
+                                    maximumSplitRatio,
                                   );
                                 });
                               },
                               child: MouseRegion(
                                 cursor: SystemMouseCursors.resizeRow,
                                 child: Container(
-                                  height: 8,
+                                  height: _splitDividerHeight,
                                   color: Theme.of(
                                     context,
                                   ).dividerColor.withValues(alpha: 0.5),
@@ -1488,6 +489,7 @@ class _RawDataPageState extends State<RawDataPage> {
                               ),
                             ),
                             Expanded(
+                              key: const ValueKey('raw-send-area'),
                               child: Selector<RawDataViewModel, _SendAreaState>(
                                 selector:
                                     (_, value) => (
@@ -1545,156 +547,129 @@ class _RawDataPageState extends State<RawDataPage> {
   Widget _buildReceiveArea(RawDataViewModel vm) {
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // 使用固定断点决定折叠策略，避免宽度跳动：
-              // - ≥ 820px: 全部展开
-              // - 560px ~ 820px: 操作组（清空/保存/设置）折叠进菜单
-              // - < 560px: 选项组（时间戳/HEX/滚动）和操作组都折叠
-              final width = constraints.maxWidth;
-              final showOptions = width >= 560;
-              final showActions = width >= 820;
-              final hasCollapsed = !showOptions || !showActions;
-
-              return SizedBox(
-                height: 40,
-                child: ClipRect(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        AppStrings.nav.rawData,
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      if (vm.shellEnabled) ...[
-                        FilterChip(
-                          label: const Text('Shell'),
-                          selected: vm.shellMode,
-                          onSelected: vm.setShellMode,
-                          avatar: const Icon(Icons.terminal, size: 16),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      ElevatedButton.icon(
-                        onPressed:
-                            vm.isRawReceiving
-                                ? () => vm.stopReceiving()
-                                : vm.isConnected
-                                ? () => vm.startReceiving()
-                                : null,
-                        icon: Icon(
-                          vm.isRawReceiving ? Icons.stop : Icons.play_arrow,
-                          size: 16,
-                        ),
-                        label: Text(
-                          vm.isRawReceiving
-                              ? AppStrings.raw.stopReceive
-                              : AppStrings.raw.startReceive,
-                        ),
-                        style: _toolbarElevatedStyle(
-                          vm.isRawReceiving ? Colors.red : Colors.green,
-                        ),
-                      ),
-                      const Spacer(),
-                      // 选项组（时间戳/HEX/自动滚动）
-                      if (showOptions) ...[
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: Checkbox(
-                                value: vm.showTimestamp,
-                                onChanged:
-                                    (value) => vm.setShowTimestamp(value!),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            ),
-                            Text(AppStrings.raw.timestamp),
-                          ],
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: Checkbox(
-                                value: vm.receiveHex,
-                                onChanged: (value) => vm.setReceiveHex(value!),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            ),
-                            Text(AppStrings.raw.hexDisplay),
-                          ],
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: Checkbox(
-                                value: vm.autoScroll,
-                                onChanged: (value) => vm.setAutoScroll(value!),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                              ),
-                            ),
-                            Text(AppStrings.raw.autoScroll),
-                          ],
-                        ),
-                      ],
-                      // 操作组（清空/保存/高级设置）
-                      if (showActions) ...[
-                        const SizedBox(width: 8),
-                        TextButton.icon(
-                          onPressed: () => vm.clearData(),
-                          icon: const Icon(Icons.clear, size: 18),
-                          label: Text(AppStrings.raw.clear),
-                          style: _toolbarFlatButtonStyle(),
-                        ),
-                        TextButton.icon(
-                          key: const ValueKey('raw-data-export-button'),
-                          onPressed:
-                              vm.hasRawData
-                                  ? () => _showExportDialog(context, vm)
-                                  : null,
-                          icon: const Icon(Icons.save, size: 18),
-                          label: Text(AppStrings.common.save),
-                          style: _toolbarFlatButtonStyle(),
-                        ),
-                        TextButton.icon(
-                          onPressed:
-                              () => _showRawAdvancedSettingsDialog(context, vm),
-                          icon: const Icon(Icons.settings, size: 18),
-                          label: Text(AppStrings.common.advancedSettings),
-                          style: _toolbarFlatButtonStyle(),
-                        ),
-                      ],
-                      // 有折叠的组时显示下拉菜单
-                      if (hasCollapsed)
-                        _buildRawCollapsedMenu(
-                          context,
-                          vm,
-                          showOptions: showOptions,
-                          showActions: showActions,
-                        ),
-                    ],
-                  ),
+        UnifiedToolbar(
+          leadingItems: [
+            ToolbarLayoutItem(
+              extent: 76,
+              child: ToolbarStartStopButton(
+                key: const ValueKey('raw-start-stop-button'),
+                onPressed:
+                    vm.isRawReceiving
+                        ? () => vm.stopReceiving()
+                        : vm.isConnected
+                        ? () => vm.startReceiving()
+                        : null,
+                running: vm.isRawReceiving,
+                label: vm.isRawReceiving ? '停止' : '开始',
+              ),
+            ),
+            ToolbarLayoutItem(
+              extent: 76,
+              child: ToolbarToggleTextButton(
+                icon: const Icon(Icons.schedule),
+                label: AppStrings.raw.timestamp,
+                tooltip: AppStrings.raw.timestamp,
+                selected: vm.showTimestamp,
+                onPressed: () => vm.setShowTimestamp(!vm.showTimestamp),
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.schedule),
+                  label: AppStrings.raw.timestamp,
+                  selected: vm.showTimestamp,
+                  onPressed: () => vm.setShowTimestamp(!vm.showTimestamp),
                 ),
-              );
-            },
-          ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: 82,
+              child: ToolbarToggleTextButton(
+                icon: const Icon(Icons.numbers),
+                label: AppStrings.raw.hexDisplay,
+                tooltip: AppStrings.raw.hexDisplay,
+                selected: vm.receiveHex,
+                onPressed: () => vm.setReceiveHex(!vm.receiveHex),
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.numbers),
+                  label: AppStrings.raw.hexDisplay,
+                  selected: vm.receiveHex,
+                  onPressed: () => vm.setReceiveHex(!vm.receiveHex),
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: 88,
+              child: ToolbarToggleTextButton(
+                icon: const Icon(Icons.vertical_align_bottom),
+                label: AppStrings.raw.autoScroll,
+                tooltip: AppStrings.raw.autoScroll,
+                selected: vm.autoScroll,
+                onPressed: () => vm.setAutoScroll(!vm.autoScroll),
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.vertical_align_bottom),
+                  label: AppStrings.raw.autoScroll,
+                  selected: vm.autoScroll,
+                  onPressed: () => vm.setAutoScroll(!vm.autoScroll),
+                ),
+              ],
+            ),
+          ],
+          trailingItems: [
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarIconButton(
+                icon: const Icon(Icons.clear),
+                tooltip: AppStrings.raw.clear,
+                onPressed: vm.clearData,
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.clear),
+                  label: AppStrings.raw.clear,
+                  onPressed: vm.clearData,
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarIconButton(
+                key: const ValueKey('raw-data-export-button'),
+                icon: const Icon(Icons.save),
+                tooltip: AppStrings.common.save,
+                onPressed:
+                    vm.hasRawData ? () => _showExportDialog(context, vm) : null,
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  key: const ValueKey('raw-data-export-menu-item'),
+                  icon: const Icon(Icons.save),
+                  label: AppStrings.common.save,
+                  onPressed:
+                      vm.hasRawData
+                          ? () => _showExportDialog(context, vm)
+                          : null,
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarAdvancedSettingsButton(
+                onPressed: () => _showRawAdvancedSettingsDialog(context, vm),
+                tooltip: AppStrings.raw.rawSettingsTitle,
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.tune),
+                  label: AppStrings.raw.rawSettingsTitle,
+                  onPressed: () => _showRawAdvancedSettingsDialog(context, vm),
+                ),
+              ],
+            ),
+          ],
         ),
         Expanded(
           child: Container(
@@ -1846,36 +821,21 @@ class _RawDataPageState extends State<RawDataPage> {
                         ],
                       ),
                       const SizedBox(width: 8),
-                      SizedBox(
+                      ToolbarDropdown<String>(
                         width: 90,
-                        child: NoAnimDropdown<String>(
-                          value: vm.lineEnding,
-                          hint: AppStrings.raw.lineEndingHint,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            isDense: true,
-                          ),
-                          items: const [
-                            DropdownMenuItem(value: '\r', child: Text(r'\r')),
-                            DropdownMenuItem(value: '\n', child: Text(r'\n')),
-                            DropdownMenuItem(
-                              value: '\r\n',
-                              child: Text(r'\r\n'),
-                            ),
-                          ],
-                          onChanged:
-                              vm.appendLineEnding
-                                  ? (value) {
-                                    if (value != null) {
-                                      vm.setLineEnding(value);
-                                    }
-                                  }
-                                  : null,
-                        ),
+                        value: vm.lineEnding,
+                        hint: AppStrings.raw.lineEndingHint,
+                        items: const [
+                          DropdownMenuItem(value: '\r', child: Text(r'\r')),
+                          DropdownMenuItem(value: '\n', child: Text(r'\n')),
+                          DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
+                        ],
+                        onChanged:
+                            vm.appendLineEnding
+                                ? (value) {
+                                  if (value != null) vm.setLineEnding(value);
+                                }
+                                : null,
                       ),
                       const SizedBox(width: 8),
                     ],
@@ -1903,89 +863,59 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                       if (vm.enableCrc) ...[
                         const SizedBox(width: 4),
-                        SizedBox(
+                        ToolbarDropdown<CrcType>(
                           width: 90,
-                          child: NoAnimDropdown<CrcType>(
-                            value: vm.crcType,
-                            hint: AppStrings.raw.crcTypeHint,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              isDense: true,
+                          value: vm.crcType,
+                          hint: AppStrings.raw.crcTypeHint,
+                          items: const [
+                            DropdownMenuItem(
+                              value: CrcType.crc8,
+                              child: Text('CRC-8'),
                             ),
-                            items: [
-                              DropdownMenuItem(
-                                value: CrcType.crc8,
-                                child: Text('CRC-8'),
-                              ),
-                              DropdownMenuItem(
-                                value: CrcType.crc16,
-                                child: Text('CRC-16'),
-                              ),
-                              DropdownMenuItem(
-                                value: CrcType.crc32,
-                                child: Text('CRC-32'),
-                              ),
-                            ],
-                            onChanged: (value) => vm.setCrcType(value!),
-                          ),
+                            DropdownMenuItem(
+                              value: CrcType.crc16,
+                              child: Text('CRC-16'),
+                            ),
+                            DropdownMenuItem(
+                              value: CrcType.crc32,
+                              child: Text('CRC-32'),
+                            ),
+                          ],
+                          onChanged: (value) => vm.setCrcType(value!),
                         ),
                         const SizedBox(width: 4),
-                        SizedBox(
+                        ToolbarDropdown<String>(
                           width: 140,
-                          child: NoAnimDropdown<String>(
-                            value: vm.crcPolyName,
-                            hint: AppStrings.raw.crcPolynomialHint,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              isDense: true,
-                            ),
-                            items:
-                                getPolysByType(vm.crcType).keys.map((name) {
-                                  return DropdownMenuItem(
-                                    value: name,
-                                    child: Tooltip(
-                                      message: name,
-                                      child: Text(
-                                        name,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                          value: vm.crcPolyName,
+                          hint: AppStrings.raw.crcPolynomialHint,
+                          items:
+                              getPolysByType(vm.crcType).keys.map((name) {
+                                return DropdownMenuItem(
+                                  value: name,
+                                  child: Tooltip(
+                                    message: name,
+                                    child: Text(
+                                      name,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  );
-                                }).toList(),
-                            onChanged: (value) => vm.setCrcPolyName(value!),
-                          ),
+                                  ),
+                                );
+                              }).toList(),
+                          onChanged: (value) => vm.setCrcPolyName(value!),
                         ),
                         const SizedBox(width: 4),
-                        SizedBox(
+                        ToolbarDropdown<CrcByteOrder>(
                           width: 92,
-                          child: NoAnimDropdown<CrcByteOrder>(
-                            value: vm.crcByteOrder,
-                            hint: AppStrings.raw.byteOrderHint,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              isDense: true,
-                            ),
-                            items:
-                                CrcByteOrder.values.map((order) {
-                                  return DropdownMenuItem(
-                                    value: order,
-                                    child: Text(order.label),
-                                  );
-                                }).toList(),
-                            onChanged: (value) => vm.setCrcByteOrder(value!),
-                          ),
+                          value: vm.crcByteOrder,
+                          hint: AppStrings.raw.byteOrderHint,
+                          items:
+                              CrcByteOrder.values.map((order) {
+                                return DropdownMenuItem(
+                                  value: order,
+                                  child: Text(order.label),
+                                );
+                              }).toList(),
+                          onChanged: (value) => vm.setCrcByteOrder(value!),
                         ),
                       ],
                     ],
@@ -2067,20 +997,25 @@ class _RawDataPageState extends State<RawDataPage> {
                 ElevatedButton.icon(
                   onPressed:
                       vm.isConnected
-                          ? () {
+                          ? () async {
                             final data = vm.prepareSendData(
                               _sendController.text,
                             );
                             if (data != null) {
+                              final messenger = ScaffoldMessenger.of(context);
                               try {
-                                vm.send(data);
+                                await vm.send(data);
+                                if (!mounted) return;
                                 if (!vm.keepSendText) {
                                   _sendController.clear();
                                   setState(() {});
                                 }
                               } catch (e) {
-                                if (!context.mounted) return;
-                                _showSnackBar(context, e.toString());
+                                if (!mounted) return;
+                                AppNotifications.show(
+                                  e.toString(),
+                                  messenger: messenger,
+                                );
                               }
                             }
                           }
@@ -2240,33 +1175,6 @@ class _RawDataPageState extends State<RawDataPage> {
     AppNotifications.show(message, messenger: ScaffoldMessenger.of(context));
   }
 
-  Future<void> _sendShellLine(RawDataViewModel vm) async {
-    final text = _shellLineController.text;
-    if (text.isEmpty) return;
-    try {
-      // 命令必须先本地回显再发送，避免设备快速响应后回显插到响应末尾。
-      // clear 单独执行完整本地清屏，设备随后只需输出新的提示符。
-      if (text.trim() == 'clear') {
-        _clearShellTerminal();
-      } else {
-        _terminal.write('$text\r\n');
-      }
-      await vm.sendShellText(text);
-      _shellLineController.clear();
-    } catch (e) {
-      if (!mounted) return;
-      _showSnackBar(context, e.toString());
-    }
-  }
-
-  void _clearShellTerminal() {
-    // 3J 清除滚动历史，2J 清除当前屏幕，H 将后续提示符移回左上角。
-    // 仅使用 2J 会让 clear 前的内容仍可被滚动控制器带回可视区域。
-    _terminal.write('\x1b[3J\x1b[2J\x1b[H\x1b[?25l');
-    _terminalController.clearSelection();
-    _scrollTerminalToBottom();
-  }
-
   void _formatHexInput(String value) {
     // 先移除所有空格。
     final hexOnly = value.replaceAll(' ', '');
@@ -2298,124 +1206,147 @@ class _RawDataPageState extends State<RawDataPage> {
     final displayLineLimitController = TextEditingController(
       text: vm.displayLineLimit.toString(),
     );
-    var shellEnabled = vm.shellEnabled;
+    final scrollController = ScrollController();
+    final encodingSectionKey = GlobalKey();
+    final hexTimingSectionKey = GlobalKey();
+    final displayLimitSectionKey = GlobalKey();
     var selectedEncoding = vm.textEncoding;
-    showDialog(
+    showDialog<void>(
       context: context,
       builder:
           (context) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AlertDialog(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+                  shape: kAdvancedSettingsDialogShape,
                   title: Text(AppStrings.raw.rawSettingsTitle),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(AppStrings.raw.textEncoding),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: NoAnimDropdown<String>(
-                          value: selectedEncoding,
-                          hint: AppStrings.raw.encodingHint,
-                          decoration: secondaryDialogFieldDecoration(),
-                          items:
-                              RawDataViewModel.availableEncodings.map((e) {
-                                return DropdownMenuItem(
-                                  value: e['id'],
-                                  child: Text(e['name']!),
-                                );
-                              }).toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setDialogState(() => selectedEncoding = value);
-                            }
-                          },
-                        ),
+                  content: SettingsNavigationView(
+                    scrollController: scrollController,
+                    items: [
+                      SettingsNavigationItem(
+                        label: '文本编码',
+                        anchorKey: encodingSectionKey,
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        AppStrings.raw.textEncodingHelp,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
+                      SettingsNavigationItem(
+                        label: 'HEX 时间',
+                        anchorKey: hexTimingSectionKey,
                       ),
-                      const SizedBox(height: 20),
-                      Text(AppStrings.raw.hexPacketTime),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: TextField(
-                          controller: timeWindowController,
-                          decoration: secondaryDialogFieldDecoration(
-                            hintText: '10 ~ 10000',
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        AppStrings.raw.hexPacketTimeHelp(
-                          vm.timeWindowUs,
-                          vm.timeWindowUs < 1000
-                              ? AppStrings.raw.microsecondTimestamp
-                              : AppStrings.raw.millisecondTimestamp,
-                        ),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(AppStrings.raw.displayLineLimit),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: TextField(
-                          controller: displayLineLimitController,
-                          decoration: secondaryDialogFieldDecoration(
-                            hintText: '100 ~ 100000',
-                          ),
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        AppStrings.raw.displayLineLimitHelp,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: Text(AppStrings.raw.enableShellEntry),
-                        subtitle: Text(
-                          AppStrings.raw.enableShellEntryHelp,
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        value: shellEnabled,
-                        onChanged:
-                            (value) =>
-                                setDialogState(() => shellEnabled = value),
+                      SettingsNavigationItem(
+                        label: '显示行数',
+                        anchorKey: displayLimitSectionKey,
                       ),
                     ],
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          key: encodingSectionKey,
+                          AppStrings.raw.textEncoding,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: kSecondaryDialogWideFieldWidth,
+                          child: NoAnimDropdown<String>(
+                            value: selectedEncoding,
+                            hint: AppStrings.raw.encodingHint,
+                            decoration: secondaryDialogFieldDecoration(),
+                            items:
+                                RawDataViewModel.availableEncodings.map((e) {
+                                  return DropdownMenuItem(
+                                    value: e['id'],
+                                    child: Text(e['name']!),
+                                  );
+                                }).toList(),
+                            onChanged: (value) {
+                              if (value != null) {
+                                setDialogState(() => selectedEncoding = value);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          AppStrings.raw.textEncodingHelp,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const Divider(height: 24),
+                        Text(
+                          key: hexTimingSectionKey,
+                          AppStrings.raw.hexPacketTime,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: kSecondaryDialogWideFieldWidth,
+                          child: TextField(
+                            controller: timeWindowController,
+                            decoration: secondaryDialogFieldDecoration(
+                              hintText: '10 ~ 10000',
+                            ),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          AppStrings.raw.hexPacketTimeHelp(
+                            vm.timeWindowUs,
+                            vm.timeWindowUs < 1000
+                                ? AppStrings.raw.microsecondTimestamp
+                                : AppStrings.raw.millisecondTimestamp,
+                          ),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const Divider(height: 24),
+                        Text(
+                          key: displayLimitSectionKey,
+                          AppStrings.raw.displayLineLimit,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: kSecondaryDialogWideFieldWidth,
+                          child: TextField(
+                            controller: displayLineLimitController,
+                            decoration: secondaryDialogFieldDecoration(
+                              hintText: '100 ~ 100000',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          AppStrings.raw.displayLineLimitHelp,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
                       child: Text(AppStrings.common.cancel),
                     ),
-                    ElevatedButton(
+                    DialogPrimaryActionButton(
+                      key: const ValueKey('raw-settings-confirm-button'),
                       onPressed: () {
                         final us = int.tryParse(timeWindowController.text);
                         final displayLineLimit = int.tryParse(
@@ -2443,13 +1374,11 @@ class _RawDataPageState extends State<RawDataPage> {
                         final changed =
                             us != vm.timeWindowUs ||
                             displayLineLimit != vm.displayLineLimit ||
-                            shellEnabled != vm.shellEnabled ||
                             selectedEncoding != vm.textEncoding;
                         if (changed) {
                           vm.setTextEncoding(selectedEncoding);
                           vm.setTimeWindowUs(us);
                           vm.setDisplayLineLimit(displayLineLimit);
-                          vm.setShellEnabled(shellEnabled);
                         }
                         Navigator.of(context).pop();
                         if (changed) {
@@ -2461,296 +1390,16 @@ class _RawDataPageState extends State<RawDataPage> {
                           );
                         }
                       },
-                      child: Text(AppStrings.common.confirm),
+                      label: AppStrings.common.confirm,
                     ),
                   ],
                 ),
           ),
-    );
-  }
-
-  void _showShellAdvancedSettingsDialog(
-    BuildContext context,
-    RawDataViewModel vm,
-  ) {
-    final terminalFontSizeController = TextEditingController(
-      text: vm.terminalFontSize.toStringAsFixed(0),
-    );
-    var terminalFontFamily =
-        _terminalFontFamilies.contains(vm.terminalFontFamily)
-            ? vm.terminalFontFamily
-            : 'Consolas';
-    var shellThemeMode = vm.shellThemeMode;
-    var shellCursorMode = vm.shellCursorMode;
-    showDialog(
-      context: context,
-      builder:
-          (context) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  title: Text(AppStrings.raw.shellSettings),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(AppStrings.raw.terminalFontSize),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: TextField(
-                          controller: terminalFontSizeController,
-                          decoration: secondaryDialogFieldDecoration(
-                            hintText: '10 ~ 24',
-                          ),
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(AppStrings.raw.terminalFontFamily),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: DropdownButtonFormField<String>(
-                          initialValue: terminalFontFamily,
-                          decoration: secondaryDialogFieldDecoration(),
-                          items:
-                              _terminalFontFamilies
-                                  .map(
-                                    (font) => DropdownMenuItem(
-                                      value: font,
-                                      child: Text(
-                                        font,
-                                        style: TextStyle(fontFamily: font),
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged:
-                              (value) => setDialogState(
-                                () => terminalFontFamily = value ?? 'Consolas',
-                              ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(AppStrings.raw.terminalTheme),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: DropdownButtonFormField<RawShellThemeMode>(
-                          initialValue: shellThemeMode,
-                          decoration: secondaryDialogFieldDecoration(),
-                          items:
-                              RawShellThemeMode.values
-                                  .map(
-                                    (mode) => DropdownMenuItem(
-                                      value: mode,
-                                      child: Text(mode.label),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged:
-                              (value) => setDialogState(
-                                () => shellThemeMode = value ?? shellThemeMode,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(AppStrings.raw.cursorStyle),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: kSecondaryDialogWideFieldWidth,
-                        child: DropdownButtonFormField<RawShellCursorMode>(
-                          initialValue: shellCursorMode,
-                          decoration: secondaryDialogFieldDecoration(),
-                          items:
-                              RawShellCursorMode.values
-                                  .map(
-                                    (mode) => DropdownMenuItem(
-                                      value: mode,
-                                      child: Text(mode.label),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged:
-                              (value) => setDialogState(
-                                () =>
-                                    shellCursorMode = value ?? shellCursorMode,
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(AppStrings.common.cancel),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        final terminalFontSize = double.tryParse(
-                          terminalFontSizeController.text,
-                        );
-                        if (terminalFontSize == null ||
-                            terminalFontSize < 10 ||
-                            terminalFontSize > 24) {
-                          _showSnackBar(
-                            context,
-                            AppStrings.raw.terminalFontSizeInvalid,
-                          );
-                          return;
-                        }
-
-                        vm.setTerminalFontSize(terminalFontSize);
-                        vm.setTerminalFontFamily(terminalFontFamily);
-                        vm.setShellThemeMode(shellThemeMode);
-                        vm.setShellCursorMode(shellCursorMode);
-                        Navigator.of(context).pop();
-                        _showSnackBar(
-                          context,
-                          AppStrings.raw.shellSettingsSaved,
-                        );
-                      },
-                      child: Text(AppStrings.common.confirm),
-                    ),
-                  ],
-                ),
-          ),
-    );
-  }
-
-  /// 折叠菜单：显示未平铺的组
-  Widget _buildRawCollapsedMenu(
-    BuildContext context,
-    RawDataViewModel vm, {
-    required bool showOptions,
-    required bool showActions,
-  }) {
-    return PopupMenuButton<String>(
-      tooltip: AppStrings.raw.moreOptions,
-      icon: const Icon(Icons.more_vert, size: 20),
-      splashRadius: 16,
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-      itemBuilder: (context) {
-        final items = <PopupMenuEntry<String>>[];
-
-        // 选项组（如果未平铺）
-        if (!showOptions) {
-          items.add(_buildMenuHeader(AppStrings.raw.displayOptions));
-          items.add(
-            PopupMenuItem(
-              value: 'timestamp',
-              child: _buildMenuItem(
-                icon:
-                    vm.showTimestamp
-                        ? Icons.check_box
-                        : Icons.check_box_outline_blank,
-                label: AppStrings.raw.timestamp,
-              ),
-              onTap: () => vm.setShowTimestamp(!vm.showTimestamp),
-            ),
-          );
-          items.add(
-            PopupMenuItem(
-              value: 'hex',
-              child: _buildMenuItem(
-                icon:
-                    vm.receiveHex
-                        ? Icons.check_box
-                        : Icons.check_box_outline_blank,
-                label: AppStrings.raw.hexDisplay,
-              ),
-              onTap: () => vm.setReceiveHex(!vm.receiveHex),
-            ),
-          );
-          items.add(
-            PopupMenuItem(
-              value: 'autoscroll',
-              child: _buildMenuItem(
-                icon:
-                    vm.autoScroll
-                        ? Icons.check_box
-                        : Icons.check_box_outline_blank,
-                label: AppStrings.raw.autoScroll,
-              ),
-              onTap: () => vm.setAutoScroll(!vm.autoScroll),
-            ),
-          );
-        }
-
-        // 操作组（如果未平铺）
-        if (!showActions) {
-          if (items.isNotEmpty) items.add(const PopupMenuDivider());
-          items.add(_buildMenuHeader(AppStrings.raw.actions));
-          items.add(
-            PopupMenuItem(
-              value: 'clear',
-              child: _buildMenuItem(
-                icon: Icons.clear,
-                label: AppStrings.raw.clear,
-              ),
-              onTap: () => vm.clearData(),
-            ),
-          );
-          items.add(
-            PopupMenuItem(
-              key: const ValueKey('raw-data-export-menu-item'),
-              value: 'export',
-              enabled: vm.hasRawData,
-              onTap:
-                  vm.hasRawData ? () => _showExportDialog(context, vm) : null,
-              child: _buildMenuItem(
-                icon: Icons.save,
-                label: AppStrings.common.save,
-              ),
-            ),
-          );
-          items.add(
-            PopupMenuItem(
-              value: 'advanced',
-              child: _buildMenuItem(
-                icon: Icons.settings,
-                label: AppStrings.common.advancedSettings,
-              ),
-              onTap: () => _showRawAdvancedSettingsDialog(context, vm),
-            ),
-          );
-        }
-
-        return items;
-      },
-    );
-  }
-
-  /// 构建菜单分组标题
-  PopupMenuItem<String> _buildMenuHeader(String label) {
-    return PopupMenuItem(
-      value: 'header_$label',
-      enabled: false,
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          color: Colors.grey.shade600,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  /// 构建下拉菜单项
-  Widget _buildMenuItem({required IconData icon, required String label}) {
-    return Row(
-      children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
-    );
+    ).whenComplete(() {
+      timeWindowController.dispose();
+      displayLineLimitController.dispose();
+      scrollController.dispose();
+    });
   }
 }
 

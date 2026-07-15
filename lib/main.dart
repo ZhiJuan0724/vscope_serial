@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/constants/window_configuration.dart';
 import 'core/localization/app_strings.dart';
+import 'core/theme/app_theme.dart';
 import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
@@ -17,8 +18,10 @@ import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
+import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/raw_data_page.dart';
+import 'views/pages/shell_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
 
@@ -84,26 +87,20 @@ class MyApp extends StatelessWidget {
     // SerialService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
     final serialService = SerialService();
-    final baseTheme = ThemeData(
-      useMaterial3: false,
-      colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-    );
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: serialService),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(serialService),
         ),
+        ChangeNotifierProvider(
+          create: (context) => ShellViewModel(serialService),
+        ),
       ],
       child: MaterialApp(
         title: AppStrings.appName,
         scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
-        theme: baseTheme.copyWith(
-          textTheme: baseTheme.textTheme.apply(fontFamily: 'SarasaUiSC'),
-          primaryTextTheme: baseTheme.primaryTextTheme.apply(
-            fontFamily: 'SarasaUiSC',
-          ),
-        ),
+        theme: AppTheme.buildLightTheme(),
         home: const MainFrame(),
       ),
     );
@@ -118,14 +115,16 @@ class MainFrame extends StatefulWidget {
 }
 
 class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
-  int _currentIndex = 0;
+  String _currentTabId = 'rawData';
 
   @override
   void initState() {
     super.initState();
     final savedPage = AppSettings().lastMainPage;
-    final savedIndex = _tabs.indexWhere((tab) => tab.id == savedPage);
-    _currentIndex = savedIndex < 0 ? 0 : savedIndex;
+    _currentTabId =
+        savedPage == 'shell' && !AppSettings().rawDataShellEnabled
+            ? 'rawData'
+            : savedPage;
     WidgetsBinding.instance.addObserver(this);
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
@@ -198,13 +197,20 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     }
   }
 
-  final List<({String id, String label, IconData icon, Widget page})> _tabs = [
+  List<({String id, String label, IconData icon, Widget page})> get _tabs => [
     (
       id: 'rawData',
       label: AppStrings.nav.rawData,
-      icon: Icons.terminal,
+      icon: Icons.data_object,
       page: const RawDataPage(),
     ),
+    if (AppSettings().rawDataShellEnabled)
+      (
+        id: 'shell',
+        label: AppStrings.nav.shell,
+        icon: Icons.terminal,
+        page: const ShellPage(),
+      ),
     (
       id: 'plot',
       label: AppStrings.nav.plot,
@@ -213,20 +219,24 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     ),
   ];
 
-  void _selectTab(int index) {
-    if (index == _currentIndex) return;
+  void _selectTab(String id) {
+    if (id == _currentTabId) return;
     setState(() {
-      _currentIndex = index;
+      _currentTabId = id;
     });
     final settings = AppSettings();
-    settings.lastMainPage = _tabs[index].id;
+    settings.lastMainPage = id;
     unawaited(settings.save());
   }
 
   @override
   Widget build(BuildContext context) {
     final serialService = Provider.of<SerialService>(context);
-    final isPlotting = serialService.isPlotting;
+    final tabs = _tabs;
+    if (!tabs.any((tab) => tab.id == _currentTabId)) {
+      _currentTabId = 'rawData';
+    }
+    final currentIndex = tabs.indexWhere((tab) => tab.id == _currentTabId);
 
     return Scaffold(
       body: Column(
@@ -243,11 +253,18 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children:
-                      _tabs.asMap().entries.map((entry) {
+                      tabs.asMap().entries.map((entry) {
                         final index = entry.key;
                         final tab = entry.value;
-                        final isSelected = index == _currentIndex;
-                        final canSwitch = !isPlotting || tab.id == 'plot';
+                        final isSelected = index == currentIndex;
+                        final ownerTab = switch (serialService.activityOwner) {
+                          SerialActivityOwner.rawData => 'rawData',
+                          SerialActivityOwner.shell => 'shell',
+                          SerialActivityOwner.plot => 'plot',
+                          SerialActivityOwner.none => null,
+                        };
+                        final canSwitch =
+                            ownerTab == null || tab.id == ownerTab;
                         final colorScheme = Theme.of(context).colorScheme;
                         final foreground =
                             isSelected
@@ -272,7 +289,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                             borderRadius: tabRadius,
                             child: InkWell(
                               borderRadius: tabRadius,
-                              onTap: canSwitch ? () => _selectTab(index) : null,
+                              onTap:
+                                  canSwitch ? () => _selectTab(tab.id) : null,
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -302,8 +320,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
           // 页面内容
           Expanded(
             child: IndexedStack(
-              index: _currentIndex,
-              children: _tabs.map((tab) => tab.page).toList(),
+              index: currentIndex,
+              children: tabs.map((tab) => tab.page).toList(),
             ),
           ),
           // 底部共享状态栏
@@ -324,9 +342,7 @@ class _WindowCloseListener extends WindowListener {
   void onWindowClose() async {
     final serialService = Provider.of<SerialService>(context, listen: false);
     if (serialService.isConnected) {
-      serialService.disconnect();
-      // 等待断开完成（C++ 线程 join 和资源清理）。
-      await Future.delayed(const Duration(milliseconds: 50));
+      await serialService.disconnect();
     }
     await windowManager.setPreventClose(false);
     await windowManager.close();

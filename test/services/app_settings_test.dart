@@ -59,6 +59,10 @@ void main() {
             ..rawDataTerminalFontFamily = 'Courier New'
             ..rawDataShellTheme = 'dark'
             ..rawDataShellCursor = 'block'
+            ..shellEncoding = 'GBK'
+            ..shellLineEnding = '\n'
+            ..shellLocalEcho = false
+            ..shellScrollbackLines = 50000
             ..ymodemSaveDirectoryPolicy = 'custom'
             ..rawMultiSendProfileId = 'multi-send'
             ..xMin = 10
@@ -120,6 +124,10 @@ void main() {
       expect(settings.rawDataTerminalFontFamily, 'Consolas');
       expect(settings.rawDataShellTheme, 'light');
       expect(settings.rawDataShellCursor, 'verticalBar');
+      expect(settings.shellEncoding, 'UTF-8');
+      expect(settings.shellLineEnding, '\r\n');
+      expect(settings.shellLocalEcho, isTrue);
+      expect(settings.shellScrollbackLines, 10000);
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
       expect(settings.rawMultiSendProfileId, isEmpty);
       expect(settings.xMin, 0);

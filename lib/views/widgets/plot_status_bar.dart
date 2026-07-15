@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../core/utils/plot_value_formatter.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import 'common_widgets.dart';
 
 /// 绘图页面状态栏
 ///
@@ -29,8 +30,8 @@ class PlotStatusBar extends StatelessWidget {
       builder: (context, selection, child) {
         final vm = context.read<PlotViewModel>();
         return Container(
-          height: 24,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          height: kPageStatusBarHeight,
+          padding: kPageStatusBarPadding,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             border: Border(
@@ -43,10 +44,7 @@ class PlotStatusBar extends StatelessWidget {
               const _PlotFpsMonitor(),
               const SizedBox(width: 8),
               // 左侧：视口范围、数据点数、速率、运行状态
-              Text(
-                selection.statusText,
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
-              ),
+              Text(selection.statusText, style: kPageStatusBarTextStyle),
               const Spacer(),
               // 右侧：垂直光标信息
               if (vm.cursor != null && vm.vCursorEnabled) _buildCursorInfo(vm),
@@ -100,10 +98,7 @@ class PlotStatusBar extends StatelessWidget {
       }
     }
 
-    return Text(
-      buffer.toString(),
-      style: const TextStyle(fontSize: 11, color: Colors.grey),
-    );
+    return Text(buffer.toString(), style: kPageStatusBarTextStyle);
   }
 }
 
@@ -163,11 +158,7 @@ class _PlotFpsMonitorState extends State<_PlotFpsMonitor> {
     final value = _fps?.round().toString() ?? '--';
     return SizedBox(
       width: 48,
-      child: Text(
-        'FPS: $value',
-        maxLines: 1,
-        style: const TextStyle(fontSize: 11, color: Colors.grey),
-      ),
+      child: Text('FPS: $value', maxLines: 1, style: kPageStatusBarTextStyle),
     );
   }
 }

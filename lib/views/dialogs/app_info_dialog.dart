@@ -8,6 +8,7 @@ import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/changelog_service.dart';
+import '../../services/serial_service.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
 import '../widgets/common_widgets.dart';
@@ -16,6 +17,13 @@ Future<void> showAppInfoDialog(BuildContext context) {
   return showDialog(
     context: context,
     builder: (context) => const AppInfoDialog(),
+  );
+}
+
+Future<void> showAppAdvancedSettingsDialog(BuildContext context) {
+  return showDialog(
+    context: context,
+    builder: (context) => const AppInfoDialog(showAdvancedSettingsOnly: true),
   );
 }
 
@@ -41,6 +49,15 @@ Future<void> showUpdateAvailableDialog(
 double _dialogContentMaxHeight(BuildContext context) {
   return (MediaQuery.sizeOf(context).height * 0.72)
       .clamp(320.0, 620.0)
+      .toDouble();
+}
+
+/// 应用信息弹窗的优选内容高度；小窗口仍由可用高度上限负责收缩。
+const double _appInfoDialogPreferredContentHeight = 540;
+
+double _appInfoDialogContentHeight(BuildContext context) {
+  return (MediaQuery.sizeOf(context).height * 0.78)
+      .clamp(320.0, _appInfoDialogPreferredContentHeight)
       .toDouble();
 }
 
@@ -308,7 +325,9 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
 }
 
 class AppInfoDialog extends StatefulWidget {
-  const AppInfoDialog({super.key});
+  const AppInfoDialog({super.key, this.showAdvancedSettingsOnly = false});
+
+  final bool showAdvancedSettingsOnly;
 
   @override
   State<AppInfoDialog> createState() => _AppInfoDialogState();
@@ -316,6 +335,7 @@ class AppInfoDialog extends StatefulWidget {
 
 class _AppInfoDialogState extends State<AppInfoDialog> {
   final _checker = UpdateChecker();
+  final _advancedSettingsScrollController = ScrollController();
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
   UpdateChannel _updateChannel = UpdateChannel.fromString(
@@ -334,6 +354,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   @override
   void initState() {
     super.initState();
+    if (widget.showAdvancedSettingsOnly) {
+      _loadRollbackUpdates();
+      return;
+    }
     AppInfo.displayVersion()
         .then((value) {
           if (mounted) setState(() => _version = value);
@@ -345,11 +369,19 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     AppInfo.buildTime().then((value) {
       if (mounted) setState(() => _buildTime = value);
     });
-    _loadRollbackUpdates();
+  }
+
+  @override
+  void dispose() {
+    _advancedSettingsScrollController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.showAdvancedSettingsOnly) {
+      return _buildAdvancedSettingsDialog(context);
+    }
     final release = _lastResult?.latestRelease;
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
@@ -361,10 +393,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         ],
       ),
       content: SizedBox(
-        width: 360,
+        key: const ValueKey('app-info-dialog-content'),
+        width: 600,
+        height: _appInfoDialogContentHeight(context),
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: _dialogContentMaxHeight(context),
+            maxHeight: _appInfoDialogContentHeight(context),
           ),
           child: _scrollWithoutScrollbar(
             context,
@@ -373,17 +407,36 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _InfoRow(
-                    label: AppStrings.appInfo.appName,
-                    value: AppInfo.name,
-                  ),
-                  _InfoRow(
-                    label: AppStrings.appInfo.version,
-                    value: _version ?? AppStrings.appInfo.loading,
-                  ),
-                  _InfoRow(
-                    label: AppStrings.appInfo.buildTime,
-                    value: _formatBuildTime(_buildTime),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 4,
+                        child: _InfoRow(
+                          key: const ValueKey('app-info-name'),
+                          label: AppStrings.appInfo.appName,
+                          value: AppInfo.name,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 4,
+                        child: _InfoRow(
+                          key: const ValueKey('app-info-version'),
+                          label: AppStrings.appInfo.version,
+                          value: _version ?? AppStrings.appInfo.loading,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 7,
+                        child: _InfoRow(
+                          key: const ValueKey('app-info-build-time'),
+                          label: AppStrings.appInfo.buildTime,
+                          value: _formatBuildTime(_buildTime),
+                        ),
+                      ),
+                    ],
                   ),
                   if (_changelogEntries.isNotEmpty) ...[
                     const SizedBox(height: 8),
@@ -394,109 +447,51 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     const SizedBox(height: 6),
                     _ChangelogPreview(entries: _changelogEntries),
                   ],
-                  const SizedBox(height: 16),
-                  const Divider(height: 1),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(AppStrings.appInfo.autoCheckUpdates),
-                    subtitle: Text(AppStrings.appInfo.autoCheckUpdatesHelp),
-                    value: _autoUpdateCheckEnabled,
-                    onChanged: (value) {
-                      setState(() => _autoUpdateCheckEnabled = value);
-                      final settings =
-                          AppSettings()..autoUpdateCheckEnabled = value;
-                      settings.save();
-                    },
+                  const SizedBox(height: 8),
+                  const Divider(
+                    key: ValueKey('app-info-update-divider'),
+                    height: 1,
                   ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(AppStrings.appInfo.updateChannelTitle),
-                    subtitle: Text(
-                      _updateChannel == UpdateChannel.beta
-                          ? AppStrings.appInfo.betaChannelHelp
-                          : AppStrings.appInfo.stableChannelHelp,
-                    ),
-                    trailing: SizedBox(
-                      width: 116,
-                      child: NoAnimDropdown<UpdateChannel>(
-                        value: _updateChannel,
-                        hint: AppStrings.appInfo.updateChannelTitle,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                        ),
-                        items: UpdateChannel.values
-                            .map(
-                              (channel) => DropdownMenuItem(
-                                value: channel,
-                                child: Text(channel.label),
+                  const SizedBox(height: 4),
+                  Row(
+                    key: const ValueKey('app-info-auto-update-row'),
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(AppStrings.appInfo.autoCheckUpdates),
+                            const SizedBox(height: 2),
+                            Text(
+                              AppStrings.appInfo.autoCheckUpdatesHelp,
+                              style: Theme.of(
+                                context,
+                              ).textTheme.bodySmall?.copyWith(
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
                               ),
-                            )
-                            .toList(growable: false),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: _autoUpdateCheckEnabled,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (value) {
-                          if (value == null) return;
-                          setState(() {
-                            _updateChannel = value;
-                            _lastResult = null;
-                          });
+                          setState(() => _autoUpdateCheckEnabled = value);
                           final settings =
-                              AppSettings()..updateChannel = value.value;
+                              AppSettings()..autoUpdateCheckEnabled = value;
                           settings.save();
                         },
                       ),
-                    ),
-                  ),
-                  _buildUpdateSourceTile(),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _checking ? null : _checkForUpdate,
-                        icon:
-                            _checking
-                                ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                                : const Icon(Icons.update, size: 16),
-                        label: Text(
-                          _checking
-                              ? AppStrings.appInfo.checking
-                              : AppStrings.appInfo.manualCheckUpdates,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _lastResult?.hasUpdate == true && release != null
-                                ? () => showUpdateAvailableDialog(
-                                  context,
-                                  release,
-                                  sourcePreference: _updateSourcePreference,
-                                )
-                                : null,
-                        icon: const Icon(Icons.download, size: 16),
-                        label: Text(AppStrings.update.downloadAndInstall),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _showAdvancedSettings,
-                        icon: const Icon(Icons.tune, size: 16),
-                        label: Text(AppStrings.common.advancedSettings),
-                      ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  _buildUpdateChannelAndSource(),
                   if (_lastResult != null) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -532,6 +527,36 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         ),
       ),
       actions: [
+        ElevatedButton.icon(
+          key: const ValueKey('check-for-update-button'),
+          onPressed: _checking ? null : _checkForUpdate,
+          icon:
+              _checking
+                  ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                  : const Icon(Icons.update, size: 16),
+          label: Text(
+            _checking
+                ? AppStrings.appInfo.checking
+                : AppStrings.appInfo.manualCheckUpdates,
+          ),
+        ),
+        OutlinedButton.icon(
+          key: const ValueKey('download-and-install-button'),
+          onPressed:
+              _lastResult?.hasUpdate == true && release != null
+                  ? () => showUpdateAvailableDialog(
+                    context,
+                    release,
+                    sourcePreference: _updateSourcePreference,
+                  )
+                  : null,
+          icon: const Icon(Icons.download, size: 16),
+          label: Text(AppStrings.update.downloadAndInstall),
+        ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(AppStrings.common.close),
@@ -540,45 +565,87 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
-  Widget _buildUpdateSourceTile() {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      title: Text(AppStrings.appInfo.updateSourceTitle),
-      subtitle: Text(
+  Widget _buildUpdateChannelAndSource() {
+    final helpStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final channelHelp =
+        _updateChannel == UpdateChannel.beta
+            ? AppStrings.appInfo.betaChannelHelp
+            : AppStrings.appInfo.stableChannelHelp;
+    final sourceHelp =
         _updateSourcePreference == UpdateSourcePreference.auto
             ? AppStrings.appInfo.updateSourceAutoHelp
             : AppStrings.appInfo.updateSourceLockedHelp(
               _updateSourcePreference.label,
+            );
+
+    return Column(
+      key: const ValueKey('update-channel-and-source'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(AppStrings.appInfo.updateChannelAndSourceTitle),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: NoAnimDropdown<UpdateChannel>(
+                value: _updateChannel,
+                hint: AppStrings.appInfo.updateChannelTitle,
+                decoration: secondaryDialogFieldDecoration(
+                  hintText: AppStrings.appInfo.updateChannelTitle,
+                ),
+                items: UpdateChannel.values
+                    .map(
+                      (channel) => DropdownMenuItem(
+                        value: channel,
+                        child: Text(channel.label),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _updateChannel = value;
+                    _lastResult = null;
+                  });
+                  final settings = AppSettings()..updateChannel = value.value;
+                  settings.save();
+                },
+              ),
             ),
-      ),
-      trailing: SizedBox(
-        width: 116,
-        child: NoAnimDropdown<UpdateSourcePreference>(
-          value: _updateSourcePreference,
-          hint: AppStrings.appInfo.updateSourceTitle,
-          decoration: const InputDecoration(
-            isDense: true,
-            border: OutlineInputBorder(),
-            contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          ),
-          items: UpdateSourcePreference.values
-              .map(
-                (source) =>
-                    DropdownMenuItem(value: source, child: Text(source.label)),
-              )
-              .toList(growable: false),
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() {
-              _updateSourcePreference = value;
-              _lastResult = null;
-            });
-            final settings = AppSettings()..updateSource = value.value;
-            settings.save();
-          },
+            const SizedBox(width: 8),
+            Expanded(
+              child: NoAnimDropdown<UpdateSourcePreference>(
+                value: _updateSourcePreference,
+                hint: AppStrings.appInfo.updateSourceTitle,
+                decoration: secondaryDialogFieldDecoration(
+                  hintText: AppStrings.appInfo.updateSourceTitle,
+                ),
+                items: UpdateSourcePreference.values
+                    .map(
+                      (source) => DropdownMenuItem(
+                        value: source,
+                        child: Text(source.label),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _updateSourcePreference = value;
+                    _lastResult = null;
+                  });
+                  final settings = AppSettings()..updateSource = value.value;
+                  settings.save();
+                },
+              ),
+            ),
+          ],
         ),
-      ),
+        const SizedBox(height: 4),
+        Text('$channelHelp；$sourceHelp', style: helpStyle),
+      ],
     );
   }
 
@@ -670,91 +737,123 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
-  Future<void> _showAdvancedSettings() async {
+  Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
-    await showDialog<void>(
-      context: context,
+    var shellEnabled = AppSettings().rawDataShellEnabled;
+    final notificationSectionKey = GlobalKey();
+    final pageSectionKey = GlobalKey();
+    final rollbackSectionKey = GlobalKey();
+    final resetSectionKey = GlobalKey();
+    return StatefulBuilder(
       builder:
-          (dialogContext) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  title: Text(AppStrings.common.advancedSettings),
-                  content: SizedBox(
-                    width: 360,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxHeight: _dialogContentMaxHeight(context),
-                      ),
-                      child: _scrollWithoutScrollbar(
-                        context,
-                        child: SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                dense: true,
-                                title: Text(
-                                  AppStrings.appInfo.disableNotifications,
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                                subtitle: Text(
-                                  AppStrings.appInfo.disableNotificationsHelp,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.bodySmall?.copyWith(
-                                    color:
-                                        Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                value: disableNotifications,
-                                onChanged: (value) {
-                                  setDialogState(
-                                    () => disableNotifications = value,
-                                  );
-                                  setState(() => _disableNotifications = value);
-                                  final settings =
-                                      AppSettings()
-                                        ..disableNotifications = value;
-                                  settings.save();
-                                },
-                              ),
-                              const Divider(height: 16),
-                              _buildRollbackSection(context),
-                              const Divider(height: 16),
-                              _buildResetSettingsSection(
-                                context,
-                                onReset: () async {
-                                  final didReset =
-                                      await _confirmResetSettings();
-                                  if (didReset) {
-                                    setDialogState(() {
-                                      disableNotifications =
-                                          AppSettings().disableNotifications;
-                                    });
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: Text(AppStrings.common.close),
-                    ),
-                  ],
+          (context, setDialogState) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.common.advancedSettings),
+            content: SettingsNavigationView(
+              scrollController: _advancedSettingsScrollController,
+              items: [
+                SettingsNavigationItem(
+                  label: '通知',
+                  anchorKey: notificationSectionKey,
                 ),
+                SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                SettingsNavigationItem(
+                  label: '版本回退',
+                  anchorKey: rollbackSectionKey,
+                ),
+                SettingsNavigationItem(
+                  label: '重置设置',
+                  anchorKey: resetSectionKey,
+                ),
+              ],
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SwitchListTile(
+                    key: notificationSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.appInfo.disableNotifications,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.appInfo.disableNotificationsHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: disableNotifications,
+                    onChanged: (value) {
+                      setDialogState(() => disableNotifications = value);
+                      setState(() => _disableNotifications = value);
+                      final settings =
+                          AppSettings()..disableNotifications = value;
+                      settings.save();
+                    },
+                  ),
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    key: pageSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.raw.enableShellEntry,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.raw.enableShellEntryHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: shellEnabled,
+                    onChanged:
+                        SerialService().activityOwner ==
+                                SerialActivityOwner.shell
+                            ? null
+                            : (value) {
+                              setDialogState(() => shellEnabled = value);
+                              SerialService().setShellEnabled(value);
+                            },
+                  ),
+                  const Divider(height: 16),
+                  KeyedSubtree(
+                    key: rollbackSectionKey,
+                    child: _buildRollbackSection(context),
+                  ),
+                  const Divider(height: 16),
+                  KeyedSubtree(
+                    key: resetSectionKey,
+                    child: _buildResetSettingsSection(
+                      context,
+                      onReset: () async {
+                        final didReset = await _confirmResetSettings();
+                        if (didReset) {
+                          setDialogState(() {
+                            disableNotifications =
+                                AppSettings().disableNotifications;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(AppStrings.common.close),
+              ),
+            ],
           ),
     );
   }
@@ -972,7 +1071,7 @@ class _ChangelogPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 180),
+      constraints: const BoxConstraints(maxHeight: 260),
       child: _scrollWithoutScrollbar(
         context,
         child: SingleChildScrollView(
@@ -1056,24 +1155,27 @@ class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const _InfoRow({required this.label, required this.value});
+  const _InfoRow({super.key, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         children: [
-          SizedBox(
-            width: 72,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+          Text(
+            '$label:',
+            maxLines: 1,
+            style: const TextStyle(fontSize: 14, color: Colors.black),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: SelectableText(
+              value,
+              maxLines: 1,
+              style: const TextStyle(fontSize: 14, color: Colors.black),
             ),
           ),
-          Expanded(child: SelectableText(value)),
         ],
       ),
     );

@@ -1896,73 +1896,110 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    _prepareHistoryForStart();
-
-    // 创建解析器
-    _parser = _createParser();
-
-    // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
-    // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
-    _protocolInitFailureMessage = null;
-    if (!_sendProtocolInitData()) {
-      _parser?.dispose();
-      _parser = null;
-      _sourceConfig.useSerial = false;
-      _sourceConfig.useRandom = false;
-      serialService.isPlotting = false;
-      final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
+    if (!serialService.tryAcquireActivity(SerialActivityOwner.plot)) {
+      const message = '其他页面正在接收数据，请先停止后再开始绘图';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      Future.microtask(() => notifyListeners());
       return;
     }
 
-    // 配置并启动数据源
-    // 注意：useSerial/useRandom 已在开头同步
-    // 根据 FireWater 配置设置随机数据源通道数
-    _sourceConfig.randomChannelCount =
-        _parserConfig.fireWaterChannelCount > 0
-            ? _parserConfig.fireWaterChannelCount
-            : 4;
-    _sourceManager.updateConfig(_sourceConfig);
-    _isPlotting = true;
-    serialService.isPlotting = true;
-    _sourceManager.start();
+    try {
+      _prepareHistoryForStart();
 
-    // 连接数据源 → 解析器 → 数据缓冲区。
-    // 一个原始字节块内的多帧结果直接批量消费，避免每包经过一次 Stream 调度。
-    _parseSubscription = _sourceManager.byteStream.listen(
-      (data) {
-        final parser = _parser;
-        if (parser == null) return;
-        final results = parser.feedBatch(data);
-        if (results.isEmpty) return;
-        final receivedAt = DateTime.now();
-        for (final result in results) {
-          _onParseResult(
-            result,
-            receivedAt: receivedAt,
-            updateFollowViewport: false,
-          );
-        }
-        if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
-          final lastIndex = _dataPoints.last.index;
-          _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
-        }
-      },
-      onError: (error) {
-        AppLogger().error('数据源错误: $error', category: 'PLOT');
-      },
-    );
+      // 创建解析器
+      _parser = _createParser();
 
-    // 开始绘图时自动停止原始数据接收
-    if (serialService.isRawReceiving) {
-      serialService.stopRawReceiving();
+      // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
+      // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
+      _protocolInitFailureMessage = null;
+      if (!await _sendProtocolInitData()) {
+        _parser?.dispose();
+        _parser = null;
+        _sourceConfig.useSerial = false;
+        _sourceConfig.useRandom = false;
+        serialService.releaseActivity(SerialActivityOwner.plot);
+        final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        Future.microtask(() => notifyListeners());
+        return;
+      }
+
+      // 配置并启动数据源
+      // 注意：useSerial/useRandom 已在开头同步
+      // 根据 FireWater 配置设置随机数据源通道数
+      _sourceConfig.randomChannelCount =
+          _parserConfig.fireWaterChannelCount > 0
+              ? _parserConfig.fireWaterChannelCount
+              : 4;
+      _sourceManager.updateConfig(_sourceConfig);
+      _isPlotting = true;
+      _sourceManager.start();
+
+      // 连接数据源 → 解析器 → 数据缓冲区。
+      // 一个原始字节块内的多帧结果直接批量消费，避免每包经过一次 Stream 调度。
+      _parseSubscription = _sourceManager.byteStream.listen(
+        (data) {
+          final parser = _parser;
+          if (parser == null) return;
+          final results = parser.feedBatch(data);
+          if (results.isEmpty) return;
+          final receivedAt = DateTime.now();
+          for (final result in results) {
+            _onParseResult(
+              result,
+              receivedAt: receivedAt,
+              updateFollowViewport: false,
+            );
+          }
+          if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+            final lastIndex = _dataPoints.last.index;
+            _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
+          }
+        },
+        onError: (error) {
+          AppLogger().error('数据源错误: $error', category: 'PLOT');
+        },
+      );
+
+      Future.microtask(() => serialService.notifyListeners());
+      _startRefreshTimer();
+      AppLogger().info('开始绘图', category: 'PLOT');
+      showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
+      Future.microtask(() => notifyListeners());
+    } catch (error, stackTrace) {
+      await _rollbackFailedPlotStart(error, stackTrace);
     }
-    Future.microtask(() => serialService.notifyListeners());
-    _startRefreshTimer();
-    AppLogger().info('开始绘图', category: 'PLOT');
-    showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
+  }
+
+  /// 回滚取得活动所有权后发生的意外启动失败，避免主页面永久被锁定。
+  Future<void> _rollbackFailedPlotStart(
+    Object error,
+    StackTrace stackTrace,
+  ) async {
+    try {
+      await _parseSubscription?.cancel();
+    } catch (cleanupError) {
+      AppLogger().warning('绘图启动失败后取消订阅失败: $cleanupError', category: 'PLOT');
+    }
+    _parseSubscription = null;
+    try {
+      _sourceManager.stop();
+    } catch (cleanupError) {
+      AppLogger().warning('绘图启动失败后停止数据源失败: $cleanupError', category: 'PLOT');
+    }
+    try {
+      _parser?.dispose();
+    } catch (cleanupError) {
+      AppLogger().warning('绘图启动失败后释放解析器失败: $cleanupError', category: 'PLOT');
+    }
+    _parser = null;
+    _isPlotting = false;
+    _sourceConfig.useSerial = false;
+    _sourceConfig.useRandom = false;
+    serialService.releaseActivity(SerialActivityOwner.plot);
+    AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
+    showStatusMessage('绘图启动失败，已恢复页面操作');
     Future.microtask(() => notifyListeners());
   }
 
@@ -1982,7 +2019,6 @@ class PlotViewModel extends BaseViewModel {
     _isStopping = true;
     _isPlotting = false;
     _resetRateState();
-    serialService.isPlotting = false;
     AppLogger().info(
       '用户请求停止绘图：已接收点=$_nextIndex，当前显示点=${_dataPoints.length}',
       category: 'PLOT',
@@ -2007,6 +2043,7 @@ class PlotViewModel extends BaseViewModel {
         _notifyTimer = null;
         _pendingNotifyCount = 0;
         _isStopping = false;
+        serialService.releaseActivity(SerialActivityOwner.plot);
         if (_triggerConfig.enabled) {
           _triggerConfig.enabled = false;
         }
@@ -2617,7 +2654,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 某些协议（如众邦电控）需要在开始绘图前发送配置数据。
   /// 返回是否发送成功，发送失败会阻止本次绘图启动。
-  bool _sendProtocolInitData() {
+  Future<bool> _sendProtocolInitData() async {
     switch (effectiveSendProtocolType) {
       case SendProtocolType.zobowBuiltIn:
         return _sendJackFourChannelInitData();
@@ -2628,7 +2665,7 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  bool _sendRProtocolInitData() {
+  Future<bool> _sendRProtocolInitData() async {
     if (!serialService.isConnected) {
       _protocolInitFailureMessage =
           'r协议初始化失败：串口未连接，无法发送初始化命令。'
@@ -2644,7 +2681,7 @@ class PlotViewModel extends BaseViewModel {
           loose: _rProtocolLooseChannelSettings,
         ),
       );
-      serialService.send(
+      await serialService.send(
         bytes,
         displaySource: SendDisplaySource.plot,
         displayAsHex: false,
@@ -2848,7 +2885,7 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 格式：18字节
   /// 前16字节为4个通道号（小端序uint32），后2字节为前16字节的CRC16/MODBUS（小端序）
-  bool _sendJackFourChannelInitData() {
+  Future<bool> _sendJackFourChannelInitData() async {
     // 串口未连接时不发送初始化数据
     if (!serialService.isConnected) {
       AppLogger().debug('串口未连接，跳过众邦电控初始化数据发送', category: 'PLOT');
@@ -2861,7 +2898,7 @@ class PlotViewModel extends BaseViewModel {
             .take(_parserConfig.zobowChannelCount)
             .toList(),
       );
-      serialService.send(
+      await serialService.send(
         bytes,
         displaySource: SendDisplaySource.plot,
         displayAsHex: true,
@@ -5003,8 +5040,7 @@ class PlotViewModel extends BaseViewModel {
     _isStopping = false;
     _stopFuture = null;
     _resetRateState();
-    // 全局单例模式下不重置 serialService.isPlotting
-    // serialService.isPlotting = false;
+    serialService.releaseActivity(SerialActivityOwner.plot);
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;

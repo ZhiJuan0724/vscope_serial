@@ -269,12 +269,19 @@ def terminal_loop(ser, args) -> None:
     )
     ser.write(intro + prompt)
     buffer = bytearray()
+    ignore_lf_after_cr = False
     print("[terminal] started. Press Ctrl+C to stop.")
     while True:
         byte = ser.read(1)
         if not byte:
             continue
         value = byte[0]
+        # CRLF is one line ending. The command is handled on CR, then the
+        # immediately following LF is consumed instead of creating an empty command.
+        if value == 0x0A and ignore_lf_after_cr:
+            ignore_lf_after_cr = False
+            continue
+        ignore_lf_after_cr = value == 0x0D
         if value == 0x03:
             buffer.clear()
             ser.write(b"^C\r\n" + prompt)

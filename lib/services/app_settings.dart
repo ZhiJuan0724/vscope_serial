@@ -194,10 +194,10 @@ class AppSettings {
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 100000;
 
-  /// 数据收发页面 Shell 模式开关。
+  /// 旧版数据收发页面 Shell 模式开关，仅用于读取历史配置。
   bool rawDataShellMode = false;
 
-  /// 是否在普通收发页面显示 Shell 模式入口。
+  /// 是否显示独立 Shell 页面标签。
   bool rawDataShellEnabled = false;
 
   /// Shell 输入模式：line / key。
@@ -214,6 +214,18 @@ class AppSettings {
 
   /// Shell 光标样式：verticalBar / underline / block。
   String rawDataShellCursor = 'verticalBar';
+
+  /// Shell 独立文本编码；首次升级时从数据收发编码迁移。
+  String shellEncoding = 'UTF-8';
+
+  /// Shell 命令行发送后追加的行尾。
+  String shellLineEnding = '\r\n';
+
+  /// Shell 命令行模式是否在发送前显示本地输入。
+  bool shellLocalEcho = true;
+
+  /// Shell 终端保留的最大历史行数。
+  int shellScrollbackLines = 10000;
 
   /// YMODEM 接收文件保存策略，当前固定为 exports。
   String ymodemSaveDirectoryPolicy = 'exports';
@@ -338,7 +350,12 @@ class AppSettings {
     rawDataTerminalFontFamily = 'Consolas';
     rawDataShellTheme = 'light';
     rawDataShellCursor = 'verticalBar';
+    shellEncoding = 'UTF-8';
+    shellLineEnding = '\r\n';
+    shellLocalEcho = true;
+    shellScrollbackLines = 10000;
     ymodemSaveDirectoryPolicy = 'exports';
+    rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
 
     xMin = PlotConfiguration.viewportDefaultXMin;
@@ -372,7 +389,11 @@ class AppSettings {
       plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
       plotFontBold = json['plotFontBold'] as bool? ?? false;
       final savedMainPage = json['lastMainPage'] as String?;
-      lastMainPage = savedMainPage == 'plot' ? 'plot' : 'rawData';
+      lastMainPage = switch (savedMainPage) {
+        'plot' => 'plot',
+        'shell' => 'shell',
+        _ => 'rawData',
+      };
       maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
               PlotConfiguration.defaultVisiblePointCount)
           .clamp(
@@ -484,7 +505,10 @@ class AppSettings {
               .clamp(100, 100000)
               .toInt();
       rawDataShellMode = json['rawDataShellMode'] as bool? ?? false;
-      rawDataShellEnabled = json['rawDataShellEnabled'] as bool? ?? false;
+      rawDataShellEnabled =
+          json['shellEnabled'] as bool? ??
+          json['rawDataShellEnabled'] as bool? ??
+          false;
       if (!rawDataShellEnabled) rawDataShellMode = false;
       rawDataShellInputMode =
           (json['rawDataShellInputMode'] as String?) == 'key' ? 'key' : 'line';
@@ -501,6 +525,22 @@ class AppSettings {
       final cursor = json['rawDataShellCursor'] as String?;
       rawDataShellCursor =
           cursor == 'block' || cursor == 'underline' ? cursor! : 'verticalBar';
+      shellEncoding =
+          json['shellEncoding'] as String? ??
+          json['rawDataEncoding'] as String? ??
+          'UTF-8';
+      // 独立 Shell 首次升级时沿用旧数据收发页 Shell 共用的行尾设置。
+      shellLineEnding = switch (json['shellLineEnding'] as String? ??
+          json['lineEnding'] as String?) {
+        '\r' => '\r',
+        '\n' => '\n',
+        _ => '\r\n',
+      };
+      shellLocalEcho = json['shellLocalEcho'] as bool? ?? true;
+      shellScrollbackLines =
+          ((json['shellScrollbackLines'] as num?)?.toInt() ?? 10000)
+              .clamp(1000, 100000)
+              .toInt();
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
@@ -597,6 +637,11 @@ class AppSettings {
       'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
       'rawDataShellTheme': rawDataShellTheme,
       'rawDataShellCursor': rawDataShellCursor,
+      'shellEnabled': rawDataShellEnabled,
+      'shellEncoding': shellEncoding,
+      'shellLineEnding': shellLineEnding,
+      'shellLocalEcho': shellLocalEcho,
+      'shellScrollbackLines': shellScrollbackLines,
       'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
       'rawDataEncoding': rawDataEncoding,
       'rawMultiSendProfileId': rawMultiSendProfileId,

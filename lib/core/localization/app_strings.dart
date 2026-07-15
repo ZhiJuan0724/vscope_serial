@@ -21,6 +21,7 @@ final class _NavStrings {
   const _NavStrings();
 
   String get rawData => '数据收发';
+  String get shell => 'Shell';
   String get plot => '绘图';
   String get protocol => '协议';
 }
@@ -37,6 +38,7 @@ final class _CommonStrings {
   String get apply => '应用';
   String get refresh => '刷新';
   String get advancedSettings => '高级设置';
+  String get shellSettings => 'Shell设置';
 }
 
 final class _StatusStrings {
@@ -176,7 +178,7 @@ final class _PlotStrings {
   String importFailed(String error) => '导入失败: $error';
   String get selectConfigFirst => '请先选择一个配置文件';
   String get selectRProtocolConfigFirst => '请先选择一个 r 协议配置文件';
-  String get advancedSettings => '高级设置';
+  String get advancedSettings => '绘图设置';
   String get showGrid => '显示网格';
   String get gridDensity => '网格密度';
   String get plotBackground => '绘图背景';
@@ -378,7 +380,7 @@ final class _RawDataStrings {
   String get writingExportFile => '正在写入文件';
   String exportProgressPercent(double progress) =>
       '${(progress * 100).round()}%';
-  String get rawSettingsTitle => '普通收发设置';
+  String get rawSettingsTitle => '数据收发设置';
   String get textEncoding => '文本编码方式:';
   String get encodingHint => '编码';
   String get textEncodingHelp => '非 HEX 模式下，发送文本按选定编码转换为字节，接收字节按同一编码解码。';
@@ -391,8 +393,8 @@ final class _RawDataStrings {
   String get millisecondTimestamp => '显示毫秒级时间戳';
   String get displayLineLimit => '接收区最大显示行数:';
   String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
-  String get enableShellEntry => '启用 Shell 模式入口';
-  String get enableShellEntryHelp => '开启后普通收发工具栏显示 Shell 切换按钮。';
+  String get enableShellEntry => '显示 Shell 页面';
+  String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签；默认关闭。';
   String get timeWindowInvalid => '请输入 10 ~ 10000 之间的数值';
   String get displayLineLimitInvalid => '显示行数请输入 100 ~ 100000 之间的数值';
   String advancedSettingsSaved(int lines) => '高级设置已保存，接收区最多显示 $lines 行';
@@ -448,6 +450,7 @@ final class _AppInfoStrings {
   String get autoCheckUpdates => '启动时自动检查更新';
   String get autoCheckUpdatesHelp => '默认关闭；开启后每次打开应用会按更新来源设置检查更新';
   String get updateChannelTitle => '更新通道';
+  String get updateChannelAndSourceTitle => '更新通道和来源';
   String get betaChannelHelp => '只检查预发布版本';
   String get stableChannelHelp => '只检查稳定版本';
   String get updateSourceTitle => '更新来源';

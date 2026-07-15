@@ -923,7 +923,7 @@ void main() {
 
     test('clearData清空数据', () {
       // 先添加一些数据
-      vm.startPlotting();
+      vm.setPlottingForTest(true);
       // 无法直接添加数据，测试清空逻辑
       vm.clearData();
 
@@ -2058,14 +2058,14 @@ void main() {
       expect(status.contains('点数:'), true);
     });
 
-    test('非FireWater解析器保留随机源开关但不能单独启动', () {
+    test('非FireWater解析器保留随机源开关但不能单独启动', () async {
       vm.setUseRandomSource(true);
       vm.setParserType(ParserType.zobow);
 
       expect(vm.useRandomSource, true);
       expect(vm.lastStatusMessage, contains('随机源已保留'));
 
-      vm.startPlotting();
+      await vm.startPlotting();
 
       expect(vm.isPlotting, false);
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
@@ -2646,7 +2646,7 @@ void main() {
     test('stopPlotting先更新UI状态并阻止重复停止', () async {
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);
-      vm.startPlotting();
+      await vm.startPlotting();
       expect(vm.isPlotting, true);
 
       final stopFuture = vm.stopPlotting();
@@ -2665,7 +2665,7 @@ void main() {
       vm.setRefreshFps(60);
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);
-      vm.startPlotting();
+      await vm.startPlotting();
       expect(vm.isPlotting, true);
 
       vm.recordRateSampleForTest(0, 0);

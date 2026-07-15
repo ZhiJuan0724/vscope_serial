@@ -8,14 +8,12 @@ import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
-import 'package:xterm/xterm.dart';
 
 void main() {
   testWidgets('发送工具栏在扩展过渡宽度下自动换行且不溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(480, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final service = SerialService();
-    service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
 
     await tester.pumpWidget(
@@ -27,7 +25,69 @@ void main() {
     await tester.pump();
 
     expect(find.text('扩展'), findsOneWidget);
+    expect(find.text('数据收发'), findsNothing);
+    expect(find.text('开始'), findsOneWidget);
+    final startButton = find.byKey(const ValueKey('raw-start-stop-button'));
+    final elevatedButton = tester.widget<ElevatedButton>(
+      find.descendant(of: startButton, matching: find.byType(ElevatedButton)),
+    );
+    expect(elevatedButton.style?.minimumSize?.resolve({}), const Size(0, 28));
+    final buttonCenter = tester.getCenter(startButton);
+    final iconCenter = tester.getCenter(
+      find.descendant(of: startButton, matching: find.byIcon(Icons.play_arrow)),
+    );
+    expect(iconCenter.dy, buttonCenter.dy);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('接收显示选项靠左且清空保存设置靠右', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = SerialService()..setRawDataShellEnabled(false);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+    await tester.pump();
+
+    final autoScroll = find.byTooltip(AppStrings.raw.autoScroll);
+    final clear = find.byTooltip(AppStrings.raw.clear);
+    expect(tester.getCenter(autoScroll).dx, lessThan(400));
+    expect(tester.getCenter(clear).dx, greaterThan(800));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('向下拖动分隔条时发送区保持最低高度', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = SerialService()..setRawDataShellEnabled(false);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+    await tester.pump();
+
+    await tester.drag(
+      find.byKey(const ValueKey('raw-split-divider')),
+      const Offset(0, 1000),
+    );
+    await tester.pump();
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey('raw-send-area'))).height,
+      greaterThanOrEqualTo(200),
+    );
+    expect(tester.takeException(), isNull);
+
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -97,7 +157,6 @@ void main() {
     });
 
     final service = SerialService();
-    service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
     await tester.pumpWidget(
       ChangeNotifierProvider<SerialService>.value(
@@ -145,7 +204,6 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final service = SerialService();
     service.clearReceivedData();
-    service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
 
     await tester.pumpWidget(
@@ -158,13 +216,33 @@ void main() {
     final exportButtonFinder = find.byKey(
       const ValueKey('raw-data-export-button'),
     );
-    expect(tester.widget<TextButton>(exportButtonFinder).onPressed, isNull);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.descendant(
+              of: exportButtonFinder,
+              matching: find.byType(IconButton),
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
     expect(find.byKey(const ValueKey('raw-data-stats-overlay')), findsNothing);
 
     service.debugAddRawReceiveData(Uint8List.fromList([1, 2, 3]));
     await tester.pump(const Duration(milliseconds: 20));
 
-    expect(tester.widget<TextButton>(exportButtonFinder).onPressed, isNotNull);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.descendant(
+              of: exportButtonFinder,
+              matching: find.byType(IconButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
+    );
     expect(
       find.byKey(const ValueKey('raw-data-stats-overlay')),
       findsOneWidget,
@@ -210,7 +288,7 @@ void main() {
 
     expect(scrollable.position.pixels, scrollable.position.maxScrollExtent);
 
-    await tester.tap(find.byType(Checkbox).at(2));
+    await tester.tap(find.byTooltip(AppStrings.raw.autoScroll));
     await tester.pump();
 
     expect(service.autoScroll, isFalse);
@@ -269,143 +347,10 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('Shell模式隐藏普通发送区并显示终端操作', (tester) async {
-    final service = SerialService();
-    service.clearReceivedData();
-    service.setRawDataShellEnabled(true);
-    service.setRawDataShellMode(true);
-    service.setRawShellInputMode(RawShellInputMode.line);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
-        value: service,
-        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
-      ),
-    );
-
-    expect(find.text('Shell'), findsOneWidget);
-    expect(find.text('发送文件'), findsNothing);
-    expect(find.text('接收文件'), findsNothing);
-    expect(find.text('发送数据'), findsNothing);
-    expect(find.text('输入命令后按 Enter 发送'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('更多选项'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('更多功能'), findsOneWidget);
-    expect(find.text('文件发送/接收'), findsOneWidget);
-    expect(find.text('发送文件'), findsNothing);
-    expect(find.text('接收文件'), findsNothing);
-    expect(find.text('取消传输'), findsNothing);
-
-    service.setRawDataShellMode(false);
-    service.setRawDataShellEnabled(false);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  testWidgets('Shell清屏同时移除可视内容和滚动历史', (tester) async {
-    final service = SerialService();
-    service.setRawDataShellEnabled(true);
-    service.setRawDataShellMode(true);
-    service.setRawShellInputMode(RawShellInputMode.line);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
-        value: service,
-        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
-      ),
-    );
-    await tester.pump();
-
-    final terminal =
-        tester.widget<TerminalView>(find.byType(TerminalView)).terminal;
-    for (var i = 0; i < 40; i++) {
-      terminal.write('old output $i\r\n');
-    }
-    await tester.pump();
-    expect(terminal.buffer.getText(), contains('old output'));
-
-    await tester.tap(find.byTooltip(AppStrings.raw.clearScreen));
-    await tester.pump();
-
-    expect(terminal.buffer.getText(), isNot(contains('old output')));
-    expect(terminal.buffer.cursorX, 0);
-    expect(terminal.buffer.cursorY, 0);
-
-    service.setRawDataShellMode(false);
-    service.setRawDataShellEnabled(false);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  testWidgets('Shell逐键模式将方向键和Tab交给终端编码', (tester) async {
-    final service = SerialService()..isConnected = true;
-    service.setRawDataShellEnabled(true);
-    service.setRawDataShellMode(true);
-    service.setRawShellInputMode(RawShellInputMode.key);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
-        value: service,
-        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
-      ),
-    );
-    await tester.pump();
-
-    final terminal =
-        tester.widget<TerminalView>(find.byType(TerminalView)).terminal;
-    final output = <String>[];
-    terminal.onOutput = output.add;
-    await tester.tap(find.byType(TerminalView));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-
-    expect(output, ['\x1b[A', '\x1b[B', '\x1b[D', '\x1b[C', '\t']);
-
-    service.setRawDataShellMode(false);
-    service.setRawDataShellEnabled(false);
-    service.isConnected = false;
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
-  testWidgets('普通收发默认隐藏Shell入口', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 700));
-    final service = SerialService();
-    service.clearReceivedData();
-    service.setRawDataShellMode(false);
-    service.setRawDataShellEnabled(false);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
-        value: service,
-        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
-      ),
-    );
-
-    expect(find.widgetWithText(FilterChip, 'Shell'), findsNothing);
-
-    await tester.tap(find.text('高级设置'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('启用 Shell 模式入口'));
-    await tester.tap(find.text('确定'));
-    await tester.pumpAndSettle();
-
-    expect(find.widgetWithText(FilterChip, 'Shell'), findsOneWidget);
-
-    service.setRawDataShellEnabled(false);
-    await tester.binding.setSurfaceSize(null);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets('普通收发高级设置未变化时不显示保存提示', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
     final service = SerialService();
     service.clearReceivedData();
-    service.setRawDataShellMode(false);
     service.setRawDataShellEnabled(false);
     service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
 
@@ -416,8 +361,26 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('高级设置'));
+    expect(find.text(AppStrings.raw.rawSettingsTitle), findsNothing);
+    expect(find.byIcon(Icons.tune), findsOneWidget);
+    await tester.tap(find.byTooltip(AppStrings.raw.rawSettingsTitle));
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('settings-navigation-view')),
+      findsOneWidget,
+    );
+    expect(find.text('文本编码'), findsWidgets);
+    expect(find.text('HEX 时间'), findsOneWidget);
+    expect(find.text('显示行数'), findsOneWidget);
+    await tester.tap(find.text('显示行数'));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('raw-settings-confirm-button')),
+        matching: find.byType(ElevatedButton),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
 
