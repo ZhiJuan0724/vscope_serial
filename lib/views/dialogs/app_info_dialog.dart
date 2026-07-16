@@ -393,7 +393,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         ],
       ),
       content: SizedBox(
-        key: const ValueKey('app-info-dialog-content'),
         width: 600,
         height: _appInfoDialogContentHeight(context),
         child: ConstrainedBox(
@@ -448,13 +447,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     _ChangelogPreview(entries: _changelogEntries),
                   ],
                   const SizedBox(height: 8),
-                  const Divider(
-                    key: ValueKey('app-info-update-divider'),
-                    height: 1,
-                  ),
+                  const Divider(height: 1),
                   const SizedBox(height: 4),
                   Row(
-                    key: const ValueKey('app-info-auto-update-row'),
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(

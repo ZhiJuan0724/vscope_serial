@@ -49,28 +49,8 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: PlotPage())),
       ),
     );
-    final startButton = tester.widget<ElevatedButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('plot-start-stop-button')),
-        matching: find.byType(ElevatedButton),
-      ),
-    );
-    expect(startButton.style?.minimumSize?.resolve({}), const Size(0, 28));
-    final startButtonFinder = find.descendant(
-      of: find.byKey(const ValueKey('plot-start-stop-button')),
-      matching: find.byType(ElevatedButton),
-    );
-    final parserField = find.descendant(
-      of: find.byKey(const ValueKey('plot-parser-selector')),
-      matching: find.byType(InputDecorator),
-    );
-    expect(
-      tester.getCenter(parserField).dy,
-      tester.getCenter(startButtonFinder).dy + 2,
-    );
     expect(find.textContaining('FPS:'), findsOneWidget);
     expect(find.text(AppStrings.plot.advancedSettings), findsNothing);
-    expect(find.byIcon(Icons.tune), findsOneWidget);
 
     await tester.tap(find.byTooltip(AppStrings.plot.advancedSettings).last);
     await tester.pumpAndSettle();

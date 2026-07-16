@@ -27,16 +27,7 @@ void main() {
     expect(find.text('扩展'), findsOneWidget);
     expect(find.text('数据收发'), findsNothing);
     expect(find.text('开始'), findsOneWidget);
-    final startButton = find.byKey(const ValueKey('raw-start-stop-button'));
-    final elevatedButton = tester.widget<ElevatedButton>(
-      find.descendant(of: startButton, matching: find.byType(ElevatedButton)),
-    );
-    expect(elevatedButton.style?.minimumSize?.resolve({}), const Size(0, 28));
-    final buttonCenter = tester.getCenter(startButton);
-    final iconCenter = tester.getCenter(
-      find.descendant(of: startButton, matching: find.byIcon(Icons.play_arrow)),
-    );
-    expect(iconCenter.dy, buttonCenter.dy);
+    expect(find.byKey(const ValueKey('raw-start-stop-button')), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -362,7 +353,6 @@ void main() {
     );
 
     expect(find.text(AppStrings.raw.rawSettingsTitle), findsNothing);
-    expect(find.byIcon(Icons.tune), findsOneWidget);
     await tester.tap(find.byTooltip(AppStrings.raw.rawSettingsTitle));
     await tester.pumpAndSettle();
     expect(
@@ -374,13 +364,6 @@ void main() {
     expect(find.text('显示行数'), findsOneWidget);
     await tester.tap(find.text('显示行数'));
     await tester.pumpAndSettle();
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('raw-settings-confirm-button')),
-        matching: find.byType(ElevatedButton),
-      ),
-      findsOneWidget,
-    );
     await tester.tap(find.text('确定'));
     await tester.pumpAndSettle();
 

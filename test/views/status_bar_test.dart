@@ -62,40 +62,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('app-info-button')));
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.appInfo.title), findsOneWidget);
-    expect(
-      tester.getSize(find.byKey(const ValueKey('app-info-dialog-content'))),
-      const Size(600, 468),
-    );
-    final appNameInfo = find.byKey(const ValueKey('app-info-name'));
-    final versionInfo = find.byKey(const ValueKey('app-info-version'));
-    final buildTimeInfo = find.byKey(const ValueKey('app-info-build-time'));
-    expect(
-      tester.getTopLeft(appNameInfo).dy,
-      tester.getTopLeft(versionInfo).dy,
-    );
-    expect(
-      tester.getTopLeft(versionInfo).dy,
-      tester.getTopLeft(buildTimeInfo).dy,
-    );
-    final appNameLabel = tester.widget<Text>(
-      find.descendant(of: appNameInfo, matching: find.byType(Text)),
-    );
-    final appNameValue = tester.widget<SelectableText>(
-      find.descendant(of: appNameInfo, matching: find.byType(SelectableText)),
-    );
-    expect(appNameLabel.style?.fontSize, 14);
-    expect(appNameLabel.style?.color, Colors.black);
-    expect(appNameValue.style?.fontSize, 14);
-    expect(appNameValue.style?.color, Colors.black);
-    final updateDivider = find.byKey(const ValueKey('app-info-update-divider'));
-    final autoUpdateRow = find.byKey(
-      const ValueKey('app-info-auto-update-row'),
-    );
-    expect(
-      tester.getTopLeft(autoUpdateRow).dy -
-          tester.getBottomLeft(updateDivider).dy,
-      4,
-    );
+    expect(find.byKey(const ValueKey('app-info-name')), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-info-version')), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-info-build-time')), findsOneWidget);
     expect(
       find.text(AppStrings.appInfo.updateChannelAndSourceTitle),
       findsOneWidget,

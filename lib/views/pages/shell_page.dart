@@ -1079,7 +1079,6 @@ class _ShellPageState extends State<ShellPage> {
                         child: Text(AppStrings.common.cancel),
                       ),
                       DialogPrimaryActionButton(
-                        key: const ValueKey('shell-settings-save-button'),
                         onPressed: () {
                           vm
                             ..setEncoding(encoding)

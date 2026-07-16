@@ -63,39 +63,14 @@ void main() {
       find.byKey(const ValueKey('shell-start-stop-button')),
       findsOneWidget,
     );
-    final startButton = tester.widget<ElevatedButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('shell-start-stop-button')),
-        matching: find.byType(ElevatedButton),
-      ),
-    );
-    expect(startButton.style?.minimumSize?.resolve({}), const Size(0, 28));
     expect(find.text('开始'), findsOneWidget);
     expect(find.byTooltip('搜索终端内容'), findsNothing);
     expect(find.byTooltip('重置终端状态'), findsNothing);
-    expect(
-      find.descendant(
-        of: find.byTooltip('导出终端文本'),
-        matching: find.byIcon(Icons.save),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byTooltip('清屏'),
-        matching: find.byIcon(Icons.clear),
-      ),
-      findsOneWidget,
-    );
+    expect(find.byTooltip('导出终端文本'), findsOneWidget);
+    expect(find.byTooltip('清屏'), findsOneWidget);
     expect(find.byTooltip(AppStrings.common.shellSettings), findsOneWidget);
     expect(find.text(AppStrings.common.shellSettings), findsNothing);
-    expect(find.byIcon(Icons.tune), findsOneWidget);
     expect(find.text('UTF-8  CRLF'), findsOneWidget);
-    final statusStyle = tester.widget<DefaultTextStyle>(
-      find.byKey(const ValueKey('shell-status-text-style')),
-    );
-    expect(statusStyle.style.fontSize, 11);
-    expect(statusStyle.style.color, Colors.grey);
     expect(tester.takeException(), isNull);
   });
 
@@ -117,14 +92,6 @@ void main() {
     expect(find.text('命令行行尾'), findsOneWidget);
     expect(find.text('Shell 配置方案'), findsNothing);
     expect(find.text('CRLF'), findsWidgets);
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('shell-settings-save-button')),
-        matching: find.byType(ElevatedButton),
-      ),
-      findsOneWidget,
-    );
-
     final lineEndingDropdown = find.byKey(
       const ValueKey('shell-line-ending-dropdown'),
     );

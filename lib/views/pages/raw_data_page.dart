@@ -72,6 +72,9 @@ class _RawDataPageState extends State<RawDataPage> {
   /// 接收区与发送区之间可拖动分隔条的固定高度。
   static const double _splitDividerHeight = 8;
 
+  /// 接收显示选项启用时统一使用橙色，与绘图工具栏的活动状态保持一致。
+  static const Color _receiveOptionActiveColor = Colors.orange;
+
   static const TextStyle _receiveLineStyle = TextStyle(
     fontFamily: 'SarasaUiSC',
     fontSize: 13,
@@ -570,6 +573,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 label: AppStrings.raw.timestamp,
                 tooltip: AppStrings.raw.timestamp,
                 selected: vm.showTimestamp,
+                activeColor: _receiveOptionActiveColor,
                 onPressed: () => vm.setShowTimestamp(!vm.showTimestamp),
               ),
               overflowActions: [
@@ -588,6 +592,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 label: AppStrings.raw.hexDisplay,
                 tooltip: AppStrings.raw.hexDisplay,
                 selected: vm.receiveHex,
+                activeColor: _receiveOptionActiveColor,
                 onPressed: () => vm.setReceiveHex(!vm.receiveHex),
               ),
               overflowActions: [
@@ -606,6 +611,7 @@ class _RawDataPageState extends State<RawDataPage> {
                 label: AppStrings.raw.autoScroll,
                 tooltip: AppStrings.raw.autoScroll,
                 selected: vm.autoScroll,
+                activeColor: _receiveOptionActiveColor,
                 onPressed: () => vm.setAutoScroll(!vm.autoScroll),
               ),
               overflowActions: [
@@ -1346,7 +1352,6 @@ class _RawDataPageState extends State<RawDataPage> {
                       child: Text(AppStrings.common.cancel),
                     ),
                     DialogPrimaryActionButton(
-                      key: const ValueKey('raw-settings-confirm-button'),
                       onPressed: () {
                         final us = int.tryParse(timeWindowController.text);
                         final displayLineLimit = int.tryParse(
