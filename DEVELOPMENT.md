@@ -80,7 +80,7 @@ lib/
 ├── viewmodels/           # 页面状态与业务流程
 ├── views/
 │   ├── dialogs/          # 配置和操作弹窗
-│   ├── pages/            # 数据收发与绘图页面
+│   ├── pages/            # 数据收发、Shell 与绘图页面
 │   ├── plot/             # 绘图 Painter、视口和手势
 │   └── widgets/          # 通用组件
 └── main.dart
@@ -97,12 +97,15 @@ docs/                     # 长期上下文、历史和设计文档
 
 - `lib/core/` 只承载通用底层能力。日志统一使用 `AppLogger`，不要直接 `print()`。
 - 固定 UI 文本优先放入 `lib/core/localization/app_strings.dart`。
-- 协议解析器统一通过 `IDataParser.feed()` 和 `outputStream` 工作。
+- 协议解析器兼容 `IDataParser.feed()` 和 `outputStream`；绘图高频接收链优先使用 `feedBatch()`，避免逐包 Stream 调度。
 - `lib/services/` 管理串口、文件、设置、更新和系统资源，不承载页面布局。
-- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态。
+- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态；`ShellViewModel` 独立管理终端会话和文件传输。
 - `lib/views/` 只处理页面、弹窗、Painter 和交互。
+- `SerialService` 通过 `SerialActivityOwner` 原子管理数据收发、Shell 和绘图的接收活动；页面只能在所有者为 `none` 时切换。
+- 所有串口写入入口共用有序后台写队列，页面和 ViewModel 不得绕过队列直接并发调用同步 FFI 写入。
 - 绘图页使用 `Selector` 隔离工具栏、通道面板、绘图区和状态栏重建。
 - 绘图区分为背景网格、数据、坐标轴和交互覆盖四层 Painter。
+- 三个主页面使用统一工具栏组件；设置弹窗使用左侧分类导航和右侧连续内容，不为纯颜色、固定像素或图标外观编写脆弱测试。
 
 ## 代码检查与测试
 
@@ -124,11 +127,18 @@ flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METR
 
 ```powershell
 flutter test test/data/models/plot_lod_index_test.dart
+flutter test test/services/serial_activity_owner_test.dart
+flutter test test/services/serial_service_raw_data_test.dart
+flutter test test/services/shell_stream_decoder_test.dart
 flutter test test/viewmodels/plot_viewmodel_test.dart
 flutter test test/viewmodels/plot_viewmodel_window_test.dart
 flutter test test/viewmodels/plot_viewmodel_stats_test.dart
+flutter test test/views/shell_page_test.dart
+flutter test test/views/raw_data_page_test.dart
 flutter test test/parser/just_float_parser_test.dart
 ```
+
+当前测试基线以行为、状态流转、数据格式和关键交互为主，不保留只断言颜色、字体、固定像素或单个图标的测试。最近一次完整验证结果为 `392 passed, 2 skipped`，并通过 `flutter analyze` 与 `git diff --check`；该数字只用于核对当前仓库状态，新增或删除测试后应同步更新。
 
 更新器独立测试：
 
@@ -188,7 +198,7 @@ python tools/build_release.py --skip-analyze
 python tools/build_release.py --skip-test
 python tools/build_release.py --skip-build
 python tools/build_release.py --no-zip
-python tools/build_release.py --version 1.0.6
+python tools/build_release.py --version 1.0.7-beta.4
 ```
 
 便携包输出到 `build/releases/`。脚本会复制原生 DLL 和可用的 VC++ 运行时，并调用 `tools/generate_update_assets.py` 生成更新资产。
@@ -198,7 +208,7 @@ python tools/build_release.py --version 1.0.6
 ```powershell
 python tools/generate_update_assets.py `
   --bundle build/windows/x64/runner/Release `
-  --tag v1.0.6 `
+  --tag v1.0.7-beta.4 `
   --output dist
 ```
 
@@ -226,9 +236,9 @@ Release 必须同时包含：
 发布示例：
 
 ```powershell
-git tag v1.0.6
+git tag v1.0.7-beta.4
 git push origin dev
-git push origin v1.0.6
+git push origin v1.0.7-beta.4
 ```
 
 `main` 的普通 push 不触发发布，避免分支合并和 tag 重复构建。
@@ -258,7 +268,10 @@ git push origin v1.0.6
 - r 协议地址必须保留十进制或带 `0x` 前缀的十六进制文本格式。
 - FixedFrame 通道数为 `1~16`，帧头和帧尾不能同时全部为 `0`。
 - FireWater 只处理 ASCII 数值文本；随机源只输出 FireWater。
-- Shell 接收字节直接写入终端，不经过普通文本行格式化。
+- 数据收发页的多条发送配置保存在 `<exe_dir>/config/multi_send/`；运行期间禁止切换配置、编辑、排序、导入导出和单条发送。
+- Shell 是独立页面，不提供 HEX 输入或输出；Shell 编码、命令行行尾、本地回显、滚动历史和外观均使用独立设置。
+- Shell 接收字节由会话控制器流式解码后写入终端，不经过普通文本行格式化；多字节字符跨数据块时不得产生替换字符或丢失。
+- Shell 接收队列每帧最多消费 `64 KiB`，只安排一次滚动和重绘；达到上限后继续在后续帧处理。
 - YMODEM 传输必须使用统一串口写入口；传输期间禁止普通发送和逐键发送。
 - Shell 中 `Ctrl+C` 发送 ETX；复制使用 `Ctrl+Shift+C` 或右键。
 
@@ -266,7 +279,9 @@ git push origin v1.0.6
 
 - `PlotLodIndex` 只存在于内存，不改变原始数据和导出结果。
 - 当前精确窗口上限由用户设置决定，不得使用固定常量绕过配置。
+- 大范围绘图质量分为性能优先、均衡和质量优先：性能优先使用正常选取的 LOD，均衡使用更细一级，质量优先使用更细两级；档位只改变绘制采样，不改变历史数据和导出结果。
 - 高频模式只降低运行时刷新和绘制压力，不得丢弃完整历史数据。
+- 定位条只映射完整 X 数据边界和当前视口，不绘制全量曲线，也不得因主图 Y 轴、通道偏置或缩放而触发额外数据处理。
 - 绘图重绘通过 `dataRevision`、`channelConfigRevision`、`viewportRevision` 和 `overlayRevision` 分类；新增状态必须归入正确 revision。
 - 不得在 Flutter build 阶段直接修改 ViewModel；动态布局使用临时渲染状态或事件阶段更新。
 - 数据批量更新不应重建工具栏和通道面板；光标移动只应重绘覆盖层。
@@ -274,10 +289,13 @@ git push origin v1.0.6
 
 ### UI 与状态
 
+- 数据收发、Shell 或绘图开始实际接收后必须取得对应 `SerialActivityOwner`；活动期间锁定页面切换，停止、断线或启动失败时必须释放所有者。
 - 绘图运行时锁定协议、配置、地址、数据导入导出和随机源开关；随机源频率仍允许调整。
 - 通道名称可在绘图期间修改，通道地址只能在停止后修改。
 - 通道列表使用可回收列表，不要把必须持久存在的编辑状态仅放在 item state 中。
-- `ListView + Tooltip` 在 Flutter Windows 上可能产生 accessibility 日志噪声，不应把该日志误判为业务失败。
+- 应用窗口最小宽度统一为 `800px`；多条发送扩展的打开/关闭需要先同步原生窗口几何，再切换 Flutter 内容，避免窄面板闪现和累计扩宽。
+- 工具栏、开始按钮、下拉选择和设置底部操作统一使用公共组件；相关测试验证行为和可用状态，不锁定颜色、固定间距或具体图标。
+- Windows 根节点当前使用 `ExcludeSemantics` 规避 Flutter `Tooltip`/下拉控件的 semantics 日志洪泛；升级 Flutter 时应重新验证上游问题。
 
 ### 更新
 
