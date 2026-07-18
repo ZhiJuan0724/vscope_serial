@@ -103,6 +103,29 @@ void main() {
     );
   });
 
+  testWidgets('Shell 字号支持数值输入并即时预览', (tester) async {
+    await tester.pumpWidget(buildPage());
+    await tester.tap(find.byTooltip(AppStrings.common.shellSettings));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-navigation-item-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Slider), findsNothing);
+    final fontSizeField = find.byKey(const ValueKey('shell-font-size-field'));
+    await tester.enterText(fontSizeField, '18');
+    await tester.pump();
+
+    final preview = tester.widget<Text>(
+      find.textContaining('SerialTools Shell'),
+    );
+    expect(preview.style?.fontFamily, viewModel.fontFamily);
+    expect(preview.style?.fontSize, 18);
+
+    await tester.tap(find.text(AppStrings.common.save));
+    await tester.pumpAndSettle();
+    expect(viewModel.fontSize, 18);
+  });
+
   testWidgets('starting Shell does not inject text or move terminal cursor', (
     tester,
   ) async {

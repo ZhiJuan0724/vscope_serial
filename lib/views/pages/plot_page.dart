@@ -3877,7 +3877,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final performanceSectionKey = GlobalKey();
     final fontSectionKey = GlobalKey();
     final viewportSectionKey = GlobalKey();
-    final featureSectionKey = GlobalKey();
+    final toolbarSectionKey = GlobalKey();
     final interactionSectionKey = GlobalKey();
     final dataSectionKey = GlobalKey();
 
@@ -3927,11 +3927,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   scrollController: advancedSettingsScrollController,
                   items: [
                     SettingsNavigationItem(
-                      label: '外观与网格',
+                      label: '外观',
                       anchorKey: appearanceSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '绘图性能',
+                      label: '性能',
                       anchorKey: performanceSectionKey,
                     ),
                     SettingsNavigationItem(
@@ -3943,15 +3943,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       anchorKey: viewportSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '功能入口',
-                      anchorKey: featureSectionKey,
+                      label: '工具栏',
+                      anchorKey: toolbarSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '吸附高亮',
+                      label: '交互',
                       anchorKey: interactionSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '数据范围',
+                      label: '数据',
                       anchorKey: dataSectionKey,
                     ),
                   ],
@@ -3979,37 +3979,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             'light',
                             vm,
                             setState,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(
-                            AppStrings.plot.floatingPanelOpacity,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const Spacer(),
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: floatingPanelOpacityController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted:
-                                  (_) => applyFloatingPanelOpacity(setState),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyFloatingPanelOpacity(setState),
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4064,10 +4033,80 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ],
                         ),
                       ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text(
+                            AppStrings.plot.floatingPanelOpacity,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const Spacer(),
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              controller: floatingPanelOpacityController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: '%',
+                              ),
+                              onSubmitted:
+                                  (_) => applyFloatingPanelOpacity(setState),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed:
+                                () => applyFloatingPanelOpacity(setState),
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
                       const Divider(),
-                      // 刷新帧率
                       Text(
                         key: performanceSectionKey,
+                        AppStrings.plot.lodQuality,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      SegmentedButton<PlotLodQuality>(
+                        key: const ValueKey('plotLodQualitySelector'),
+                        // 占满对话框可用宽度，避免选中图标切换到短标签时
+                        // SegmentedButton 按固有内容宽度重新收缩。
+                        expandedInsets: EdgeInsets.zero,
+                        segments: [
+                          ButtonSegment<PlotLodQuality>(
+                            value: PlotLodQuality.performance,
+                            label: Text(AppStrings.plot.lodQualityPerformance),
+                          ),
+                          ButtonSegment<PlotLodQuality>(
+                            value: PlotLodQuality.balanced,
+                            label: Text(AppStrings.plot.lodQualityBalanced),
+                          ),
+                          ButtonSegment<PlotLodQuality>(
+                            value: PlotLodQuality.quality,
+                            label: Text(AppStrings.plot.lodQualityQuality),
+                          ),
+                        ],
+                        selected: {vm.lodQuality},
+                        onSelectionChanged: (values) {
+                          vm.setLodQuality(values.first);
+                          setState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.lodQualityHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      // 刷新帧率是对质量档位的进一步性能约束，因此放在质量选择之后。
+                      Text(
                         AppStrings.plot.refreshFps,
                         style: const TextStyle(fontSize: 14),
                       ),
@@ -4122,45 +4161,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       Text(
                         AppStrings.plot.refreshFpsHelp,
                         style: TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      const Divider(),
-                      Text(
-                        AppStrings.plot.lodQuality,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                      const SizedBox(height: 6),
-                      SegmentedButton<PlotLodQuality>(
-                        key: const ValueKey('plotLodQualitySelector'),
-                        // 占满对话框可用宽度，避免选中图标切换到短标签时
-                        // SegmentedButton 按固有内容宽度重新收缩。
-                        expandedInsets: EdgeInsets.zero,
-                        segments: [
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.performance,
-                            label: Text(AppStrings.plot.lodQualityPerformance),
-                          ),
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.balanced,
-                            label: Text(AppStrings.plot.lodQualityBalanced),
-                          ),
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.quality,
-                            label: Text(AppStrings.plot.lodQualityQuality),
-                          ),
-                        ],
-                        selected: {vm.lodQuality},
-                        onSelectionChanged: (values) {
-                          vm.setLodQuality(values.first);
-                          setState(() {});
-                        },
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        AppStrings.plot.lodQualityHelp,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey,
-                        ),
                       ),
                       const Divider(),
                       Text(
@@ -4295,38 +4295,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                       const Divider(),
                       Row(
-                        key: featureSectionKey,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppStrings.plot.keepPlotOnRestart,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  AppStrings.plot.keepPlotOnRestartHelp,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Switch(
-                            value: vm.keepPlotOnRestart,
-                            onChanged: (value) {
-                              vm.setKeepPlotOnRestart(value);
-                              setState(() {});
-                            },
-                          ),
-                        ],
-                      ),
-                      const Divider(),
-                      Row(
+                        key: toolbarSectionKey,
                         children: [
                           Expanded(
                             child: Column(
@@ -4421,6 +4390,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                       const Divider(),
                       Row(
+                        key: interactionSectionKey,
                         children: [
                           Expanded(
                             child: Column(
@@ -4453,7 +4423,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       const Divider(),
                       // 吸附点高亮
                       Row(
-                        key: interactionSectionKey,
                         children: [
                           Expanded(
                             child: Text(
@@ -4553,8 +4522,39 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 : null,
                       ),
                       const Divider(),
-                      Text(
+                      Row(
                         key: dataSectionKey,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  AppStrings.plot.keepPlotOnRestart,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  AppStrings.plot.keepPlotOnRestartHelp,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: vm.keepPlotOnRestart,
+                            onChanged: (value) {
+                              vm.setKeepPlotOnRestart(value);
+                              setState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                      const Divider(),
+                      Text(
                         AppStrings.plot.plotWindowLimit,
                         style: const TextStyle(fontSize: 14),
                       ),

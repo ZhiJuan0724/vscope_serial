@@ -399,7 +399,7 @@ final class _RawDataStrings {
   String get terminalFontFamily => '终端字体:';
   String get terminalTheme => '终端主题:';
   String get cursorStyle => '光标样式:';
-  String get terminalFontSizeInvalid => '终端字号请输入 10 ~ 24 之间的数值';
+  String get terminalFontSizeInvalid => '终端字号: 10 - 24';
   String get shellSettingsSaved => 'Shell 设置已保存';
   String get displayOptions => '显示选项';
   String get actions => '操作';

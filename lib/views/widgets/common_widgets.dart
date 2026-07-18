@@ -85,6 +85,71 @@ class SettingsNavigationView extends StatefulWidget {
 
 class _SettingsNavigationViewState extends State<SettingsNavigationView> {
   int _selectedIndex = 0;
+  final GlobalKey _contentViewportKey = GlobalKey();
+  bool _selectionSyncScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.scrollController.addListener(_scheduleSelectionSync);
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsNavigationView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollController == widget.scrollController) return;
+    oldWidget.scrollController.removeListener(_scheduleSelectionSync);
+    widget.scrollController.addListener(_scheduleSelectionSync);
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController.removeListener(_scheduleSelectionSync);
+    super.dispose();
+  }
+
+  void _scheduleSelectionSync() {
+    if (_selectionSyncScheduled) return;
+    _selectionSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _selectionSyncScheduled = false;
+      if (!mounted) return;
+      _syncSelectionToScrollPosition();
+    });
+  }
+
+  void _syncSelectionToScrollPosition() {
+    if (!widget.scrollController.hasClients || widget.items.isEmpty) return;
+
+    final position = widget.scrollController.position;
+    var nextIndex = 0;
+    if (position.extentAfter <= 0.5) {
+      // 最后一类通常没有足够的下方空间移到视口顶部，
+      // 因此滚动到底时直接选中最后一类。
+      nextIndex = widget.items.length - 1;
+    } else {
+      final viewportBox =
+          _contentViewportKey.currentContext?.findRenderObject() as RenderBox?;
+      if (viewportBox == null || !viewportBox.hasSize) return;
+      final activationY = viewportBox.localToGlobal(Offset.zero).dy + 12;
+
+      for (var index = 0; index < widget.items.length; index++) {
+        final anchorBox =
+            widget.items[index].anchorKey.currentContext?.findRenderObject()
+                as RenderBox?;
+        if (anchorBox == null || !anchorBox.hasSize) continue;
+        if (anchorBox.localToGlobal(Offset.zero).dy <= activationY) {
+          nextIndex = index;
+        } else {
+          break;
+        }
+      }
+    }
+
+    if (nextIndex != _selectedIndex) {
+      setState(() => _selectedIndex = nextIndex);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -136,10 +201,14 @@ class _SettingsNavigationViewState extends State<SettingsNavigationView> {
                       curve: Curves.easeOut,
                     );
                   },
-                  child: Text(
-                    item.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: Semantics(
+                    key: ValueKey('settings-navigation-selection-$index'),
+                    selected: selected,
+                    child: Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 );
               },
@@ -148,13 +217,16 @@ class _SettingsNavigationViewState extends State<SettingsNavigationView> {
           VerticalDivider(width: 1, color: colorScheme.outlineVariant),
           const SizedBox(width: 16),
           Expanded(
-            child: Scrollbar(
-              controller: widget.scrollController,
-              child: SingleChildScrollView(
-                key: const ValueKey('settings-navigation-content'),
+            child: SizedBox.expand(
+              key: _contentViewportKey,
+              child: Scrollbar(
                 controller: widget.scrollController,
-                padding: kAdvancedSettingsDialogScrollPadding,
-                child: widget.child,
+                child: SingleChildScrollView(
+                  key: const ValueKey('settings-navigation-content'),
+                  controller: widget.scrollController,
+                  padding: kAdvancedSettingsDialogScrollPadding,
+                  child: widget.child,
+                ),
               ),
             ),
           ),

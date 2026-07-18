@@ -806,6 +806,8 @@ class _ShellPageState extends State<ShellPage> {
     var cursor = vm.cursorMode;
     var localEcho = vm.localEcho;
     var scrollback = vm.scrollbackLines;
+    var fontSizeText = fontSize.round().toString();
+    String? fontSizeError;
     final scrollController = ScrollController();
     final inputSectionKey = GlobalKey();
     final fontSectionKey = GlobalKey();
@@ -975,25 +977,67 @@ class _ShellPageState extends State<ShellPage> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              const Text('字号'),
-                              Expanded(
-                                child: Slider(
-                                  min: 10,
-                                  max: 24,
-                                  divisions: 14,
-                                  label: fontSize.round().toString(),
-                                  value: fontSize,
-                                  onChanged:
-                                      (value) => setDialogState(
-                                        () => fontSize = value,
-                                      ),
+                              const Text('字号', style: TextStyle(fontSize: 14)),
+                              const Spacer(),
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextFormField(
+                                  key: const ValueKey('shell-font-size-field'),
+                                  initialValue: fontSizeText,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: 'px',
+                                  ).copyWith(errorText: fontSizeError),
+                                  onChanged: (value) {
+                                    fontSizeText = value;
+                                    final parsed = double.tryParse(value);
+                                    setDialogState(() {
+                                      if (parsed == null ||
+                                          parsed < 10 ||
+                                          parsed > 24) {
+                                        fontSizeError =
+                                            AppStrings
+                                                .raw
+                                                .terminalFontSizeInvalid;
+                                      } else {
+                                        fontSize = parsed;
+                                        fontSizeError = null;
+                                      }
+                                    });
+                                  },
                                 ),
                               ),
-                              SizedBox(
-                                width: 28,
-                                child: Text(fontSize.round().toString()),
-                              ),
                             ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text('字体示例', style: TextStyle(fontSize: 14)),
+                          const SizedBox(height: 4),
+                          Container(
+                            key: const ValueKey('shell-font-preview'),
+                            width: double.infinity,
+                            constraints: const BoxConstraints(minHeight: 64),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerLow,
+                              border: Border.all(
+                                color: Theme.of(context).dividerColor,
+                              ),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'SerialTools Shell  中文终端\nAa Bb 0123456789  > _',
+                              style: TextStyle(
+                                fontFamily: fontFamily,
+                                fontSize: fontSize,
+                                height: 1.25,
+                              ),
+                            ),
                           ),
                           const Divider(height: 24),
                           Text(
@@ -1080,12 +1124,23 @@ class _ShellPageState extends State<ShellPage> {
                       ),
                       DialogPrimaryActionButton(
                         onPressed: () {
+                          final parsedFontSize = double.tryParse(fontSizeText);
+                          if (parsedFontSize == null ||
+                              parsedFontSize < 10 ||
+                              parsedFontSize > 24) {
+                            setDialogState(
+                              () =>
+                                  fontSizeError =
+                                      AppStrings.raw.terminalFontSizeInvalid,
+                            );
+                            return;
+                          }
                           vm
                             ..setEncoding(encoding)
                             ..setLineEnding(lineEnding)
                             ..setLocalEcho(localEcho)
                             ..setFontFamily(fontFamily)
-                            ..setFontSize(fontSize)
+                            ..setFontSize(parsedFontSize)
                             ..setThemeMode(theme)
                             ..setCursorMode(cursor);
                           if (scrollback != vm.scrollbackLines) {

@@ -36,4 +36,60 @@ void main() {
     expect(find.byKey(firstKey), findsOneWidget);
     expect(find.byKey(secondKey), findsOneWidget);
   });
+
+  testWidgets('右侧内容滚动时左侧分类跟随选中', (tester) async {
+    final controller = ScrollController();
+    final firstKey = GlobalKey();
+    final secondKey = GlobalKey();
+    final thirdKey = GlobalKey();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SettingsNavigationView(
+            scrollController: controller,
+            items: [
+              SettingsNavigationItem(label: '第一类', anchorKey: firstKey),
+              SettingsNavigationItem(label: '第二类', anchorKey: secondKey),
+              SettingsNavigationItem(label: '第三类', anchorKey: thirdKey),
+            ],
+            child: Column(
+              children: [
+                SizedBox(key: firstKey, height: 300),
+                SizedBox(key: secondKey, height: 300),
+                SizedBox(key: thirdKey, height: 300),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    controller.jumpTo(310);
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester
+          .widget<Semantics>(
+            find.byKey(const ValueKey('settings-navigation-selection-1')),
+          )
+          .properties
+          .selected,
+      isTrue,
+    );
+
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester
+          .widget<Semantics>(
+            find.byKey(const ValueKey('settings-navigation-selection-2')),
+          )
+          .properties
+          .selected,
+      isTrue,
+    );
+  });
 }

@@ -58,7 +58,7 @@ void main() {
       find.byKey(const ValueKey('settings-navigation-view')),
       findsOneWidget,
     );
-    await tester.tap(find.text('绘图性能'));
+    await tester.tap(find.text('性能'));
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
     expect(find.text(AppStrings.plot.lodQualityBalanced), findsOneWidget);
