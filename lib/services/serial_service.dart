@@ -310,7 +310,7 @@ class SerialService extends ChangeNotifier {
   String? get portRefreshError => _portCatalog.lastError;
   Duration? get lastPortRefreshDuration => _portCatalog.lastDuration;
 
-  // 时间窗口聚合器
+  // 自动换行时间窗口聚合器
   TimeWindowAggregator? _aggregator;
 
   Timer? _receiveLogFlushTimer;
@@ -332,8 +332,13 @@ class SerialService extends ChangeNotifier {
   static const Duration _ioLogDetectWindow = Duration(milliseconds: 200);
   static const Duration _ioLogMaxBatchWindow = Duration(seconds: 1);
 
-  // 时间窗口粒度（微秒），默认 1000us = 1ms
-  int timeWindowUs = 1000;
+  static const int minAutoLineBreakIntervalMs = 1;
+  static const int defaultAutoLineBreakIntervalMs = 100;
+  static const int maxAutoLineBreakIntervalMs = 10000;
+
+  // 自动换行默认开启，时间窗口与时间戳及 HEX 显示相互独立。
+  bool autoLineBreak = true;
+  int autoLineBreakIntervalMs = defaultAutoLineBreakIntervalMs;
 
   // 当前连接的串口标识（用于判断是否需要清空数据）
   String? _lastConnectedPort;
@@ -435,6 +440,10 @@ class SerialService extends ChangeNotifier {
     _displayLineLimit = settings.rawDataDisplayLineLimit.clamp(
       minDisplayLineLimit,
       maxDisplayLineLimit,
+    );
+    autoLineBreakIntervalMs = settings.rawDataAutoLineBreakIntervalMs.clamp(
+      minAutoLineBreakIntervalMs,
+      maxAutoLineBreakIntervalMs,
     );
     rawDataShellEnabled = settings.rawDataShellEnabled;
     rawShellInputMode = RawShellInputMode.fromString(
@@ -816,19 +825,7 @@ class SerialService extends ChangeNotifier {
         nativeData.timestampUs,
       );
 
-      if (showTimestamp && receiveHex) {
-        // HEX + 时间戳显示时使用时间窗口聚合器分包
-        _aggregator ??= TimeWindowAggregator(
-          windowUs: timeWindowUs,
-          onWindowComplete: (timestamp, aggregatedData) {
-            _addRawDataLine(timestamp, aggregatedData);
-          },
-        );
-        _aggregator!.feed(data, receiveTime);
-      } else {
-        // 文本模式不按底层回调分包，只按换行符更新显示行
-        _addRawDataLine(receiveTime, data);
-      }
+      _displayReceivedData(data, receiveTime);
     }
 
     if (shouldReceiveShell) {
@@ -1022,10 +1019,52 @@ class SerialService extends ChangeNotifier {
     }
   }
 
+  void _displayReceivedData(Uint8List data, DateTime timestamp) {
+    if (!autoLineBreak) {
+      _addRawDataLine(timestamp, data);
+      return;
+    }
+    _aggregator ??= _createAutoLineBreakAggregator();
+    _aggregator!.feed(data, timestamp);
+  }
+
+  TimeWindowAggregator _createAutoLineBreakAggregator() {
+    return TimeWindowAggregator(
+      windowUs: autoLineBreakIntervalMs * Duration.microsecondsPerMillisecond,
+      onWindowComplete: (timestamp, data) {
+        _addRawDataLine(timestamp, data);
+        if (!receiveHex) _finishPendingReceiveLine();
+      },
+    );
+  }
+
+  void _finishPendingReceiveLine() {
+    _pendingReceiveText = '';
+    _pendingReceiveLineIndex = null;
+    _pendingReceiveLinePrefix = '';
+  }
+
+  void _flushAutoLineBreakWindow() {
+    _aggregator?.flush();
+    _aggregator = null;
+  }
+
   @visibleForTesting
   void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
     _rawBytes.append(data);
     _addRawDataLine(timestamp ?? DateTime.now(), data);
+  }
+
+  /// 按真实接收显示流程喂入数据，用于验证自动换行窗口。
+  @visibleForTesting
+  void debugFeedRawReceiveData(Uint8List data, {DateTime? timestamp}) {
+    _rawBytes.append(data);
+    _displayReceivedData(data, timestamp ?? DateTime.now());
+  }
+
+  @visibleForTesting
+  void debugFlushAutoLineBreakForTest() {
+    _flushAutoLineBreakWindow();
   }
 
   @visibleForTesting
@@ -1107,10 +1146,11 @@ class SerialService extends ChangeNotifier {
     void ensureLine() {
       if (pendingIndex != null &&
           pendingIndex! >= 0 &&
-          pendingIndex! < receivedLines.length &&
-          pendingPrefix == prefix) {
+          pendingIndex! < receivedLines.length) {
         return;
       }
+      // 接收数据没有行尾时属于同一条连续文本；后续数据包即使时间戳不同，
+      // 也应更新首次创建的显示行，直到收到 CR/LF 后再使用新的时间戳建行。
       pendingPrefix = prefix;
       pendingIndex = _addDisplayLine(pendingPrefix);
     }
@@ -1354,8 +1394,8 @@ class SerialService extends ChangeNotifier {
 
   void setReceiveHex(bool value) {
     if (receiveHex == value) return;
+    _flushAutoLineBreakWindow();
     receiveHex = value;
-    _aggregator = null;
     _resetTextLineBuffers();
     AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
@@ -1379,8 +1419,8 @@ class SerialService extends ChangeNotifier {
 
   void setShowTimestamp(bool value) {
     if (showTimestamp == value) return;
+    _flushAutoLineBreakWindow();
     showTimestamp = value;
-    _aggregator = null;
     _resetTextLineBuffers();
     AppLogger().info('接收时间戳${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
@@ -1400,17 +1440,13 @@ class SerialService extends ChangeNotifier {
     final m = dt.minute.toString().padLeft(2, '0');
     final s = dt.second.toString().padLeft(2, '0');
     final ms = dt.millisecond.toString().padLeft(3, '0');
-    // 当时间窗口 < 1000us 时显示微秒，否则只显示毫秒
-    if (timeWindowUs < 1000) {
-      final us = dt.microsecond.toString().padLeft(6, '0');
-      return '$h:$m:$s.$ms$us';
-    } else {
-      return '$h:$m:$s.$ms';
-    }
+    return '$h:$m:$s.$ms';
   }
 
   /// 清空所有数据（切换串口时调用）
   void _clearAllData() {
+    _aggregator?.reset();
+    _aggregator = null;
     _rawBytes.clear();
     _receivedLines.clear();
     _receivedTextBytes = 0;
@@ -1759,16 +1795,27 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置时间窗口粒度（微秒）
-  void setTimeWindowUs(int us) {
-    timeWindowUs = us;
-    _aggregator = TimeWindowAggregator(
-      windowUs: us,
-      onWindowComplete: (timestamp, data) {
-        _addRawDataLine(timestamp, data);
-      },
+  void setAutoLineBreak(bool value) {
+    if (autoLineBreak == value) return;
+    _flushAutoLineBreakWindow();
+    autoLineBreak = value;
+    AppLogger().info('接收自动换行${value ? '启用' : '关闭'}', category: 'DATA');
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置自动换行时间，范围为 1~10000ms。
+  void setAutoLineBreakIntervalMs(int milliseconds) {
+    final next = milliseconds.clamp(
+      minAutoLineBreakIntervalMs,
+      maxAutoLineBreakIntervalMs,
     );
-    AppLogger().info('时间窗口粒度: $us μs', category: 'SERIAL');
+    if (autoLineBreakIntervalMs == next) return;
+    _flushAutoLineBreakWindow();
+    autoLineBreakIntervalMs = next;
+    final settings = AppSettings()..rawDataAutoLineBreakIntervalMs = next;
+    unawaited(settings.save());
+    AppLogger().info('接收自动换行时间: $next ms', category: 'SERIAL');
+    Future.microtask(() => notifyListeners());
   }
 
   // ========== 原始数据接收控制 ==========
@@ -1791,6 +1838,7 @@ class SerialService extends ChangeNotifier {
 
   /// 停止接收原始数据
   void stopRawReceiving() {
+    _flushAutoLineBreakWindow();
     isRawReceiving = false;
     _releaseActivity(SerialActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
@@ -1843,12 +1891,16 @@ class SerialService extends ChangeNotifier {
 
   void _releaseActivity(SerialActivityOwner owner) {
     if (_activityOwner != owner) return;
+    if (owner == SerialActivityOwner.rawData) _flushAutoLineBreakWindow();
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
   }
 
   void _releaseAllActivities() {
+    if (_activityOwner == SerialActivityOwner.rawData) {
+      _flushAutoLineBreakWindow();
+    }
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
@@ -1864,6 +1916,8 @@ class SerialService extends ChangeNotifier {
     _flushSendLog();
     _displayNotifyTimer?.cancel();
     _displayNotifyTimer = null;
+    _aggregator?.reset();
+    _aggregator = null;
     _portChangeDebounce?.cancel();
     _portChangeDebounce = null;
     unawaited(_portMonitorSubscription?.cancel());

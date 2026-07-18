@@ -353,6 +353,7 @@ final class _RawDataStrings {
   String get waitingForTransfer => '等待开始传输';
   String get clear => '清空';
   String get timestamp => '时间戳';
+  String get autoLineBreak => '自动换行';
   String get hexDisplay => 'HEX显示';
   String get autoScroll => '自动滚动';
   String get commandInputHint => '输入命令后按 Enter 发送';
@@ -384,18 +385,13 @@ final class _RawDataStrings {
   String get textEncoding => '文本编码方式:';
   String get encodingHint => '编码';
   String get textEncodingHelp => '非 HEX 模式下，发送文本按选定编码转换为字节，接收字节按同一编码解码。';
-  String get hexPacketTime => 'HEX分包时间 (μs):';
-  String hexPacketTimeHelp(int timeWindowUs, String precisionText) {
-    return '仅在 HEX显示 + 时间戳 开启时生效。当前: $timeWindowUsμs ($precisionText)';
-  }
-
-  String get microsecondTimestamp => '显示微秒级时间戳';
-  String get millisecondTimestamp => '显示毫秒级时间戳';
+  String get autoLineBreakTime => '自动换行时间 (ms):';
+  String get autoLineBreakTimeHelp => '自动换行开启时，接收数据按该时间组成一行；文本中的换行符仍会正常换行。';
   String get displayLineLimit => '接收区最大显示行数:';
   String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
   String get enableShellEntry => '显示 Shell 页面';
   String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签；默认关闭。';
-  String get timeWindowInvalid => '请输入 10 ~ 10000 之间的数值';
+  String get autoLineBreakTimeInvalid => '自动换行时间请输入 1 ~ 10000 ms';
   String get displayLineLimitInvalid => '显示行数请输入 100 ~ 100000 之间的数值';
   String advancedSettingsSaved(int lines) => '高级设置已保存，接收区最多显示 $lines 行';
   String get terminalFontSize => '终端字号:';

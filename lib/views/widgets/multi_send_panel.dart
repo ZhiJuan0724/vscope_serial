@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/models/multi_send_profile.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
+import 'hex_input_formatter.dart';
 
 class MultiSendPanel extends StatelessWidget {
   final VoidCallback onClose;
@@ -17,6 +18,7 @@ class MultiSendPanel extends StatelessWidget {
         if (vm.loading) return const Center(child: CircularProgressIndicator());
         final profile = vm.selectedProfile;
         final locked = vm.isRunning;
+        final manualSendEnabled = vm.canSendManually;
         return Material(
           color: Theme.of(context).scaffoldBackgroundColor,
           child: Column(
@@ -77,28 +79,66 @@ class MultiSendPanel extends StatelessWidget {
                             locked ? null : (value) => vm.selectProfile(value),
                       ),
                     ),
-                    IconButton(
-                      tooltip: '新建配置',
-                      onPressed:
-                          locked ? null : () => _editProfileName(context, vm),
-                      icon: const Icon(Icons.add),
-                    ),
-                    PopupMenuButton<String>(
-                      tooltip: '配置操作',
-                      enabled: !locked && profile != null,
-                      onSelected:
-                          (action) => _handleProfileAction(context, vm, action),
-                      itemBuilder:
-                          (_) => const [
-                            PopupMenuItem(
-                              value: 'rename',
-                              child: Text('重命名配置'),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: Tooltip(
+                        message: '新建配置',
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: InkResponse(
+                            onTap:
+                                locked
+                                    ? null
+                                    : () => _editProfileName(context, vm),
+                            containedInkWell: true,
+                            highlightShape: BoxShape.circle,
+                            radius: 16,
+                            child: Icon(
+                              Icons.add,
+                              size: 20,
+                              color:
+                                  locked
+                                      ? Theme.of(context).disabledColor
+                                      : IconTheme.of(context).color,
                             ),
-                            PopupMenuItem(value: 'import', child: Text('导入配置')),
-                            PopupMenuItem(value: 'export', child: Text('导出配置')),
-                            PopupMenuDivider(),
-                            PopupMenuItem(value: 'delete', child: Text('删除配置')),
-                          ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: PopupMenuButton<String>(
+                        tooltip: '配置操作',
+                        enabled: !locked && profile != null,
+                        padding: EdgeInsets.zero,
+                        iconSize: 20,
+                        splashRadius: 18,
+                        onSelected:
+                            (action) =>
+                                _handleProfileAction(context, vm, action),
+                        itemBuilder:
+                            (_) => const [
+                              PopupMenuItem(
+                                value: 'rename',
+                                child: Text('重命名配置'),
+                              ),
+                              PopupMenuItem(
+                                value: 'import',
+                                child: Text('导入配置'),
+                              ),
+                              PopupMenuItem(
+                                value: 'export',
+                                child: Text('导出配置'),
+                              ),
+                              PopupMenuDivider(),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('删除配置'),
+                              ),
+                            ],
+                      ),
                     ),
                   ],
                 ),
@@ -131,6 +171,7 @@ class MultiSendPanel extends StatelessWidget {
                               entry: entry,
                               active: vm.currentEntryId == entry.id,
                               locked: locked,
+                              sendEnabled: manualSendEnabled,
                               onToggle:
                                   (enabled) => vm.updateEntry(
                                     entry.copyWith(enabled: enabled),
@@ -336,6 +377,7 @@ class _EntryRow extends StatelessWidget {
   final MultiSendEntry entry;
   final bool active;
   final bool locked;
+  final bool sendEnabled;
   final ValueChanged<bool> onToggle;
   final VoidCallback onSend;
   final VoidCallback onEdit;
@@ -347,6 +389,7 @@ class _EntryRow extends StatelessWidget {
     required this.entry,
     required this.active,
     required this.locked,
+    required this.sendEnabled,
     required this.onToggle,
     required this.onSend,
     required this.onEdit,
@@ -447,19 +490,46 @@ class _EntryRow extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            tooltip: '发送此条',
-            onPressed: locked ? null : onSend,
-            icon: const Icon(Icons.send, size: 18),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: Tooltip(
+              message: '发送此条',
+              child: Material(
+                type: MaterialType.transparency,
+                child: InkResponse(
+                  onTap: sendEnabled ? onSend : null,
+                  containedInkWell: true,
+                  highlightShape: BoxShape.circle,
+                  radius: 16,
+                  child: Icon(
+                    Icons.send,
+                    size: 18,
+                    color:
+                        sendEnabled
+                            ? IconTheme.of(context).color
+                            : Theme.of(context).disabledColor,
+                  ),
+                ),
+              ),
+            ),
           ),
-          PopupMenuButton<String>(
-            enabled: !locked,
-            onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
-            itemBuilder:
-                (_) => const [
-                  PopupMenuItem(value: 'edit', child: Text('编辑')),
-                  PopupMenuItem(value: 'delete', child: Text('删除')),
-                ],
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: PopupMenuButton<String>(
+              tooltip: '更多操作',
+              enabled: !locked,
+              padding: EdgeInsets.zero,
+              iconSize: 20,
+              splashRadius: 18,
+              onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
+              itemBuilder:
+                  (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('编辑')),
+                    PopupMenuItem(value: 'delete', child: Text('删除')),
+                  ],
+            ),
           ),
         ],
       ),
@@ -536,6 +606,24 @@ class _EntryEditorState extends State<_EntryEditor> {
     );
   }
 
+  void _setHexMode(bool value) {
+    final wasHex = _hex;
+    setState(() => _hex = value);
+    if (!wasHex && value) {
+      _content.clear();
+    }
+  }
+
+  void _formatHexContent(String value) {
+    final newText = formatHexByteGroups(value);
+    if (newText != value) {
+      _content.value = TextEditingValue(
+        text: newText,
+        selection: TextSelection.collapsed(offset: newText.length),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.entry == null ? '添加发送条目' : '编辑发送条目'),
@@ -576,7 +664,7 @@ class _EntryEditorState extends State<_EntryEditor> {
               ButtonSegment(value: true, label: Text('HEX')),
             ],
             selected: {_hex},
-            onSelectionChanged: (value) => setState(() => _hex = value.first),
+            onSelectionChanged: (value) => _setHexMode(value.first),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -588,6 +676,8 @@ class _EntryEditorState extends State<_EntryEditor> {
               border: const OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
+            inputFormatters: _hex ? const [HexInputFormatter()] : null,
+            onChanged: _hex ? _formatHexContent : null,
           ),
           const SizedBox(height: 12),
           Row(

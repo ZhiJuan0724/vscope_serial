@@ -52,6 +52,7 @@ void main() {
             ..updateSource = 'gitee'
             ..disableNotifications = true
             ..rawDataDisplayLineLimit = 500
+            ..rawDataAutoLineBreakIntervalMs = 250
             ..rawDataShellMode = true
             ..rawDataShellEnabled = true
             ..rawDataShellInputMode = 'key'
@@ -117,6 +118,7 @@ void main() {
       expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
       expect(settings.rawDataDisplayLineLimit, 100000);
+      expect(settings.rawDataAutoLineBreakIntervalMs, 100);
       expect(settings.rawDataShellMode, isFalse);
       expect(settings.rawDataShellEnabled, isFalse);
       expect(settings.rawDataShellInputMode, 'line');

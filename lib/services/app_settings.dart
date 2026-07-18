@@ -194,6 +194,9 @@ class AppSettings {
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 100000;
 
+  /// 数据收发自动换行时间，单位毫秒。
+  int rawDataAutoLineBreakIntervalMs = 100;
+
   /// 旧版数据收发页面 Shell 模式开关，仅用于读取历史配置。
   bool rawDataShellMode = false;
 
@@ -343,6 +346,7 @@ class AppSettings {
     disableNotifications = false;
 
     rawDataDisplayLineLimit = 100000;
+    rawDataAutoLineBreakIntervalMs = 100;
     rawDataShellMode = false;
     rawDataShellEnabled = false;
     rawDataShellInputMode = 'line';
@@ -504,6 +508,10 @@ class AppSettings {
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 100000)
               .clamp(100, 100000)
               .toInt();
+      rawDataAutoLineBreakIntervalMs =
+          ((json['rawDataAutoLineBreakIntervalMs'] as num?)?.toInt() ?? 100)
+              .clamp(1, 10000)
+              .toInt();
       rawDataShellMode = json['rawDataShellMode'] as bool? ?? false;
       rawDataShellEnabled =
           json['shellEnabled'] as bool? ??
@@ -630,6 +638,7 @@ class AppSettings {
       'updateSource': updateSource,
       'disableNotifications': disableNotifications,
       'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
+      'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
       'rawDataShellMode': rawDataShellMode,
       'rawDataShellEnabled': rawDataShellEnabled,
       'rawDataShellInputMode': rawDataShellInputMode,

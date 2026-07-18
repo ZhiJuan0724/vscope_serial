@@ -20,11 +20,15 @@ class MultiSendViewModel extends ChangeNotifier {
   int _runToken = 0;
   String? _currentEntryId;
   int _completedRounds = 0;
+  late bool _lastConnected;
+  late bool _lastRawReceiving;
 
   MultiSendViewModel(
     this._serialService, {
     MultiSendProfileService? profileService,
   }) : _profileService = profileService ?? MultiSendProfileService() {
+    _lastConnected = _serialService.isConnected;
+    _lastRawReceiving = _serialService.isRawReceiving;
     _serialService.addListener(_handleSerialChange);
   }
 
@@ -34,8 +38,9 @@ class MultiSendViewModel extends ChangeNotifier {
   int get completedRounds => _completedRounds;
   List<MultiSendProfile> get profiles => _profileService.profiles;
   MultiSendProfile? get selectedProfile => _selectedProfile;
-  bool get canRun =>
-      !_running && _serialService.isConnected && enabledEntries.isNotEmpty;
+  bool get canSendManually =>
+      !_running && _serialService.isConnected && _serialService.isRawReceiving;
+  bool get canRun => canSendManually && enabledEntries.isNotEmpty;
   List<MultiSendEntry> get enabledEntries =>
       _selectedProfile?.entries.where((entry) => entry.enabled).toList() ??
       const [];
@@ -161,7 +166,7 @@ class MultiSendViewModel extends ChangeNotifier {
   }
 
   Future<void> sendEntry(MultiSendEntry entry) async {
-    if (_running) return;
+    if (!canSendManually) return;
     await _sendEntry(entry);
   }
 
@@ -220,7 +225,10 @@ class MultiSendViewModel extends ChangeNotifier {
   }
 
   bool _isActive(int token) =>
-      _running && token == _runToken && _serialService.isConnected;
+      _running &&
+      token == _runToken &&
+      _serialService.isConnected &&
+      _serialService.isRawReceiving;
 
   Future<void> _sendEntry(MultiSendEntry entry) async {
     final data = _serialService.prepareMultiSendData(
@@ -247,8 +255,25 @@ class MultiSendViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 数据收发开始或停止后立即同步发送可用性，避免等待异步服务通知。
+  void refreshSendAvailability() {
+    _handleSerialChange();
+  }
+
   void _handleSerialChange() {
-    if (_running && !_serialService.isConnected) stop();
+    final connected = _serialService.isConnected;
+    final rawReceiving = _serialService.isRawReceiving;
+    final availabilityChanged =
+        connected != _lastConnected || rawReceiving != _lastRawReceiving;
+    _lastConnected = connected;
+    _lastRawReceiving = rawReceiving;
+
+    if (_running && (!connected || !rawReceiving)) {
+      stop();
+      return;
+    }
+    // 只在发送可用性变化时刷新面板，避免接收数据通知重建条目列表。
+    if (availabilityChanged) notifyListeners();
   }
 
   @override

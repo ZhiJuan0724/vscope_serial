@@ -17,6 +17,7 @@ import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/hex_input_formatter.dart';
 import '../widgets/multi_send_panel.dart';
 
 enum _RawDataExportFormat { text, rawBytes }
@@ -30,6 +31,7 @@ typedef _ReceiveAreaState =
       bool receiving,
       bool receiveHex,
       bool showTimestamp,
+      bool autoLineBreak,
       bool autoScroll,
       bool hasRawData,
       String textEncoding,
@@ -38,6 +40,8 @@ typedef _ReceiveAreaState =
 typedef _SendAreaState =
     ({
       bool connected,
+      bool rawReceiving,
+      bool multiSendRunning,
       bool keepText,
       bool appendLineEnding,
       String lineEnding,
@@ -442,6 +446,7 @@ class _RawDataPageState extends State<RawDataPage> {
                                           receiving: value.isRawReceiving,
                                           receiveHex: value.receiveHex,
                                           showTimestamp: value.showTimestamp,
+                                          autoLineBreak: value.autoLineBreak,
                                           autoScroll: value.autoScroll,
                                           hasRawData: value.hasRawData,
                                           textEncoding: value.textEncoding,
@@ -450,7 +455,10 @@ class _RawDataPageState extends State<RawDataPage> {
                                       final receiveVm =
                                           context.read<RawDataViewModel>();
                                       _scrollToBottom(receiveVm);
-                                      return _buildReceiveArea(receiveVm);
+                                      return _buildReceiveArea(
+                                        receiveVm,
+                                        context.read<MultiSendViewModel>(),
+                                      );
                                     },
                                   ),
                             ),
@@ -493,18 +501,24 @@ class _RawDataPageState extends State<RawDataPage> {
                             ),
                             Expanded(
                               key: const ValueKey('raw-send-area'),
-                              child: Selector<RawDataViewModel, _SendAreaState>(
+                              child: Selector2<
+                                RawDataViewModel,
+                                MultiSendViewModel,
+                                _SendAreaState
+                              >(
                                 selector:
-                                    (_, value) => (
-                                      connected: value.isConnected,
-                                      keepText: value.keepSendText,
-                                      appendLineEnding: value.appendLineEnding,
-                                      lineEnding: value.lineEnding,
-                                      sendHex: value.sendHex,
-                                      enableCrc: value.enableCrc,
-                                      crcType: value.crcType,
-                                      crcPolyName: value.crcPolyName,
-                                      crcByteOrder: value.crcByteOrder,
+                                    (_, rawVm, multiSendVm) => (
+                                      connected: rawVm.isConnected,
+                                      rawReceiving: rawVm.isRawReceiving,
+                                      multiSendRunning: multiSendVm.isRunning,
+                                      keepText: rawVm.keepSendText,
+                                      appendLineEnding: rawVm.appendLineEnding,
+                                      lineEnding: rawVm.lineEnding,
+                                      sendHex: rawVm.sendHex,
+                                      enableCrc: rawVm.enableCrc,
+                                      crcType: rawVm.crcType,
+                                      crcPolyName: rawVm.crcPolyName,
+                                      crcByteOrder: rawVm.crcByteOrder,
                                     ),
                                 builder:
                                     (context, _, _) => _buildSendArea(
@@ -547,7 +561,10 @@ class _RawDataPageState extends State<RawDataPage> {
     );
   }
 
-  Widget _buildReceiveArea(RawDataViewModel vm) {
+  Widget _buildReceiveArea(
+    RawDataViewModel vm,
+    MultiSendViewModel multiSendVm,
+  ) {
     return Column(
       children: [
         UnifiedToolbar(
@@ -558,9 +575,17 @@ class _RawDataPageState extends State<RawDataPage> {
                 key: const ValueKey('raw-start-stop-button'),
                 onPressed:
                     vm.isRawReceiving
-                        ? () => vm.stopReceiving()
+                        ? () {
+                          // 停止接收时同步取消多条发送，当前写入完成后不再调度下一条。
+                          multiSendVm.stop();
+                          vm.stopReceiving();
+                          multiSendVm.refreshSendAvailability();
+                        }
                         : vm.isConnected
-                        ? () => vm.startReceiving()
+                        ? () {
+                          vm.startReceiving();
+                          multiSendVm.refreshSendAvailability();
+                        }
                         : null,
                 running: vm.isRawReceiving,
                 label: vm.isRawReceiving ? '停止' : '开始',
@@ -582,6 +607,25 @@ class _RawDataPageState extends State<RawDataPage> {
                   label: AppStrings.raw.timestamp,
                   selected: vm.showTimestamp,
                   onPressed: () => vm.setShowTimestamp(!vm.showTimestamp),
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: 88,
+              child: ToolbarToggleTextButton(
+                icon: const Icon(Icons.wrap_text),
+                label: AppStrings.raw.autoLineBreak,
+                tooltip: AppStrings.raw.autoLineBreak,
+                selected: vm.autoLineBreak,
+                activeColor: _receiveOptionActiveColor,
+                onPressed: () => vm.setAutoLineBreak(!vm.autoLineBreak),
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.wrap_text),
+                  label: AppStrings.raw.autoLineBreak,
+                  selected: vm.autoLineBreak,
+                  onPressed: () => vm.setAutoLineBreak(!vm.autoLineBreak),
                 ),
               ],
             ),
@@ -715,7 +759,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     )
                     : const Center(
                       child: Text(
-                        '发送的数据将显示在这里\n点击"开始接收"可同时显示接收数据',
+                        '点击"开始"按钮开始接收/发送数据',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.grey, fontSize: 14),
                       ),
@@ -958,7 +1002,7 @@ class _RawDataPageState extends State<RawDataPage> {
                         keyboardType: TextInputType.multiline,
                         textInputAction: TextInputAction.newline,
                         inputFormatters:
-                            vm.sendHex ? [_HexInputFormatter()] : null,
+                            vm.sendHex ? const [HexInputFormatter()] : null,
                         onChanged: (value) {
                           if (vm.sendHex) {
                             _formatHexInput(value);
@@ -1001,9 +1045,16 @@ class _RawDataPageState extends State<RawDataPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
+                  key: const ValueKey('raw-send-button'),
                   onPressed:
-                      vm.isConnected
+                      vm.isConnected &&
+                              vm.isRawReceiving &&
+                              !multiSendVm.isRunning
                           ? () async {
+                            // 自动发送开始后立即拒绝手动入口，避免状态切换帧内重复发送。
+                            if (!vm.isRawReceiving || multiSendVm.isRunning) {
+                              return;
+                            }
                             final data = vm.prepareSendData(
                               _sendController.text,
                             );
@@ -1182,18 +1233,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   void _formatHexInput(String value) {
-    // 先移除所有空格。
-    final hexOnly = value.replaceAll(' ', '');
-    // 再按每两个 HEX 字符补回一个空格。
-    final formatted = <String>[];
-    for (var i = 0; i < hexOnly.length; i += 2) {
-      if (i + 2 <= hexOnly.length) {
-        formatted.add(hexOnly.substring(i, i + 2));
-      } else {
-        formatted.add(hexOnly.substring(i));
-      }
-    }
-    final newText = formatted.join(' ');
+    final newText = formatHexByteGroups(value);
     if (newText != value) {
       _sendController.value = TextEditingValue(
         text: newText,
@@ -1206,15 +1246,15 @@ class _RawDataPageState extends State<RawDataPage> {
     BuildContext context,
     RawDataViewModel vm,
   ) {
-    final timeWindowController = TextEditingController(
-      text: vm.timeWindowUs.toString(),
+    final autoLineBreakTimeController = TextEditingController(
+      text: vm.autoLineBreakIntervalMs.toString(),
     );
     final displayLineLimitController = TextEditingController(
       text: vm.displayLineLimit.toString(),
     );
     final scrollController = ScrollController();
     final encodingSectionKey = GlobalKey();
-    final hexTimingSectionKey = GlobalKey();
+    final autoLineBreakTimingSectionKey = GlobalKey();
     final displayLimitSectionKey = GlobalKey();
     var selectedEncoding = vm.textEncoding;
     showDialog<void>(
@@ -1233,8 +1273,8 @@ class _RawDataPageState extends State<RawDataPage> {
                         anchorKey: encodingSectionKey,
                       ),
                       SettingsNavigationItem(
-                        label: 'HEX 时间',
-                        anchorKey: hexTimingSectionKey,
+                        label: '自动换行时间',
+                        anchorKey: autoLineBreakTimingSectionKey,
                       ),
                       SettingsNavigationItem(
                         label: '显示行数',
@@ -1283,29 +1323,27 @@ class _RawDataPageState extends State<RawDataPage> {
                         ),
                         const Divider(height: 24),
                         Text(
-                          key: hexTimingSectionKey,
-                          AppStrings.raw.hexPacketTime,
+                          key: autoLineBreakTimingSectionKey,
+                          AppStrings.raw.autoLineBreakTime,
                           style: const TextStyle(fontSize: 14),
                         ),
                         const SizedBox(height: 4),
                         SizedBox(
                           width: kSecondaryDialogWideFieldWidth,
                           child: TextField(
-                            controller: timeWindowController,
+                            controller: autoLineBreakTimeController,
                             decoration: secondaryDialogFieldDecoration(
-                              hintText: '10 ~ 10000',
+                              hintText: '1 ~ 10000',
                             ),
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          AppStrings.raw.hexPacketTimeHelp(
-                            vm.timeWindowUs,
-                            vm.timeWindowUs < 1000
-                                ? AppStrings.raw.microsecondTimestamp
-                                : AppStrings.raw.millisecondTimestamp,
-                          ),
+                          AppStrings.raw.autoLineBreakTimeHelp,
                           style: Theme.of(
                             context,
                           ).textTheme.bodySmall?.copyWith(
@@ -1353,14 +1391,20 @@ class _RawDataPageState extends State<RawDataPage> {
                     ),
                     DialogPrimaryActionButton(
                       onPressed: () {
-                        final us = int.tryParse(timeWindowController.text);
+                        final autoLineBreakIntervalMs = int.tryParse(
+                          autoLineBreakTimeController.text,
+                        );
                         final displayLineLimit = int.tryParse(
                           displayLineLimitController.text,
                         );
-                        if (us == null || us < 10 || us > 10000) {
+                        if (autoLineBreakIntervalMs == null ||
+                            autoLineBreakIntervalMs <
+                                SerialService.minAutoLineBreakIntervalMs ||
+                            autoLineBreakIntervalMs >
+                                SerialService.maxAutoLineBreakIntervalMs) {
                           _showSnackBar(
                             context,
-                            AppStrings.raw.timeWindowInvalid,
+                            AppStrings.raw.autoLineBreakTimeInvalid,
                           );
                           return;
                         }
@@ -1377,12 +1421,15 @@ class _RawDataPageState extends State<RawDataPage> {
                         }
 
                         final changed =
-                            us != vm.timeWindowUs ||
+                            autoLineBreakIntervalMs !=
+                                vm.autoLineBreakIntervalMs ||
                             displayLineLimit != vm.displayLineLimit ||
                             selectedEncoding != vm.textEncoding;
                         if (changed) {
                           vm.setTextEncoding(selectedEncoding);
-                          vm.setTimeWindowUs(us);
+                          vm.setAutoLineBreakIntervalMs(
+                            autoLineBreakIntervalMs,
+                          );
                           vm.setDisplayLineLimit(displayLineLimit);
                         }
                         Navigator.of(context).pop();
@@ -1401,24 +1448,9 @@ class _RawDataPageState extends State<RawDataPage> {
                 ),
           ),
     ).whenComplete(() {
-      timeWindowController.dispose();
+      autoLineBreakTimeController.dispose();
       displayLineLimitController.dispose();
       scrollController.dispose();
     });
-  }
-}
-
-/// HEX输入格式化器 - 只允许十六进制字符和空格
-class _HexInputFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final filtered = newValue.text.replaceAll(RegExp(r'[^0-9A-Fa-f ]'), '');
-    return TextEditingValue(
-      text: filtered,
-      selection: TextSelection.collapsed(offset: filtered.length),
-    );
   }
 }

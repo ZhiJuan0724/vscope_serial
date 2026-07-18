@@ -16,6 +16,10 @@ void main() {
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
+      service.setAutoLineBreak(true);
+      service.setAutoLineBreakIntervalMs(
+        SerialService.defaultAutoLineBreakIntervalMs,
+      );
       service.setTextEncoding('UTF-8');
       service.sendHex = false;
       service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
@@ -26,6 +30,10 @@ void main() {
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
+      service.setAutoLineBreak(true);
+      service.setAutoLineBreakIntervalMs(
+        SerialService.defaultAutoLineBreakIntervalMs,
+      );
       service.setTextEncoding('UTF-8');
       service.sendHex = false;
       service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
@@ -53,6 +61,57 @@ void main() {
 
       expect(service.receivedLines.single, startsWith('← [09:08:07.123] line'));
       expect(service.receivedLines.single, isNot(contains('bytes')));
+    });
+
+    test('带时间戳的无行尾分包持续更新同一显示行', () {
+      service.setShowTimestamp(true);
+      service.debugAddRawReceiveData(
+        _utf8('1222'),
+        timestamp: DateTime(2026, 5, 28, 20, 26, 34, 859),
+      );
+      service.debugAddRawReceiveData(
+        _utf8('11111'),
+        timestamp: DateTime(2026, 5, 28, 20, 26, 35, 861),
+      );
+      service.debugAddRawReceiveData(
+        _utf8('1222\n'),
+        timestamp: DateTime(2026, 5, 28, 20, 26, 36, 862),
+      );
+
+      expect(service.receivedLines, ['← [20:26:34.859] 1222111111222']);
+    });
+
+    test('自动换行默认开启且默认时间为100ms', () {
+      expect(service.autoLineBreak, isTrue);
+      expect(
+        service.autoLineBreakIntervalMs,
+        SerialService.defaultAutoLineBreakIntervalMs,
+      );
+    });
+
+    test('自动换行按时间结束文本行且保留文本换行符', () {
+      service.setAutoLineBreak(true);
+      service.setAutoLineBreakIntervalMs(1);
+
+      service.debugFeedRawReceiveData(_utf8('first\nsecond'));
+      service.debugFlushAutoLineBreakForTest();
+      service.debugFeedRawReceiveData(_utf8('third'));
+      service.debugFlushAutoLineBreakForTest();
+
+      expect(service.receivedLines, ['first', 'second', 'third']);
+    });
+
+    test('自动换行与HEX显示和时间戳独立生效', () {
+      service.setReceiveHex(true);
+      service.setShowTimestamp(false);
+      service.setAutoLineBreak(true);
+      service.setAutoLineBreakIntervalMs(1);
+
+      service.debugFeedRawReceiveData(Uint8List.fromList([0x01]));
+      service.debugFeedRawReceiveData(Uint8List.fromList([0x02]));
+      service.debugFlushAutoLineBreakForTest();
+
+      expect(service.receivedLines, ['01 02 (2 bytes)']);
     });
 
     test('hex mode keeps byte counts but hides markers without timestamp', () {

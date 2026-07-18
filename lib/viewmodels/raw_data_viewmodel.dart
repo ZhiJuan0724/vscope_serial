@@ -18,6 +18,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get isConnected => serialService.isConnected;
   bool get receiveHex => serialService.receiveHex;
   bool get showTimestamp => serialService.showTimestamp;
+  bool get autoLineBreak => serialService.autoLineBreak;
   bool get autoScroll => serialService.autoScroll;
   bool get sendHex => serialService.sendHex;
   bool get keepSendText => serialService.keepSendText;
@@ -30,7 +31,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
   bool get hasRawData => serialService.hasRawData;
-  int get timeWindowUs => serialService.timeWindowUs;
+  int get autoLineBreakIntervalMs => serialService.autoLineBreakIntervalMs;
   int get displayLineLimit => serialService.displayLineLimit;
   String get textEncoding => serialService.textEncoding;
 
@@ -70,6 +71,10 @@ class RawDataViewModel extends BaseViewModel {
 
   void setShowTimestamp(bool value) {
     serialService.setShowTimestamp(value);
+  }
+
+  void setAutoLineBreak(bool value) {
+    serialService.setAutoLineBreak(value);
   }
 
   void setAutoScroll(bool value) {
@@ -149,8 +154,8 @@ class RawDataViewModel extends BaseViewModel {
     Future.microtask(() => serialService.notifyListeners());
   }
 
-  void setTimeWindowUs(int us) {
-    serialService.setTimeWindowUs(us);
+  void setAutoLineBreakIntervalMs(int milliseconds) {
+    serialService.setAutoLineBreakIntervalMs(milliseconds);
   }
 
   void setDisplayLineLimit(int value) {
@@ -167,6 +172,9 @@ class RawDataViewModel extends BaseViewModel {
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) =>
       serialService.prepareMultiSendData(text, isHex: isHex);
   Future<void> send(Uint8List data) {
+    if (!isRawReceiving) {
+      throw StateError('请先开始数据接收');
+    }
     AppLogger().info('用户手动发送数据 ${data.length} bytes', category: 'DATA');
     return serialService.send(data);
   }

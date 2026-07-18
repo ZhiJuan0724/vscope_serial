@@ -7,9 +7,50 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/viewmodels/multi_send_viewmodel.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
 
 void main() {
+  testWidgets('未开始接收时禁用手动发送', (tester) async {
+    final service =
+        SerialService()
+          ..isConnected = true
+          ..setRawDataShellEnabled(false);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
+      ),
+    );
+
+    ElevatedButton sendButton() => tester.widget<ElevatedButton>(
+      find.byKey(const ValueKey('raw-send-button')),
+    );
+
+    expect(sendButton().onPressed, isNull);
+
+    final startStopButton = find.byKey(const ValueKey('raw-start-stop-button'));
+    final multiSendVm = Provider.of<MultiSendViewModel>(
+      tester.element(find.byKey(const ValueKey('raw-send-button'))),
+      listen: false,
+    );
+
+    await tester.tap(startStopButton);
+    await tester.pump();
+    expect(service.isRawReceiving, isTrue);
+    expect(multiSendVm.canSendManually, isTrue);
+    expect(sendButton().onPressed, isNotNull);
+
+    await tester.tap(startStopButton);
+    await tester.pump();
+    expect(service.isRawReceiving, isFalse);
+    expect(multiSendVm.canSendManually, isFalse);
+    expect(sendButton().onPressed, isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('发送工具栏在扩展过渡宽度下自动换行且不溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(480, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -47,7 +88,7 @@ void main() {
 
     final autoScroll = find.byTooltip(AppStrings.raw.autoScroll);
     final clear = find.byTooltip(AppStrings.raw.clear);
-    expect(tester.getCenter(autoScroll).dx, lessThan(400));
+    expect(tester.getCenter(autoScroll).dx, lessThan(500));
     expect(tester.getCenter(clear).dx, greaterThan(800));
     expect(tester.takeException(), isNull);
 
@@ -360,7 +401,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('文本编码'), findsWidgets);
-    expect(find.text('HEX 时间'), findsOneWidget);
+    expect(find.text('自动换行时间'), findsOneWidget);
     expect(find.text('显示行数'), findsOneWidget);
     await tester.tap(find.text('显示行数'));
     await tester.pumpAndSettle();
