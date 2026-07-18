@@ -232,10 +232,11 @@ class _RateBucket {
 /// 将字符串解析为 ParserType
 ParserType _parserTypeFromString(String value) {
   return switch (value) {
+    'fireWater' => ParserType.fireWater,
     'fixedFrame' => ParserType.fixedFrame,
     'zobow' => ParserType.zobow,
     'justFloat' => ParserType.justFloat,
-    _ => ParserType.fireWater,
+    _ => ParserType.zobow,
   };
 }
 

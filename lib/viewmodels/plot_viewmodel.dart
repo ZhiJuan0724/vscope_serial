@@ -415,7 +415,7 @@ class PlotViewModel extends BaseViewModel {
   bool _triggerConfigured = false;
 
   /// 当前解析器类型
-  ParserType _parserType = ParserType.fireWater;
+  ParserType _parserType = ParserType.zobow;
 
   /// 用户选择的发送协议。Zobow 接收协议会临时覆盖为内置发送协议。
   SendProtocolType _sendProtocolType = SendProtocolType.none;

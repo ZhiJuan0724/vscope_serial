@@ -103,7 +103,7 @@ void main() {
       expect(settings.followEnabled, isFalse);
       expect(settings.followPositionRatio, 0.9);
       expect(settings.yFitDisplayRatio, 0.8);
-      expect(settings.parserType, 'fireWater');
+      expect(settings.parserType, 'zobow');
       expect(settings.sendProtocolType, 'none');
       expect(settings.receiveCustomProtocolId, isEmpty);
       expect(settings.sendCustomProtocolId, isEmpty);

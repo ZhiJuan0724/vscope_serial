@@ -336,6 +336,9 @@ class SerialService extends ChangeNotifier {
   static const int defaultAutoLineBreakIntervalMs = 100;
   static const int maxAutoLineBreakIntervalMs = 10000;
 
+  /// 连续数据始终没有空闲时，到达此上限后强制换行，避免单行无限增长。
+  static const int _maxAutoLineBreakBufferBytes = 64 * 1024;
+
   // 自动换行默认开启，时间窗口与时间戳及 HEX 显示相互独立。
   bool autoLineBreak = true;
   int autoLineBreakIntervalMs = defaultAutoLineBreakIntervalMs;
@@ -1030,7 +1033,9 @@ class SerialService extends ChangeNotifier {
 
   TimeWindowAggregator _createAutoLineBreakAggregator() {
     return TimeWindowAggregator(
-      windowUs: autoLineBreakIntervalMs * Duration.microsecondsPerMillisecond,
+      idleTimeoutUs:
+          autoLineBreakIntervalMs * Duration.microsecondsPerMillisecond,
+      maxBufferBytes: _maxAutoLineBreakBufferBytes,
       onWindowComplete: (timestamp, data) {
         _addRawDataLine(timestamp, data);
         if (!receiveHex) _finishPendingReceiveLine();
@@ -1803,7 +1808,7 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置自动换行时间，范围为 1~10000ms。
+  /// 设置相邻接收包的自动换行超时，范围为 1~10000ms。
   void setAutoLineBreakIntervalMs(int milliseconds) {
     final next = milliseconds.clamp(
       minAutoLineBreakIntervalMs,

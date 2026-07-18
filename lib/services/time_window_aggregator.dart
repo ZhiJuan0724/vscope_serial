@@ -1,25 +1,31 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-/// 时间窗口聚合器
+/// 包间空闲超时聚合器
 ///
-/// 将高频、零散的数据按时间窗口聚合为完整的数据块。
-/// 适用于底层串口读取不稳定（如 1B、3B、4B 零散读取）的场景。
+/// 持续到达的数据归入同一块；只有相邻两包的间隔达到设定值，
+/// 或累计数据达到内置上限时，才结束当前块。
 class TimeWindowAggregator {
-  /// 时间窗口粒度（微秒）
-  final int windowUs;
+  /// 相邻数据包的空闲超时（微秒）。
+  final int idleTimeoutUs;
+
+  /// 单个聚合块允许的最大字节数。
+  final int maxBufferBytes;
 
   /// 窗口完成回调
   final void Function(DateTime timestamp, Uint8List data) onWindowComplete;
 
   final List<int> _buffer = [];
   DateTime? _windowStart;
+  DateTime? _lastReceiveTime;
   Timer? _flushTimer;
 
   TimeWindowAggregator({
-    required this.windowUs,
+    required this.idleTimeoutUs,
+    required this.maxBufferBytes,
     required this.onWindowComplete,
-  });
+  }) : assert(idleTimeoutUs > 0),
+       assert(maxBufferBytes > 0);
 
   /// 喂入新数据
   ///
@@ -28,25 +34,38 @@ class TimeWindowAggregator {
   void feed(Uint8List data, DateTime receiveTime) {
     if (data.isEmpty) return;
 
-    if (_windowStart == null) {
-      _startWindow(receiveTime);
-    }
-
-    // 检查是否跨越了时间窗口边界
-    final elapsedUs = receiveTime.difference(_windowStart!).inMicroseconds;
-
-    if (elapsedUs >= windowUs && _buffer.isNotEmpty) {
+    final lastReceiveTime = _lastReceiveTime;
+    if (_buffer.isNotEmpty &&
+        lastReceiveTime != null &&
+        receiveTime.difference(lastReceiveTime).inMicroseconds >=
+            idleTimeoutUs) {
       _emitWindow();
-      _startWindow(receiveTime);
     }
 
-    _buffer.addAll(data);
+    var offset = 0;
+    while (offset < data.length) {
+      _windowStart ??= receiveTime;
+      final copyLength = (maxBufferBytes - _buffer.length).clamp(
+        0,
+        data.length - offset,
+      );
+      _buffer.addAll(data.sublist(offset, offset + copyLength));
+      offset += copyLength;
+
+      if (_buffer.length >= maxBufferBytes) {
+        _emitWindow();
+      }
+    }
+
+    if (_buffer.isNotEmpty) {
+      _lastReceiveTime = receiveTime;
+      _restartIdleTimer();
+    }
   }
 
-  void _startWindow(DateTime receiveTime) {
-    _windowStart = receiveTime;
+  void _restartIdleTimer() {
     _flushTimer?.cancel();
-    _flushTimer = Timer(Duration(microseconds: windowUs), _emitWindow);
+    _flushTimer = Timer(Duration(microseconds: idleTimeoutUs), _emitWindow);
   }
 
   void _emitWindow() {
@@ -58,6 +77,7 @@ class TimeWindowAggregator {
     }
     _buffer.clear();
     _windowStart = null;
+    _lastReceiveTime = null;
   }
 
   /// 强制刷新当前窗口（用于停止接收时发送剩余数据）
@@ -71,5 +91,6 @@ class TimeWindowAggregator {
     _flushTimer = null;
     _buffer.clear();
     _windowStart = null;
+    _lastReceiveTime = null;
   }
 }

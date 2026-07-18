@@ -125,7 +125,7 @@ class AppSettings {
   List<MathChannelConfig> mathChannels = MathChannelConfig.createDefaults();
 
   /// 解析器类型名称（'fireWater' / 'fixedFrame' / 'zobow' / 'justFloat'）
-  String parserType = 'fireWater';
+  String parserType = 'zobow';
 
   /// 发送协议名称（'none' / 'rProtocol'）。
   String sendProtocolType = 'none';
@@ -316,7 +316,7 @@ class AppSettings {
     followPositionRatio = 0.9;
     yFitDisplayRatio = 0.8;
     mathChannels = MathChannelConfig.createDefaults();
-    parserType = 'fireWater';
+    parserType = 'zobow';
     sendProtocolType = 'none';
     receiveCustomProtocolId = '';
     sendCustomProtocolId = '';
@@ -464,7 +464,7 @@ class AppSettings {
       yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.8)
           .clamp(0.5, 0.95);
       mathChannels = MathChannelConfig.normalizeList(json['mathChannels']);
-      parserType = json['parserType'] as String? ?? 'fireWater';
+      parserType = json['parserType'] as String? ?? 'zobow';
       sendProtocolType = json['sendProtocolType'] as String? ?? 'none';
       receiveCustomProtocolId =
           json['receiveCustomProtocolId'] as String? ?? '';

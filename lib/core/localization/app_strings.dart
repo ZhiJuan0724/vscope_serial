@@ -386,7 +386,8 @@ final class _RawDataStrings {
   String get encodingHint => '编码';
   String get textEncodingHelp => '非 HEX 模式下，发送文本按选定编码转换为字节，接收字节按同一编码解码。';
   String get autoLineBreakTime => '自动换行时间 (ms):';
-  String get autoLineBreakTimeHelp => '自动换行开启时，接收数据按该时间组成一行；文本中的换行符仍会正常换行。';
+  String get autoLineBreakTimeHelp =>
+      '相邻两包数据超过该时间未继续接收时自动换行；连续数据不换行，文本中的换行符仍正常生效。';
   String get displayLineLimit => '接收区最大显示行数:';
   String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
   String get enableShellEntry => '显示 Shell 页面';
@@ -470,7 +471,7 @@ final class _AppInfoStrings {
   String get confirmResetSettingsTitle => '确认恢复默认设置';
   String get resetSettingsWarning => '此操作会重置串口、绘图、数据收发、Shell、更新等应用设置，操作不可撤销。';
   String get resetSettingsKeepsProfiles => '绘图配置功能保存的 JSON 配置文件不会被删除。';
-  String enterConfirmText(String text) => '请输入“$text”以继续：';
+  String enterResetCode(String code) => '请输入四位验证码 $code 以继续：';
   String get confirmReset => '确认恢复';
   String get resetSettingsDone => '已恢复默认设置，建议重启应用以确保所有界面完全生效。';
   String get noVersionInfo => '未获取到版本信息';

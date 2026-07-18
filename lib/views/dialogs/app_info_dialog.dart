@@ -1,6 +1,8 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/localization/app_strings.dart';
@@ -854,7 +856,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   }
 
   Future<bool> _confirmResetSettings() async {
-    final confirmText = AppStrings.appInfo.resetSettings;
+    final confirmCode = (math.Random.secure().nextInt(9000) + 1000).toString();
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -887,7 +889,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 12),
-                    Text(AppStrings.appInfo.enterConfirmText(confirmText)),
+                    Text(AppStrings.appInfo.enterResetCode(confirmCode)),
                     const SizedBox(height: 8),
                     TextField(
                       autofocus: true,
@@ -895,6 +897,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         isDense: true,
                         border: OutlineInputBorder(),
                       ),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(4),
+                      ],
                       onChanged: (value) => setDialogState(() => input = value),
                     ),
                   ],
@@ -910,7 +917,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       foregroundColor: Theme.of(context).colorScheme.onError,
                     ),
                     onPressed:
-                        input == confirmText
+                        input == confirmCode
                             ? () => Navigator.of(dialogContext).pop(true)
                             : null,
                     child: Text(AppStrings.appInfo.confirmReset),

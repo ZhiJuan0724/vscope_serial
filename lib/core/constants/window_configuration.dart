@@ -7,7 +7,7 @@ abstract final class WindowConfiguration {
   static const double minHeight = 600;
 
   /// 应用首次显示时使用的默认宽度。
-  static const double defaultWidth = 1000;
+  static const double defaultWidth = 950;
 
   /// 应用首次显示时使用的默认高度。
   static const double defaultHeight = 700;
