@@ -1446,11 +1446,31 @@ void main() {
       }
       final token = PlotExportCancelToken()..cancel();
       final binPath = '${dir.path}/cancel.bin';
+      await File(binPath).writeAsString('existing-bin');
 
       final exported = await vm.exportToBin(binPath, cancelToken: token);
 
       expect(exported, isNull);
-      expect(File(binPath).existsSync(), isFalse);
+      expect(await File(binPath).readAsString(), 'existing-bin');
+      expect(File('$binPath.part').existsSync(), isFalse);
+    });
+
+    test('CSV 导出取消时保留既有目标并删除半成品', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_cancel_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      final token = PlotExportCancelToken()..cancel();
+      final csvPath = '${dir.path}/cancel.csv';
+      await File(csvPath).writeAsString('existing-csv');
+
+      final exported = await vm.exportToCsv(csvPath, cancelToken: token);
+
+      expect(exported, isNull);
+      expect(await File(csvPath).readAsString(), 'existing-csv');
+      expect(File('$csvPath.part').existsSync(), isFalse);
     });
 
     test('BIN 导出超过当前格式4GB上限时拒绝导出', () async {
@@ -1669,6 +1689,29 @@ void main() {
       expect(await imported.importFromBin(binPath), isNull);
       expect(imported.channels[0].alias, isEmpty);
       expect(imported.importedChannelAddresses, vm.importedChannelAddresses);
+    });
+
+    test('CSV、BIN和DAT预检失败时保留当前绘图', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_import_transaction_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 20], bytesConsumed: 1));
+      final originalValues = List<double>.from(vm.dataPoints.single.values);
+
+      final csv = File('${dir.path}/invalid.csv');
+      final bin = File('${dir.path}/invalid.bin');
+      final dat = File('${dir.path}/invalid.dat');
+      await csv.writeAsString('x\n0\n');
+      await bin.writeAsBytes(const [0x56, 0x53, 0x50]);
+      await dat.writeAsBytes(const [0, 1, 2, 3]);
+
+      expect(await vm.importFromCsv(csv.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
+      expect(await vm.importFromBin(bin.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
+      expect(await vm.importFromLegacyDat(dat.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
     });
 
     test('setVCursorEnabled切换状态', () {

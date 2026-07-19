@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/utils/app_logger.dart';
+import '../core/utils/atomic_file.dart';
 import '../core/utils/crc.dart';
 import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_packet.dart';
@@ -120,20 +121,6 @@ class _CircularStringList extends ListBase<String> {
     _items = next;
     _head = 0;
   }
-}
-
-class _IosStringSink implements Sink<String> {
-  final IOSink output;
-
-  _IosStringSink(this.output);
-
-  @override
-  void add(String data) {
-    output.write(data);
-  }
-
-  @override
-  void close() {}
 }
 
 enum SendDisplaySource { user, plot }
@@ -1686,6 +1673,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('没有原始接收数据，已取消文本导出', category: 'DATA');
       return null;
     }
+    String? partPath;
     try {
       onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
@@ -1693,18 +1681,14 @@ class SerialService extends ChangeNotifier {
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.txt';
-      final file = File(path);
+      const committer = AtomicFileCommitter();
+      partPath = committer.partPath(path);
+      final file = File(partPath);
+      if (await file.exists()) await file.delete();
       final encoding = _textEncoding;
-      if (_supportsStreamingTextExport(encoding)) {
-        await _exportTextStreaming(file, encoding, onProgress);
-      } else {
-        // 其他代码页的流式跨块解码需要保留解码器状态，暂时保留旧行为保证文本正确性。
-        final bytes = _rawBytes.toBytes();
-        onProgress?.call(0.25);
-        final content = _decodeBytesWithEncoding(bytes, encoding);
-        onProgress?.call(0.75);
-        await file.writeAsString(content);
-      }
+      await _exportTextStreaming(file, encoding, onProgress);
+      await committer.commitPart(path);
+      partPath = null;
       onProgress?.call(1);
       AppLogger().info(
         '已导出完整接收文本: $path，编码=$encoding，原始字节=$_rawBytesSize',
@@ -1712,6 +1696,7 @@ class SerialService extends ChangeNotifier {
       );
       return path;
     } catch (e) {
+      await _deleteExportPart(partPath);
       AppLogger().error('导出失败: $e', category: 'DATA');
       return null;
     }
@@ -1726,6 +1711,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('没有原始接收数据，已取消BIN导出', category: 'DATA');
       return null;
     }
+    String? partPath;
     try {
       onProgress?.call(0.05);
       final exeDir = File(Platform.resolvedExecutable).parent;
@@ -1733,29 +1719,31 @@ class SerialService extends ChangeNotifier {
       await dir.create(recursive: true);
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final path = '${dir.path}/vscope_serial_$timestamp.bin';
-      final file = File(path);
+      const committer = AtomicFileCommitter();
+      partPath = committer.partPath(path);
+      final file = File(partPath);
+      if (await file.exists()) await file.delete();
 
       await _exportRawBytesStreaming(file, onProgress);
+      await committer.commitPart(path);
+      partPath = null;
       onProgress?.call(1);
 
       AppLogger().info('已导出原始字节: $path', category: 'DATA');
       return path;
     } catch (e) {
+      await _deleteExportPart(partPath);
       AppLogger().error('导出失败: $e', category: 'DATA');
       return null;
     }
   }
 
-  bool _supportsStreamingTextExport(String encoding) {
-    return encoding == 'UTF-8' || encoding == 'Latin-1' || encoding == 'ASCII';
-  }
-
-  Converter<List<int>, String> _streamingTextDecoder(String encoding) {
-    return switch (encoding) {
-      'Latin-1' => latin1.decoder,
-      'ASCII' => ascii.decoder,
-      _ => utf8.decoder,
-    };
+  Future<void> _deleteExportPart(String? path) async {
+    if (path == null) return;
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
   }
 
   Future<void> _exportTextStreaming(
@@ -1764,17 +1752,16 @@ class SerialService extends ChangeNotifier {
     ExportProgressCallback? onProgress,
   ) async {
     final output = file.openWrite();
-    final decoder = _streamingTextDecoder(encoding);
-    final decoderSink = decoder.startChunkedConversion(_IosStringSink(output));
+    final decoder = ShellStreamDecoder(encoding);
     var written = 0;
     try {
       for (final chunk in _rawBytes.readChunks()) {
-        decoderSink.add(chunk);
+        output.write(decoder.add(chunk));
         written += chunk.length;
         onProgress?.call(0.05 + 0.9 * written / _rawBytesSize);
         await Future<void>.delayed(Duration.zero);
       }
-      decoderSink.close();
+      output.write(decoder.flush());
       await output.flush();
       await output.close();
     } catch (_) {

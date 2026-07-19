@@ -78,10 +78,17 @@ class AtomicFileCommitter {
     bool keepBackup = false,
   }) async {
     final part = partPath(targetPath);
-    final backup = backupPath(targetPath);
     await operations.createParent(targetPath);
     await operations.delete(part);
     await operations.writeAndFlush(part, bytes);
+
+    await commitPart(targetPath, keepBackup: keepBackup);
+  }
+
+  /// 提交调用方已经 flush 并关闭的同目录 `.part` 文件。
+  Future<void> commitPart(String targetPath, {bool keepBackup = false}) async {
+    final part = partPath(targetPath);
+    final backup = backupPath(targetPath);
 
     var movedOriginal = false;
     try {

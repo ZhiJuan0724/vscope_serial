@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import '../core/constants/plot_configuration.dart';
 import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
+import '../core/utils/atomic_file.dart';
 import '../core/utils/crc.dart';
 import '../core/utils/math_expression.dart';
 import '../core/utils/plot_value_formatter.dart';

@@ -11,12 +11,72 @@ class _PlotExportColumn {
   bool get isMath => channelIndex >= PlotConfiguration.rawChannelCount;
 }
 
+class _CsvImportPlan {
+  final int pointCount;
+  final int sourceChannelCount;
+  final int rawChannelCount;
+  final Map<String, dynamic> metadata;
+
+  const _CsvImportPlan({
+    required this.pointCount,
+    required this.sourceChannelCount,
+    required this.rawChannelCount,
+    required this.metadata,
+  });
+}
+
+class _BinImportPlan {
+  final int version;
+  final int pointCount;
+  final int sourceChannelCount;
+  final int rawChannelCount;
+  final int payloadOffset;
+  final int rowLength;
+  final Map<String, dynamic> metadata;
+
+  const _BinImportPlan({
+    required this.version,
+    required this.pointCount,
+    required this.sourceChannelCount,
+    required this.rawChannelCount,
+    required this.payloadOffset,
+    required this.rowLength,
+    required this.metadata,
+  });
+}
+
+class _DatImportPlan {
+  final int pointCount;
+  final List<int> channelDataOffsets;
+  final List<int> addresses;
+
+  const _DatImportPlan({
+    required this.pointCount,
+    required this.channelDataOffsets,
+    required this.addresses,
+  });
+}
+
+class _ImportValueRange {
+  double min = double.infinity;
+  double max = double.negativeInfinity;
+
+  void include(List<double> values) {
+    for (final value in values) {
+      if (!value.isFinite) continue;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+  }
+}
+
 /// PlotViewModel 的数据导入导出能力，包含 CSV、BIN 和旧版 DAT 格式。
 extension PlotViewModelImportExport on PlotViewModel {
   static const int _binMaxUint32 = 0xFFFFFFFF;
   static const int _binExportBatchSize = 65536;
   static const int _csvExportBatchSize = 8192;
   static const int _maxExportChannelCount = PlotConfiguration.totalChannelCount;
+  static const AtomicFileCommitter _atomicFiles = AtomicFileCommitter();
 
   List<ChannelConfig> get exportCandidateChannels {
     final rawCount = _exportChannelCount.clamp(0, channels.length).toInt();
@@ -47,6 +107,7 @@ extension PlotViewModelImportExport on PlotViewModel {
   }) async {
     IOSink? sink;
     String? path;
+    String? partPath;
     try {
       final exportRange = _normalizeExportRange(startIndex, endIndex);
       if (exportRange == null) {
@@ -67,7 +128,9 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
       final sourceStart = exportRange.$1;
       final pointCount = exportRange.$2;
-      final file = File(path);
+      partPath = _atomicFiles.partPath(path);
+      final file = File(partPath);
+      if (await file.exists()) await file.delete();
       sink = file.openWrite();
       final startedAt = DateTime.now();
       var writtenBytes = 0;
@@ -122,19 +185,26 @@ extension PlotViewModelImportExport on PlotViewModel {
       await sink.flush();
       await sink.close();
       sink = null;
+      await _atomicFiles.commitPart(path);
+      partPath = null;
       AppLogger().info('已导出 CSV: $path', category: 'PLOT');
       return path;
     } on _PlotExportCancelled {
       await sink?.close();
-      if (path != null) {
+      if (partPath != null) {
         try {
-          await File(path).delete();
+          await File(partPath).delete();
         } catch (_) {}
       }
       AppLogger().info('CSV 导出已取消', category: 'PLOT');
       return null;
     } catch (e) {
       await sink?.close();
+      if (partPath != null) {
+        try {
+          await File(partPath).delete();
+        } catch (_) {}
+      }
       AppLogger().error('CSV 导出失败: $e', category: 'PLOT');
       return null;
     }
@@ -150,6 +220,7 @@ extension PlotViewModelImportExport on PlotViewModel {
   }) async {
     RandomAccessFile? output;
     String? path;
+    String? partPath;
     try {
       final exportRange = _normalizeExportRange(startIndex, endIndex);
       if (exportRange == null) {
@@ -194,7 +265,10 @@ extension PlotViewModelImportExport on PlotViewModel {
         ),
       );
       final crc = CrcCalculator(crc32Polys['CRC-32']!)..add(metadataBytes);
-      output = await File(path).open(mode: FileMode.write);
+      partPath = _atomicFiles.partPath(path);
+      final partFile = File(partPath);
+      if (await partFile.exists()) await partFile.delete();
+      output = await partFile.open(mode: FileMode.write);
       final startedAt = DateTime.now();
       var writtenBytes = 0;
       await output.writeFrom(Uint8List(28));
@@ -256,19 +330,26 @@ extension PlotViewModelImportExport on PlotViewModel {
       await output.flush();
       await output.close();
       output = null;
+      await _atomicFiles.commitPart(path);
+      partPath = null;
       AppLogger().info('已导出 BIN: $path', category: 'PLOT');
       return path;
     } on _PlotExportCancelled {
       await output?.close();
-      if (path != null) {
+      if (partPath != null) {
         try {
-          await File(path).delete();
+          await File(partPath).delete();
         } catch (_) {}
       }
       AppLogger().info('BIN 导出已取消', category: 'PLOT');
       return null;
     } catch (e) {
       await output?.close();
+      if (partPath != null) {
+        try {
+          await File(partPath).delete();
+        } catch (_) {}
+      }
       AppLogger().error('BIN 导出失败: $e', category: 'PLOT');
       return null;
     }
@@ -554,167 +635,28 @@ extension PlotViewModelImportExport on PlotViewModel {
     String filePath, {
     PlotImportProgressCallback? onProgress,
   }) async {
+    File? staged;
     try {
       final file = File(filePath);
       await _reportImportProgress(onProgress, '检查文件', 0, 0);
       if (!await file.exists()) {
         return '文件不存在';
       }
-
-      await _reportImportProgress(onProgress, '读取 CSV', 0, 0);
-      final lines = await file.readAsLines();
-      if (lines.isEmpty) {
-        return '文件为空';
-      }
-      await _reportImportProgress(
-        onProgress,
-        '读取 CSV',
-        lines.length,
-        lines.length,
-      );
-
-      final metadata = <String, dynamic>{};
-      var headerLineIndex = 0;
-      while (headerLineIndex < lines.length &&
-          lines[headerLineIndex].trim().startsWith('#')) {
-        final line = lines[headerLineIndex].trim();
-        const prefix = '# vscope_plot_meta=';
-        if (line.startsWith(prefix)) {
-          final decoded = jsonDecode(line.substring(prefix.length));
-          if (decoded is Map<String, dynamic>) {
-            metadata.addAll(decoded);
-          }
-        }
-        headerLineIndex++;
-      }
-      if (headerLineIndex >= lines.length) {
-        return '缺少 CSV 表头';
-      }
-
-      // 解析表头
-      final header = lines[headerLineIndex].trim();
-      if (!header.toLowerCase().startsWith('x')) {
-        return '表头格式错误，第一列应为 x';
-      }
-
-      final headerParts = header.split(',');
-      final channelCount = headerParts.length - 1; // 减去 x 列
-      if (channelCount < 1) {
-        return '至少需要 1 个数据列';
-      }
-      if (channelCount > PlotConfiguration.totalChannelCount) {
-        return '通道数超过限制（最大${PlotConfiguration.totalChannelCount}通道）';
-      }
-
-      // 解析数据行
-      final importedPoints = <PlotDataPoint>[];
-      final dataLineCount = lines.length - headerLineIndex - 1;
-      int index = 0;
-      for (int i = headerLineIndex + 1; i < lines.length; i++) {
-        final line = lines[i].trim();
-        if (line.isEmpty) {
-          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
-            await _reportImportProgress(
-              onProgress,
-              '解析 CSV',
-              i - headerLineIndex - 1,
-              dataLineCount,
-              detail: '${importedPoints.length} 点',
-            );
-          }
-          continue;
-        }
-
-        final parts = line.split(',');
-        if (parts.length < 2) {
-          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
-            await _reportImportProgress(
-              onProgress,
-              '解析 CSV',
-              i - headerLineIndex - 1,
-              dataLineCount,
-              detail: '${importedPoints.length} 点',
-            );
-          }
-          continue;
-        }
-
-        final xValue = double.tryParse(parts[0].trim());
-        if (xValue == null) {
-          if ((i - headerLineIndex) % _importProgressBatchSize == 0) {
-            await _reportImportProgress(
-              onProgress,
-              '解析 CSV',
-              i - headerLineIndex - 1,
-              dataLineCount,
-              detail: '${importedPoints.length} 点',
-            );
-          }
-          continue;
-        }
-
-        final values = <double>[];
-        for (int c = 1; c < parts.length && c <= channelCount; c++) {
-          final v = double.tryParse(parts[c].trim());
-          if (v != null) {
-            values.add(v);
-          } else {
-            values.add(0);
-          }
-        }
-
-        // 如果某行列数不足，补零
-        while (values.length < channelCount) {
-          values.add(0);
-        }
-
-        importedPoints.add(
-          PlotDataPoint(index: index, timestamp: xValue, values: values),
-        );
-        index++;
-
-        if (index % _importProgressBatchSize == 0) {
-          await _reportImportProgress(
-            onProgress,
-            '解析 CSV',
-            i - headerLineIndex,
-            dataLineCount,
-            detail: '$index 点',
-          );
-        }
-      }
-
-      if (importedPoints.isEmpty) {
-        return '未找到有效数据行';
-      }
-
-      var normalizedPoints = importedPoints;
-      var normalizedChannelCount = channelCount;
-      if (channelCount > PlotConfiguration.rawChannelCount) {
-        final expressions = _csvTrailingMathExpressions(headerParts);
-        if (expressions == null) {
-          return '超过16列的 CSV 必须按 Ch0..Ch15 加数学表达式列排列';
-        }
-        normalizedPoints = _takeRawImportColumns(importedPoints);
-        normalizedChannelCount = PlotConfiguration.rawChannelCount;
-        metadata['mathChannels'] = _mathChannelMetadata(expressions);
-      }
-
-      await _replaceImportedPoints(
-        normalizedPoints,
-        normalizedChannelCount,
-        metadata: metadata,
-        onProgress: onProgress,
-      );
+      staged = await _stageImportFile(file, '读取 CSV', onProgress);
+      final plan = await _preflightCsv(staged, onProgress);
+      await _buildCsvImport(staged, plan, onProgress);
 
       AppLogger().info(
-        'CSV 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
+        'CSV 导入成功: $filePath, ${plan.pointCount} 点, '
+        '${plan.sourceChannelCount} 通道',
         category: 'PLOT',
       );
       return null;
     } catch (e) {
       AppLogger().error('CSV 导入失败: $e', category: 'PLOT');
       return '解析错误: $e';
+    } finally {
+      if (staged != null && await staged.exists()) await staged.delete();
     }
   }
 
@@ -722,6 +664,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     String filePath, {
     PlotImportProgressCallback? onProgress,
   }) async {
+    File? staged;
     try {
       final file = File(filePath);
       await _reportImportProgress(onProgress, '检查文件', 0, 0);
@@ -729,133 +672,20 @@ extension PlotViewModelImportExport on PlotViewModel {
         return '文件不存在';
       }
 
-      await _reportImportProgress(onProgress, '读取 BIN', 0, 0);
-      final bytes = await file.readAsBytes();
-      if (bytes.length < 24) {
-        return 'BIN 文件头不完整';
-      }
-      await _reportImportProgress(
-        onProgress,
-        '读取 BIN',
-        bytes.length,
-        bytes.length,
-        detail: '${bytes.length} 字节',
-      );
-
-      const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
-      for (int i = 0; i < magic.length; i++) {
-        if (bytes[i] != magic[i]) {
-          return 'BIN 文件标识错误';
-        }
-      }
-
-      final header = ByteData.sublistView(bytes, 0, 24);
-      final version = header.getUint16(8, Endian.little);
-      final channelCount = header.getUint16(10, Endian.little);
-      final pointCount = header.getUint32(12, Endian.little);
-      final payloadLength = header.getUint32(16, Endian.little);
-      final expectedChecksum = header.getUint32(20, Endian.little);
-
-      if (version != 1 && version != 2) return '不支持的 BIN 版本: $version';
-      if (channelCount < 1 ||
-          channelCount > PlotConfiguration.totalChannelCount) {
-        return '通道数无效';
-      }
-      final headerLength = version == 2 ? 28 : 24;
-      if (bytes.length < headerLength) return 'BIN 文件头不完整';
-      final metadataLength =
-          version == 2
-              ? ByteData.sublistView(bytes, 24, 28).getUint32(0, Endian.little)
-              : 0;
-      if (bytes.length != headerLength + metadataLength + payloadLength) {
-        return 'BIN 文件长度不匹配';
-      }
-
-      final dataBlock = Uint8List.sublistView(bytes, headerLength);
-      await _reportImportProgress(onProgress, '校验 BIN', 0, payloadLength);
-      final actualChecksum = calculateCrc(dataBlock, crc32Polys['CRC-32']!);
-      if (actualChecksum != expectedChecksum) {
-        return 'BIN 校验失败';
-      }
-      await _reportImportProgress(
-        onProgress,
-        '校验 BIN',
-        payloadLength,
-        payloadLength,
-      );
-
-      final metadata = <String, dynamic>{};
-      if (metadataLength > 0) {
-        final decoded = jsonDecode(
-          utf8.decode(Uint8List.sublistView(dataBlock, 0, metadataLength)),
-        );
-        if (decoded is Map<String, dynamic>) {
-          metadata.addAll(decoded);
-        }
-      }
-
-      final payload = Uint8List.sublistView(dataBlock, metadataLength);
-
-      final rowLength = 8 + channelCount * 8;
-      if (payloadLength != pointCount * rowLength) {
-        return 'BIN 数据长度不匹配';
-      }
-
-      final data = ByteData.sublistView(payload);
-      final importedPoints = <PlotDataPoint>[];
-      var offset = 0;
-      for (int i = 0; i < pointCount; i++) {
-        final x = data.getFloat64(offset, Endian.little);
-        offset += 8;
-        final values = <double>[];
-        for (int c = 0; c < channelCount; c++) {
-          values.add(data.getFloat64(offset, Endian.little));
-          offset += 8;
-        }
-        importedPoints.add(
-          PlotDataPoint(index: i, timestamp: x, values: values),
-        );
-        if ((i + 1) % _importProgressBatchSize == 0) {
-          await _reportImportProgress(
-            onProgress,
-            '解析 BIN',
-            i + 1,
-            pointCount,
-            detail: '${i + 1} 点',
-          );
-        }
-      }
-
-      if (importedPoints.isEmpty) {
-        return '未找到有效数据行';
-      }
-
-      var normalizedPoints = importedPoints;
-      var normalizedChannelCount = channelCount;
-      if (channelCount > PlotConfiguration.rawChannelCount) {
-        final expressions = _binTrailingMathExpressions(metadata, channelCount);
-        if (expressions == null) {
-          return '超过16列的 BIN 缺少完整的普通/数学通道描述';
-        }
-        normalizedPoints = _takeRawImportColumns(importedPoints);
-        normalizedChannelCount = PlotConfiguration.rawChannelCount;
-        metadata['mathChannels'] = _mathChannelMetadata(expressions);
-      }
-
-      await _replaceImportedPoints(
-        normalizedPoints,
-        normalizedChannelCount,
-        metadata: metadata,
-        onProgress: onProgress,
-      );
+      staged = await _stageImportFile(file, '读取 BIN', onProgress);
+      final plan = await _preflightBin(staged, onProgress);
+      await _buildBinImport(staged, plan, onProgress);
       AppLogger().info(
-        'BIN 导入成功: $filePath, ${importedPoints.length} 点, $channelCount 通道',
+        'BIN 导入成功: $filePath, ${plan.pointCount} 点, '
+        '${plan.sourceChannelCount} 通道',
         category: 'PLOT',
       );
       return null;
     } catch (e) {
       AppLogger().error('BIN 导入失败: $e', category: 'PLOT');
       return '解析错误: $e';
+    } finally {
+      if (staged != null && await staged.exists()) await staged.delete();
     }
   }
 
@@ -867,6 +697,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     String filePath, {
     PlotImportProgressCallback? onProgress,
   }) async {
+    File? staged;
     try {
       final file = File(filePath);
       await _reportImportProgress(onProgress, '检查文件', 0, 0);
@@ -874,99 +705,491 @@ extension PlotViewModelImportExport on PlotViewModel {
         return '文件不存在';
       }
 
-      await _reportImportProgress(onProgress, '读取 DAT', 0, 0);
-      final bytes = await file.readAsBytes();
-      const channelCount = 4;
-      const reservedPointCount = 50000;
-      const minimumHeaderLength = 0x24;
-      if (bytes.length < minimumHeaderLength) {
-        return 'DAT 文件头不完整';
-      }
-      await _reportImportProgress(
-        onProgress,
-        '读取 DAT',
-        bytes.length,
-        bytes.length,
-        detail: '${bytes.length} 字节',
-      );
-
-      final data = ByteData.sublistView(bytes);
-      final declaredLength = data.getUint32(0, Endian.little);
-      if (declaredLength != bytes.length) {
-        return 'DAT 文件长度校验失败';
-      }
-
-      final storedPointCount = data.getUint32(0x20, Endian.little);
-      if (storedPointCount <= reservedPointCount) {
-        return 'DAT 文件没有有效数据';
-      }
-      final expectedLength = 4 + channelCount * (32 + storedPointCount * 2);
-      if (expectedLength != bytes.length) {
-        return 'DAT 数据布局不匹配';
-      }
-
-      final importedPointCount = storedPointCount - reservedPointCount;
-      final addresses = <int>[];
-      final channelDataOffsets = <int>[];
-      for (int channel = 0; channel < channelCount; channel++) {
-        final channelNumber = channel + 1;
-        final blockOffset = channel * storedPointCount * 2;
-        final dataOffset =
-            0x04 + channelNumber * 32 + blockOffset + reservedPointCount * 2;
-        // 每个通道块都有 32 字节头部。
-        // 地址字段位于原始样本数据前 12 字节，类型为 uint32。
-        final addressOffset = dataOffset - reservedPointCount * 2 - 12;
-        final dataEnd =
-            0x04 + channelNumber * 32 + blockOffset + storedPointCount * 2;
-        if (addressOffset + 4 > bytes.length ||
-            dataOffset > dataEnd ||
-            dataEnd > bytes.length) {
-          return 'DAT 通道数据不完整';
-        }
-        addresses.add(data.getUint32(addressOffset, Endian.little));
-        channelDataOffsets.add(dataOffset);
-      }
-
-      final importedPoints = <PlotDataPoint>[];
-      for (int pointIndex = 0; pointIndex < importedPointCount; pointIndex++) {
-        final byteOffset = pointIndex * 2;
-        importedPoints.add(
-          PlotDataPoint(
-            index: pointIndex,
-            timestamp: pointIndex.toDouble(),
-            values: [
-              for (final offset in channelDataOffsets)
-                data.getInt16(offset + byteOffset, Endian.little).toDouble(),
-            ],
-          ),
-        );
-        if ((pointIndex + 1) % _importProgressBatchSize == 0 ||
-            pointIndex + 1 == importedPointCount) {
-          await _reportImportProgress(
-            onProgress,
-            '解析 DAT',
-            pointIndex + 1,
-            importedPointCount,
-            detail: '${pointIndex + 1} 点',
-          );
-        }
-      }
-
-      await _replaceImportedPoints(
-        importedPoints,
-        channelCount,
-        metadata: {'channelAddresses': addresses},
-        onProgress: onProgress,
-      );
+      staged = await _stageImportFile(file, '读取 DAT', onProgress);
+      final plan = await _preflightDat(staged);
+      await _buildDatImport(staged, plan, onProgress);
       AppLogger().info(
-        '旧版 DAT 导入成功: $filePath, $importedPointCount 点, 地址=${addresses.map((address) => '0x${address.toRadixString(16).toUpperCase()}').join(',')}',
+        '旧版 DAT 导入成功: $filePath, ${plan.pointCount} 点, '
+        '地址=${plan.addresses.map((address) => '0x${address.toRadixString(16).toUpperCase()}').join(',')}',
         category: 'PLOT',
       );
       return null;
     } catch (e) {
       AppLogger().error('旧版 DAT 导入失败: $e', category: 'PLOT');
       return '解析错误: $e';
+    } finally {
+      if (staged != null && await staged.exists()) await staged.delete();
     }
+  }
+
+  Future<File> _stageImportFile(
+    File source,
+    String stage,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    final length = await source.length();
+    final separator = Platform.pathSeparator;
+    final staged = File(
+      '${Directory.systemTemp.path}${separator}vscope_import_'
+      '${pid}_${DateTime.now().microsecondsSinceEpoch}.part',
+    );
+    final input = await source.open();
+    final output = await staged.open(mode: FileMode.write);
+    var copied = 0;
+    try {
+      try {
+        while (copied < length) {
+          final chunk = await input.read(math.min(64 * 1024, length - copied));
+          if (chunk.isEmpty) {
+            throw const FileSystemException('导入源文件读取中断');
+          }
+          await output.writeFrom(chunk);
+          copied += chunk.length;
+          if (copied % (4 * 1024 * 1024) < chunk.length || copied == length) {
+            await _reportImportProgress(
+              onProgress,
+              stage,
+              copied,
+              length,
+              detail: '$copied 字节',
+            );
+          }
+        }
+        await output.flush();
+      } finally {
+        await output.close();
+        await input.close();
+      }
+      return staged;
+    } catch (_) {
+      if (await staged.exists()) await staged.delete();
+      rethrow;
+    }
+  }
+
+  Stream<String> _readBoundedCsvLines(File file) async* {
+    const maxLineBytes = 64 * 1024;
+    final line = <int>[];
+    await for (final chunk in file.openRead()) {
+      for (final byte in chunk) {
+        if (byte == 0x0A) {
+          yield utf8.decode(line);
+          line.clear();
+          continue;
+        }
+        line.add(byte);
+        if (line.length > maxLineBytes) {
+          throw const FormatException('CSV 单行超过 64 KiB');
+        }
+      }
+    }
+    if (line.isNotEmpty) yield utf8.decode(line);
+  }
+
+  Future<_CsvImportPlan> _preflightCsv(
+    File file,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    final metadata = <String, dynamic>{};
+    List<String>? headerParts;
+    var pointCount = 0;
+    var scannedLines = 0;
+    await for (final rawLine in _readBoundedCsvLines(file)) {
+      scannedLines++;
+      final line = rawLine.trim();
+      if (headerParts == null) {
+        if (line.startsWith('#')) {
+          const prefix = '# vscope_plot_meta=';
+          if (line.startsWith(prefix)) {
+            final decoded = jsonDecode(line.substring(prefix.length));
+            if (decoded is Map) {
+              metadata.addAll(Map<String, dynamic>.from(decoded));
+            }
+          }
+          continue;
+        }
+        if (line.isEmpty) continue;
+        if (!line.toLowerCase().startsWith('x')) {
+          throw const FormatException('表头格式错误，第一列应为 x');
+        }
+        headerParts = line.split(',');
+        continue;
+      }
+      if (line.isEmpty) continue;
+      final parts = line.split(',');
+      if (parts.length >= 2 && double.tryParse(parts[0].trim()) != null) {
+        pointCount++;
+      }
+      if (scannedLines % _importProgressBatchSize == 0) {
+        await _reportImportProgress(
+          onProgress,
+          '校验 CSV',
+          scannedLines,
+          0,
+          detail: '$pointCount 点',
+        );
+      }
+    }
+    if (headerParts == null) throw const FormatException('缺少 CSV 表头');
+    final channelCount = headerParts.length - 1;
+    if (channelCount < 1) throw const FormatException('至少需要 1 个数据列');
+    if (channelCount > PlotConfiguration.totalChannelCount) {
+      throw FormatException(
+        '通道数超过限制（最大${PlotConfiguration.totalChannelCount}通道）',
+      );
+    }
+    if (pointCount == 0) throw const FormatException('未找到有效数据行');
+    final rawChannelCount = math.min(
+      channelCount,
+      PlotConfiguration.rawChannelCount,
+    );
+    if (channelCount > PlotConfiguration.rawChannelCount) {
+      final expressions = _csvTrailingMathExpressions(headerParts);
+      if (expressions == null) {
+        throw const FormatException('超过16列的 CSV 必须按 Ch0..Ch15 加数学表达式列排列');
+      }
+      metadata['mathChannels'] = _mathChannelMetadata(expressions);
+    }
+    _validateImportCapacity(pointCount, rawChannelCount);
+    return _CsvImportPlan(
+      pointCount: pointCount,
+      sourceChannelCount: channelCount,
+      rawChannelCount: rawChannelCount,
+      metadata: metadata,
+    );
+  }
+
+  Future<void> _buildCsvImport(
+    File file,
+    _CsvImportPlan plan,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    _beginImportedReplacement();
+    final range = _ImportValueRange();
+    var headerSeen = false;
+    var pointIndex = 0;
+    await for (final rawLine in _readBoundedCsvLines(file)) {
+      final line = rawLine.trim();
+      if (!headerSeen) {
+        if (line.isEmpty || line.startsWith('#')) continue;
+        headerSeen = true;
+        continue;
+      }
+      if (line.isEmpty) continue;
+      final parts = line.split(',');
+      if (parts.length < 2 || double.tryParse(parts[0].trim()) == null) {
+        continue;
+      }
+      final values = List<double>.filled(plan.rawChannelCount, 0);
+      for (
+        var channel = 0;
+        channel < plan.rawChannelCount && channel + 1 < parts.length;
+        channel++
+      ) {
+        values[channel] = double.tryParse(parts[channel + 1].trim()) ?? 0;
+      }
+      _appendImportedValues(pointIndex++, values, range);
+      if (pointIndex % _importProgressBatchSize == 0 ||
+          pointIndex == plan.pointCount) {
+        await _reportImportProgress(
+          onProgress,
+          '建立绘图索引',
+          pointIndex,
+          plan.pointCount,
+          detail: '$pointIndex 点',
+        );
+      }
+    }
+    await _finishImportedReplacement(
+      plan.pointCount,
+      plan.rawChannelCount,
+      range,
+      metadata: plan.metadata,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<_BinImportPlan> _preflightBin(
+    File file,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
+    const maxMetadataBytes = 16 * 1024 * 1024;
+    final input = await file.open();
+    try {
+      final fileLength = await input.length();
+      if (fileLength < 24) throw const FormatException('BIN 文件头不完整');
+      final firstHeader = await _readExact(input, 24);
+      for (var i = 0; i < magic.length; i++) {
+        if (firstHeader[i] != magic[i]) {
+          throw const FormatException('BIN 文件标识错误');
+        }
+      }
+      final header = ByteData.sublistView(firstHeader);
+      final version = header.getUint16(8, Endian.little);
+      final channelCount = header.getUint16(10, Endian.little);
+      final pointCount = header.getUint32(12, Endian.little);
+      final payloadLength = header.getUint32(16, Endian.little);
+      final expectedChecksum = header.getUint32(20, Endian.little);
+      if (version != 1 && version != 2) {
+        throw FormatException('不支持的 BIN 版本: $version');
+      }
+      if (channelCount < 1 ||
+          channelCount > PlotConfiguration.totalChannelCount) {
+        throw const FormatException('通道数无效');
+      }
+      final headerLength = version == 2 ? 28 : 24;
+      var metadataLength = 0;
+      if (version == 2) {
+        metadataLength = ByteData.sublistView(
+          await _readExact(input, 4),
+        ).getUint32(0, Endian.little);
+      }
+      if (metadataLength > maxMetadataBytes) {
+        throw const FormatException('BIN 元数据超过 16 MiB 限制');
+      }
+      if (fileLength != headerLength + metadataLength + payloadLength) {
+        throw const FormatException('BIN 文件长度不匹配');
+      }
+      final rowLength = 8 + channelCount * 8;
+      if (pointCount == 0 || payloadLength != pointCount * rowLength) {
+        throw const FormatException('BIN 数据长度不匹配');
+      }
+
+      final metadata = <String, dynamic>{};
+      if (metadataLength > 0) {
+        final decoded = jsonDecode(
+          utf8.decode(await _readExact(input, metadataLength)),
+        );
+        if (decoded is! Map) throw const FormatException('BIN 元数据格式错误');
+        metadata.addAll(Map<String, dynamic>.from(decoded));
+      }
+
+      await input.setPosition(headerLength);
+      final crc = CrcCalculator(crc32Polys['CRC-32']!);
+      var checked = 0;
+      final checkedLength = metadataLength + payloadLength;
+      while (checked < checkedLength) {
+        final chunk = await input.read(
+          math.min(64 * 1024, checkedLength - checked),
+        );
+        if (chunk.isEmpty) throw const FormatException('BIN 数据读取中断');
+        crc.add(chunk);
+        checked += chunk.length;
+        if (checked % (4 * 1024 * 1024) < chunk.length ||
+            checked == checkedLength) {
+          await _reportImportProgress(
+            onProgress,
+            '校验 BIN',
+            checked,
+            checkedLength,
+          );
+        }
+      }
+      if (crc.digest != expectedChecksum) {
+        throw const FormatException('BIN 校验失败');
+      }
+
+      final rawChannelCount = math.min(
+        channelCount,
+        PlotConfiguration.rawChannelCount,
+      );
+      if (channelCount > PlotConfiguration.rawChannelCount) {
+        final expressions = _binTrailingMathExpressions(metadata, channelCount);
+        if (expressions == null) {
+          throw const FormatException('超过16列的 BIN 缺少完整的普通/数学通道描述');
+        }
+        metadata['mathChannels'] = _mathChannelMetadata(expressions);
+      }
+      _validateImportCapacity(pointCount, rawChannelCount);
+      return _BinImportPlan(
+        version: version,
+        pointCount: pointCount,
+        sourceChannelCount: channelCount,
+        rawChannelCount: rawChannelCount,
+        payloadOffset: headerLength + metadataLength,
+        rowLength: rowLength,
+        metadata: metadata,
+      );
+    } finally {
+      await input.close();
+    }
+  }
+
+  Future<void> _buildBinImport(
+    File file,
+    _BinImportPlan plan,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    _beginImportedReplacement();
+    final range = _ImportValueRange();
+    final input = await file.open();
+    var pointIndex = 0;
+    try {
+      await input.setPosition(plan.payloadOffset);
+      while (pointIndex < plan.pointCount) {
+        final rows = math.min(
+          _importProgressBatchSize,
+          plan.pointCount - pointIndex,
+        );
+        final chunk = await _readExact(input, rows * plan.rowLength);
+        final data = ByteData.sublistView(chunk);
+        var offset = 0;
+        for (var row = 0; row < rows; row++) {
+          offset += 8;
+          final values = List<double>.generate(
+            plan.rawChannelCount,
+            (channel) => data.getFloat64(offset + channel * 8, Endian.little),
+            growable: false,
+          );
+          offset += (plan.sourceChannelCount * 8);
+          _appendImportedValues(pointIndex++, values, range);
+        }
+        await _reportImportProgress(
+          onProgress,
+          '建立绘图索引',
+          pointIndex,
+          plan.pointCount,
+          detail: '$pointIndex 点',
+        );
+      }
+    } finally {
+      await input.close();
+    }
+    await _finishImportedReplacement(
+      plan.pointCount,
+      plan.rawChannelCount,
+      range,
+      metadata: plan.metadata,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<_DatImportPlan> _preflightDat(File file) async {
+    const channelCount = 4;
+    const reservedPointCount = 50000;
+    const minimumHeaderLength = 0x24;
+    final input = await file.open();
+    try {
+      final fileLength = await input.length();
+      if (fileLength < minimumHeaderLength) {
+        throw const FormatException('DAT 文件头不完整');
+      }
+      final header = ByteData.sublistView(
+        await _readExact(input, minimumHeaderLength),
+      );
+      if (header.getUint32(0, Endian.little) != fileLength) {
+        throw const FormatException('DAT 文件长度校验失败');
+      }
+      final storedPointCount = header.getUint32(0x20, Endian.little);
+      if (storedPointCount <= reservedPointCount) {
+        throw const FormatException('DAT 文件没有有效数据');
+      }
+      final expectedLength = 4 + channelCount * (32 + storedPointCount * 2);
+      if (expectedLength != fileLength) {
+        throw const FormatException('DAT 数据布局不匹配');
+      }
+      final addresses = <int>[];
+      final offsets = <int>[];
+      for (var channel = 0; channel < channelCount; channel++) {
+        final channelNumber = channel + 1;
+        final blockOffset = channel * storedPointCount * 2;
+        final dataOffset =
+            0x04 + channelNumber * 32 + blockOffset + reservedPointCount * 2;
+        final addressOffset = dataOffset - reservedPointCount * 2 - 12;
+        final dataEnd =
+            0x04 + channelNumber * 32 + blockOffset + storedPointCount * 2;
+        if (addressOffset + 4 > fileLength ||
+            dataOffset > dataEnd ||
+            dataEnd > fileLength) {
+          throw const FormatException('DAT 通道数据不完整');
+        }
+        await input.setPosition(addressOffset);
+        addresses.add(
+          ByteData.sublistView(
+            await _readExact(input, 4),
+          ).getUint32(0, Endian.little),
+        );
+        offsets.add(dataOffset);
+      }
+      final pointCount = storedPointCount - reservedPointCount;
+      _validateImportCapacity(pointCount, channelCount);
+      return _DatImportPlan(
+        pointCount: pointCount,
+        channelDataOffsets: offsets,
+        addresses: addresses,
+      );
+    } finally {
+      await input.close();
+    }
+  }
+
+  Future<void> _buildDatImport(
+    File file,
+    _DatImportPlan plan,
+    PlotImportProgressCallback? onProgress,
+  ) async {
+    _beginImportedReplacement();
+    final range = _ImportValueRange();
+    final input = await file.open();
+    var pointIndex = 0;
+    try {
+      while (pointIndex < plan.pointCount) {
+        final rows = math.min(
+          _importProgressBatchSize,
+          plan.pointCount - pointIndex,
+        );
+        final channelBlocks = <ByteData>[];
+        for (final offset in plan.channelDataOffsets) {
+          await input.setPosition(offset + pointIndex * 2);
+          channelBlocks.add(
+            ByteData.sublistView(await _readExact(input, rows * 2)),
+          );
+        }
+        for (var row = 0; row < rows; row++) {
+          final values = <double>[
+            for (final channel in channelBlocks)
+              channel.getInt16(row * 2, Endian.little).toDouble(),
+          ];
+          _appendImportedValues(pointIndex++, values, range);
+        }
+        await _reportImportProgress(
+          onProgress,
+          '解析 DAT',
+          pointIndex,
+          plan.pointCount,
+          detail: '$pointIndex 点',
+        );
+      }
+    } finally {
+      await input.close();
+    }
+    await _reportImportProgress(
+      onProgress,
+      '建立绘图索引',
+      plan.pointCount,
+      plan.pointCount,
+      detail: '${plan.pointCount} 点',
+    );
+    await _finishImportedReplacement(
+      plan.pointCount,
+      plan.channelDataOffsets.length,
+      range,
+      metadata: {'channelAddresses': plan.addresses},
+      onProgress: onProgress,
+    );
+  }
+
+  Future<Uint8List> _readExact(RandomAccessFile input, int length) async {
+    final result = Uint8List(length);
+    var offset = 0;
+    while (offset < length) {
+      final chunk = await input.read(length - offset);
+      if (chunk.isEmpty) throw const FormatException('文件数据提前结束');
+      result.setRange(offset, offset + chunk.length, chunk);
+      offset += chunk.length;
+    }
+    return result;
   }
 
   List<String>? _csvTrailingMathExpressions(List<String> headerParts) {
@@ -1033,42 +1256,23 @@ extension PlotViewModelImportExport on PlotViewModel {
     ];
   }
 
-  List<PlotDataPoint> _takeRawImportColumns(List<PlotDataPoint> points) {
-    return [
-      for (final point in points)
-        PlotDataPoint(
-          index: point.index,
-          timestamp: point.timestamp,
-          values: point.values
-              .take(PlotConfiguration.rawChannelCount)
-              .toList(growable: false),
-        ),
-    ];
-  }
-
-  Future<void> _replaceImportedPoints(
-    List<PlotDataPoint> importedPoints,
-    int channelCount, {
-    Map<String, dynamic>? metadata,
-    PlotImportProgressCallback? onProgress,
-  }) async {
+  void _validateImportCapacity(int pointCount, int channelCount) {
     final normalizedChannelCount = channelCount.clamp(
       1,
       PlotConfiguration.rawChannelCount,
     );
     final projectedBytes =
-        importedPoints.length * (normalizedChannelCount * 8 + 64) +
-        math.min(
-              importedPoints.length,
-              PlotConfiguration.maxMaterializedPointCount,
-            ) *
-            192;
+        pointCount * (normalizedChannelCount * 8 + 64) +
+        math.min(pointCount, PlotConfiguration.maxMaterializedPointCount) * 192;
     if (projectedBytes > _plotRetentionLimitBytes) {
       throw StateError(
         '导入预计占用 ${_formatRetentionBytes(projectedBytes)}，超过绘图历史 '
         '${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限',
       );
     }
+  }
+
+  void _beginImportedReplacement() {
     _dataPoints.clear();
     _parsedHistory.clear();
     _lodIndex.clear();
@@ -1076,43 +1280,40 @@ extension PlotViewModelImportExport on PlotViewModel {
     _fixedFrameRawFrames.clear();
     _resetPlotRetentionState();
     _importedChannelAddresses = null;
-    var minY = double.infinity;
-    var maxY = double.negativeInfinity;
-    for (int i = 0; i < importedPoints.length; i++) {
-      final point = importedPoints[i];
-      _parsedHistory.add(point.values);
-      _lodIndex.add(point.index, point.values);
-      for (final value in point.values) {
-        if (!value.isFinite) continue;
-        if (value < minY) minY = value;
-        if (value > maxY) maxY = value;
-      }
-      if ((i + 1) % _importProgressBatchSize == 0 ||
-          i + 1 == importedPoints.length) {
-        await _reportImportProgress(
-          onProgress,
-          '建立绘图索引',
-          i + 1,
-          importedPoints.length,
-          detail: '${i + 1} 点',
-        );
-      }
-    }
-    _nextIndex = importedPoints.length;
+  }
+
+  void _appendImportedValues(
+    int pointIndex,
+    List<double> values,
+    _ImportValueRange range,
+  ) {
+    _parsedHistory.add(values);
+    _lodIndex.add(pointIndex, values);
+    range.include(values);
+  }
+
+  Future<void> _finishImportedReplacement(
+    int pointCount,
+    int channelCount,
+    _ImportValueRange range, {
+    Map<String, dynamic>? metadata,
+    PlotImportProgressCallback? onProgress,
+  }) async {
+    _nextIndex = pointCount;
     _activeChannelCount = channelCount;
     _startTime = null;
     _applyImportedMetadata(metadata, channelCount);
 
     final visibleCount =
-        importedPoints.length
+        pointCount
             .clamp(0, PlotConfiguration.maxMaterializedPointCount)
             .toInt();
-    final visibleStart = importedPoints.length - visibleCount;
+    final visibleStart = pointCount - visibleCount;
     viewport = PlotViewport(
       xMin: visibleStart.toDouble(),
-      xMax: importedPoints.length.toDouble(),
-      yMin: minY == double.infinity ? 0 : minY,
-      yMax: maxY == double.negativeInfinity ? 1 : maxY,
+      xMax: pointCount.toDouble(),
+      yMin: range.min == double.infinity ? 0 : range.min,
+      yMax: range.max == double.negativeInfinity ? 1 : range.max,
     );
     await _reportImportProgress(
       onProgress,
