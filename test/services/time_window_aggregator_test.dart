@@ -13,13 +13,15 @@ void main() {
       onWindowComplete: (_, data) => output.add(data),
     );
 
-    aggregator.feed(Uint8List.fromList([1]), start);
+    aggregator.feed(Uint8List.fromList([1]), 0, start);
     aggregator.feed(
       Uint8List.fromList([2]),
+      const Duration(seconds: 6).inMicroseconds,
       start.add(const Duration(seconds: 6)),
     );
     aggregator.feed(
       Uint8List.fromList([3]),
+      const Duration(seconds: 12).inMicroseconds,
       start.add(const Duration(seconds: 12)),
     );
 
@@ -39,9 +41,10 @@ void main() {
       onWindowComplete: (_, data) => output.add(data),
     );
 
-    aggregator.feed(Uint8List.fromList([1]), start);
+    aggregator.feed(Uint8List.fromList([1]), 0, start);
     aggregator.feed(
       Uint8List.fromList([2]),
+      const Duration(seconds: 11).inMicroseconds,
       start.add(const Duration(seconds: 11)),
     );
 
@@ -63,7 +66,7 @@ void main() {
       onWindowComplete: (_, data) => output.add(data),
     );
 
-    aggregator.feed(Uint8List.fromList([1, 2, 3, 4, 5, 6]), DateTime(2026));
+    aggregator.feed(Uint8List.fromList([1, 2, 3, 4, 5, 6]), 0, DateTime(2026));
 
     expect(output, [
       [1, 2, 3, 4],
@@ -72,6 +75,58 @@ void main() {
     expect(output, [
       [1, 2, 3, 4],
       [5, 6],
+    ]);
+  });
+
+  test('墙钟回拨不影响单调时间分包', () {
+    final timestamps = <DateTime>[];
+    final output = <List<int>>[];
+    final start = DateTime(2026);
+    final aggregator = TimeWindowAggregator(
+      idleTimeoutUs: const Duration(seconds: 10).inMicroseconds,
+      maxBufferBytes: 1024,
+      onWindowComplete: (timestamp, data) {
+        timestamps.add(timestamp);
+        output.add(data);
+      },
+    );
+
+    aggregator.feed(Uint8List.fromList([1]), 0, start);
+    aggregator.feed(
+      Uint8List.fromList([2]),
+      const Duration(seconds: 11).inMicroseconds,
+      start.subtract(const Duration(days: 1)),
+    );
+
+    expect(output, [
+      [1],
+    ]);
+    expect(timestamps.single, start);
+  });
+
+  test('超过30天的单调时间仍按微秒间隔正确分包', () {
+    final output = <List<int>>[];
+    final aggregator = TimeWindowAggregator(
+      idleTimeoutUs: 1000,
+      maxBufferBytes: 1024,
+      onWindowComplete: (_, data) => output.add(data),
+    );
+    final afterThirtyDays = const Duration(days: 31).inMicroseconds;
+
+    aggregator.feed(Uint8List.fromList([1]), afterThirtyDays, DateTime(2026));
+    aggregator.feed(
+      Uint8List.fromList([2]),
+      afterThirtyDays + 999,
+      DateTime(2026),
+    );
+    aggregator.feed(
+      Uint8List.fromList([3]),
+      afterThirtyDays + 2000,
+      DateTime(2026),
+    );
+
+    expect(output, [
+      [1, 2],
     ]);
   });
 }

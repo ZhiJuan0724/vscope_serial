@@ -27,6 +27,11 @@ static std::atomic<bool> g_running(false);
 static std::mutex g_stateMutex;
 static int64_t g_dartPort = 0;
 static int g_timeoutMs = 0;
+static LARGE_INTEGER g_qpcFrequency = {};
+static std::atomic<uint64_t> g_readBytes(0);
+static std::atomic<uint64_t> g_maxReadBlockBytes(0);
+static std::atomic<uint64_t> g_readCallbackCount(0);
+static std::atomic<uint64_t> g_postFailureCount(0);
 static HCMNOTIFICATION g_portNotification = NULL;
 static std::atomic<int64_t> g_portMonitorDartPort(0);
 static const GUID kComPortInterfaceGuid = {
@@ -282,18 +287,45 @@ static DWORD CALLBACK port_notification_callback(
     return ERROR_SUCCESS;
 }
 
-// Get current time in microseconds
-static int64_t get_time_us() {
-    LARGE_INTEGER freq, count;
-    QueryPerformanceFrequency(&freq);
+// Convert QPC ticks without multiplying the full counter by one million.
+// The quotient/remainder split avoids overflow after long process uptimes.
+static int64_t get_monotonic_time_us() {
+    LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
-    return (count.QuadPart * 1000000LL) / freq.QuadPart;
+    const int64_t frequency = g_qpcFrequency.QuadPart;
+    const int64_t seconds = count.QuadPart / frequency;
+    const int64_t remainder = count.QuadPart % frequency;
+    return seconds * 1000000LL + (remainder * 1000000LL) / frequency;
+}
+
+static int64_t get_wall_clock_time_us() {
+    FILETIME fileTime = {};
+    GetSystemTimePreciseAsFileTime(&fileTime);
+    ULARGE_INTEGER ticks = {};
+    ticks.LowPart = fileTime.dwLowDateTime;
+    ticks.HighPart = fileTime.dwHighDateTime;
+    constexpr uint64_t kWindowsToUnixEpoch100ns = 116444736000000000ULL;
+    return static_cast<int64_t>(
+        (ticks.QuadPart - kWindowsToUnixEpoch100ns) / 10ULL);
+}
+
+static void update_max_read_block(uint64_t bytesRead) {
+    uint64_t current = g_maxReadBlockBytes.load();
+    while (bytesRead > current &&
+           !g_maxReadBlockBytes.compare_exchange_weak(current, bytesRead)) {
+    }
 }
 
 // Read thread
 static void read_thread_func() {
-    uint8_t buffer[4096];
-    
+    constexpr DWORD kReadBufferBytes = 64 * 1024;
+    constexpr size_t kPacketHeaderBytes = 16;
+    std::vector<uint8_t> buffer(kReadBufferBytes);
+    std::vector<uint8_t> message(kPacketHeaderBytes + kReadBufferBytes);
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (overlapped.hEvent == NULL) return;
+
     while (g_running.load()) {
         HANDLE hSerial = INVALID_HANDLE_VALUE;
         int64_t dartPort = 0;
@@ -307,64 +339,79 @@ static void read_thread_func() {
 
         if (hSerial == INVALID_HANDLE_VALUE) break;
         
+        ResetEvent(overlapped.hEvent);
         DWORD bytesRead = 0;
-        BOOL result = FALSE;
-        
-        if (timeoutMs > 0) {
-            OVERLAPPED ov = {0};
-            ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-            if (ov.hEvent == NULL) break;
-            
-            result = ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, &ov);
-            
-            if (!result && GetLastError() == ERROR_IO_PENDING) {
-                DWORD waitResult = WaitForSingleObject(ov.hEvent, timeoutMs);
+        BOOL result = ReadFile(
+            hSerial, buffer.data(), kReadBufferBytes, &bytesRead, &overlapped);
+        if (!result && GetLastError() == ERROR_IO_PENDING) {
+            const DWORD waitSlice = timeoutMs > 0
+                ? static_cast<DWORD>(timeoutMs)
+                : INFINITE;
+            while (g_running.load()) {
+                const DWORD waitResult =
+                    WaitForSingleObject(overlapped.hEvent, waitSlice);
                 if (waitResult == WAIT_OBJECT_0) {
-                    result = GetOverlappedResult(hSerial, &ov, &bytesRead, FALSE);
-                } else if (waitResult == WAIT_TIMEOUT) {
-                    CancelIoEx(hSerial, &ov);
-                    GetOverlappedResult(hSerial, &ov, &bytesRead, TRUE);
+                    result = GetOverlappedResult(
+                        hSerial, &overlapped, &bytesRead, FALSE);
+                    break;
+                }
+                if (waitResult != WAIT_TIMEOUT) {
                     result = FALSE;
+                    break;
                 }
             }
-            
-            CloseHandle(ov.hEvent);
-        } else {
-            result = ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, NULL);
+            if (!g_running.load()) {
+                CancelIoEx(hSerial, &overlapped);
+                GetOverlappedResult(
+                    hSerial, &overlapped, &bytesRead, TRUE);
+                break;
+            }
         }
         
         if (result && bytesRead > 0) {
-            int64_t timestampUs = get_time_us();
+            const int64_t monotonicUs = get_monotonic_time_us();
+            const int64_t wallClockUs = get_wall_clock_time_us();
+            g_readBytes.fetch_add(bytesRead);
+            update_max_read_block(bytesRead);
             
             // Send data to Dart using Dart_PostCObject_DL
             // Only post if Dart API is initialized (Dart_PostCObject_DL != NULL)
             if (dartPort != 0 && Dart_PostCObject_DL != NULL) {
-                // Debug: log that we're about to post data
-                // char debugMsg[256];
-                // snprintf(debugMsg, sizeof(debugMsg), "[NSR] Posting %lu bytes to port %lld\n", bytesRead, g_dartPort);
-                // OutputDebugStringA(debugMsg);
-                uint8_t* combined = (uint8_t*)malloc(8 + bytesRead);
-                if (combined != NULL) {
-                    memcpy(combined, &timestampUs, 8);
-                    memcpy(combined + 8, buffer, bytesRead);
-                    
-                    Dart_CObject msg;
-                    msg.type = Dart_CObject_kTypedData;
-                    msg.value.as_typed_data.type = Dart_TypedData_kUint8;
-                    msg.value.as_typed_data.length = 8 + bytesRead;
-                    msg.value.as_typed_data.values = combined;
-                    
-                    Dart_PostCObject_DL(dartPort, &msg);
-                    
-                    free(combined);
+                memcpy(message.data(), &monotonicUs, sizeof(monotonicUs));
+                memcpy(
+                    message.data() + sizeof(monotonicUs),
+                    &wallClockUs,
+                    sizeof(wallClockUs));
+                memcpy(
+                    message.data() + kPacketHeaderBytes,
+                    buffer.data(),
+                    bytesRead);
+
+                Dart_CObject msg;
+                msg.type = Dart_CObject_kTypedData;
+                msg.value.as_typed_data.type = Dart_TypedData_kUint8;
+                msg.value.as_typed_data.length =
+                    static_cast<intptr_t>(kPacketHeaderBytes + bytesRead);
+                msg.value.as_typed_data.values = message.data();
+
+                if (Dart_PostCObject_DL(dartPort, &msg)) {
+                    g_readCallbackCount.fetch_add(1);
+                } else {
+                    g_postFailureCount.fetch_add(1);
                 }
             }
         }
     }
+
+    CloseHandle(overlapped.hEvent);
 }
 
 int nsr_init_dart_api(void* data) {
     if (data == NULL) return -1;
+    if (g_qpcFrequency.QuadPart == 0 &&
+        !QueryPerformanceFrequency(&g_qpcFrequency)) {
+        return -1;
+    }
     return Dart_InitializeApiDL(data) == 0 ? 0 : -1;
 }
 
@@ -409,7 +456,11 @@ int nsr_open_port(const char* portName, int baudRate) {
         return -1;
     }
     
-    SetupComm(hSerial, 1, 1);
+    constexpr DWORD kDriverBufferBytes = 64 * 1024;
+    if (!SetupComm(hSerial, kDriverBufferBytes, kDriverBufferBytes)) {
+        CloseHandle(hSerial);
+        return -1;
+    }
     
     COMMTIMEOUTS timeouts = {0};
     timeouts.ReadIntervalTimeout = MAXDWORD;
@@ -480,11 +531,32 @@ int nsr_start_reading(int64_t dartPort, int timeoutMs) {
     
     g_dartPort = dartPort;
     g_timeoutMs = timeoutMs;
+    g_readBytes = 0;
+    g_maxReadBlockBytes = 0;
+    g_readCallbackCount = 0;
+    g_postFailureCount = 0;
     g_running = true;
     
     g_readThread = std::thread(read_thread_func);
     
     return 0;
+}
+
+void nsr_get_read_metrics(
+    uint64_t* bytesRead,
+    uint64_t* maxBlockBytes,
+    uint64_t* callbackCount,
+    uint64_t* postFailureCount) {
+    if (bytesRead != NULL) *bytesRead = g_readBytes.load();
+    if (maxBlockBytes != NULL) {
+        *maxBlockBytes = g_maxReadBlockBytes.load();
+    }
+    if (callbackCount != NULL) {
+        *callbackCount = g_readCallbackCount.load();
+    }
+    if (postFailureCount != NULL) {
+        *postFailureCount = g_postFailureCount.load();
+    }
 }
 
 void nsr_stop_reading() {

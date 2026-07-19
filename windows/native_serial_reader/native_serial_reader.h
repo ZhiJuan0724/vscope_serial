@@ -46,6 +46,13 @@ NSR_API int nsr_start_reading(int64_t dartPort, int timeoutMs);
 // Stop reading thread
 NSR_API void nsr_stop_reading();
 
+// Return metrics for the current or most recently completed read cycle.
+NSR_API void nsr_get_read_metrics(
+    uint64_t* bytesRead,
+    uint64_t* maxBlockBytes,
+    uint64_t* callbackCount,
+    uint64_t* postFailureCount);
+
 // Write data to serial port
 // Returns: bytes written, -1 on failure
 NSR_API int nsr_write(const uint8_t* data, int length);

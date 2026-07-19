@@ -16,8 +16,8 @@ class TimeWindowAggregator {
   final void Function(DateTime timestamp, Uint8List data) onWindowComplete;
 
   final List<int> _buffer = [];
-  DateTime? _windowStart;
-  DateTime? _lastReceiveTime;
+  DateTime? _windowStartWallClock;
+  int? _lastMonotonicUs;
   Timer? _flushTimer;
 
   TimeWindowAggregator({
@@ -30,21 +30,22 @@ class TimeWindowAggregator {
   /// 喂入新数据
   ///
   /// [data]: 接收到的字节数据
-  /// [receiveTime]: 接收时刻（DateTime，用于时间窗口计算）
-  void feed(Uint8List data, DateTime receiveTime) {
+  /// [monotonicUs] 只用于包间隔判断，不受系统时间校准影响。
+  /// [wallClockTime] 只用于最终显示时间戳。
+  void feed(Uint8List data, int monotonicUs, DateTime wallClockTime) {
     if (data.isEmpty) return;
 
-    final lastReceiveTime = _lastReceiveTime;
+    final lastMonotonicUs = _lastMonotonicUs;
     if (_buffer.isNotEmpty &&
-        lastReceiveTime != null &&
-        receiveTime.difference(lastReceiveTime).inMicroseconds >=
-            idleTimeoutUs) {
+        lastMonotonicUs != null &&
+        (monotonicUs < lastMonotonicUs ||
+            monotonicUs - lastMonotonicUs >= idleTimeoutUs)) {
       _emitWindow();
     }
 
     var offset = 0;
     while (offset < data.length) {
-      _windowStart ??= receiveTime;
+      _windowStartWallClock ??= wallClockTime;
       final copyLength = (maxBufferBytes - _buffer.length).clamp(
         0,
         data.length - offset,
@@ -58,7 +59,7 @@ class TimeWindowAggregator {
     }
 
     if (_buffer.isNotEmpty) {
-      _lastReceiveTime = receiveTime;
+      _lastMonotonicUs = monotonicUs;
       _restartIdleTimer();
     }
   }
@@ -71,13 +72,13 @@ class TimeWindowAggregator {
   void _emitWindow() {
     _flushTimer?.cancel();
     _flushTimer = null;
-    final windowStart = _windowStart;
+    final windowStart = _windowStartWallClock;
     if (_buffer.isNotEmpty && windowStart != null) {
       onWindowComplete(windowStart, Uint8List.fromList(_buffer));
     }
     _buffer.clear();
-    _windowStart = null;
-    _lastReceiveTime = null;
+    _windowStartWallClock = null;
+    _lastMonotonicUs = null;
   }
 
   /// 强制刷新当前窗口（用于停止接收时发送剩余数据）
@@ -90,7 +91,7 @@ class TimeWindowAggregator {
     _flushTimer?.cancel();
     _flushTimer = null;
     _buffer.clear();
-    _windowStart = null;
-    _lastReceiveTime = null;
+    _windowStartWallClock = null;
+    _lastMonotonicUs = null;
   }
 }

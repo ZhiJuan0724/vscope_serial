@@ -956,12 +956,16 @@ class SerialService extends ChangeNotifier {
       );
       if (accepted.isEmpty) return;
 
-      // 使用 C++ 提供的微秒级时间戳
+      // 单调时间用于分包，墙钟时间只负责用户可见的时间戳。
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
-        nativeData.timestampUs,
+        nativeData.wallClockUs,
       );
 
-      _displayReceivedData(accepted, receiveTime);
+      _displayReceivedData(
+        accepted,
+        receiveTime,
+        monotonicUs: nativeData.monotonicUs,
+      );
     }
 
     if (shouldReceiveShell) {
@@ -1203,13 +1207,21 @@ class SerialService extends ChangeNotifier {
     }
   }
 
-  void _displayReceivedData(Uint8List data, DateTime timestamp) {
+  void _displayReceivedData(
+    Uint8List data,
+    DateTime timestamp, {
+    int? monotonicUs,
+  }) {
     if (!autoLineBreak) {
       _addRawDataLine(timestamp, data);
       return;
     }
     _aggregator ??= _createAutoLineBreakAggregator();
-    _aggregator!.feed(data, timestamp);
+    _aggregator!.feed(
+      data,
+      monotonicUs ?? timestamp.microsecondsSinceEpoch,
+      timestamp,
+    );
   }
 
   TimeWindowAggregator _createAutoLineBreakAggregator() {

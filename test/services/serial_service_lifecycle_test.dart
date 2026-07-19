@@ -174,7 +174,8 @@ class _FakeTransport implements SerialTransport {
     _controller.add(
       NativeSerialData(
         data: Uint8List.fromList(bytes),
-        timestampUs: DateTime.now().microsecondsSinceEpoch,
+        monotonicUs: DateTime.now().microsecondsSinceEpoch,
+        wallClockUs: DateTime.now().microsecondsSinceEpoch,
       ),
     );
   }
