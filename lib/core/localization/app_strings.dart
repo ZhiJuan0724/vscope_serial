@@ -75,6 +75,7 @@ final class _PlotStrings {
 
   String get cursor => '光标';
   String get start => '开始';
+  String get starting => '正在启动';
   String get stop => '停止';
   String get stopping => '停止中';
   String get randomSource => '随机源';
@@ -230,7 +231,8 @@ final class _PlotStrings {
     required String defaultValue,
     required String current,
   }) {
-    return '范围: $min~$max 包，默认 $defaultValue 包。当前窗口: $current 包。可输入 1M、1.5M、40M';
+    return '范围: $min~$max 包，默认 $defaultValue 包。当前可见范围: $current 包。'
+        '可输入 1M、1.5M、10M；超过 250K 点时自动使用 LOD，历史达到 2 GiB 后停止绘图并保留已有数据。';
   }
 
   String droppedPacketsHelp({required String max}) {

@@ -116,6 +116,7 @@ class MainFrame extends StatefulWidget {
 
 class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   String _currentTabId = 'rawData';
+  _WindowCloseListener? _windowCloseListener;
 
   @override
   void initState() {
@@ -159,7 +160,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   void _setupWindowCloseHandler() {
     windowManager.setPreventClose(true);
-    windowManager.addListener(_WindowCloseListener(context));
+    final listener = _WindowCloseListener(context);
+    _windowCloseListener = listener;
+    windowManager.addListener(listener);
   }
 
   Future<void> _checkForUpdatesOnStartup() async {
@@ -186,6 +189,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    final listener = _windowCloseListener;
+    if (listener != null) windowManager.removeListener(listener);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -335,15 +340,16 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 /// 窗口关闭监听器：允许窗口关闭前先断开串口。
 class _WindowCloseListener extends WindowListener {
   final BuildContext context;
+  bool _isClosing = false;
 
   _WindowCloseListener(this.context);
 
   @override
   void onWindowClose() async {
+    if (_isClosing) return;
+    _isClosing = true;
     final serialService = Provider.of<SerialService>(context, listen: false);
-    if (serialService.isConnected) {
-      await serialService.disconnect();
-    }
+    await serialService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();
   }

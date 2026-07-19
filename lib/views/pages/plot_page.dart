@@ -66,6 +66,7 @@ class _PlotPageContent extends StatefulWidget {
 typedef _PlotToolbarSelection =
     ({
       bool isPlotting,
+      bool isStarting,
       bool isStopping,
       bool hasData,
       ParserType parserType,
@@ -96,6 +97,7 @@ typedef _PlotChannelPanelSelection =
     ({
       int channelConfigRevision,
       bool isPlotting,
+      bool isStarting,
       bool isStopping,
       ParserType parserType,
       int activeChannelCount,
@@ -229,6 +231,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   _PlotToolbarSelection _selectToolbar(PlotViewModel vm) {
     return (
       isPlotting: vm.isPlotting,
+      isStarting: vm.isStarting,
       isStopping: vm.isStopping,
       hasData: vm.dataPoints.isNotEmpty,
       parserType: vm.parserType,
@@ -260,6 +263,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return (
       channelConfigRevision: vm.channelConfigRevision,
       isPlotting: vm.isPlotting,
+      isStarting: vm.isStarting,
       isStopping: vm.isStopping,
       parserType: vm.parserType,
       activeChannelCount: vm.activeChannelCount,
@@ -526,7 +530,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     BuildContext context,
     PlotViewModel vm,
   ) {
-    final canChange = !vm.isPlotting && !vm.isStopping;
+    final canChange = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return [
       ToolbarOverflowAction(
         icon: const Icon(Icons.casino_outlined),
@@ -547,7 +551,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     BuildContext context,
     PlotViewModel vm,
   ) {
-    final enabled = !vm.isPlotting && !vm.isStopping;
+    final enabled = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return [
       ToolbarOverflowAction(
         icon: const AppIcon(AppIcons.plotImport),
@@ -726,7 +730,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return ToolbarStartStopButton(
       key: const ValueKey('plot-start-stop-button'),
       onPressed:
-          vm.isStopping
+          vm.isStarting || vm.isStopping
               ? null
               : () {
                 if (vm.isPlotting) {
@@ -736,9 +740,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 }
               },
       running: vm.isPlotting,
-      busy: vm.isStopping,
+      busy: vm.isStarting || vm.isStopping,
       label:
-          vm.isStopping
+          vm.isStarting
+              ? AppStrings.plot.starting
+              : vm.isStopping
               ? AppStrings.plot.stopping
               : vm.isPlotting
               ? AppStrings.plot.stop
@@ -748,7 +754,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 随机数据源 + 频率设置
   Widget _buildRandomSourceToggle(BuildContext context, PlotViewModel vm) {
-    final canChangeSource = !vm.isPlotting && !vm.isStopping;
+    final canChangeSource = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: _withToolbarSpacing([
@@ -777,7 +783,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 收发协议选择 + 配置按钮 + 地址配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -919,7 +926,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildRProfileSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return ToolbarDropdown<String?>(
       key: const ValueKey('plot-r-profile-selector'),
       width: 140,
@@ -968,7 +976,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// Zobow配置文件选择器
   Widget _buildZobowProfileSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return ToolbarDropdown<String?>(
       key: const ValueKey('plot-zobow-profile-selector'),
       width: 140,
@@ -1174,7 +1183,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 顺序：导入数据 | 导出数据
   Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
-    final fileOperationsEnabled = !vm.isPlotting && !vm.isStopping;
+    final fileOperationsEnabled =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: _withToolbarSpacing([
@@ -1574,7 +1584,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     BuildContext context,
     PlotViewModel vm,
   ) async {
-    if (vm.isPlotting || vm.isStopping) {
+    if (vm.isPlotting || vm.isStarting || vm.isStopping) {
       vm.showStatusMessage(AppStrings.plot.resetAllChannelsStoppedOnly);
       return;
     }
@@ -2900,7 +2910,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   bool _canUsePlotFileOperations(PlotViewModel vm) {
-    if (!vm.isPlotting && !vm.isStopping) return true;
+    if (!vm.isPlotting && !vm.isStarting && !vm.isStopping) return true;
     vm.showStatusMessage(AppStrings.plot.fileOperationDisabledWhilePlotting);
     return false;
   }
@@ -4745,7 +4755,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   bool _canOpenInputConfiguration(PlotViewModel vm) {
-    if (!vm.isPlotting && !vm.isStopping) return true;
+    if (!vm.isPlotting && !vm.isStarting && !vm.isStopping) return true;
     vm.showStatusMessage(
       AppStrings.plot.inputConfigurationDisabledWhilePlotting,
     );

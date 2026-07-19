@@ -216,6 +216,14 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label optimized
 pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 ```
 
+`soak` 包含以下容量场景：
+
+- `1M-16CH`：实际采集达到 1M 点后验收，精确对象不得超过 250k。
+- `10M-4CH`：实际采集达到 10M 点后执行拖动/缩放，精确对象不得超过 250k，p95 帧时间不得超过 33 ms。
+- `100K-16CH-SOAK`：16 通道和数学通道持续 5 分钟，验证 2 GiB 历史预算停止和 4 GiB RSS 紧急保护线。
+
+前两个场景若在限定时间内未达到目标点数会直接失败，不再用配置范围代替实际历史量。所有容量场景同时断言峰值 RSS 低于 4 GiB，报告记录历史预算占用和视口任务是否收敛。
+
 输出文件保存在 `build/performance/`，该目录不提交到仓库：
 
 - `<Label>.json`：原始指标，便于脚本或后续工具分析。

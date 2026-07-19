@@ -26,12 +26,28 @@ enum PlotLodQuality {
   quality,
 }
 
+/// Painter 查询普通与派生通道 LOD 的统一入口。
+abstract interface class PlotLodSource {
+  int get length;
+  bool get isEmpty;
+
+  bool canQuery(double visiblePointCount, double plotWidth);
+
+  PlotLodSeries? query({
+    required int channelIndex,
+    required double xMin,
+    required double xMax,
+    required double plotWidth,
+    PlotLodQuality quality,
+  });
+}
+
 /// 大规模绘图历史数据的内存级 LOD 索引。
 ///
 /// 每个桶从 64 个点开始分层。较小可见范围仍使用精确点窗口；
 /// 较大范围可以绘制数量受控的最小/最大采样点，避免每帧扫描全部可见点。
-class PlotLodIndex {
-  static const int maxChannels = PlotConfiguration.rawChannelCount;
+class PlotLodIndex implements PlotLodSource {
+  static const int maxChannels = PlotConfiguration.totalChannelCount;
   static const int minBucketSize = 64;
   static const int _minLevel = 6; // 2^6 = 64
   static const int _maxLevel = 23;
@@ -44,12 +60,22 @@ class PlotLodIndex {
   int _length = 0;
   int _maxChannelCount = 0;
 
+  @override
   int get length => _length;
   int get maxChannelCount => _maxChannelCount;
+  @override
   bool get isEmpty => _length == 0;
   bool get isNotEmpty => _length > 0;
   int get allocatedBucketCount =>
       _levels.fold(0, (total, level) => total + level.allocatedBucketCount);
+  int get estimatedAllocatedBytes =>
+      _levels.fold(0, (total, level) => total + level.estimatedAllocatedBytes);
+
+  int estimatedAdditionalBytesFor(int index, int channelCount) => _levels.fold(
+    0,
+    (total, level) =>
+        total + level.estimatedAdditionalBytesFor(index, channelCount),
+  );
 
   void clear() {
     for (final level in _levels) {
@@ -92,6 +118,7 @@ class PlotLodIndex {
     }
   }
 
+  @override
   bool canQuery(double visiblePointCount, double plotWidth) {
     if (_length == 0 || plotWidth <= 0 || visiblePointCount <= 0) return false;
     // 首层 LOD 桶为 64 点；一旦数据密度超过像素宽度，直接使用桶摘要，
@@ -99,6 +126,7 @@ class PlotLodIndex {
     return visiblePointCount > plotWidth;
   }
 
+  @override
   PlotLodSeries? query({
     required int channelIndex,
     required double xMin,
@@ -181,28 +209,50 @@ class _LodLevel {
   final int bucketSize;
   final List<_LodBucket?> _buckets = [];
   int _allocatedBucketCount = 0;
+  int _estimatedAllocatedBytes = 0;
 
   _LodLevel(this.bucketSize);
 
   int get allocatedBucketCount => _allocatedBucketCount;
+  int get estimatedAllocatedBytes => _estimatedAllocatedBytes;
+
+  int estimatedAdditionalBytesFor(int index, int channelCount) {
+    final bucketIndex = index ~/ bucketSize;
+    final listGrowth = math.max(0, bucketIndex + 1 - _buckets.length) * 8;
+    if (bucketIndex < _buckets.length) {
+      final bucket = _buckets[bucketIndex];
+      if (bucket != null) {
+        return listGrowth + bucket.estimatedGrowthBytes(channelCount);
+      }
+    }
+    return listGrowth + _LodBucket.estimatedBytesForCapacity(channelCount);
+  }
 
   void clear() {
     _buckets.clear();
     _allocatedBucketCount = 0;
+    _estimatedAllocatedBytes = 0;
   }
 
   void add(int index, List<double> values, int channelCount) {
     final bucketIndex = index ~/ bucketSize;
+    final previousListLength = _buckets.length;
     while (_buckets.length <= bucketIndex) {
       _buckets.add(null);
     }
+    _estimatedAllocatedBytes += (_buckets.length - previousListLength) * 8;
     var bucket = _buckets[bucketIndex];
     if (bucket == null) {
       bucket = _LodBucket(channelCount);
       _buckets[bucketIndex] = bucket;
       _allocatedBucketCount++;
+      _estimatedAllocatedBytes += bucket.estimatedAllocatedBytes;
+      bucket.add(index, values, channelCount);
+      return;
     }
+    final previousBytes = bucket.estimatedAllocatedBytes;
     bucket.add(index, values, channelCount);
+    _estimatedAllocatedBytes += bucket.estimatedAllocatedBytes - previousBytes;
   }
 
   PlotLodSeries? query(int channelIndex, double xMin, double xMax) {
@@ -262,6 +312,20 @@ class _LodBucket {
   int _lastIndex = -1;
   int _channelCount = 0;
 
+  int get estimatedAllocatedBytes =>
+      estimatedBytesForCapacity(_firstValues.length);
+
+  static int estimatedBytesForCapacity(int channelCapacity) {
+    final capacity = channelCapacity.clamp(1, PlotLodIndex.maxChannels);
+    // 4x Float64、2x Int32、1x Uint8，加上对象和 typed-list 头部余量。
+    return 160 + capacity * 41;
+  }
+
+  int estimatedGrowthBytes(int nextCapacity) =>
+      nextCapacity <= _firstValues.length
+          ? 0
+          : estimatedBytesForCapacity(nextCapacity) - estimatedAllocatedBytes;
+
   _LodBucket(int channelCapacity) {
     _allocate(channelCapacity.clamp(1, PlotLodIndex.maxChannels));
   }
@@ -276,6 +340,7 @@ class _LodBucket {
 
     for (int ch = 0; ch < channelCount; ch++) {
       final value = values[ch];
+      if (!value.isFinite) continue;
       if (_hasChannel[ch] == 0) {
         _hasChannel[ch] = 1;
         _firstValues[ch] = value;

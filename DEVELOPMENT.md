@@ -138,7 +138,7 @@ flutter test test/views/raw_data_page_test.dart
 flutter test test/parser/just_float_parser_test.dart
 ```
 
-当前测试基线以行为、状态流转、数据格式和关键交互为主，不保留只断言颜色、字体、固定像素或单个图标的测试。最近一次完整验证结果为 `392 passed, 2 skipped`，并通过 `flutter analyze` 与 `git diff --check`；该数字只用于核对当前仓库状态，新增或删除测试后应同步更新。
+当前测试基线以行为、状态流转、数据格式和关键交互为主，不保留只断言颜色、字体、固定像素或单个图标的测试。最近一次完整验证结果为 `415 passed, 2 skipped`，并通过 `flutter analyze` 与 `git diff --check`；该数字只用于核对当前仓库状态，新增或删除测试后应同步更新。
 
 更新器独立测试：
 

@@ -10,12 +10,24 @@ class _ParsedValueHistory {
 
   int _length = 0;
   int _maxChannelCount = 0;
+  int _allocatedBytes = 0;
 
   bool get isEmpty => _length == 0;
   int get length => _length;
   int get maxChannelCount => _maxChannelCount;
   int get allocatedValueSlots =>
       _chunks.fold(0, (total, chunk) => total + chunk.allocatedValueSlots);
+  int get allocatedBytes => _allocatedBytes;
+
+  int additionalAllocatedBytesForAppend(int channelCount) {
+    if (_length % _chunkPointCount != 0) {
+      final chunk = _chunks.isEmpty ? null : _chunks.last;
+      return chunk?.additionalAllocatedBytesForChannels(channelCount) ?? 0;
+    }
+    final capacity = channelCount.clamp(1, _maxChannels);
+    return _chunkPointCount *
+        (capacity * Float64List.bytesPerElement + Uint8List.bytesPerElement);
+  }
 
   @visibleForTesting
   void debugSetLengthForTest(
@@ -25,27 +37,32 @@ class _ParsedValueHistory {
     _chunks.clear();
     _length = length;
     _maxChannelCount = maxChannelCount.clamp(0, _maxChannels).toInt();
+    _allocatedBytes = 0;
   }
 
   void clear() {
     _chunks.clear();
     _length = 0;
     _maxChannelCount = 0;
+    _allocatedBytes = 0;
   }
 
   void add(List<double> values) {
     final chunkIndex = _length ~/ _chunkPointCount;
     if (chunkIndex == _chunks.length) {
-      _chunks.add(
-        _ParsedValueChunk(
-          pointCapacity: _chunkPointCount,
-          channelCapacity: values.length.clamp(1, _maxChannels),
-        ),
+      final chunk = _ParsedValueChunk(
+        pointCapacity: _chunkPointCount,
+        channelCapacity: values.length.clamp(1, _maxChannels),
       );
+      _chunks.add(chunk);
+      _allocatedBytes += chunk.allocatedBytes;
     }
 
     final count = values.length.clamp(0, _maxChannels).toInt();
-    _chunks[chunkIndex].add(values, count);
+    final chunk = _chunks[chunkIndex];
+    final previousBytes = chunk.allocatedBytes;
+    chunk.add(values, count);
+    _allocatedBytes += chunk.allocatedBytes - previousBytes;
 
     if (count > _maxChannelCount) _maxChannelCount = count;
     _length++;
@@ -91,6 +108,19 @@ class _ParsedValueChunk {
   }
 
   int get allocatedValueSlots => _values.length;
+  int get allocatedBytes =>
+      _values.length * Float64List.bytesPerElement + _counts.length;
+
+  int additionalAllocatedBytesForChannels(int nextChannelCapacity) {
+    if (nextChannelCapacity <= channelCapacity) return 0;
+    final next = nextChannelCapacity.clamp(
+      1,
+      PlotConfiguration.rawChannelCount,
+    );
+    return pointCapacity *
+        (next - channelCapacity) *
+        Float64List.bytesPerElement;
+  }
 
   void add(List<double> values, int count) {
     if (_length >= pointCapacity) {

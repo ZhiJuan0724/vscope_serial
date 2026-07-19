@@ -67,7 +67,7 @@ class AppSettings {
   /// 主窗口上次停留的页面。
   String lastMainPage = 'rawData';
 
-  /// 绘图窗口点数上限。
+  /// 绘图可导航范围上限（持久化键保持兼容）。
   int maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
 
   /// 每次开始绘图时丢弃的前置有效数据包数量。
@@ -398,12 +398,16 @@ class AppSettings {
         'shell' => 'shell',
         _ => 'rawData',
       };
-      maxVisiblePoints = ((json['maxVisiblePoints'] as num?)?.toInt() ??
-              PlotConfiguration.defaultVisiblePointCount)
-          .clamp(
-            PlotConfiguration.minVisiblePointCount,
-            PlotConfiguration.maxVisiblePointCount,
-          );
+      final storedMaxVisiblePoints =
+          (json['maxVisiblePoints'] as num?)?.toInt() ??
+          PlotConfiguration.defaultVisiblePointCount;
+      maxVisiblePoints =
+          storedMaxVisiblePoints
+              .clamp(
+                PlotConfiguration.minVisiblePointCount,
+                PlotConfiguration.maxVisiblePointCount,
+              )
+              .toInt();
       discardInitialPacketCount =
           ((json['discardInitialPacketCount'] as num?)?.toInt() ?? 0)
               .clamp(0, PlotConfiguration.maxDiscardInitialPacketCount)
@@ -566,6 +570,9 @@ class AppSettings {
       yMax =
           (json['yMax'] as num?)?.toDouble() ??
           PlotConfiguration.viewportDefaultYMax;
+      if (storedMaxVisiblePoints != maxVisiblePoints) {
+        await save();
+      }
     } catch (e) {
       // 配置文件损坏，使用默认值
     }

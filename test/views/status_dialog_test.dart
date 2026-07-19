@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -5,15 +7,23 @@ import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/serial_transport.dart';
 import 'package:vscope_serial/views/dialogs/status_dialog.dart';
 
 void main() {
-  final service = SerialService();
+  late SerialService service;
+
+  setUp(() {
+    service = SerialService.forTesting(
+      transportFactory: _StatusDialogTransport.new,
+    );
+  });
 
   tearDown(() {
     service.debugPortEnumerator = null;
     service.debugPortDetailsEnumerator = null;
     service.config = SerialConfig();
+    service.dispose();
   });
 
   testWidgets('串口详细信息默认关闭且只在勾选后刷新', (tester) async {
@@ -30,6 +40,10 @@ void main() {
         ];
       };
 
+    // 先准备端口目录；弹窗自身仍会在首帧后触发一次连接状态刷新。
+    // 测试只需泵送首帧，不等待可能持续调度通知的整个 Widget 树空闲。
+    await service.refreshPorts(reason: '测试准备');
+
     await tester.binding.setSurfaceSize(const Size(900, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -38,7 +52,7 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: StatusDialog())),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     final checkboxFinder = find.byKey(
       const ValueKey('show-port-details-checkbox'),
@@ -86,6 +100,8 @@ void main() {
       ..config = SerialConfig(port: 'COM9')
       ..debugPortEnumerator = () async => const [];
 
+    await service.refreshPorts(reason: '测试准备');
+
     await tester.binding.setSurfaceSize(const Size(900, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -94,7 +110,7 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: StatusDialog())),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(find.text('COM9（当前不存在）'), findsOneWidget);
     final connectButton = tester.widget<ElevatedButton>(
@@ -102,4 +118,33 @@ void main() {
     );
     expect(connectButton.onPressed, isNull);
   });
+}
+
+class _StatusDialogTransport implements SerialTransport {
+  @override
+  Stream<NativeSerialData> get dataStream => const Stream.empty();
+
+  @override
+  bool get isOpen => false;
+
+  @override
+  Future<bool> open(String port, int baudRate) async => false;
+
+  @override
+  bool setConfig(int dataBits, int stopBits, int parity) => true;
+
+  @override
+  void setDtr(bool value) {}
+
+  @override
+  void setRts(bool value) {}
+
+  @override
+  bool startReading({required int timeoutMs}) => true;
+
+  @override
+  Future<int> write(Uint8List data) async => data.length;
+
+  @override
+  Future<void> close() async {}
 }

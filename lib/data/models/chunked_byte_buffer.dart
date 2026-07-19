@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 /// 基于固定大小分块的追加式字节缓冲。
@@ -12,6 +13,14 @@ class ChunkedByteBuffer {
   ChunkedByteBuffer({this.chunkSize = 1024 * 1024}) : assert(chunkSize > 0);
 
   int get length => _length;
+  int get allocatedCapacity => _chunks.length * chunkSize;
+
+  int additionalAllocatedCapacityForAppend(int byteCount) {
+    if (byteCount <= 0) return 0;
+    final requiredChunks = (_length + byteCount + chunkSize - 1) ~/ chunkSize;
+    return math.max(0, requiredChunks - _chunks.length) * chunkSize;
+  }
+
   bool get isEmpty => _length == 0;
   bool get isNotEmpty => _length > 0;
 
@@ -107,6 +116,10 @@ class FixedPacketByteBuffer {
       _bytes = ChunkedByteBuffer(chunkSize: chunkSize);
 
   int get byteLength => _bytes.length;
+  int get allocatedCapacity => _bytes.allocatedCapacity;
+
+  int additionalAllocatedCapacityForAppend(int byteCount) =>
+      _bytes.additionalAllocatedCapacityForAppend(byteCount);
   int get packetCount => _bytes.length ~/ packetSize;
   bool get isEmpty => _bytes.isEmpty;
   bool get isNotEmpty => _bytes.isNotEmpty;

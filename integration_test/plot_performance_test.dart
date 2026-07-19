@@ -100,6 +100,9 @@ Future<Map<String, Object?>> _runScenario(
       ..fireWaterChannelCount = scenario.channelCount,
   );
   vm.setRandomFrequency(scenario.frequencyHz.toDouble());
+  if (scenario.visibleRange != null) {
+    vm.setMaxVisiblePoints(scenario.visibleRange!);
+  }
   vm.setUseRandomSource(true);
   vm.setFollowEnabled(scenario.followEnabled);
   if (scenario.mathChannelEnabled) {
@@ -130,12 +133,45 @@ Future<Map<String, Object?>> _runScenario(
   // 场景运行期间不主动操作 UI，只让随机源持续推数据。
   // 这样采到的是“持续接收 + 自动刷新”的基线性能。
   vm.startPlotting();
-  await Future<void>.delayed(scenario.duration);
+  final targetPointCount = scenario.targetPointCount;
+  if (targetPointCount == null) {
+    await Future<void>.delayed(scenario.duration);
+  } else {
+    while (vm.pointCount < targetPointCount &&
+        stopwatch.elapsed < scenario.duration) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    expect(
+      vm.pointCount,
+      greaterThanOrEqualTo(targetPointCount),
+      reason: '${scenario.name} 未在 ${scenario.duration.inSeconds}s 内达到目标点数',
+    );
+  }
 
   // 停止绘图后 highRateMode 会恢复，因此运行时状态要在 stop 前记录。
   final effectiveRefreshFpsDuringRun = vm.effectiveRefreshFps;
   final highRateModeDuringRun = vm.highRateMode;
   await vm.stopPlotting();
+
+  if (scenario.visibleRange != null && vm.pointCount > 1) {
+    final range = math.min(scenario.visibleRange!, vm.pointCount).toDouble();
+    vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: range));
+    for (var i = 0; i < 30; i++) {
+      final maxStart = math.max(0.0, vm.pointCount - range);
+      final start = maxStart * i / 29;
+      vm.updateViewport(
+        vm.viewport.copyWith(xMin: start, xMax: start + range),
+        fromDrag: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+    vm.saveDragViewport();
+    final loadWait = Stopwatch()..start();
+    while (vm.isWindowLoading &&
+        loadWait.elapsed < const Duration(seconds: 5)) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+  }
 
   stopwatch.stop();
   rssTimer.cancel();
@@ -154,6 +190,15 @@ Future<Map<String, Object?>> _runScenario(
   final rasterMicros = frameTimings
     .map((timing) => timing.rasterDuration.inMicroseconds)
     .toList(growable: false)..sort();
+  final totalSummary = _timingSummary(totalMicros);
+
+  if (scenario.visibleRange != null) {
+    expect(vm.visiblePointCount, lessThanOrEqualTo(250000));
+    expect(peakRss, lessThan(4 * 1024 * 1024 * 1024));
+    if (scenario.visibleRange == 10000000) {
+      expect(totalSummary['p95'], lessThanOrEqualTo(33));
+    }
+  }
 
   return <String, Object?>{
     'name': scenario.name,
@@ -163,11 +208,16 @@ Future<Map<String, Object?>> _runScenario(
     'mathChannelEnabled': scenario.mathChannelEnabled,
     'followEnabled': scenario.followEnabled,
     'receivedPoints': vm.pointCount,
+    'materializedPointCount': vm.visiblePointCount,
+    'configuredVisibleRange': scenario.visibleRange,
+    'windowLoadingAtEnd': vm.isWindowLoading,
+    'retentionUsedBytes': vm.plotRetentionUsage.usedBytes,
+    'retentionLimitBytes': vm.plotRetentionUsage.limitBytes,
     'actualPacketsPerSecond': vm.pointCount / elapsedSeconds,
     'effectiveRefreshFps': effectiveRefreshFpsDuringRun,
     'highRateMode': highRateModeDuringRun,
     'frameCount': frameTimings.length,
-    'frameTotalMs': _timingSummary(totalMicros),
+    'frameTotalMs': totalSummary,
     'frameBuildMs': _timingSummary(buildMicros),
     'frameRasterMs': _timingSummary(rasterMicros),
     'rssBytes': <String, int>{
@@ -308,13 +358,22 @@ const _quickScenarios = <_BenchmarkScenario>[
 // soak 场景用于长时间观察内存和卡顿风险，不建议放进 CI。
 // 这里仍然沿用随机源，不依赖外部串口设备，方便在同一机器上复测。
 const _soakScenarios = <_BenchmarkScenario>[
-  _BenchmarkScenario('100K-16CH-400K', 100000, 16, Duration(seconds: 4)),
   _BenchmarkScenario(
-    '100K-16CH-1M',
+    '1M-16CH',
     100000,
     16,
-    Duration(seconds: 10),
-    mathChannelEnabled: true,
+    Duration(seconds: 30),
+    visibleRange: 1000000,
+    targetPointCount: 1000000,
+    followEnabled: true,
+  ),
+  _BenchmarkScenario(
+    '10M-4CH',
+    100000,
+    4,
+    Duration(minutes: 7),
+    visibleRange: 10000000,
+    targetPointCount: 10000000,
     followEnabled: true,
   ),
   _BenchmarkScenario(
@@ -339,6 +398,8 @@ class _BenchmarkScenario {
   final Duration duration;
   final bool mathChannelEnabled;
   final bool followEnabled;
+  final int? visibleRange;
+  final int? targetPointCount;
 
   const _BenchmarkScenario(
     this.name,
@@ -347,5 +408,7 @@ class _BenchmarkScenario {
     this.duration, {
     this.mathChannelEnabled = false,
     this.followEnabled = false,
+    this.visibleRange,
+    this.targetPointCount,
   });
 }

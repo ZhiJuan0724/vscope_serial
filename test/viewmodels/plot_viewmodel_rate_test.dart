@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
+import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
@@ -13,6 +14,7 @@ void main() {
       await AppLogger().init();
       serialService = SerialService();
       vm = PlotViewModel(serialService);
+      vm.setParserType(ParserType.fireWater);
     });
 
     tearDown(() {

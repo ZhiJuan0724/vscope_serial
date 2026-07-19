@@ -1052,11 +1052,29 @@ extension PlotViewModelImportExport on PlotViewModel {
     Map<String, dynamic>? metadata,
     PlotImportProgressCallback? onProgress,
   }) async {
+    final normalizedChannelCount = channelCount.clamp(
+      1,
+      PlotConfiguration.rawChannelCount,
+    );
+    final projectedBytes =
+        importedPoints.length * (normalizedChannelCount * 8 + 64) +
+        math.min(
+              importedPoints.length,
+              PlotConfiguration.maxMaterializedPointCount,
+            ) *
+            192;
+    if (projectedBytes > _plotRetentionLimitBytes) {
+      throw StateError(
+        '导入预计占用 ${_formatRetentionBytes(projectedBytes)}，超过绘图历史 '
+        '${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限',
+      );
+    }
     _dataPoints.clear();
     _parsedHistory.clear();
     _lodIndex.clear();
     _zobowRawFrames.clear();
     _fixedFrameRawFrames.clear();
+    _resetPlotRetentionState();
     _importedChannelAddresses = null;
     var minY = double.infinity;
     var maxY = double.negativeInfinity;
@@ -1086,7 +1104,9 @@ extension PlotViewModelImportExport on PlotViewModel {
     _applyImportedMetadata(metadata, channelCount);
 
     final visibleCount =
-        importedPoints.length.clamp(0, _maxVisiblePoints).toInt();
+        importedPoints.length
+            .clamp(0, PlotConfiguration.maxMaterializedPointCount)
+            .toInt();
     final visibleStart = importedPoints.length - visibleCount;
     viewport = PlotViewport(
       xMin: visibleStart.toDouble(),
@@ -1101,7 +1121,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       visibleCount,
       detail: '$visibleCount 点',
     );
-    _rebuildParsedWindow(visibleStart, visibleCount);
+    await _rebuildParsedWindow(visibleStart, visibleCount);
     await _reportImportProgress(
       onProgress,
       '加载可见窗口',

@@ -2221,7 +2221,7 @@ void main() {
       expect(vm.lodIndex.length, vm.pointCount);
     });
 
-    test('高频模式超过40万点时不使用固定窗口上限', () {
+    test('高频模式超过25万点时精确对象窗口保持硬上限', () {
       vm.setMaxVisiblePoints(1000000);
       vm.recordRateSampleForTest(0, 0);
       vm.recordRateSampleForTest(6000, 300);
@@ -2234,7 +2234,7 @@ void main() {
       }
 
       expect(vm.highRateMode, true);
-      expect(vm.visiblePointCount, 400005);
+      expect(vm.visiblePointCount, lessThanOrEqualTo(250000));
       expect(vm.pointCount - startPointCount, 400005);
       expect(vm.lodIndex.length, vm.pointCount);
     });

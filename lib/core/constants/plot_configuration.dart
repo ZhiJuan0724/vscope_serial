@@ -96,14 +96,17 @@ abstract final class PlotConfiguration {
   /// 用户可创建的观察点数量上限。
   static const int maxObservationCount = 100;
 
-  /// 精确绘图窗口允许配置的最小点数。
+  /// 用户可导航范围允许配置的最小点数。
   static const int minVisiblePointCount = 1000000;
 
-  /// 精确绘图窗口默认保留的点数。
+  /// 用户可导航范围默认保留的点数。
   static const int defaultVisiblePointCount = minVisiblePointCount;
 
-  /// 精确绘图窗口允许配置的最大点数。
-  static const int maxVisiblePointCount = 40000000;
+  /// 用户可导航范围允许配置的最大点数。
+  static const int maxVisiblePointCount = 10000000;
+
+  /// Flutter 层同时物化的精确 PlotDataPoint 对象上限。
+  static const int maxMaterializedPointCount = 250000;
 
   /// 开始绘图时允许丢弃的前置有效数据包上限。
   static const int maxDiscardInitialPacketCount = 10000;

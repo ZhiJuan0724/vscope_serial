@@ -1,12 +1,18 @@
+import 'dart:math' as math;
+
 class MathExpression {
   final _ExprNode _root;
   final int futureLookahead;
+  final int pastLookback;
   final bool hasChannelOffset;
+  final Set<int> referencedChannels;
 
   const MathExpression._(
     this._root, {
     required this.futureLookahead,
+    required this.pastLookback,
     required this.hasChannelOffset,
+    required this.referencedChannels,
   });
 
   static MathExpression parse(String source) {
@@ -15,7 +21,9 @@ class MathExpression {
     return MathExpression._(
       root,
       futureLookahead: root.futureLookahead,
+      pastLookback: root.pastLookback,
       hasChannelOffset: root.hasChannelOffset,
+      referencedChannels: Set.unmodifiable(root.referencedChannels),
     );
   }
 
@@ -62,7 +70,11 @@ abstract class _ExprNode {
 
   int get futureLookahead => 0;
 
+  int get pastLookback => 0;
+
   bool get hasChannelOffset => false;
+
+  Set<int> get referencedChannels => const {};
 
   double evaluate(MathEvalContext context);
 }
@@ -89,6 +101,12 @@ class _ChannelNode extends _ExprNode {
   bool get hasChannelOffset => xOffset != 0;
 
   @override
+  int get pastLookback => xOffset > 0 ? xOffset : 0;
+
+  @override
+  Set<int> get referencedChannels => {index};
+
+  @override
   double evaluate(MathEvalContext context) {
     final sourceIndex = context.currentIndex - xOffset;
     if (sourceIndex < 0 || sourceIndex >= context.pointCount) {
@@ -109,6 +127,12 @@ class _UnaryNode extends _ExprNode {
 
   @override
   bool get hasChannelOffset => child.hasChannelOffset;
+
+  @override
+  int get pastLookback => child.pastLookback;
+
+  @override
+  Set<int> get referencedChannels => child.referencedChannels;
 
   @override
   double evaluate(MathEvalContext context) {
@@ -136,6 +160,15 @@ class _BinaryNode extends _ExprNode {
 
   @override
   bool get hasChannelOffset => left.hasChannelOffset || right.hasChannelOffset;
+
+  @override
+  int get pastLookback => math.max(left.pastLookback, right.pastLookback);
+
+  @override
+  Set<int> get referencedChannels => {
+    ...left.referencedChannels,
+    ...right.referencedChannels,
+  };
 
   @override
   double evaluate(MathEvalContext context) {

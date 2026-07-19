@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -11,11 +10,13 @@ import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_packet.dart';
+import '../data/models/retention_usage.dart';
 import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'serial_port_catalog.dart';
+import 'serial_transport.dart';
 import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
 import 'windows_code_page_codec.dart';
@@ -144,6 +145,10 @@ enum SerialActivityOwner { none, rawData, shell, plot }
 
 typedef ExportProgressCallback = void Function(double progress);
 
+class _ConnectionCancelled implements Exception {
+  const _ConnectionCancelled();
+}
+
 String _decodeBytesWithEncoding(Uint8List data, String encoding) {
   String decodeOrFallback(String Function(Uint8List) decode) {
     try {
@@ -229,7 +234,14 @@ enum RawShellCursorMode {
 class SerialService extends ChangeNotifier {
   static final SerialService _instance = SerialService._internal();
   factory SerialService() => _instance;
-  SerialService._internal() {
+  SerialService._internal() : this._withTransport(NativeSerialTransport.new);
+
+  @visibleForTesting
+  SerialService.forTesting({
+    required SerialTransport Function() transportFactory,
+  }) : this._withTransport(transportFactory);
+
+  SerialService._withTransport(this._transportFactory) {
     _portCatalog = SerialPortCatalog(
       enumerator: () {
         final debugEnumerator = debugPortEnumerator;
@@ -249,6 +261,13 @@ class SerialService extends ChangeNotifier {
   SerialConfig config = SerialConfig();
   bool isConnected = false;
   bool isConnecting = false;
+  Future<void> _connectionTail = Future<void>.value();
+  Future<void>? _connectFuture;
+  int? _connectFutureGeneration;
+  Future<void>? _ioDisconnectFuture;
+  Future<void>? _shutdownFuture;
+  int _connectionGeneration = 0;
+  bool _shuttingDown = false;
   late final SerialPortCatalog _portCatalog;
   NativeSerialPortMonitor? _portMonitor;
   StreamSubscription<void>? _portMonitorSubscription;
@@ -259,8 +278,8 @@ class SerialService extends ChangeNotifier {
   Future<bool>? _pendingPortDetailsRefresh;
   bool _isRefreshingPortDetails = false;
 
-  // Windows 原生串口读取器
-  NativeSerialReader? _nativeReader;
+  final SerialTransport Function() _transportFactory;
+  SerialTransport? _transport;
   StreamSubscription? _nativeSubscription;
 
   /// 仅测试使用：模拟原生串口打开缓慢或失败。
@@ -277,6 +296,18 @@ class SerialService extends ChangeNotifier {
 
   /// 仅测试使用：替换原生句柄打开状态。
   bool? debugNativePortOpen;
+
+  Future<T> _enqueueConnectionOperation<T>(Future<T> Function() operation) {
+    final completer = Completer<T>();
+    _connectionTail = _connectionTail.catchError((_) {}).then((_) async {
+      try {
+        completer.complete(await operation());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
 
   List<String> get availablePorts => _portCatalog.ports;
   bool get isRefreshingPorts =>
@@ -356,6 +387,30 @@ class SerialService extends ChangeNotifier {
   // 原始字节数据（内部保留）
   final ChunkedByteBuffer _rawBytes = ChunkedByteBuffer();
   int get _rawBytesSize => _rawBytes.length;
+  static const int rawRetentionLimitBytes = 512 * 1024 * 1024;
+  static const double _retentionWarningRatio = 0.8;
+  int? debugRawRetentionLimitBytes;
+  bool _rawRetentionWarningShown = false;
+  bool _rawRetentionLimitShown = false;
+
+  int get _effectiveRawRetentionLimitBytes =>
+      debugRawRetentionLimitBytes ?? rawRetentionLimitBytes;
+
+  RetentionUsage get rawRetentionUsage {
+    final limit = _effectiveRawRetentionLimitBytes;
+    final ratio = limit <= 0 ? 0.0 : _rawBytesSize / limit;
+    final state =
+        _rawBytesSize >= limit
+            ? RetentionState.limitReached
+            : ratio >= _retentionWarningRatio
+            ? RetentionState.warning
+            : RetentionState.normal;
+    return RetentionUsage(
+      usedBytes: _rawBytesSize,
+      limitBytes: limit,
+      state: state,
+    );
+  }
 
   // 原始文本数据（用于原始数据页面显示）
   final _CircularStringList _receivedLines = _CircularStringList();
@@ -604,6 +659,14 @@ class SerialService extends ChangeNotifier {
   ///
   /// 健康连接不触发端口枚举。只有句柄异常后才刷新一次目录并决定是否重连。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
+    return _enqueueConnectionOperation(
+      () => _refreshConnectionStatusLocked(reconnectOnce: reconnectOnce),
+    );
+  }
+
+  Future<bool> _refreshConnectionStatusLocked({
+    required bool reconnectOnce,
+  }) async {
     final selectedPort = config.port;
     if (!isConnected) {
       await refreshPorts(reason: '连接窗口刷新');
@@ -611,7 +674,7 @@ class SerialService extends ChangeNotifier {
     }
 
     final healthChecker = debugConnectionHealthChecker;
-    final nativePortOpen = debugNativePortOpen ?? _nativeReader?.isOpen == true;
+    final nativePortOpen = debugNativePortOpen ?? _transport?.isOpen == true;
     var healthy = false;
     if (nativePortOpen) {
       try {
@@ -638,7 +701,8 @@ class SerialService extends ChangeNotifier {
     if (healthy) return true;
 
     AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
-    unawaited(_cleanupPort());
+    _connectionGeneration++;
+    await _cleanupPortLocked();
 
     final reconnectPortsRefreshed = await refreshPorts(reason: '连接异常复查');
     if (!reconnectPortsRefreshed) return false;
@@ -655,7 +719,8 @@ class SerialService extends ChangeNotifier {
     if (!reconnectOnce) return false;
 
     AppLogger().info('尝试自动重连串口: $selectedPort', category: 'SERIAL');
-    await connect();
+    final generation = ++_connectionGeneration;
+    await _connectLocked(generation);
     return isConnected;
   }
 
@@ -666,17 +731,46 @@ class SerialService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connect() async {
+  Future<void> connect() {
+    if (_shuttingDown) return Future<void>.value();
+    final existing = _connectFuture;
+    if (existing != null && _connectFutureGeneration == _connectionGeneration) {
+      return existing;
+    }
+    final generation = ++_connectionGeneration;
+    isConnecting = true;
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+    late final Future<void> operation;
+    operation = _enqueueConnectionOperation(() => _connectLocked(generation));
+    _connectFuture = operation;
+    _connectFutureGeneration = generation;
+    operation.then(
+      (_) {
+        if (identical(_connectFuture, operation)) {
+          _connectFuture = null;
+          _connectFutureGeneration = null;
+        }
+      },
+      onError: (Object _, StackTrace stackTrace) {
+        if (identical(_connectFuture, operation)) {
+          _connectFuture = null;
+          _connectFutureGeneration = null;
+        }
+      },
+    );
+    return operation;
+  }
+
+  Future<void> _connectLocked(int generation) async {
     AppLogger().trace('connect() 被调用', category: 'SERIAL');
     if (config.port == null) {
       AppLogger().error('请先选择串口', category: 'SERIAL');
       return;
     }
-    if (isConnecting || isConnected) {
-      AppLogger().trace(
-        'connect() 被忽略，isConnecting=$isConnecting, isConnected=$isConnected',
-        category: 'SERIAL',
-      );
+    if (isConnected) {
+      AppLogger().trace('connect() 被忽略，串口已连接', category: 'SERIAL');
       return;
     }
 
@@ -695,7 +789,10 @@ class SerialService extends ChangeNotifier {
     try {
       // 直接使用 NativeSerialReader 打开串口（跳过 Isolate 探测）
       AppLogger().trace('使用 NativeSerialReader 打开串口...', category: 'SERIAL');
-      await _openPort();
+      await _openPort(generation);
+      if (_shuttingDown || generation != _connectionGeneration) {
+        throw const _ConnectionCancelled();
+      }
 
       _lastConnectedPort = config.port;
       isConnected = true;
@@ -704,9 +801,12 @@ class SerialService extends ChangeNotifier {
         '串口已连接: ${config.port} @ ${config.baudRate}',
         category: 'SERIAL',
       );
+    } on _ConnectionCancelled {
+      AppLogger().info('串口打开结果已过期，正在清理', category: 'SERIAL');
+      await _cleanupPortLocked();
     } catch (e) {
       AppLogger().error('连接失败: $e', category: 'SERIAL');
-      await _cleanupPort();
+      await _cleanupPortLocked();
       AppNotifications.show('串口打开失败，请检查端口占用或设备状态');
     } finally {
       isConnecting = false;
@@ -716,7 +816,7 @@ class SerialService extends ChangeNotifier {
   }
 
   /// 在后台 isolate 打开原生句柄，然后挂接 UI 侧 IO。
-  Future<void> _openPort() async {
+  Future<void> _openPort(int generation) async {
     final port = config.port!;
     if (debugPortOpener != null) {
       final opened = await debugPortOpener!(port, config.baudRate);
@@ -725,70 +825,94 @@ class SerialService extends ChangeNotifier {
       }
     }
 
-    // 使用 Windows 原生串口读取器
-    _nativeReader = NativeSerialReader();
-    // 打开前使用 NativeApi.initializeApiDLData 初始化 Dart API。
-    final initData = NativeApi.initializeApiDLData;
-    _nativeReader!.initDartApi(initData);
-    final opened = await NativeSerialReader.openInBackground(
-      port,
-      config.baudRate,
-    );
+    final transport = _transportFactory();
+    final opened = await transport.open(port, config.baudRate);
     if (!opened) {
+      await transport.close();
       throw Exception('无法打开串口');
     }
-    if (!_nativeReader!.attachToOpenPort()) {
-      throw Exception('无法获取已打开的串口句柄');
+    if (_shuttingDown || generation != _connectionGeneration) {
+      await transport.close();
+      throw const _ConnectionCancelled();
     }
 
     // 设置串口参数
-    _nativeReader!.setConfig(config.dataBits, config.stopBits, config.parity);
-    _nativeReader!.setRts(config.rts);
-    _nativeReader!.setDtr(config.dtr);
+    transport.setConfig(config.dataBits, config.stopBits, config.parity);
+    transport.setRts(config.rts);
+    transport.setDtr(config.dtr);
 
     AppLogger().trace('NativeSerialReader 打开成功', category: 'SERIAL');
 
     // 监听数据流
-    _nativeSubscription = _nativeReader!.dataStream.listen(
-      (nativeData) => _onNativeDataReceived(nativeData),
+    _transport = transport;
+    _nativeSubscription = transport.dataStream.listen(
+      (nativeData) {
+        if (generation == _connectionGeneration &&
+            identical(transport, _transport)) {
+          _onNativeDataReceived(nativeData);
+        }
+      },
       onError:
           (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
 
     // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
-    if (!_nativeReader!.startReading(timeoutMs: 10)) {
+    if (!transport.startReading(timeoutMs: 10)) {
       await _nativeSubscription?.cancel();
       _nativeSubscription = null;
-      await _nativeReader!.close();
-      _nativeReader = null;
+      await transport.close();
+      _transport = null;
       throw Exception('failed to start native serial read thread');
+    }
+
+    if (_shuttingDown || generation != _connectionGeneration) {
+      await _cleanupPortLocked();
+      throw const _ConnectionCancelled();
     }
 
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
   }
 
-  Future<void> disconnect() async {
-    if (isConnecting) {
-      AppLogger().warning('正在连接中，无法断开', category: 'SERIAL');
-      return;
-    }
-    await _cleanupPort();
+  Future<void> disconnect() {
+    _connectionGeneration++;
+    return _enqueueConnectionOperation(_disconnectLocked);
+  }
+
+  Future<void> _disconnectLocked() async {
+    await _cleanupPortLocked();
     AppLogger().info('串口已断开', category: 'SERIAL');
     Future.microtask(() => notifyListeners());
   }
 
-  Future<void> _cleanupPort() async {
+  Future<void> _cleanupPortLocked() async {
     _flushReceiveLog();
     _flushSendLog();
     final subscription = _nativeSubscription;
     _nativeSubscription = null;
-    final reader = _nativeReader;
-    _nativeReader = null;
+    final transport = _transport;
+    _transport = null;
     isConnected = false;
     _releaseAllActivities();
     if (!_disposed) Future.microtask(notifyListeners);
     await subscription?.cancel();
-    await reader?.close();
+    await transport?.close();
+  }
+
+  /// 应用退出专用：立即取消当前连接意图，再等待所有串口操作有序收敛。
+  Future<void> shutdown() {
+    final existing = _shutdownFuture;
+    if (existing != null) return existing;
+    _shuttingDown = true;
+    _connectionGeneration++;
+    final operation = _enqueueConnectionOperation(() async {
+      await _cleanupPortLocked();
+      await _portMonitorSubscription?.cancel();
+      _portMonitorSubscription = null;
+      _portMonitor?.dispose();
+      _portMonitor = null;
+    });
+    _shutdownFuture = operation;
+    return operation;
   }
 
   /// 原生串口数据接收回调
@@ -814,27 +938,80 @@ class SerialService extends ChangeNotifier {
 
     if (shouldReceiveYmodem) {
       _recordReceiveLog(data.length);
-      _rawBytes.append(data);
+      // YMODEM 文件本身由接收服务直接落盘；原始追踪达到上限后不再增长，
+      // 但不能因此截断正在进行的文件传输。
+      _appendRawBytesWithinLimit(data, stopRawReceivingAtLimit: false);
       ymodemService.addIncomingBytes(data);
       return;
     }
 
     if (shouldReceiveRaw) {
       _recordReceiveLog(data.length);
-      _rawBytes.append(data);
+      final accepted = _appendRawBytesWithinLimit(
+        data,
+        stopRawReceivingAtLimit: true,
+      );
+      if (accepted.isEmpty) return;
 
       // 使用 C++ 提供的微秒级时间戳
       final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
         nativeData.timestampUs,
       );
 
-      _displayReceivedData(data, receiveTime);
+      _displayReceivedData(accepted, receiveTime);
     }
 
     if (shouldReceiveShell) {
       _recordReceiveLog(data.length);
       _shellDataController.add(data);
     }
+  }
+
+  Uint8List _appendRawBytesWithinLimit(
+    Uint8List data, {
+    required bool stopRawReceivingAtLimit,
+  }) {
+    if (data.isEmpty) return data;
+    final limit = _effectiveRawRetentionLimitBytes;
+    final remaining = (limit - _rawBytesSize).clamp(0, limit);
+    final acceptedLength = data.length.clamp(0, remaining).toInt();
+    final accepted =
+        acceptedLength == data.length
+            ? data
+            : Uint8List.sublistView(data, 0, acceptedLength);
+    if (accepted.isNotEmpty) _rawBytes.append(accepted);
+
+    final usage = rawRetentionUsage;
+    if (!_rawRetentionWarningShown && usage.ratio >= _retentionWarningRatio) {
+      _rawRetentionWarningShown = true;
+      final message =
+          '原始数据已使用 ${(usage.ratio * 100).clamp(0, 100).toStringAsFixed(0)}%，'
+          '达到 ${_formatByteSize(usage.limitBytes)} 后将自动停止接收';
+      AppLogger().warning(message, category: 'DATA');
+      AppNotifications.show(message);
+    }
+
+    if (usage.state == RetentionState.limitReached &&
+        !_rawRetentionLimitShown) {
+      _rawRetentionLimitShown = true;
+      final message =
+          '原始数据已达到 ${_formatByteSize(usage.limitBytes)} 上限，'
+          '${stopRawReceivingAtLimit ? '已自动停止接收' : '后续传输不再写入原始追踪'}';
+      AppLogger().warning(message, category: 'DATA');
+      AppNotifications.show(message);
+      if (stopRawReceivingAtLimit && isRawReceiving) stopRawReceiving();
+    }
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+    return accepted;
+  }
+
+  static String _formatByteSize(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GiB';
+    }
+    return '${(bytes / 1024 / 1024).toStringAsFixed(0)} MiB';
   }
 
   /// 测试独立 Shell 的接收调度，不绕过活动所有权约束。
@@ -1056,15 +1233,25 @@ class SerialService extends ChangeNotifier {
 
   @visibleForTesting
   void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
-    _rawBytes.append(data);
-    _addRawDataLine(timestamp ?? DateTime.now(), data);
+    final accepted = _appendRawBytesWithinLimit(
+      data,
+      stopRawReceivingAtLimit: true,
+    );
+    if (accepted.isNotEmpty) {
+      _addRawDataLine(timestamp ?? DateTime.now(), accepted);
+    }
   }
 
   /// 按真实接收显示流程喂入数据，用于验证自动换行窗口。
   @visibleForTesting
   void debugFeedRawReceiveData(Uint8List data, {DateTime? timestamp}) {
-    _rawBytes.append(data);
-    _displayReceivedData(data, timestamp ?? DateTime.now());
+    final accepted = _appendRawBytesWithinLimit(
+      data,
+      stopRawReceivingAtLimit: true,
+    );
+    if (accepted.isNotEmpty) {
+      _displayReceivedData(accepted, timestamp ?? DateTime.now());
+    }
   }
 
   @visibleForTesting
@@ -1453,6 +1640,8 @@ class SerialService extends ChangeNotifier {
     _aggregator?.reset();
     _aggregator = null;
     _rawBytes.clear();
+    _rawRetentionWarningShown = false;
+    _rawRetentionLimitShown = false;
     _receivedLines.clear();
     _receivedTextBytes = 0;
     _resetTextLineBuffers();
@@ -1605,11 +1794,15 @@ class SerialService extends ChangeNotifier {
 
   /// 获取数据大小信息
   Map<String, String> get dataStats {
+    final retention = rawRetentionUsage;
     return <String, String>{
       '显示行数': '${receivedLines.length} / $_displayLineLimit',
       '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
       '完整原始数据':
           '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
+      '原始数据容量':
+          '${(retention.ratio * 100).clamp(0, 100).toStringAsFixed(1)}% / '
+          '${_formatByteSize(retention.limitBytes)}',
       '文本导出编码': _textEncoding,
     };
   }
@@ -1619,7 +1812,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().error('串口未连接', category: 'SERIAL');
       return null;
     }
-    if (_nativeReader == null) {
+    if (_transport == null) {
       AppLogger().error('串口未连接', category: 'SERIAL');
       return null;
     }
@@ -1632,7 +1825,7 @@ class SerialService extends ChangeNotifier {
 
   /// 多条发送条目使用独立的有效载荷规则：不追加普通发送区的行尾或 CRC。
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) {
-    if (!isConnected || _nativeReader == null || text.isEmpty) return null;
+    if (!isConnected || _transport == null || text.isEmpty) return null;
     try {
       if (!isHex) return _encodeTextWithEncoding(text, _textEncoding);
       final hex = text.replaceAll(RegExp(r'\s+'), '');
@@ -1749,8 +1942,8 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
       throw StateError('串口未连接');
     }
-    if (_nativeReader != null) {
-      final sent = await _nativeReader!.write(data);
+    if (_transport != null) {
+      final sent = await _transport!.write(data);
       if (sent != data.length) {
         _handleIoDisconnected(
           '发送失败，串口可能已断开: expected=${data.length}, sent=$sent',
@@ -1772,7 +1965,18 @@ class SerialService extends ChangeNotifier {
 
   void _handleIoDisconnected(String message) {
     AppLogger().warning(message, category: 'SERIAL');
-    unawaited(_cleanupPort());
+    if (_ioDisconnectFuture != null) return;
+    _connectionGeneration++;
+    late final Future<void> operation;
+    operation = _enqueueConnectionOperation(_cleanupPortLocked).whenComplete(
+      () {
+        if (identical(_ioDisconnectFuture, operation)) {
+          _ioDisconnectFuture = null;
+        }
+      },
+    );
+    _ioDisconnectFuture = operation;
+    unawaited(operation);
     Future.microtask(() => notifyListeners());
   }
 
@@ -1780,8 +1984,8 @@ class SerialService extends ChangeNotifier {
     config = config.copyWith(rts: value);
     _saveSettings();
     if (isConnected) {
-      if (_nativeReader != null) {
-        _nativeReader!.setRts(value);
+      if (_transport != null) {
+        _transport!.setRts(value);
       }
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -1792,8 +1996,8 @@ class SerialService extends ChangeNotifier {
     config = config.copyWith(dtr: value);
     _saveSettings();
     if (isConnected) {
-      if (_nativeReader != null) {
-        _nativeReader!.setDtr(value);
+      if (_transport != null) {
+        _transport!.setDtr(value);
       }
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -1829,6 +2033,12 @@ class SerialService extends ChangeNotifier {
   bool startRawReceiving() {
     if (!isConnected) {
       AppLogger().warning('串口未连接，无法开始接收', category: 'SERIAL');
+      return false;
+    }
+    if (rawRetentionUsage.state == RetentionState.limitReached) {
+      const message = '原始数据已达到容量上限，请先导出并清空接收区';
+      AppLogger().warning(message, category: 'DATA');
+      AppNotifications.show(message);
       return false;
     }
     if (!_tryAcquireActivity(SerialActivityOwner.rawData)) {
@@ -1917,6 +2127,8 @@ class SerialService extends ChangeNotifier {
     // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
     // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
     _disposed = true;
+    _shuttingDown = true;
+    _connectionGeneration++;
     _flushReceiveLog();
     _flushSendLog();
     _displayNotifyTimer?.cancel();
@@ -1925,16 +2137,15 @@ class SerialService extends ChangeNotifier {
     _aggregator = null;
     _portChangeDebounce?.cancel();
     _portChangeDebounce = null;
-    unawaited(_portMonitorSubscription?.cancel());
-    _portMonitorSubscription = null;
-    _portMonitor?.dispose();
-    _portMonitor = null;
-    _nativeSubscription?.cancel();
-    _nativeSubscription = null;
-    final nativeReader = _nativeReader;
-    _nativeReader = null;
-    if (nativeReader != null) unawaited(nativeReader.dispose());
-    _nativeReader = null;
+    unawaited(
+      _enqueueConnectionOperation(() async {
+        await _cleanupPortLocked();
+        await _portMonitorSubscription?.cancel();
+        _portMonitorSubscription = null;
+        _portMonitor?.dispose();
+        _portMonitor = null;
+      }),
+    );
     isConnected = false;
     unawaited(ymodemService.dispose());
     _dataController.close();

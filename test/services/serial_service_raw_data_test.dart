@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:charset/charset.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
+import 'package:vscope_serial/data/models/retention_usage.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 
 void main() {
@@ -37,7 +38,34 @@ void main() {
       service.setTextEncoding('UTF-8');
       service.sendHex = false;
       service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+      service.stopRawReceiving();
+      service.isConnected = false;
+      service.debugRawRetentionLimitBytes = null;
     });
+
+    test(
+      'raw retention accepts only the final prefix and resets after clear',
+      () {
+        service
+          ..debugRawRetentionLimitBytes = 10
+          ..isConnected = true;
+        expect(service.startRawReceiving(), isTrue);
+
+        service.debugFeedRawReceiveData(Uint8List.fromList(List.filled(8, 1)));
+        expect(service.rawRetentionUsage.state, RetentionState.warning);
+        expect(service.isRawReceiving, isTrue);
+
+        service.debugFeedRawReceiveData(Uint8List.fromList(List.filled(5, 2)));
+        expect(service.rawRetentionUsage.usedBytes, 10);
+        expect(service.rawRetentionUsage.state, RetentionState.limitReached);
+        expect(service.isRawReceiving, isFalse);
+
+        service.clearReceivedData();
+        expect(service.rawRetentionUsage.usedBytes, 0);
+        expect(service.rawRetentionUsage.state, RetentionState.normal);
+        expect(service.startRawReceiving(), isTrue);
+      },
+    );
 
     test(
       'text mode wraps only on newline characters and hides byte counts',

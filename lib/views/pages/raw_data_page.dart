@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../core/constants/window_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/crc.dart';
+import '../../data/models/retention_usage.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
 import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
@@ -35,6 +36,9 @@ typedef _ReceiveAreaState =
       bool autoScroll,
       bool hasRawData,
       String textEncoding,
+      int retentionUsedBytes,
+      int retentionLimitBytes,
+      RetentionState retentionState,
     });
 
 typedef _SendAreaState =
@@ -436,31 +440,38 @@ class _RawDataPageState extends State<RawDataPage> {
                             SizedBox(
                               key: const ValueKey('raw-receive-area'),
                               height: receiveHeight,
-                              child:
-                                  Selector<RawDataViewModel, _ReceiveAreaState>(
-                                    selector:
-                                        (_, value) => (
-                                          displayRevision:
-                                              value.displayRevision,
-                                          connected: value.isConnected,
-                                          receiving: value.isRawReceiving,
-                                          receiveHex: value.receiveHex,
-                                          showTimestamp: value.showTimestamp,
-                                          autoLineBreak: value.autoLineBreak,
-                                          autoScroll: value.autoScroll,
-                                          hasRawData: value.hasRawData,
-                                          textEncoding: value.textEncoding,
-                                        ),
-                                    builder: (context, _, _) {
-                                      final receiveVm =
-                                          context.read<RawDataViewModel>();
-                                      _scrollToBottom(receiveVm);
-                                      return _buildReceiveArea(
-                                        receiveVm,
-                                        context.read<MultiSendViewModel>(),
-                                      );
-                                    },
-                                  ),
+                              child: Selector<
+                                RawDataViewModel,
+                                _ReceiveAreaState
+                              >(
+                                selector:
+                                    (_, value) => (
+                                      displayRevision: value.displayRevision,
+                                      connected: value.isConnected,
+                                      receiving: value.isRawReceiving,
+                                      receiveHex: value.receiveHex,
+                                      showTimestamp: value.showTimestamp,
+                                      autoLineBreak: value.autoLineBreak,
+                                      autoScroll: value.autoScroll,
+                                      hasRawData: value.hasRawData,
+                                      textEncoding: value.textEncoding,
+                                      retentionUsedBytes:
+                                          value.rawRetentionUsage.usedBytes,
+                                      retentionLimitBytes:
+                                          value.rawRetentionUsage.limitBytes,
+                                      retentionState:
+                                          value.rawRetentionUsage.state,
+                                    ),
+                                builder: (context, _, _) {
+                                  final receiveVm =
+                                      context.read<RawDataViewModel>();
+                                  _scrollToBottom(receiveVm);
+                                  return _buildReceiveArea(
+                                    receiveVm,
+                                    context.read<MultiSendViewModel>(),
+                                  );
+                                },
+                              ),
                             ),
                             GestureDetector(
                               key: const ValueKey('raw-split-divider'),
@@ -565,6 +576,17 @@ class _RawDataPageState extends State<RawDataPage> {
     RawDataViewModel vm,
     MultiSendViewModel multiSendVm,
   ) {
+    final retention = vm.rawRetentionUsage;
+    final retentionStatus = switch (retention.state) {
+      RetentionState.normal => '',
+      RetentionState.warning => ' [容量预警]',
+      RetentionState.limitReached => ' [容量上限停止，请导出并清空]',
+    };
+    final retentionColor = switch (retention.state) {
+      RetentionState.normal => Theme.of(context).colorScheme.onSurfaceVariant,
+      RetentionState.warning => Colors.orange.shade800,
+      RetentionState.limitReached => Theme.of(context).colorScheme.error,
+    };
     return Column(
       children: [
         UnifiedToolbar(
@@ -581,7 +603,8 @@ class _RawDataPageState extends State<RawDataPage> {
                           vm.stopReceiving();
                           multiSendVm.refreshSendAvailability();
                         }
-                        : vm.isConnected
+                        : vm.isConnected &&
+                            retention.state != RetentionState.limitReached
                         ? () {
                           vm.startReceiving();
                           multiSendVm.refreshSendAvailability();
@@ -788,12 +811,9 @@ class _RawDataPageState extends State<RawDataPage> {
                       ),
                       child: Text(
                         vm.receiveHex
-                            ? '接收: ${vm.dataStats['完整原始数据']} | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}'
-                            : '编码: ${vm.textEncoding} | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                            ? '接收: ${vm.dataStats['完整原始数据']} | 容量: ${vm.dataStats['原始数据容量']}$retentionStatus | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}'
+                            : '编码: ${vm.textEncoding} | 原始容量: ${vm.dataStats['原始数据容量']}$retentionStatus | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}',
+                        style: TextStyle(fontSize: 11, color: retentionColor),
                       ),
                     ),
                   ),

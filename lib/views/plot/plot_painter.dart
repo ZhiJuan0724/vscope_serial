@@ -135,7 +135,7 @@ class PlotLayerPainter extends CustomPainter {
   final int overlayRevision;
 
   /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
-  final PlotLodIndex? lodIndex;
+  final PlotLodSource? lodIndex;
 
   /// 大范围历史绘制时使用的 LOD 质量策略。
   final PlotLodQuality lodQuality;
@@ -874,7 +874,7 @@ class PlotLayerPainter extends CustomPainter {
       final lodSeries =
           canUseLod
               ? lodIndex?.query(
-                channelIndex: channelIndex,
+                channelIndex: channel.index,
                 xMin: viewport.xMin,
                 xMax: viewport.xMax,
                 plotWidth: viewport.plotWidth(size.width),
@@ -926,7 +926,7 @@ class PlotLayerPainter extends CustomPainter {
       );
     } else if (canUseLod && !channel.showLine) {
       final lodSeries = lodIndex?.query(
-        channelIndex: channelIndex,
+        channelIndex: channel.index,
         xMin: viewport.xMin,
         xMax: viewport.xMax,
         plotWidth: viewport.plotWidth(size.width),

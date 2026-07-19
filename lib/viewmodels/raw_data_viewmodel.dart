@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
+import '../data/models/retention_usage.dart';
 import '../services/serial_service.dart';
 import 'base_viewmodel.dart';
 
@@ -31,6 +32,7 @@ class RawDataViewModel extends BaseViewModel {
   bool get useRandomSource => serialService.useRandomSource;
   bool get isRawReceiving => serialService.isRawReceiving;
   bool get hasRawData => serialService.hasRawData;
+  RetentionUsage get rawRetentionUsage => serialService.rawRetentionUsage;
   int get autoLineBreakIntervalMs => serialService.autoLineBreakIntervalMs;
   int get displayLineLimit => serialService.displayLineLimit;
   String get textEncoding => serialService.textEncoding;
