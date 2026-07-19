@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 
@@ -140,4 +143,75 @@ void main() {
       expect(settings.yMax, 32768);
     },
   );
+
+  group('AppSettings file persistence', () {
+    late Directory temporaryDirectory;
+    late String settingsPath;
+    final settings = AppSettings();
+
+    setUp(() async {
+      temporaryDirectory = await Directory.systemTemp.createTemp(
+        'vscope_settings_test_',
+      );
+      settingsPath = '${temporaryDirectory.path}/settings.json';
+      await settings.debugInitializeAt(settingsPath);
+    });
+
+    tearDown(() async {
+      await settings.debugDetach();
+      if (await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+
+    test('连续保存合并后写入完整的最新快照', () async {
+      settings.baudRate = 9600;
+      final first = settings.save();
+      settings.dataBits = 7;
+      final second = settings.save();
+      settings.lastMainPage = 'plot';
+      final third = settings.save();
+
+      await Future.wait([first, second, third]);
+      await settings.flushPendingSave();
+      final decoded = jsonDecode(await File(settingsPath).readAsString());
+
+      expect(decoded['baudRate'], 9600);
+      expect(decoded['dataBits'], 7);
+      expect(decoded['lastMainPage'], 'plot');
+    });
+
+    test('截断主文件后自动恢复上一代备份', () async {
+      settings.baudRate = 9600;
+      await settings.save();
+      settings.baudRate = 57600;
+      await settings.save();
+      await File(settingsPath).writeAsString('{"baudRate":');
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.baudRate, 9600);
+      expect(settings.takeRecoveryNotice(), isNotNull);
+      expect(jsonDecode(await File(settingsPath).readAsString()), isA<Map>());
+    });
+
+    test('字段类型错误时不应用半套设置并恢复备份', () async {
+      settings
+        ..baudRate = 19200
+        ..lastMainPage = 'shell';
+      await settings.save();
+      settings
+        ..baudRate = 38400
+        ..lastMainPage = 'plot';
+      await settings.save();
+      await File(settingsPath).writeAsString(
+        jsonEncode({'baudRate': 'invalid', 'lastMainPage': 'plot'}),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.baudRate, 19200);
+      expect(settings.lastMainPage, 'shell');
+    });
+  });
 }

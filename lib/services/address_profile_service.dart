@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../core/utils/app_logger.dart';
+import '../core/utils/atomic_file.dart';
 import '../data/models/address_config_profile.dart';
+import 'app_notifications.dart';
 
 /// Zobow/r 协议共用的地址配置文件服务。
 ///
@@ -9,8 +12,14 @@ import '../data/models/address_config_profile.dart';
 /// 每个配置文件为一个独立的 JSON 文件。
 class AddressProfileService {
   final AddressProfileProtocolType protocolType;
+  final Directory? directoryOverride;
+  final AtomicFileCommitter fileCommitter;
 
-  AddressProfileService({this.protocolType = AddressProfileProtocolType.zobow});
+  AddressProfileService({
+    this.protocolType = AddressProfileProtocolType.zobow,
+    this.directoryOverride,
+    this.fileCommitter = const AtomicFileCommitter(),
+  });
 
   /// 配置文件目录名称
   static const String _configDirName = 'config';
@@ -51,7 +60,8 @@ class AddressProfileService {
     if (_initialized) return;
 
     final exeDir = File(Platform.resolvedExecutable).parent;
-    _configDir = Directory('${exeDir.path}/$_configDirName');
+    _configDir =
+        directoryOverride ?? Directory('${exeDir.path}/$_configDirName');
 
     if (!_configDir!.existsSync()) {
       _configDir!.createSync(recursive: true);
@@ -67,25 +77,63 @@ class AddressProfileService {
 
     if (_configDir == null || !_configDir!.existsSync()) return;
 
-    final files = _configDir!.listSync().whereType<File>().where(
-      (f) => f.path.endsWith(_fileExtension),
-    );
+    final targetPaths = <String>{};
+    for (final file in _configDir!.listSync().whereType<File>()) {
+      final lowerPath = file.path.toLowerCase();
+      if (lowerPath.endsWith(_fileExtension)) {
+        targetPaths.add(file.path);
+      } else if (lowerPath.endsWith('$_fileExtension.bak')) {
+        targetPaths.add(file.path.substring(0, file.path.length - 4));
+      }
+    }
 
-    for (final file in files) {
+    for (final path in targetPaths) {
       try {
-        final content = file.readAsStringSync();
-        final json = jsonDecode(content) as Map<String, dynamic>;
-        final profile = AddressConfigProfile.fromJson(json);
+        await fileCommitter.recoverMissingTarget(path);
+        final profile = await _readProfile(path);
         if (profile.protocolType == protocolType) {
           _profiles.add(profile);
         }
-      } catch (e) {
-        // 跳过损坏的配置文件
+      } catch (primaryError) {
+        try {
+          final profile = await _readProfile(fileCommitter.backupPath(path));
+          await fileCommitter.restoreBackup(path);
+          if (profile.protocolType == protocolType) _profiles.add(profile);
+          AppLogger().warning('地址配置损坏，已从备份恢复: $path', category: 'SETTINGS');
+          AppNotifications.show('一个地址配置文件损坏，已自动恢复上一份有效配置。');
+        } catch (backupError) {
+          AppLogger().warning(
+            '跳过损坏的地址配置: $path ($primaryError; $backupError)',
+            category: 'SETTINGS',
+          );
+        }
       }
     }
 
     // 按名称排序
     _profiles.sort((a, b) => a.name.compareTo(b.name));
+  }
+
+  Future<AddressConfigProfile> _readProfile(String path) async {
+    final decoded = jsonDecode(await File(path).readAsString());
+    if (decoded is! Map) throw const FormatException('地址配置根节点必须为对象');
+    final json = Map<String, dynamic>.from(decoded);
+    if (json['id'] is! String || (json['id'] as String).isEmpty) {
+      throw const FormatException('地址配置 ID 无效');
+    }
+    if (json['name'] is! String || json['presets'] is! List) {
+      throw const FormatException('地址配置字段类型错误');
+    }
+    for (final item in json['presets'] as List) {
+      if (item is! Map || item['name'] is! String || item['address'] is! num) {
+        throw const FormatException('地址条目字段类型错误');
+      }
+      final address = (item['address'] as num).toInt();
+      if (address < 0 || address > 0xFFFFFFFF) {
+        throw const FormatException('地址条目超出32位无符号范围');
+      }
+    }
+    return AddressConfigProfile.fromJson(json);
   }
 
   /// 创建新配置文件
@@ -108,8 +156,12 @@ class AddressProfileService {
   Future<void> _saveProfile(AddressConfigProfile profile) async {
     if (_configDir == null) return;
 
-    final file = File('${_configDir!.path}/${profile.id}$_fileExtension');
-    file.writeAsStringSync(profile.toJsonString());
+    final path = '${_configDir!.path}/${profile.id}$_fileExtension';
+    await fileCommitter.writeString(
+      path,
+      profile.toJsonString(),
+      keepBackup: true,
+    );
   }
 
   /// 更新并保存配置文件

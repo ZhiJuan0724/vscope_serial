@@ -130,6 +130,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final recoveryNotice = AppSettings().takeRecoveryNotice();
+      if (recoveryNotice != null) AppNotifications.show(recoveryNotice);
       unawaited(_handleStartupUpdates());
     });
   }
@@ -349,6 +351,7 @@ class _WindowCloseListener extends WindowListener {
     if (_isClosing) return;
     _isClosing = true;
     final serialService = Provider.of<SerialService>(context, listen: false);
+    await AppSettings().flushPendingSave();
     await serialService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();

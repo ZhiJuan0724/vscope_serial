@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import '../core/constants/plot_configuration.dart';
+import '../core/utils/app_logger.dart';
+import '../core/utils/atomic_file.dart';
 import '../data/models/address_config_profile.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
@@ -31,6 +34,14 @@ class AppSettings {
 
   /// 是否已完成初始化
   bool _initialized = false;
+
+  final AtomicFileCommitter _fileCommitter = const AtomicFileCommitter();
+  Timer? _saveDebounceTimer;
+  Completer<void>? _pendingSave;
+  Future<void> _saveChain = Future<void>.value();
+  String? _recoveryNotice;
+
+  static const Duration _saveDebounce = Duration(milliseconds: 200);
 
   // ========== 串口设置 ==========
   /// 上次连接成功的串口名称（启动时自动连接）
@@ -375,15 +386,43 @@ class AppSettings {
 
   /// 从配置文件加载所有设置
   ///
-  /// 文件不存在时使用默认值，解析失败时静默使用默认值。
+  /// 文件不存在时使用默认值；主文件损坏时优先恢复上一代备份。
   Future<void> _load() async {
     if (_settingsPath == null) return;
-    final file = File(_settingsPath!);
-    if (!file.existsSync()) return;
+    final path = _settingsPath!;
+    await _fileCommitter.recoverMissingTarget(path);
+    if (!await File(path).exists()) return;
+
+    late Map<String, dynamic> json;
+    try {
+      json = await _readValidatedSettings(path);
+    } catch (primaryError, primaryStack) {
+      final backupPath = _fileCommitter.backupPath(path);
+      try {
+        json = await _readValidatedSettings(backupPath);
+        await _fileCommitter.restoreBackup(path);
+        _recoveryNotice = '应用设置文件损坏，已自动恢复上一份有效设置。';
+        AppLogger().warning(
+          '应用设置损坏，已从备份恢复: $primaryError',
+          category: 'SETTINGS',
+        );
+      } catch (backupError, backupStack) {
+        _applyDefaults();
+        AppLogger().error(
+          '应用设置与备份均无法读取，已使用默认值',
+          category: 'SETTINGS',
+          error: backupError,
+          stackTrace: backupStack,
+        );
+        AppLogger().debug(
+          '主设置读取异常: $primaryError\n$primaryStack',
+          category: 'SETTINGS',
+        );
+        return;
+      }
+    }
 
     try {
-      final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
-
       // 串口设置
       lastPort = json['lastPort'] as String?;
       baudRate = json['baudRate'] as int? ?? 115200;
@@ -586,106 +625,306 @@ class AppSettings {
       if (storedMaxVisiblePoints != maxVisiblePoints) {
         await save();
       }
-    } catch (e) {
-      // 配置文件损坏，使用默认值
+    } catch (error, stackTrace) {
+      // 快照已完整校验；这里仍整体回退，避免未来新增归一化逻辑时留下半套状态。
+      _applyDefaults();
+      AppLogger().error(
+        '应用设置应用失败，已恢复默认值',
+        category: 'SETTINGS',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
+  }
+
+  Future<Map<String, dynamic>> _readValidatedSettings(String path) async {
+    final decoded = jsonDecode(await File(path).readAsString());
+    if (decoded is! Map) throw const FormatException('设置根节点必须为对象');
+    final snapshot = Map<String, dynamic>.from(decoded);
+    _validateSettingsSnapshot(snapshot);
+    return snapshot;
+  }
+
+  static void _validateSettingsSnapshot(Map<String, dynamic> json) {
+    const stringKeys = <String>{
+      'lastPort',
+      'lastMainPage',
+      'snapHighlightColorMode',
+      'plotLodQuality',
+      'gridDensity',
+      'plotBackground',
+      'parserType',
+      'sendProtocolType',
+      'receiveCustomProtocolId',
+      'sendCustomProtocolId',
+      'zobowProfileId',
+      'rProfileId',
+      'zobowPresetViewMode',
+      'updateChannel',
+      'updateSource',
+      'rawDataShellInputMode',
+      'rawDataTerminalFontFamily',
+      'rawDataShellTheme',
+      'rawDataShellCursor',
+      'shellEncoding',
+      'shellLineEnding',
+      'ymodemSaveDirectoryPolicy',
+      'rawDataEncoding',
+      'rawMultiSendProfileId',
+    };
+    const boolKeys = <String>{
+      'rts',
+      'dtr',
+      'plotFontBold',
+      'keepPlotOnRestart',
+      'snapHighlightEnabled',
+      'statsToolbarEnabled',
+      'triggerToolbarEnabled',
+      'previewToolbarEnabled',
+      'showGrid',
+      'observationClickToPlace',
+      'useRandomSource',
+      'followEnabled',
+      'rProtocolLooseChannelSettings',
+      'autoUpdateCheckEnabled',
+      'disableNotifications',
+      'rawDataShellMode',
+      'rawDataShellEnabled',
+      'shellEnabled',
+      'shellLocalEcho',
+    };
+    const integerKeys = <String>{
+      'baudRate',
+      'dataBits',
+      'stopBits',
+      'parity',
+      'refreshFps',
+      'plotFontSizeDelta',
+    };
+    const numberKeys = <String>{
+      'maxVisiblePoints',
+      'plotHistoryMemoryLimitGiB',
+      'discardInitialPacketCount',
+      'snapHighlightDiameter',
+      'floatingPanelOpacity',
+      'plotLegendPanelRight',
+      'plotLegendPanelTop',
+      'plotLiveValuesPanelRight',
+      'plotLiveValuesPanelTop',
+      'randomFrequency',
+      'followPositionRatio',
+      'yFitDisplayRatio',
+      'justFloatChannelCount',
+      'rawDataDisplayLineLimit',
+      'rawDataAutoLineBreakIntervalMs',
+      'rawDataTerminalFontSize',
+      'shellScrollbackLines',
+      'xMin',
+      'xMax',
+      'yMin',
+      'yMax',
+    };
+    const listKeys = <String>{
+      'mathChannels',
+      'rChannelAddresses',
+      'zobowChannelIds',
+      'zobowChannelTypes',
+      'channelPresetBindings',
+      'fixedFrameChannelTypes',
+    };
+
+    for (final entry in json.entries) {
+      final value = entry.value;
+      if (value == null) continue;
+      final valid = switch (entry.key) {
+        final key when stringKeys.contains(key) => value is String,
+        final key when boolKeys.contains(key) => value is bool,
+        final key when integerKeys.contains(key) => value is int,
+        final key when numberKeys.contains(key) => value is num,
+        final key when listKeys.contains(key) => value is List,
+        _ => true,
+      };
+      if (!valid) {
+        throw FormatException('设置字段 ${entry.key} 类型错误');
+      }
+    }
+
+    // 在修改实例字段前执行所有可能涉及嵌套结构的归一化。
+    MathChannelConfig.normalizeList(json['mathChannels']);
+    _normalizeStringList(json['rChannelAddresses']);
+    _normalizeZobowChannelIds(json['zobowChannelIds']);
+    _normalizeChannelPresetBindings(json['channelPresetBindings']);
+    _normalizeDataTypeList(
+      json['zobowChannelTypes'],
+      length: ParserConfig.maxZobowChannelCount,
+      fallback: DataType.int16,
+    );
+    _normalizeDataTypeList(
+      json['fixedFrameChannelTypes'],
+      length: SendProtocolConfig.maxChannelCount,
+      fallback: DataType.uint16,
+    );
   }
 
   /// 保存所有设置到配置文件
   ///
-  /// 配置以 JSON 格式写入，覆盖原有内容。
-  Future<void> save() async {
-    if (_settingsPath == null) return;
-
-    final json = <String, dynamic>{
-      // 串口设置
-      'lastPort': lastPort,
-      'baudRate': baudRate,
-      'dataBits': dataBits,
-      'stopBits': stopBits,
-      'parity': parity,
-      'rts': rts,
-      'dtr': dtr,
-
-      // 绘图设置
-      'refreshFps': refreshFps,
-      'plotFontSizeDelta': plotFontSizeDelta,
-      'plotFontBold': plotFontBold,
-      'lastMainPage': lastMainPage,
-      'maxVisiblePoints': maxVisiblePoints,
-      'plotHistoryMemoryLimitGiB': plotHistoryMemoryLimitGiB,
-      'discardInitialPacketCount': discardInitialPacketCount,
-      'keepPlotOnRestart': keepPlotOnRestart,
-      'snapHighlightEnabled': snapHighlightEnabled,
-      'snapHighlightDiameter': snapHighlightDiameter,
-      'snapHighlightColorMode': snapHighlightColorMode,
-      'statsToolbarEnabled': statsToolbarEnabled,
-      'triggerToolbarEnabled': triggerToolbarEnabled,
-      'previewToolbarEnabled': previewToolbarEnabled,
-      'plotLodQuality': plotLodQuality,
-      'showGrid': showGrid,
-      'gridDensity': gridDensity,
-      'plotBackground': plotBackground,
-      'floatingPanelOpacity': floatingPanelOpacity,
-      'plotLegendPanelRight': plotLegendPanelRight,
-      'plotLegendPanelTop': plotLegendPanelTop,
-      'plotLiveValuesPanelRight': plotLiveValuesPanelRight,
-      'plotLiveValuesPanelTop': plotLiveValuesPanelTop,
-      'observationClickToPlace': observationClickToPlace,
-      'useRandomSource': useRandomSource,
-      'randomFrequency': randomFrequency,
-      'followEnabled': followEnabled,
-      'followPositionRatio': followPositionRatio,
-      'yFitDisplayRatio': yFitDisplayRatio,
-      'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
-      'parserType': parserType,
-      'sendProtocolType': sendProtocolType,
-      'receiveCustomProtocolId': receiveCustomProtocolId,
-      'sendCustomProtocolId': sendCustomProtocolId,
-      'rChannelAddresses': rChannelAddresses,
-      'rProtocolLooseChannelSettings': rProtocolLooseChannelSettings,
-      'justFloatChannelCount': justFloatChannelCount,
-      'zobowChannelIds': zobowChannelIds,
-      'zobowChannelTypes': zobowChannelTypes.map((type) => type.name).toList(),
-      'channelPresetBindings':
-          channelPresetBindings.map((binding) => binding.toJson()).toList(),
-      'fixedFrameChannelTypes':
-          fixedFrameChannelTypes.map((type) => type.name).toList(),
-      'zobowProfileId': zobowProfileId,
-      'rProfileId': rProfileId,
-      'zobowPresetViewMode': zobowPresetViewMode,
-      'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
-      'updateChannel': updateChannel,
-      'updateSource': updateSource,
-      'disableNotifications': disableNotifications,
-      'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
-      'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
-      'rawDataShellMode': rawDataShellMode,
-      'rawDataShellEnabled': rawDataShellEnabled,
-      'rawDataShellInputMode': rawDataShellInputMode,
-      'rawDataTerminalFontSize': rawDataTerminalFontSize,
-      'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
-      'rawDataShellTheme': rawDataShellTheme,
-      'rawDataShellCursor': rawDataShellCursor,
-      'shellEnabled': rawDataShellEnabled,
-      'shellEncoding': shellEncoding,
-      'shellLineEnding': shellLineEnding,
-      'shellLocalEcho': shellLocalEcho,
-      'shellScrollbackLines': shellScrollbackLines,
-      'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
-      'rawDataEncoding': rawDataEncoding,
-      'rawMultiSendProfileId': rawMultiSendProfileId,
-
-      // 视口设置
-      'xMin': xMin,
-      'xMax': xMax,
-      'yMin': yMin,
-      'yMax': yMax,
-    };
-
-    final file = File(_settingsPath!);
-    file.writeAsStringSync(jsonEncode(json));
+  /// 200ms 内的连续修改合并为一次原子写入，所有写入保持严格串行。
+  Future<void> save() {
+    if (_settingsPath == null) return Future<void>.value();
+    _saveDebounceTimer?.cancel();
+    final pending = _pendingSave ??= Completer<void>();
+    _saveDebounceTimer = Timer(_saveDebounce, _enqueueSave);
+    return pending.future;
   }
+
+  void _enqueueSave() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+    final path = _settingsPath;
+    final pending = _pendingSave;
+    _pendingSave = null;
+    if (path == null || pending == null) return;
+    final content = jsonEncode(_toJson());
+    final write = _saveChain.then(
+      (_) => _fileCommitter.writeString(path, content, keepBackup: true),
+    );
+    _saveChain = write.catchError((Object _) {});
+    write.then<void>(
+      (_) => pending.complete(),
+      onError: (Object error, StackTrace stackTrace) {
+        pending.completeError(error, stackTrace);
+      },
+    );
+  }
+
+  /// 应用退出前提交尚在合并窗口内的设置，并等待串行写链结束。
+  Future<void> flushPendingSave() async {
+    if (_pendingSave != null) _enqueueSave();
+    await _saveChain;
+    if (_pendingSave != null) {
+      _enqueueSave();
+      await _saveChain;
+    }
+  }
+
+  /// 返回并清除本次启动期间的设置恢复提示。
+  String? takeRecoveryNotice() {
+    final notice = _recoveryNotice;
+    _recoveryNotice = null;
+    return notice;
+  }
+
+  /// 测试专用：在隔离目录重新加载单例，避免改写实际应用设置。
+  Future<void> debugInitializeAt(String settingsPath) async {
+    await flushPendingSave();
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+    _pendingSave = null;
+    _settingsPath = settingsPath;
+    _initialized = false;
+    _recoveryNotice = null;
+    _applyDefaults();
+    await _load();
+    _initialized = true;
+  }
+
+  /// 测试专用：解除文件路径并恢复内存默认值。
+  Future<void> debugDetach() async {
+    await flushPendingSave();
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+    _pendingSave = null;
+    _settingsPath = null;
+    _initialized = false;
+    _recoveryNotice = null;
+    _applyDefaults();
+  }
+
+  Map<String, dynamic> _toJson() => <String, dynamic>{
+    // 串口设置
+    'lastPort': lastPort,
+    'baudRate': baudRate,
+    'dataBits': dataBits,
+    'stopBits': stopBits,
+    'parity': parity,
+    'rts': rts,
+    'dtr': dtr,
+
+    // 绘图设置
+    'refreshFps': refreshFps,
+    'plotFontSizeDelta': plotFontSizeDelta,
+    'plotFontBold': plotFontBold,
+    'lastMainPage': lastMainPage,
+    'maxVisiblePoints': maxVisiblePoints,
+    'plotHistoryMemoryLimitGiB': plotHistoryMemoryLimitGiB,
+    'discardInitialPacketCount': discardInitialPacketCount,
+    'keepPlotOnRestart': keepPlotOnRestart,
+    'snapHighlightEnabled': snapHighlightEnabled,
+    'snapHighlightDiameter': snapHighlightDiameter,
+    'snapHighlightColorMode': snapHighlightColorMode,
+    'statsToolbarEnabled': statsToolbarEnabled,
+    'triggerToolbarEnabled': triggerToolbarEnabled,
+    'previewToolbarEnabled': previewToolbarEnabled,
+    'plotLodQuality': plotLodQuality,
+    'showGrid': showGrid,
+    'gridDensity': gridDensity,
+    'plotBackground': plotBackground,
+    'floatingPanelOpacity': floatingPanelOpacity,
+    'plotLegendPanelRight': plotLegendPanelRight,
+    'plotLegendPanelTop': plotLegendPanelTop,
+    'plotLiveValuesPanelRight': plotLiveValuesPanelRight,
+    'plotLiveValuesPanelTop': plotLiveValuesPanelTop,
+    'observationClickToPlace': observationClickToPlace,
+    'useRandomSource': useRandomSource,
+    'randomFrequency': randomFrequency,
+    'followEnabled': followEnabled,
+    'followPositionRatio': followPositionRatio,
+    'yFitDisplayRatio': yFitDisplayRatio,
+    'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
+    'parserType': parserType,
+    'sendProtocolType': sendProtocolType,
+    'receiveCustomProtocolId': receiveCustomProtocolId,
+    'sendCustomProtocolId': sendCustomProtocolId,
+    'rChannelAddresses': rChannelAddresses,
+    'rProtocolLooseChannelSettings': rProtocolLooseChannelSettings,
+    'justFloatChannelCount': justFloatChannelCount,
+    'zobowChannelIds': zobowChannelIds,
+    'zobowChannelTypes': zobowChannelTypes.map((type) => type.name).toList(),
+    'channelPresetBindings':
+        channelPresetBindings.map((binding) => binding.toJson()).toList(),
+    'fixedFrameChannelTypes':
+        fixedFrameChannelTypes.map((type) => type.name).toList(),
+    'zobowProfileId': zobowProfileId,
+    'rProfileId': rProfileId,
+    'zobowPresetViewMode': zobowPresetViewMode,
+    'autoUpdateCheckEnabled': autoUpdateCheckEnabled,
+    'updateChannel': updateChannel,
+    'updateSource': updateSource,
+    'disableNotifications': disableNotifications,
+    'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
+    'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
+    'rawDataShellMode': rawDataShellMode,
+    'rawDataShellEnabled': rawDataShellEnabled,
+    'rawDataShellInputMode': rawDataShellInputMode,
+    'rawDataTerminalFontSize': rawDataTerminalFontSize,
+    'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
+    'rawDataShellTheme': rawDataShellTheme,
+    'rawDataShellCursor': rawDataShellCursor,
+    'shellEnabled': rawDataShellEnabled,
+    'shellEncoding': shellEncoding,
+    'shellLineEnding': shellLineEnding,
+    'shellLocalEcho': shellLocalEcho,
+    'shellScrollbackLines': shellScrollbackLines,
+    'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
+    'rawDataEncoding': rawDataEncoding,
+    'rawMultiSendProfileId': rawMultiSendProfileId,
+
+    // 视口设置
+    'xMin': xMin,
+    'xMax': xMax,
+    'yMin': yMin,
+    'yMax': yMax,
+  };
 
   static List<String> _normalizeStringList(Object? value) {
     final values =
