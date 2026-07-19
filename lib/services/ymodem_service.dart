@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import '../core/utils/atomic_file.dart';
+
 enum YmodemDirection { send, receive }
 
 enum YmodemPacketSizeMode {
@@ -105,9 +107,12 @@ class YmodemService {
     required FutureOr<void> Function(Uint8List data) sendBytes,
     Duration packetTimeout = const Duration(seconds: 8),
     int maxRetries = 10,
+    int inputHighWaterBytes = 4 * 1024 * 1024,
   }) : _sendBytes = sendBytes,
        _packetTimeout = packetTimeout,
-       _maxRetries = maxRetries;
+       _maxRetries = maxRetries,
+       _inputHighWaterBytes = inputHighWaterBytes,
+       assert(inputHighWaterBytes > 0);
 
   static const int soh = 0x01;
   static const int stx = 0x02;
@@ -117,17 +122,23 @@ class YmodemService {
   static const int can = 0x18;
   static const int crcRequest = 0x43;
   static const int eof = 0x1A;
+  static const int maxFileSize = 4 * 1024 * 1024 * 1024;
 
   final FutureOr<void> Function(Uint8List data) _sendBytes;
   final Duration _packetTimeout;
   final int _maxRetries;
+  final int _inputHighWaterBytes;
   final _statusController = StreamController<YmodemTransferStatus>.broadcast();
-  final Queue<int> _incoming = Queue<int>();
+  final Queue<Uint8List> _incoming = Queue<Uint8List>();
 
   StreamSubscription<Uint8List>? _subscription;
   YmodemTransferStatus _status = const YmodemTransferStatus.idle();
   bool _cancelRequested = false;
-  Completer<int>? _pendingByte;
+  bool _inputOverloaded = false;
+  bool _overloadCanSent = false;
+  int _incomingOffset = 0;
+  int _incomingBytes = 0;
+  Completer<void>? _incomingSignal;
 
   Stream<YmodemTransferStatus> get statusStream => _statusController.stream;
   YmodemTransferStatus get status => _status;
@@ -140,16 +151,20 @@ class YmodemService {
 
   void addIncomingBytes(Uint8List data) {
     // 空闲时忽略 Shell 文本流，避免命令提示符被后续误读为文件头。
-    if (!isActive && _pendingByte == null) return;
-    for (final byte in data) {
-      final pending = _pendingByte;
-      if (pending != null && !pending.isCompleted) {
-        _pendingByte = null;
-        pending.complete(byte);
-      } else {
-        _incoming.add(byte);
-      }
+    if (data.isEmpty || (!isActive && _incomingSignal == null)) return;
+    if (_inputOverloaded) return;
+    if (_incomingBytes + data.length > _inputHighWaterBytes) {
+      _inputOverloaded = true;
+      _incoming.clear();
+      _incomingOffset = 0;
+      _incomingBytes = 0;
+      _notifyIncomingWaiter();
+      unawaited(_sendInputOverloadCan());
+      return;
     }
+    _incoming.add(data);
+    _incomingBytes += data.length;
+    _notifyIncomingWaiter();
   }
 
   Future<void> sendFile(
@@ -162,7 +177,6 @@ class YmodemService {
     RandomAccessFile? input;
     try {
       final fileSize = await file.length();
-      input = await file.open();
       final fileName = file.uri.pathSegments.last;
       _setStatus(
         YmodemTransferStatus(
@@ -175,6 +189,10 @@ class YmodemService {
           message: '等待接收方',
         ),
       );
+      if (fileSize < 0 || fileSize > maxFileSize) {
+        throw const YmodemException('YMODEM 文件大小必须在 0 到 4 GiB 之间');
+      }
+      input = await file.open();
       await _waitForByte(crcRequest, '等待接收方请求 CRC');
       await _sendPacket(_buildHeaderPacket(fileName, fileSize), 0);
       await _waitForByte(crcRequest, '等待数据请求');
@@ -237,6 +255,7 @@ class YmodemService {
     _cancelRequested = false;
     RandomAccessFile? output;
     File? target;
+    File? partFile;
     try {
       _setStatus(
         const YmodemTransferStatus(
@@ -270,7 +289,9 @@ class YmodemService {
         return null;
       }
       target = await _resolveReceiveFile(directory, metadata.fileName);
-      output = await target.open(mode: FileMode.write);
+      partFile = File('${target.path}.part');
+      if (await partFile.exists()) await partFile.delete();
+      output = await partFile.open(mode: FileMode.write);
       _setStatus(
         YmodemTransferStatus(
           direction: YmodemDirection.receive,
@@ -303,8 +324,11 @@ class YmodemService {
             throw const YmodemException('YMODEM 结束头无效');
           }
           await _sendByte(ack);
-          // 发送最终 ACK 后立即标记完成，确保对端回复数据
-          // 不会被 YMODEM 输入缓冲吞掉，而是正确路由到 Shell 终端
+          await output!.flush();
+          await output.close();
+          output = null;
+          await const AtomicFileCommitter().commitPart(target.path);
+          partFile = null;
           _setStatus(
             _status.copyWith(
               phase: YmodemPhase.completed,
@@ -313,7 +337,7 @@ class YmodemService {
               savedPath: target.path,
             ),
           );
-          break;
+          return target;
         }
         late final _YmodemPacket packet;
         try {
@@ -341,7 +365,7 @@ class YmodemService {
         final remaining = metadata.fileSize - written;
         final toWrite = math.min(packet.payload.length, math.max(remaining, 0));
         if (toWrite > 0) {
-          await output.writeFrom(packet.payload, 0, toWrite);
+          await output!.writeFrom(packet.payload, 0, toWrite);
           written += toWrite;
         }
         await _sendByte(ack);
@@ -354,11 +378,15 @@ class YmodemService {
         );
         expectedBlock++;
       }
-      await output.close();
-      output = null;
-      return target;
     } catch (error) {
-      await output?.close();
+      try {
+        await output?.close();
+      } catch (_) {}
+      if (partFile != null && await partFile.exists()) {
+        try {
+          await partFile.delete();
+        } catch (_) {}
+      }
       if (_cancelRequested) {
         _setStatus(
           _status.copyWith(phase: YmodemPhase.cancelled, message: '已取消'),
@@ -378,11 +406,7 @@ class YmodemService {
   Future<void> cancel() async {
     if (!isActive) return;
     _cancelRequested = true;
-    final pending = _pendingByte;
-    if (pending != null && !pending.isCompleted) {
-      _pendingByte = null;
-      pending.complete(can);
-    }
+    _notifyIncomingWaiter();
     try {
       await _sendBytes(Uint8List.fromList([can, can, can, can]));
     } catch (_) {
@@ -395,12 +419,10 @@ class YmodemService {
   void abort(String message) {
     if (!isActive) return;
     _cancelRequested = true;
-    final pending = _pendingByte;
-    if (pending != null && !pending.isCompleted) {
-      _pendingByte = null;
-      pending.complete(can);
-    }
     _incoming.clear();
+    _incomingOffset = 0;
+    _incomingBytes = 0;
+    _notifyIncomingWaiter();
     _setStatus(
       _status.copyWith(phase: YmodemPhase.cancelled, message: message),
     );
@@ -492,17 +514,16 @@ class YmodemService {
       can => throw const YmodemException('对端取消传输'),
       _ => throw YmodemException('未知 YMODEM 包头: ${_hex(start)}'),
     };
-    final block = await _readRequiredByte();
-    final complement = await _readRequiredByte();
+    // 一次等待并取出块号、负块号、完整 payload 和 CRC，避免每字节创建 Future。
+    final body = await _readRequiredBytes(size + 4);
+    final block = body[0];
+    final complement = body[1];
     if (((block + complement) & 0xFF) != 0xFF) {
       throw const YmodemException('YMODEM 块号校验失败');
     }
-    final payload = Uint8List(size);
-    for (var i = 0; i < size; i++) {
-      payload[i] = await _readRequiredByte();
-    }
-    final crcHigh = await _readRequiredByte();
-    final crcLow = await _readRequiredByte();
+    final payload = Uint8List.sublistView(body, 2, size + 2);
+    final crcHigh = body[size + 2];
+    final crcLow = body[size + 3];
     final expectedCrc = (crcHigh << 8) | crcLow;
     final actualCrc = crc16Ccitt(payload);
     if (actualCrc != expectedCrc) {
@@ -512,15 +533,9 @@ class YmodemService {
   }
 
   Future<int?> _readByteWithTimeout({bool allowTimeout = false}) async {
-    try {
-      if (_incoming.isNotEmpty) return _incoming.removeFirst();
-      final completer = _pendingByte = Completer<int>();
-      return await completer.future.timeout(_packetTimeout);
-    } on TimeoutException {
-      _pendingByte = null;
-      if (allowTimeout) return null;
-      throw const YmodemException('等待 YMODEM 数据超时');
-    }
+    final ready = await _waitForIncoming(1, allowTimeout: allowTimeout);
+    if (!ready) return null;
+    return _removeIncomingByte();
   }
 
   Future<int> _readRequiredByte() async {
@@ -531,21 +546,103 @@ class YmodemService {
     return byte;
   }
 
+  Future<Uint8List> _readRequiredBytes(int length) async {
+    await _waitForIncoming(length);
+    return _removeIncomingBytes(length);
+  }
+
+  Future<bool> _waitForIncoming(int length, {bool allowTimeout = false}) async {
+    while (_incomingBytes < length) {
+      _throwIfCancelled();
+      _throwIfInputOverloaded();
+      final signal = _incomingSignal ??= Completer<void>();
+      try {
+        await signal.future.timeout(_packetTimeout);
+      } on TimeoutException {
+        if (identical(_incomingSignal, signal)) _incomingSignal = null;
+        if (allowTimeout) return false;
+        throw const YmodemException('等待 YMODEM 数据超时');
+      }
+    }
+    _throwIfInputOverloaded();
+    return true;
+  }
+
+  int _removeIncomingByte() {
+    final chunk = _incoming.first;
+    final byte = chunk[_incomingOffset++];
+    _incomingBytes--;
+    if (_incomingOffset == chunk.length) {
+      _incoming.removeFirst();
+      _incomingOffset = 0;
+    }
+    return byte;
+  }
+
+  Uint8List _removeIncomingBytes(int length) {
+    final result = Uint8List(length);
+    var written = 0;
+    while (written < length) {
+      final chunk = _incoming.first;
+      final available = chunk.length - _incomingOffset;
+      final count = math.min(available, length - written);
+      result.setRange(written, written + count, chunk, _incomingOffset);
+      written += count;
+      _incomingOffset += count;
+      _incomingBytes -= count;
+      if (_incomingOffset == chunk.length) {
+        _incoming.removeFirst();
+        _incomingOffset = 0;
+      }
+    }
+    return result;
+  }
+
   Future<void> _sendByte(int byte) async {
     await _sendBytes(Uint8List.fromList([byte]));
   }
 
   void _resetIncomingBuffer() {
     _incoming.clear();
-    final pending = _pendingByte;
-    if (pending != null && !pending.isCompleted) {
-      pending.completeError(const YmodemException('YMODEM 输入已重置'));
-    }
-    _pendingByte = null;
+    _incomingOffset = 0;
+    _incomingBytes = 0;
+    _inputOverloaded = false;
+    _overloadCanSent = false;
+    _notifyIncomingWaiter();
   }
 
   void _throwIfCancelled() {
     if (_cancelRequested) throw const YmodemException('YMODEM 已取消');
+  }
+
+  void _throwIfInputOverloaded() {
+    if (_inputOverloaded) {
+      throw const YmodemException('YMODEM 输入过载，传输已终止');
+    }
+  }
+
+  void _notifyIncomingWaiter() {
+    final signal = _incomingSignal;
+    _incomingSignal = null;
+    if (signal != null && !signal.isCompleted) signal.complete();
+  }
+
+  Future<void> _sendInputOverloadCan() async {
+    if (_overloadCanSent) return;
+    _overloadCanSent = true;
+    try {
+      await _sendBytes(Uint8List.fromList([can, can, can, can]));
+    } catch (_) {
+      // 输入已不可恢复；即使串口同时断开，也必须保留本地过载失败状态。
+    }
+    if (isActive) {
+      _setStatus(
+        _status.copyWith(
+          phase: YmodemPhase.failed,
+          message: 'YMODEM 输入过载，传输已终止',
+        ),
+      );
+    }
   }
 
   void _setStatus(YmodemTransferStatus value) {
@@ -598,8 +695,11 @@ class YmodemService {
     final fields = String.fromCharCodes(rest).trim().split(RegExp(r'\s+'));
     final fileSize =
         fields.isEmpty || fields.first.isEmpty
-            ? 0
-            : int.tryParse(fields.first) ?? 0;
+            ? null
+            : int.tryParse(fields.first);
+    if (fileSize == null || fileSize < 0 || fileSize > maxFileSize) {
+      throw const YmodemException('YMODEM 文件大小无效或超过 4 GiB');
+    }
     return _YmodemHeader(fileName, fileSize);
   }
 

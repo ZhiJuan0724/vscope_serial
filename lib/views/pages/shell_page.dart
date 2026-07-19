@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -15,6 +14,7 @@ import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/app_notifications.dart';
 import '../../services/serial_service.dart';
+import '../../services/shell_receive_queue.dart';
 import '../../services/shell_stream_decoder.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/shell_viewmodel.dart';
@@ -25,7 +25,10 @@ import '../widgets/common_widgets.dart';
 /// 高频串口回调只进入 [_receiveQueue]，终端更新限制为每帧一次且每帧最多
 /// 消费 64 KiB，避免小包风暴反复触发布局、绘制和滚动。
 class ShellPage extends StatefulWidget {
-  const ShellPage({super.key});
+  const ShellPage({super.key, this.receiveQueueLimitBytes = 256 * 1024 * 1024});
+
+  /// Shell UI 尚未消费的接收数据上限；测试可注入较小值验证过载路径。
+  final int receiveQueueLimitBytes;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
@@ -51,11 +54,10 @@ class _ShellPageState extends State<ShellPage> {
   final TextEditingController _lineController = TextEditingController();
   final FocusNode _lineFocusNode = FocusNode(debugLabel: 'shellLineInput');
   final FocusNode _terminalFocusNode = FocusNode(debugLabel: 'shellTerminal');
-  final Queue<Uint8List> _receiveQueue = Queue<Uint8List>();
+  late final ShellReceiveQueue _receiveQueue;
   final List<String> _commandHistory = <String>[];
   StreamSubscription<Uint8List>? _receiveSubscription;
   ShellViewModel? _viewModel;
-  int _receiveQueueOffset = 0;
   int _receivedBytes = 0;
   int _newOutputBytes = 0;
   int _historyIndex = 0;
@@ -63,11 +65,13 @@ class _ShellPageState extends State<ShellPage> {
   bool _terminalSizeUpdateScheduled = false;
   bool _terminalAtBottom = true;
   String _ansiDetectionTail = '';
+  DateTime? _lastOverflowWarningAt;
 
   @override
   void initState() {
     super.initState();
     final settings = context.read<ShellViewModel>();
+    _receiveQueue = ShellReceiveQueue(maxBytes: widget.receiveQueueLimitBytes);
     _terminal = _createTerminal(settings.scrollbackLines);
     _decoder = ShellStreamDecoder(settings.encoding);
     _terminalScrollController.addListener(_handleScrollPosition);
@@ -124,8 +128,28 @@ class _ShellPageState extends State<ShellPage> {
 
   void _enqueueReceivedData(Uint8List data) {
     if (data.isEmpty) return;
-    _receiveQueue.add(data);
+    final dropped = _receiveQueue.add(data);
+    if (dropped > 0) _handleReceiveOverflow();
     _scheduleReceiveDrain();
+  }
+
+  void _handleReceiveOverflow() {
+    _decoder.reset(encoding: _viewModel?.encoding);
+    _ansiDetectionTail = '';
+    _terminalController.clearSelection();
+    // RIS 终止可能被截断的 ANSI 序列，避免丢块后终端长期处于错误样式。
+    _terminal.write('\x1bc');
+    final now = DateTime.now();
+    final previous = _lastOverflowWarningAt;
+    if (previous != null &&
+        now.difference(previous) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastOverflowWarningAt = now;
+    _terminal.write(
+      '\r\n[警告] Shell 接收过载，已丢弃最旧数据 '
+      '${_formatBytes(_receiveQueue.droppedBytes)}。\r\n',
+    );
   }
 
   void _scheduleReceiveDrain() {
@@ -144,27 +168,10 @@ class _ShellPageState extends State<ShellPage> {
     var consumed = 0;
     final output = StringBuffer();
     final followBottom = _isAtBottom;
-    while (remaining > 0 && _receiveQueue.isNotEmpty) {
-      final chunk = _receiveQueue.first;
-      final available = chunk.length - _receiveQueueOffset;
-      final count = available.clamp(0, remaining);
-      if (count == 0) break;
-      output.write(
-        _decoder.add(
-          Uint8List.sublistView(
-            chunk,
-            _receiveQueueOffset,
-            _receiveQueueOffset + count,
-          ),
-        ),
-      );
-      _receiveQueueOffset += count;
-      remaining -= count;
-      consumed += count;
-      if (_receiveQueueOffset == chunk.length) {
-        _receiveQueue.removeFirst();
-        _receiveQueueOffset = 0;
-      }
+    for (final chunk in _receiveQueue.removeUpTo(remaining)) {
+      output.write(_decoder.add(chunk));
+      remaining -= chunk.length;
+      consumed += chunk.length;
     }
     if (output.isNotEmpty) {
       final decoded = output.toString();
@@ -223,12 +230,12 @@ class _ShellPageState extends State<ShellPage> {
       return;
     }
     if (!vm.start()) return;
-    _receiveQueue.clear();
-    _receiveQueueOffset = 0;
+    _receiveQueue.reset();
     _receivedBytes = 0;
     _newOutputBytes = 0;
     _terminalAtBottom = true;
     _ansiDetectionTail = '';
+    _lastOverflowWarningAt = null;
     _decoder.reset(encoding: vm.encoding);
     _focusInputModeAfterLayout(vm.inputMode);
   }
@@ -778,6 +785,13 @@ class _ShellPageState extends State<ShellPage> {
               '接收 ${_formatBytes(_receivedBytes)}',
               key: const ValueKey('shell-received-bytes'),
             ),
+            if (_receiveQueue.droppedBytes > 0) ...[
+              const SizedBox(width: 16),
+              Text(
+                '丢弃 ${_formatBytes(_receiveQueue.droppedBytes)}',
+                key: const ValueKey('shell-dropped-bytes'),
+              ),
+            ],
             const Spacer(),
             if (!_isAtBottom) const Text('滚动锁定'),
           ],

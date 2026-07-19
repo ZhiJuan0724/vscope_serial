@@ -33,13 +33,17 @@ void main() {
     viewModel.dispose();
   });
 
-  Widget buildPage() {
+  Widget buildPage({int receiveQueueLimitBytes = 256 * 1024 * 1024}) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<SerialService>.value(value: service),
         ChangeNotifierProvider<ShellViewModel>.value(value: viewModel),
       ],
-      child: const MaterialApp(home: Scaffold(body: ShellPage())),
+      child: MaterialApp(
+        home: Scaffold(
+          body: ShellPage(receiveQueueLimitBytes: receiveQueueLimitBytes),
+        ),
+      ),
     );
   }
 
@@ -311,5 +315,28 @@ void main() {
     expect(receivedStatus().data, '接收 64.0 KiB');
     await tester.pump();
     expect(receivedStatus().data, '接收 70.0 KiB');
+  });
+
+  testWidgets('receive overload drops old blocks and reports Chinese warning', (
+    tester,
+  ) async {
+    service.isConnected = true;
+    await tester.pumpWidget(buildPage(receiveQueueLimitBytes: 8));
+    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.pump();
+
+    service.debugAddShellData(Uint8List.fromList([0xE4]));
+    service.debugAddShellData(Uint8List.fromList(List.filled(12, 65)));
+    await tester.pump();
+    await tester.pump();
+
+    final terminal = tester.widget<TerminalView>(find.byType(TerminalView));
+    expect(terminal.terminal.buffer.getText(), contains('Shell 接收过载'));
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('shell-dropped-bytes')))
+          .data,
+      '丢弃 5 B',
+    );
   });
 }
