@@ -4,6 +4,13 @@ import 'package:flutter/material.dart';
 
 import 'plot_viewport.dart';
 
+/// 定位条两端为选区描边预留的可视空间。
+const double kPlotLocatorHorizontalPadding = 6;
+
+double _locatorTrackInset(double width) {
+  return math.min(kPlotLocatorHorizontalPadding, math.max(0, (width - 1) / 2));
+}
+
 /// 用于在完整数据范围中快速定位当前主图 X 视口的紧凑定位条。
 class PlotLocatorBar extends StatefulWidget {
   final int pointCount;
@@ -28,14 +35,9 @@ class _PlotLocatorBarState extends State<PlotLocatorBar> {
 
   double _dataX(double screenX, double width) {
     final maxX = math.max(1, widget.pointCount - 1).toDouble();
-    return (screenX / width * maxX).clamp(0.0, maxX);
-  }
-
-  bool _isInFrame(Offset localPosition, double width) {
-    final maxX = math.max(1, widget.pointCount - 1).toDouble();
-    final left = widget.viewport.xMin.clamp(0.0, maxX) / maxX * width;
-    final right = widget.viewport.xMax.clamp(0.0, maxX) / maxX * width;
-    return localPosition.dx >= left && localPosition.dx <= right;
+    final inset = _locatorTrackInset(width);
+    final trackWidth = math.max(1.0, width - inset * 2);
+    return ((screenX - inset) / trackWidth * maxX).clamp(0.0, maxX);
   }
 
   void _finishDrag() {
@@ -52,7 +54,7 @@ class _PlotLocatorBarState extends State<PlotLocatorBar> {
           cursor:
               _draggingFrame
                   ? SystemMouseCursors.grabbing
-                  : SystemMouseCursors.click,
+                  : SystemMouseCursors.grab,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTapUp:
@@ -61,13 +63,13 @@ class _PlotLocatorBarState extends State<PlotLocatorBar> {
                   fromDrag: false,
                 ),
             onPanStart: (details) {
-              final isInFrame = _isInFrame(
-                details.localPosition,
-                constraints.maxWidth,
+              // 整条轨道都是拖动热区，避免数据量很大时窗口块
+              // 缩成几个像素后难以准确按中。
+              if (!_draggingFrame) setState(() => _draggingFrame = true);
+              widget.onNavigate(
+                _dataX(details.localPosition.dx, constraints.maxWidth),
+                fromDrag: true,
               );
-              if (_draggingFrame != isInFrame) {
-                setState(() => _draggingFrame = isInFrame);
-              }
             },
             onPanUpdate: (details) {
               if (!_draggingFrame) return;
@@ -77,9 +79,7 @@ class _PlotLocatorBarState extends State<PlotLocatorBar> {
               );
             },
             onPanEnd: (_) => _finishDrag(),
-            onPanCancel: () {
-              if (_draggingFrame) setState(() => _draggingFrame = false);
-            },
+            onPanCancel: _finishDrag,
             child: SizedBox.expand(
               child: RepaintBoundary(
                 child: CustomPaint(
@@ -116,24 +116,18 @@ class PlotLocatorBarPainter extends CustomPainter {
     if (size.width <= 1 || size.height <= 1) return;
 
     final railY = size.height / 2;
+    final trackInset = _locatorTrackInset(size.width);
+    final trackRight = size.width - trackInset;
     canvas.drawLine(
-      Offset(0, railY),
-      Offset(size.width, railY),
+      Offset(trackInset, railY),
+      Offset(trackRight, railY),
       Paint()
         ..color = const Color(0xFFC8CED6)
         ..strokeWidth = 2,
     );
 
-    if (pointCount > 1) {
-      final maxX = math.max(1, pointCount - 1).toDouble();
-      final left = xMin.clamp(0.0, maxX) / maxX * size.width;
-      final right = xMax.clamp(0.0, maxX) / maxX * size.width;
-      final frame = Rect.fromLTRB(
-        left,
-        5,
-        math.max(left + 8, right),
-        size.height - 5,
-      );
+    final frame = frameRectForSize(size);
+    if (frame != null) {
       canvas.drawRect(
         frame,
         Paint()..color = const Color(0xFF3F6EAA).withValues(alpha: 0.16),
@@ -153,6 +147,33 @@ class PlotLocatorBarPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1,
     );
+  }
+
+  /// 计算完整位于有效轨道内的视口框，确保两端描边不会被裁切。
+  @visibleForTesting
+  Rect? frameRectForSize(Size size) {
+    if (pointCount <= 1 || size.width <= 1 || size.height <= 1) return null;
+
+    final maxX = math.max(1, pointCount - 1).toDouble();
+    final trackInset = _locatorTrackInset(size.width);
+    final trackRight = size.width - trackInset;
+    final trackWidth = math.max(1.0, trackRight - trackInset);
+    final mappedLeft = trackInset + xMin.clamp(0.0, maxX) / maxX * trackWidth;
+    final mappedRight = trackInset + xMax.clamp(0.0, maxX) / maxX * trackWidth;
+    final minimumWidth = math.min(8.0, trackWidth);
+    final desiredLeft = math.min(mappedLeft, mappedRight);
+    final desiredRight = math.max(mappedLeft, mappedRight);
+
+    if (desiredRight - desiredLeft >= minimumWidth) {
+      return Rect.fromLTRB(desiredLeft, 5, desiredRight, size.height - 5);
+    }
+
+    final center = (desiredLeft + desiredRight) / 2;
+    final left =
+        (center - minimumWidth / 2)
+            .clamp(trackInset, trackRight - minimumWidth)
+            .toDouble();
+    return Rect.fromLTRB(left, 5, left + minimumWidth, size.height - 5);
   }
 
   @override

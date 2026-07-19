@@ -40,6 +40,16 @@ abstract interface class PlotLodSource {
     required double plotWidth,
     PlotLodQuality quality,
   });
+
+  /// 精确窗口暂未覆盖视口时，返回有界的粗略摘要。
+  ///
+  /// 该查询不受常规点密度门槛限制，用于异步换窗期间避免空白。
+  PlotLodSeries? queryCoarse({
+    required int channelIndex,
+    required double xMin,
+    required double xMax,
+    required double plotWidth,
+  });
 }
 
 /// 大规模绘图历史数据的内存级 LOD 索引。
@@ -161,8 +171,8 @@ class PlotLodIndex implements PlotLodSource {
     return level.query(channelIndex, xMin, xMax);
   }
 
-  /// 概览使用的全范围查询。即使数据量小于像素桶阈值，也返回桶级摘要。
-  PlotLodSeries? queryOverview({
+  @override
+  PlotLodSeries? queryCoarse({
     required int channelIndex,
     required double xMin,
     required double xMax,
@@ -179,8 +189,43 @@ class PlotLodIndex implements PlotLodSource {
       minBucketSize,
       ((xMax - xMin) / plotWidth).ceil(),
     );
-    return _selectLevel(targetBucketSize).query(channelIndex, xMin, xMax);
+    final preferred = _selectLevel(targetBucketSize);
+    final preferredResult = preferred.query(
+      channelIndex,
+      xMin,
+      xMax,
+      clipSamplesToRange: false,
+    );
+    if (preferredResult != null) return preferredResult;
+
+    // 高频采样可能跳过最细桶，逐级放大查询桶以确保
+    // 定位拖动时总有一个有界的趋势摘要可用。
+    final preferredIndex = _levels.indexOf(preferred);
+    for (var i = preferredIndex + 1; i < _levels.length; i++) {
+      final level = _levels[i];
+      final result = level.query(
+        channelIndex,
+        xMin,
+        xMax,
+        clipSamplesToRange: false,
+      );
+      if (result != null) return result;
+    }
+    return null;
   }
+
+  /// 概览的兼容入口，与精确窗口换载时的粗略查询共用实现。
+  PlotLodSeries? queryOverview({
+    required int channelIndex,
+    required double xMin,
+    required double xMax,
+    required double plotWidth,
+  }) => queryCoarse(
+    channelIndex: channelIndex,
+    xMin: xMin,
+    xMax: xMax,
+    plotWidth: plotWidth,
+  );
 
   _LodLevel _selectLevel(int targetBucketSize, {int finerLevelCount = 0}) {
     for (var index = 0; index < _levels.length; index++) {
@@ -255,7 +300,12 @@ class _LodLevel {
     _estimatedAllocatedBytes += bucket.estimatedAllocatedBytes - previousBytes;
   }
 
-  PlotLodSeries? query(int channelIndex, double xMin, double xMax) {
+  PlotLodSeries? query(
+    int channelIndex,
+    double xMin,
+    double xMax, {
+    bool clipSamplesToRange = true,
+  }) {
     if (_buckets.isEmpty) return null;
 
     final firstBucket = (xMin.floor() ~/ bucketSize).clamp(
@@ -288,6 +338,7 @@ class _LodLevel {
         indices,
         values,
         out,
+        clipSamplesToRange: clipSamplesToRange,
       );
     }
 
@@ -370,8 +421,9 @@ class _LodBucket {
     double xMax,
     Int32List indices,
     Float64List values,
-    int out,
-  ) {
+    int out, {
+    bool clipSamplesToRange = true,
+  }) {
     if (channelIndex >= _channelCount || _hasChannel[channelIndex] == 0) {
       return out;
     }
@@ -380,7 +432,7 @@ class _LodBucket {
     void append(int index, double value) {
       if (index == previousIndex) return;
       previousIndex = index;
-      if (index < xMin || index > xMax) return;
+      if (clipSamplesToRange && (index < xMin || index > xMax)) return;
       indices[out] = index;
       values[out] = value;
       out++;

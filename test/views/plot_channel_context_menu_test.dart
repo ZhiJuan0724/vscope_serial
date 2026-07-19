@@ -17,6 +17,7 @@ import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/widgets/common_widgets.dart';
+import 'package:vscope_serial/views/widgets/plot_status_bar.dart';
 
 void main() {
   final serialService = SerialService();
@@ -28,6 +29,7 @@ void main() {
     settings.rChannelAddresses = List.filled(16, '');
     settings.rProtocolLooseChannelSettings = false;
     settings.plotLodQuality = 'performance';
+    settings.plotHistoryMemoryLimitGiB = 2;
     settings.mathChannels = MathChannelConfig.createDefaults();
     settings.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
@@ -37,6 +39,40 @@ void main() {
   });
 
   tearDownAll(serialService.dispose);
+
+  testWidgets('绘图状态栏在窄窗口中单行截断长文本', (tester) async {
+    final vm = PlotViewModel(serialService);
+    for (var i = 0; i < 32; i++) {
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([i.toDouble()], bytesConsumed: 4),
+      );
+    }
+    vm.setVCursorEnabled(true);
+    vm.updateCursor(CursorState(x: 10, y: 10, hasData: true));
+
+    await tester.binding.setSurfaceSize(const Size(280, 80));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(
+          home: Scaffold(bottomNavigationBar: PlotStatusBar()),
+        ),
+      ),
+    );
+
+    final status = tester.widget<Text>(
+      find.byKey(const ValueKey('plot-status-text')),
+    );
+    expect(status.maxLines, 1);
+    expect(status.overflow, TextOverflow.ellipsis);
+    expect(find.textContaining('Ch0:'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump();
+  });
 
   testWidgets('高级设置可切换大范围绘图质量', (tester) async {
     final vm = PlotViewModel(serialService);
@@ -78,6 +114,19 @@ void main() {
 
     expect(vm.lodQuality, PlotLodQuality.quality);
     expect(tester.getSize(qualitySelector).width, initialWidth);
+
+    await tester.tap(find.byKey(const ValueKey('settings-navigation-item-6')));
+    await tester.pumpAndSettle();
+    final retentionField = find.byKey(
+      const ValueKey('plot-retention-limit-field'),
+    );
+    expect(retentionField, findsOneWidget);
+    await tester.enterText(retentionField, '8');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(vm.plotRetentionLimitGiB, 8);
+    expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
+
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
   });

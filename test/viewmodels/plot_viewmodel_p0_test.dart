@@ -19,6 +19,7 @@ void main() {
         ..sendProtocolType = 'none'
         ..useRandomSource = false
         ..keepPlotOnRestart = false
+        ..plotHistoryMemoryLimitGiB = 2
         ..mathChannels = MathChannelConfig.createDefaults();
       vm = PlotViewModel(SerialService());
       vm.setParserType(ParserType.fireWater);
@@ -112,14 +113,17 @@ void main() {
 
       vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 250000));
       expect(vm.isWindowLoading, isTrue);
-      vm.updateViewport(vm.viewport.copyWith(xMin: 10000, xMax: 20000));
-      for (var i = 0; i < 20 && vm.isWindowLoading; i++) {
+      expect(vm.statusText, isNot(contains('精确窗口加载中')));
+      vm.updateViewport(vm.viewport.copyWith(xMin: 250000, xMax: 259999));
+      for (var i = 0; i < 100 && vm.isWindowLoading; i++) {
         await Future<void>.delayed(Duration.zero);
       }
 
       expect(vm.isWindowLoading, isFalse);
-      expect(vm.visibleStartIndex, 10000);
-      expect(vm.visiblePointCount, 10000);
+      expect(vm.visibleStartIndex, greaterThan(0));
+      expect(vm.visibleStartIndex, lessThanOrEqualTo(250000));
+      expect(vm.visibleStartIndex + vm.visiblePointCount, total);
+      expect(vm.visiblePointCount, lessThanOrEqualTo(250000));
     });
 
     test('math LOD and exact cursor use full history with channel offsets', () {

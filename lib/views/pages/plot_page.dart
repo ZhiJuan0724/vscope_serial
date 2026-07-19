@@ -764,6 +764,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           label: AppStrings.plot.randomSource,
           tooltip: AppStrings.plot.randomSource,
           selected: vm.useRandomSource,
+          activeColor: Colors.green,
           onPressed:
               canChangeSource
                   ? () => vm.setUseRandomSource(!vm.useRandomSource)
@@ -3870,6 +3871,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final maxVisibleController = TextEditingController(
       text: _formatCompactCount(vm.maxVisiblePoints),
     );
+    final plotRetentionLimitController = TextEditingController(
+      text: vm.plotRetentionLimitGiB.toString(),
+    );
     final discardInitialPacketController = TextEditingController(
       text: _formatCompactCount(vm.discardInitialPacketCount),
     );
@@ -4565,6 +4569,62 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                       const Divider(),
                       Text(
+                        AppStrings.plot.plotHistoryMemoryLimit,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              key: const ValueKey('plot-retention-limit-field'),
+                              controller: plotRetentionLimitController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: AppStrings.plot.unitGiB,
+                              ),
+                              onSubmitted: (value) {
+                                final gib = int.tryParse(value);
+                                if (gib != null) {
+                                  vm.setPlotRetentionLimitGiB(gib);
+                                  plotRetentionLimitController.text =
+                                      vm.plotRetentionLimitGiB.toString();
+                                  setState(() {});
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () {
+                              final gib = int.tryParse(
+                                plotRetentionLimitController.text,
+                              );
+                              if (gib != null) {
+                                vm.setPlotRetentionLimitGiB(gib);
+                                plotRetentionLimitController.text =
+                                    vm.plotRetentionLimitGiB.toString();
+                                setState(() {});
+                              }
+                            },
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.plotHistoryMemoryLimitHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      Text(
                         AppStrings.plot.plotWindowLimit,
                         style: const TextStyle(fontSize: 14),
                       ),
@@ -4703,6 +4763,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       refreshFpsController.dispose();
       snapDiameterController.dispose();
       maxVisibleController.dispose();
+      plotRetentionLimitController.dispose();
       discardInitialPacketController.dispose();
       followPositionController.dispose();
       yFitDisplayRatioController.dispose();

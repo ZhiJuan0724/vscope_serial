@@ -100,6 +100,7 @@ void main() {
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
       settings.plotLodQuality = 'performance';
+      settings.plotHistoryMemoryLimitGiB = 2;
       settings.mathChannels = MathChannelConfig.createDefaults();
       settings.keepPlotOnRestart = false;
       settings.plotLegendPanelRight = null;
@@ -1711,6 +1712,21 @@ void main() {
 
       expect(vm.lodQuality, PlotLodQuality.quality);
       expect(AppSettings().plotLodQuality, 'qualityHigh');
+    });
+
+    test('绘图历史内存上限限制在1到8GiB并保存', () {
+      expect(vm.plotRetentionLimitGiB, 2);
+
+      vm.setPlotRetentionLimitGiB(8);
+      expect(vm.plotRetentionLimitGiB, 8);
+      expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
+
+      vm.setPlotRetentionLimitGiB(9);
+      expect(vm.plotRetentionLimitGiB, 8);
+
+      vm.setPlotRetentionLimitGiB(0);
+      expect(vm.plotRetentionLimitGiB, 1);
+      expect(AppSettings().plotHistoryMemoryLimitGiB, 1);
     });
 
     test('拖动画布时自动关闭跟随', () {

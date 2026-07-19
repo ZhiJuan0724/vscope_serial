@@ -152,5 +152,29 @@ void main() {
       expect(series, isNotNull);
       expect(series!.length, lessThan(4000));
     });
+
+    test(
+      'coarse query bypasses density threshold during exact window load',
+      () {
+        final index = PlotLodIndex();
+        for (var i = 0; i < 2048; i++) {
+          index.add(i, [math.sin(i / 17)]);
+        }
+
+        expect(
+          index.query(channelIndex: 0, xMin: 500, xMax: 550, plotWidth: 800),
+          isNull,
+        );
+        final coarse = index.queryCoarse(
+          channelIndex: 0,
+          xMin: 500,
+          xMax: 550,
+          plotWidth: 800,
+        );
+
+        expect(coarse, isNotNull);
+        expect(coarse!.length, lessThanOrEqualTo(8));
+      },
+    );
   });
 }

@@ -456,5 +456,184 @@ void main() {
 
       expect(paintedPixels, greaterThan(0));
     });
+
+    testWidgets('小范围视口换载期间使用粗略LOD避免空白', (tester) async {
+      final lod = PlotLodIndex();
+      for (var i = 0; i < 20000; i++) {
+        lod.add(i, [math.sin(i / 31) * 40 + 50]);
+      }
+
+      final paintedPixels = await tester.runAsync(() async {
+        const size = Size(900, 180);
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.data,
+          viewport: PlotViewport(xMin: 3500, xMax: 3650, yMin: 0, yMax: 100),
+          data: const [],
+          lodIndex: lod,
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(900, 180);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        var count = 0;
+        for (var i = 3; i < bytes!.lengthInBytes; i += 4) {
+          if (bytes.getUint8(i) != 0) count++;
+        }
+        image.dispose();
+        return count;
+      });
+
+      expect(paintedPixels, greaterThan(0));
+    });
+
+    testWidgets('粗略LOD的边界连线不会绘制到主绘图区域外', (tester) async {
+      final lod = PlotLodIndex();
+      for (var i = 0; i < 20000; i++) {
+        lod.add(i, [math.sin(i / 31) * 40 + 50]);
+      }
+
+      final counts = await tester.runAsync(() async {
+        const width = 900;
+        const height = 180;
+        const size = Size(900, 180);
+        final viewport = PlotViewport(
+          xMin: 3500,
+          xMax: 3650,
+          yMin: 0,
+          yMax: 100,
+        );
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.data,
+          viewport: viewport,
+          data: const [],
+          lodIndex: lod,
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(width, height);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        var inside = 0;
+        var outside = 0;
+        for (var y = 0; y < height; y++) {
+          for (var x = 0; x < width; x++) {
+            final alpha = bytes!.getUint8((y * width + x) * 4 + 3);
+            if (alpha == 0) continue;
+            final inPlot =
+                x >= viewport.marginLeft &&
+                x < width - viewport.marginRight &&
+                y >= viewport.marginTop &&
+                y < height - viewport.marginBottom;
+            if (inPlot) {
+              inside++;
+            } else {
+              outside++;
+            }
+          }
+        }
+        image.dispose();
+        return (inside: inside, outside: outside);
+      });
+
+      expect(counts!.inside, greaterThan(0));
+      expect(counts.outside, 0);
+    });
+
+    testWidgets('快速换窗时悬停光标和提示框不会绘制到主绘图区域外', (tester) async {
+      final counts = await tester.runAsync(() async {
+        const width = 320;
+        const height = 180;
+        const size = Size(320, 180);
+        final viewport = PlotViewport(xMin: 0, xMax: 100, yMin: 0, yMax: 100);
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.overlay,
+          viewport: viewport,
+          data: const [],
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+          cursor: CursorState(
+            x: 50,
+            y: 50,
+            screenPosition: const Offset(310, 175),
+            channelValues: const [50],
+          ),
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(width, height);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        var inside = 0;
+        var outside = 0;
+        for (var y = 0; y < height; y++) {
+          for (var x = 0; x < width; x++) {
+            final alpha = bytes!.getUint8((y * width + x) * 4 + 3);
+            if (alpha == 0) continue;
+            final inPlot =
+                x >= viewport.marginLeft &&
+                x < width - viewport.marginRight &&
+                y >= viewport.marginTop &&
+                y < height - viewport.marginBottom;
+            if (inPlot) {
+              inside++;
+            } else {
+              outside++;
+            }
+          }
+        }
+        image.dispose();
+        return (inside: inside, outside: outside);
+      });
+
+      expect(counts!.inside, greaterThan(0));
+      expect(counts.outside, 0);
+    });
+
+    testWidgets('快速换窗后视口外的旧悬停光标不再绘制', (tester) async {
+      final paintedPixels = await tester.runAsync(() async {
+        const width = 320;
+        const height = 180;
+        const size = Size(320, 180);
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.overlay,
+          viewport: PlotViewport(xMin: 1000, xMax: 1100, yMin: 0, yMax: 100),
+          data: const [],
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+          cursor: CursorState(
+            x: 50,
+            y: 50,
+            screenPosition: const Offset(160, 90),
+            channelValues: const [50],
+          ),
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(width, height);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        var count = 0;
+        for (var i = 3; i < bytes!.lengthInBytes; i += 4) {
+          if (bytes.getUint8(i) != 0) count++;
+        }
+        image.dispose();
+        return count;
+      });
+
+      expect(paintedPixels, 0);
+    });
   });
 }

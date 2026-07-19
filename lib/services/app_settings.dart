@@ -70,6 +70,10 @@ class AppSettings {
   /// 绘图可导航范围上限（持久化键保持兼容）。
   int maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
 
+  /// 单次绘图历史的内存上限，单位 GiB，范围 1~8。
+  int plotHistoryMemoryLimitGiB =
+      PlotConfiguration.defaultHistoryMemoryLimitGiB;
+
   /// 每次开始绘图时丢弃的前置有效数据包数量。
   int discardInitialPacketCount = 0;
 
@@ -292,6 +296,7 @@ class AppSettings {
     plotFontBold = false;
     lastMainPage = 'rawData';
     maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
+    plotHistoryMemoryLimitGiB = PlotConfiguration.defaultHistoryMemoryLimitGiB;
     discardInitialPacketCount = 0;
     keepPlotOnRestart = false;
     snapHighlightEnabled = true;
@@ -406,6 +411,14 @@ class AppSettings {
               .clamp(
                 PlotConfiguration.minVisiblePointCount,
                 PlotConfiguration.maxVisiblePointCount,
+              )
+              .toInt();
+      plotHistoryMemoryLimitGiB =
+          ((json['plotHistoryMemoryLimitGiB'] as num?)?.toInt() ??
+                  PlotConfiguration.defaultHistoryMemoryLimitGiB)
+              .clamp(
+                PlotConfiguration.minHistoryMemoryLimitGiB,
+                PlotConfiguration.maxHistoryMemoryLimitGiB,
               )
               .toInt();
       discardInitialPacketCount =
@@ -600,6 +613,7 @@ class AppSettings {
       'plotFontBold': plotFontBold,
       'lastMainPage': lastMainPage,
       'maxVisiblePoints': maxVisiblePoints,
+      'plotHistoryMemoryLimitGiB': plotHistoryMemoryLimitGiB,
       'discardInitialPacketCount': discardInitialPacketCount,
       'keepPlotOnRestart': keepPlotOnRestart,
       'snapHighlightEnabled': snapHighlightEnabled,

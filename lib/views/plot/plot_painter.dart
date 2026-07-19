@@ -768,12 +768,27 @@ class PlotLayerPainter extends CustomPainter {
       viewportDataCount,
       plotW,
     );
+    final exactWindowCoversViewport = _exactWindowCoversViewport(
+      visibleIndices,
+    );
     final canUseLod =
         !useExactQualityBuckets &&
-        lodIndex?.canQuery(viewportDataCount, plotW) == true &&
+        lodIndex != null &&
+        !lodIndex!.isEmpty &&
+        (lodIndex!.canQuery(viewportDataCount, plotW) ||
+            !exactWindowCoversViewport) &&
         activeChannelCount > 0;
     final dataCount = visibleIndices.end - visibleIndices.start;
     final useMinMaxBuckets = dataCount > plotW;
+    final plotH = viewport.plotHeight(size.height);
+    if (plotW <= 0 || plotH <= 0) return;
+
+    // LOD 换窗预览会保留视口两侧的桶边界点用于连线，
+    // 数据层必须裁剪在主绘图矩形内，避免线段画入坐标轴或通道面板。
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTWH(viewport.marginLeft, viewport.marginTop, plotW, plotH),
+    );
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length && ch < activeChannelCount; ch++) {
@@ -795,6 +810,7 @@ class PlotLayerPainter extends CustomPainter {
         canUseLod,
       );
     }
+    canvas.restore();
   }
 
   bool _canUseExactQualityBuckets(
@@ -806,10 +822,15 @@ class PlotLayerPainter extends CustomPainter {
         plotWidth <= 0 ||
         viewportDataCount >
             plotWidth * PlotConfiguration.lodQualityExactMaxPointsPerPixel ||
-        visibleRange.start >= visibleRange.end) {
+        !_exactWindowCoversViewport(visibleRange)) {
       return false;
     }
 
+    return true;
+  }
+
+  bool _exactWindowCoversViewport(_Range visibleRange) {
+    if (visibleRange.start >= visibleRange.end || data.isEmpty) return false;
     final historyLength = lodIndex?.length ?? data.length;
     if (historyLength <= 0) return false;
     final expectedStart = viewport.xMin.ceil().clamp(0, historyLength - 1);
@@ -871,16 +892,7 @@ class PlotLayerPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..isAntiAlias = antiAliasEnabled;
 
-      final lodSeries =
-          canUseLod
-              ? lodIndex?.query(
-                channelIndex: channel.index,
-                xMin: viewport.xMin,
-                xMax: viewport.xMax,
-                plotWidth: viewport.plotWidth(size.width),
-                quality: lodQuality,
-              )
-              : null;
+      final lodSeries = canUseLod ? _queryLodSeries(channel.index, size) : null;
       if (lodSeries != null && lodSeries.isNotEmpty) {
         _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
       } else if (useMinMaxBuckets) {
@@ -925,13 +937,7 @@ class PlotLayerPainter extends CustomPainter {
         pointPaint,
       );
     } else if (canUseLod && !channel.showLine) {
-      final lodSeries = lodIndex?.query(
-        channelIndex: channel.index,
-        xMin: viewport.xMin,
-        xMax: viewport.xMax,
-        plotWidth: viewport.plotWidth(size.width),
-        quality: lodQuality,
-      );
+      final lodSeries = _queryLodSeries(channel.index, size);
       if (lodSeries != null && lodSeries.isNotEmpty) {
         final channelColor = _plotChannelColor(channel.color);
         final pointPaint =
@@ -942,6 +948,25 @@ class PlotLayerPainter extends CustomPainter {
         _drawChannelLodPoints(canvas, size, channel, lodSeries, pointPaint);
       }
     }
+  }
+
+  PlotLodSeries? _queryLodSeries(int channelIndex, Size size) {
+    final source = lodIndex;
+    if (source == null) return null;
+    final plotWidth = viewport.plotWidth(size.width);
+    return source.query(
+          channelIndex: channelIndex,
+          xMin: viewport.xMin,
+          xMax: viewport.xMax,
+          plotWidth: plotWidth,
+          quality: lodQuality,
+        ) ??
+        source.queryCoarse(
+          channelIndex: channelIndex,
+          xMin: viewport.xMin,
+          xMax: viewport.xMax,
+          plotWidth: plotWidth,
+        );
   }
 
   void _drawChannelLodSeries(
@@ -1606,19 +1631,33 @@ class PlotLayerPainter extends CustomPainter {
   void _drawCursor(Canvas canvas, Size size) {
     if (cursor == null) return;
 
+    final plotRect = Rect.fromLTWH(
+      viewport.marginLeft,
+      viewport.marginTop,
+      viewport.plotWidth(size.width),
+      viewport.plotHeight(size.height),
+    );
+    if (plotRect.width <= 0 || plotRect.height <= 0) return;
+
+    final sx = viewport.dataToScreenX(cursor!.x, size.width);
+    // 快速换窗时光标仍可能保留上一帧的数据坐标；旧坐标离开视口后不再绘制。
+    if (sx < plotRect.left || sx > plotRect.right) return;
+
     final cursorPaint =
         Paint()
           ..color = _palette.axisStrong
           ..strokeWidth = 1.0
           ..style = PaintingStyle.stroke;
 
-    final sx = viewport.dataToScreenX(cursor!.x, size.width);
+    canvas.save();
+    canvas.clipRect(plotRect);
     canvas.drawLine(
-      Offset(sx, PlotViewport().marginTop),
-      Offset(sx, size.height - PlotViewport().marginBottom),
+      Offset(sx, plotRect.top),
+      Offset(sx, plotRect.bottom),
       cursorPaint,
     );
-    _drawCursorTooltip(canvas, size, sx);
+    _drawCursorTooltip(canvas, plotRect);
+    canvas.restore();
   }
 
   /// 绘制垂直光标旁的各通道 Y 值 tooltip
@@ -1626,7 +1665,7 @@ class PlotLayerPainter extends CustomPainter {
   /// - 无数据（hasData=false）时整个 tooltip 不显示
   /// - 只显示有数据且 visible 的通道，不显示 "ChX: --"
   /// - 字体已放大以便阅读
-  void _drawCursorTooltip(Canvas canvas, Size size, double sx) {
+  void _drawCursorTooltip(Canvas canvas, Rect plotRect) {
     if (cursor?.screenPosition == null) return;
 
     final screenPos = cursor!.screenPosition!;
@@ -1677,28 +1716,38 @@ class PlotLayerPainter extends CustomPainter {
     });
     final desiredContentWidth =
         markerAndGapWidth + maxNameWidth + separatorWidth + maxValueWidth;
+    final availableWidth = plotRect.width - 10;
+    if (availableWidth <= 0) return;
     final tooltipWidth =
         math
             .min(
-              size.width - 10,
+              availableWidth,
               math.max(120, desiredContentWidth + padding * 2),
             )
             .toDouble();
     final tooltipHeight = rows.length * lineHeight + padding * 2 + headerHeight;
 
-    // 提示框位置（默认在鼠标右侧，超出边界时放到左侧）。
-    var tooltipX = screenPos.dx + 18;
-    var tooltipY = screenPos.dy + 18;
+    // 提示框锚点先限制在主绘图区，避免视口快速变化时沿用区域外的旧鼠标位置。
+    final anchorX =
+        screenPos.dx.clamp(plotRect.left, plotRect.right).toDouble();
+    final anchorY =
+        screenPos.dy.clamp(plotRect.top, plotRect.bottom).toDouble();
+    var tooltipX = anchorX + 18;
+    var tooltipY = anchorY + 18;
 
-    // 边界检查
-    if (tooltipX + tooltipWidth > size.width - 5) {
-      tooltipX = screenPos.dx - tooltipWidth - 10;
+    // 提示框只在主绘图区内翻转和限位，不占用坐标轴或定位条区域。
+    if (tooltipX + tooltipWidth > plotRect.right - 5) {
+      tooltipX = anchorX - tooltipWidth - 10;
     }
-    if (tooltipY + tooltipHeight > size.height - 5) {
-      tooltipY = screenPos.dy - tooltipHeight - 10;
+    if (tooltipY + tooltipHeight > plotRect.bottom - 5) {
+      tooltipY = anchorY - tooltipHeight - 10;
     }
-    tooltipX = tooltipX.clamp(5.0, size.width - tooltipWidth - 5);
-    tooltipY = tooltipY.clamp(5.0, size.height - tooltipHeight - 5);
+    final minimumX = plotRect.left + 5;
+    final minimumY = plotRect.top + 5;
+    final maximumX = math.max(minimumX, plotRect.right - tooltipWidth - 5);
+    final maximumY = math.max(minimumY, plotRect.bottom - tooltipHeight - 5);
+    tooltipX = tooltipX.clamp(minimumX, maximumX).toDouble();
+    tooltipY = tooltipY.clamp(minimumY, maximumY).toDouble();
 
     // 绘制背景
     final bgRect = RRect.fromRectAndRadius(

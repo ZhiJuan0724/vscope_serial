@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
@@ -121,6 +122,52 @@ void main() {
 
       expect(vm.visibleStartIndex, tailStart);
       expect(vm.dataPoints.length, total);
+    });
+
+    test('prefetches a full exact block and debounces drag reloads', () async {
+      final smallVm = PlotViewModel(
+        SerialService(),
+        materializedPointLimit: 100,
+      );
+      smallVm.setParserType(ParserType.zobow);
+      addTearDown(smallVm.dispose);
+      for (var i = 0; i < 300; i++) {
+        final frame = _zobowFrame(i);
+        smallVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(frame, smallVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: frame,
+          ),
+        );
+      }
+
+      smallVm.updateViewport(smallVm.viewport.copyWith(xMin: 10, xMax: 20));
+      expect(smallVm.visibleStartIndex, 0);
+      expect(smallVm.dataPoints, hasLength(100));
+
+      final prefetchedRevision = smallVm.dataRevision;
+      smallVm.updateViewport(
+        smallVm.viewport.copyWith(xMin: 30, xMax: 40),
+        fromDrag: true,
+      );
+      await Future<void>.delayed(
+        PlotConfiguration.locatorDragWindowLoadDebounce +
+            const Duration(milliseconds: 30),
+      );
+      expect(smallVm.dataRevision, prefetchedRevision);
+
+      smallVm.updateViewport(
+        smallVm.viewport.copyWith(xMin: 85, xMax: 95),
+        fromDrag: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(smallVm.visibleStartIndex, 0);
+      await Future<void>.delayed(
+        PlotConfiguration.locatorDragWindowLoadDebounce,
+      );
+      expect(smallVm.visibleStartIndex, 40);
+      expect(smallVm.dataPoints, hasLength(100));
     });
 
     test('clearData clears LOD index', () {

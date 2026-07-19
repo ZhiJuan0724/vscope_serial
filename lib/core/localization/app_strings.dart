@@ -1,3 +1,5 @@
+import '../constants/plot_configuration.dart';
+
 /// 集中管理固定 UI 文本。
 ///
 /// 这里使用普通 Dart 注册表而不是 XML，便于保持类型安全和重构便利。
@@ -215,15 +217,21 @@ final class _PlotStrings {
   String get snapHighlightColorMode => '吸附点颜色';
   String get snapHighlightColorCursor => '跟随光标线';
   String get snapHighlightColorChannel => '跟随各自通道';
+  String get plotHistoryMemoryLimit => '绘图历史内存上限';
   String get plotWindowLimit => '绘图窗口上限';
   String get droppedPackets => '丢弃包数';
   String get unitFps => 'fps';
   String get unitPixel => 'px';
   String get unitPacket => '包';
+  String get unitGiB => 'GiB';
 
   String get refreshFpsHelp => '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率';
   String get plotFontSizeHelp => '范围: -3~+6，影响绘图区坐标轴及所有悬浮窗字体大小';
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
+  String get plotHistoryMemoryLimitHelp =>
+      '范围: ${PlotConfiguration.minHistoryMemoryLimitGiB}~${PlotConfiguration.maxHistoryMemoryLimitGiB} GiB，'
+      '默认 ${PlotConfiguration.defaultHistoryMemoryLimitGiB} GiB。达到 80% 时预警，'
+      '达到上限时停止绘图并保留已有历史。';
 
   String plotWindowLimitHelp({
     required String min,
@@ -232,7 +240,7 @@ final class _PlotStrings {
     required String current,
   }) {
     return '范围: $min~$max 包，默认 $defaultValue 包。当前可见范围: $current 包。'
-        '可输入 1M、1.5M、10M；超过 250K 点时自动使用 LOD，历史达到 2 GiB 后停止绘图并保留已有数据。';
+        '可输入 1M、1.5M、10M；超过 250K 点时自动使用 LOD。';
   }
 
   String droppedPacketsHelp({required String max}) {

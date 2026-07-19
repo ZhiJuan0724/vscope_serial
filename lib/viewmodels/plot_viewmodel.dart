@@ -209,6 +209,7 @@ class PlotViewModel extends BaseViewModel {
   static const int maxDiscardInitialPacketCount =
       PlotConfiguration.maxDiscardInitialPacketCount;
   int _maxVisiblePoints = defaultVisiblePoints;
+  final int _materializedPointLimit;
   int _discardInitialPacketCount = 0;
   int _activeDiscardInitialPacketLimit = 0;
   int _discardedInitialPacketCount = 0;
@@ -239,10 +240,11 @@ class PlotViewModel extends BaseViewModel {
     packetSize: ParserConfig.fixedFrameDefault().totalFrameLength,
   );
 
-  static const int plotRetentionLimitBytes = 2 * 1024 * 1024 * 1024;
-  static const int plotEmergencyRssBytes = 4 * 1024 * 1024 * 1024;
+  static const int plotRetentionLimitBytes =
+      PlotConfiguration.defaultHistoryMemoryLimitBytes;
   static const double _retentionWarningRatio = 0.8;
-  final int _plotRetentionLimitBytes;
+  int _plotRetentionLimitBytes;
+  final bool _retentionLimitInjected;
   bool _plotRetentionWarningShown = false;
   bool _plotRetentionLimitReached = false;
   String? _plotRetentionStopReason;
@@ -252,6 +254,9 @@ class PlotViewModel extends BaseViewModel {
   bool _isWindowLoading = false;
   int _windowLoadGeneration = 0;
   int _pendingWindowPointCount = 0;
+  int? _pendingWindowStartIndex;
+  int? _pendingWindowEndIndex;
+  Timer? _dragWindowLoadTimer;
 
   /// 下一个数据点的索引序号（单调递增）
   int _nextIndex = 0;
@@ -524,7 +529,10 @@ class PlotViewModel extends BaseViewModel {
 
   int get _visibleTrimBatchSize {
     final byRatio = (effectiveMaterializedPointLimit / 32).round();
-    return byRatio.clamp(4096, 65536).toInt();
+    return math.min(
+      effectiveMaterializedPointLimit,
+      byRatio.clamp(4096, 65536).toInt(),
+    );
   }
 
   int get _lodSampleStep {
@@ -555,13 +563,30 @@ class PlotViewModel extends BaseViewModel {
   /// 创建 PlotViewModel 并初始化数据源管理器、加载设置、启动定时刷新
   PlotViewModel(
     super.serialService, {
-    int retentionLimitBytes = plotRetentionLimitBytes,
-  }) : _plotRetentionLimitBytes = retentionLimitBytes {
-    if (retentionLimitBytes <= 0) {
+    int? retentionLimitBytes,
+    int? materializedPointLimit,
+  }) : _materializedPointLimit =
+           materializedPointLimit ??
+           PlotConfiguration.maxMaterializedPointCount,
+       _retentionLimitInjected = retentionLimitBytes != null,
+       _plotRetentionLimitBytes =
+           retentionLimitBytes ??
+           AppSettings().plotHistoryMemoryLimitGiB *
+               PlotConfiguration.bytesPerGiB {
+    if (_plotRetentionLimitBytes <= 0) {
       throw ArgumentError.value(
-        retentionLimitBytes,
+        _plotRetentionLimitBytes,
         'retentionLimitBytes',
         'must be positive',
+      );
+    }
+    if (_materializedPointLimit <= 0 ||
+        _materializedPointLimit > PlotConfiguration.maxMaterializedPointCount) {
+      throw ArgumentError.value(
+        _materializedPointLimit,
+        'materializedPointLimit',
+        'must be between 1 and '
+            '${PlotConfiguration.maxMaterializedPointCount}',
       );
     }
     _sourceManager = DataSourceManager(serialService);
@@ -714,6 +739,9 @@ class PlotViewModel extends BaseViewModel {
     settings.plotFontSizeDelta = _plotFontSizeDelta;
     settings.plotFontBold = _plotFontBold;
     settings.maxVisiblePoints = _maxVisiblePoints;
+    if (!_retentionLimitInjected) {
+      settings.plotHistoryMemoryLimitGiB = plotRetentionLimitGiB;
+    }
     settings.discardInitialPacketCount = _discardInitialPacketCount;
     settings.snapHighlightEnabled = _snapHighlightEnabled;
     settings.snapHighlightDiameter = _snapHighlightDiameter;
@@ -1029,6 +1057,9 @@ class PlotViewModel extends BaseViewModel {
     );
   }
 
+  int get plotRetentionLimitGiB =>
+      _plotRetentionLimitBytes ~/ PlotConfiguration.bytesPerGiB;
+
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
   int? get minJumpXIndex => _nextIndex > 0 ? 0 : null;
@@ -1046,7 +1077,7 @@ class PlotViewModel extends BaseViewModel {
 
   int get effectiveMaxVisiblePoints => _maxVisiblePoints;
   int get effectiveMaterializedPointLimit =>
-      math.min(_maxVisiblePoints, PlotConfiguration.maxMaterializedPointCount);
+      math.min(_maxVisiblePoints, _materializedPointLimit);
 
   /// 每次开始绘图时丢弃的前置有效数据包数量。
   int get discardInitialPacketCount => _discardInitialPacketCount;
@@ -1429,9 +1460,6 @@ class PlotViewModel extends BaseViewModel {
     }
     if (_isPlotting) {
       buffer.write(' [运行中]');
-    }
-    if (_isWindowLoading) {
-      buffer.write(' [精确窗口加载中，当前显示 LOD]');
     }
     final usage = plotRetentionUsage;
     buffer.write(
@@ -2394,9 +2422,14 @@ class PlotViewModel extends BaseViewModel {
 
   bool _canAcceptPlotPoint(ParseResult result) {
     if (_plotRetentionLimitReached) return false;
-    if (_nextIndex % 4096 == 0 &&
-        ProcessInfo.currentRss >= plotEmergencyRssBytes) {
-      _reachPlotRetentionLimit('进程内存已达到 4 GiB 紧急保护线，绘图已停止');
+    final emergencyRssBytes = math.max(
+      PlotConfiguration.baseEmergencyRssLimitBytes,
+      _plotRetentionLimitBytes + PlotConfiguration.emergencyRssHeadroomBytes,
+    );
+    if (_nextIndex % 4096 == 0 && ProcessInfo.currentRss >= emergencyRssBytes) {
+      _reachPlotRetentionLimit(
+        '进程内存已达到 ${_formatRetentionBytes(emergencyRssBytes)} 紧急保护线，绘图已停止',
+      );
       return false;
     }
     if (_projectedAllocationFor(result) > _plotRetentionLimitBytes) {
@@ -2748,18 +2781,95 @@ class PlotViewModel extends BaseViewModel {
   }
 
   (int, int) _materializedWindowForRange(int start, int end, int total) {
-    final limit = effectiveMaterializedPointLimit;
-    if (end - start <= limit) return (start, end);
-    final center = start + (end - start) ~/ 2;
-    var materializedStart = center - limit ~/ 2;
-    materializedStart = materializedStart.clamp(0, math.max(0, total - limit));
-    return (materializedStart, math.min(total, materializedStart + limit));
+    if (total <= 0) return (0, 0);
+    final requestedStart = start.clamp(0, total);
+    final requestedEnd = end.clamp(requestedStart, total);
+    final count = math.min(total, effectiveMaterializedPointLimit);
+    final center = requestedStart + (requestedEnd - requestedStart) ~/ 2;
+    var materializedStart = center - count ~/ 2;
+    materializedStart = materializedStart.clamp(0, total - count);
+    return (materializedStart, materializedStart + count);
+  }
+
+  bool _windowKeepsRangePrefetched({
+    required int windowStart,
+    required int windowEnd,
+    required int requestedStart,
+    required int requestedEnd,
+    required int total,
+  }) {
+    if (requestedStart < windowStart || requestedEnd > windowEnd) return false;
+
+    final windowLength = windowEnd - windowStart;
+    final requestedLength = requestedEnd - requestedStart;
+    final spare = windowLength - requestedLength;
+    if (spare <= 0) return true;
+
+    final desiredMargin =
+        (windowLength * PlotConfiguration.materializedWindowReloadMarginRatio)
+            .round();
+    final margin = math.min(desiredMargin, spare ~/ 2);
+    final safeStart = windowStart == 0 ? windowStart : windowStart + margin;
+    final safeEnd = windowEnd == total ? windowEnd : windowEnd - margin;
+    return requestedStart >= safeStart && requestedEnd <= safeEnd;
+  }
+
+  bool _hasPrefetchedWindowForRange({
+    required int requestedStart,
+    required int requestedEnd,
+    required int total,
+  }) {
+    if (requestedEnd - requestedStart >= effectiveMaterializedPointLimit) {
+      final (targetStart, targetEnd) = _materializedWindowForRange(
+        requestedStart,
+        requestedEnd,
+        total,
+      );
+      final currentMatches =
+          _visibleStartIndex == targetStart && _visibleEndIndex == targetEnd;
+      final pendingMatches =
+          _isWindowLoading &&
+          _pendingWindowStartIndex == targetStart &&
+          _pendingWindowEndIndex == targetEnd;
+      if (currentMatches && _isWindowLoading && !pendingMatches) {
+        _cancelWindowLoad();
+      }
+      return currentMatches || pendingMatches;
+    }
+
+    final currentKeepsRange = _windowKeepsRangePrefetched(
+      windowStart: _visibleStartIndex,
+      windowEnd: _visibleEndIndex,
+      requestedStart: requestedStart,
+      requestedEnd: requestedEnd,
+      total: total,
+    );
+    final pendingStart = _pendingWindowStartIndex;
+    final pendingEnd = _pendingWindowEndIndex;
+    final pendingKeepsRange =
+        _isWindowLoading &&
+        pendingStart != null &&
+        pendingEnd != null &&
+        _windowKeepsRangePrefetched(
+          windowStart: pendingStart,
+          windowEnd: pendingEnd,
+          requestedStart: requestedStart,
+          requestedEnd: requestedEnd,
+          total: total,
+        );
+    if (currentKeepsRange && _isWindowLoading && !pendingKeepsRange) {
+      _cancelWindowLoad();
+    }
+    return currentKeepsRange || pendingKeepsRange;
   }
 
   void _cancelWindowLoad() {
+    _cancelDragWindowLoad();
     _windowLoadGeneration++;
     _isWindowLoading = false;
     _pendingWindowPointCount = 0;
+    _pendingWindowStartIndex = null;
+    _pendingWindowEndIndex = null;
   }
 
   void _rebuildWindowChunked(
@@ -2794,6 +2904,8 @@ class PlotViewModel extends BaseViewModel {
     final generation = ++_windowLoadGeneration;
     _isWindowLoading = true;
     _pendingWindowPointCount = count;
+    _pendingWindowStartIndex = start;
+    _pendingWindowEndIndex = start + count;
     Future.microtask(() {
       if (!_disposed) notifyListeners();
     });
@@ -2820,6 +2932,8 @@ class PlotViewModel extends BaseViewModel {
         if (!_disposed && generation == _windowLoadGeneration) {
           _isWindowLoading = false;
           _pendingWindowPointCount = 0;
+          _pendingWindowStartIndex = null;
+          _pendingWindowEndIndex = null;
           Future.microtask(() {
             if (!_disposed) notifyListeners();
           });
@@ -2833,6 +2947,8 @@ class PlotViewModel extends BaseViewModel {
       ..clear()
       ..addAll(points);
     _visibleStartIndex = start;
+    _pendingWindowStartIndex = null;
+    _pendingWindowEndIndex = null;
     _dataRevision++;
     _invalidateDisplayCaches();
   }
@@ -2840,19 +2956,27 @@ class PlotViewModel extends BaseViewModel {
   void _loadZobowWindowForViewport({bool force = false}) {
     if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
 
-    var start =
+    final requestedStart =
         viewport.xMin.floor().clamp(0, _zobowRawFrames.packetCount).toInt();
-    var end =
-        viewport.xMax.ceil().clamp(start, _zobowRawFrames.packetCount).toInt();
-    (start, end) = _materializedWindowForRange(
-      start,
-      end,
+    final requestedEnd =
+        viewport.xMax.floor().toInt().clamp(
+          0,
+          _zobowRawFrames.packetCount - 1,
+        ) +
+        1;
+    if (!force &&
+        _hasPrefetchedWindowForRange(
+          requestedStart: requestedStart,
+          requestedEnd: requestedEnd,
+          total: _zobowRawFrames.packetCount,
+        )) {
+      return;
+    }
+    final (start, end) = _materializedWindowForRange(
+      requestedStart,
+      requestedEnd,
       _zobowRawFrames.packetCount,
     );
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
 
     _rebuildWindowChunked(
       start,
@@ -2886,25 +3010,30 @@ class PlotViewModel extends BaseViewModel {
   void _loadFixedFrameWindowForViewport({bool force = false}) {
     if (_fixedFrameRawFrames.isEmpty) return;
 
-    var start =
+    final requestedStart =
         viewport.xMin
             .floor()
             .clamp(0, _fixedFrameRawFrames.packetCount)
             .toInt();
-    var end =
-        viewport.xMax
-            .ceil()
-            .clamp(start, _fixedFrameRawFrames.packetCount)
-            .toInt();
-    (start, end) = _materializedWindowForRange(
-      start,
-      end,
+    final requestedEnd =
+        viewport.xMax.floor().toInt().clamp(
+          0,
+          _fixedFrameRawFrames.packetCount - 1,
+        ) +
+        1;
+    if (!force &&
+        _hasPrefetchedWindowForRange(
+          requestedStart: requestedStart,
+          requestedEnd: requestedEnd,
+          total: _fixedFrameRawFrames.packetCount,
+        )) {
+      return;
+    }
+    final (start, end) = _materializedWindowForRange(
+      requestedStart,
+      requestedEnd,
       _fixedFrameRawFrames.packetCount,
     );
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
 
     _rebuildWindowChunked(
       start,
@@ -2919,17 +3048,23 @@ class PlotViewModel extends BaseViewModel {
   void _loadParsedWindowForViewport({bool force = false}) {
     if (_parsedHistory.isEmpty) return;
 
-    var start = viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
-    var end = viewport.xMax.ceil().clamp(start, _parsedHistory.length).toInt();
-    (start, end) = _materializedWindowForRange(
-      start,
-      end,
+    final requestedStart =
+        viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
+    final requestedEnd =
+        viewport.xMax.floor().toInt().clamp(0, _parsedHistory.length - 1) + 1;
+    if (!force &&
+        _hasPrefetchedWindowForRange(
+          requestedStart: requestedStart,
+          requestedEnd: requestedEnd,
+          total: _parsedHistory.length,
+        )) {
+      return;
+    }
+    final (start, end) = _materializedWindowForRange(
+      requestedStart,
+      requestedEnd,
       _parsedHistory.length,
     );
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
 
     _rebuildWindowChunked(
       start,
@@ -3386,7 +3521,10 @@ class PlotViewModel extends BaseViewModel {
   void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
     // 保存当前的偏移通道列宽，避免 copy() 丢失
     final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
-    if (!fromDrag) _cancelPendingDragViewportNotification();
+    if (!fromDrag) {
+      _cancelPendingDragViewportNotification();
+      _cancelDragWindowLoad();
+    }
     if (fromDrag && _followEnabled) {
       _followEnabled = false;
     }
@@ -3395,7 +3533,9 @@ class PlotViewModel extends BaseViewModel {
     }
     _setViewport(_limitXRange(newViewport, previous: viewport).copy());
     viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
-    if (!fromDrag) {
+    if (fromDrag) {
+      _scheduleDragWindowLoad();
+    } else {
       _loadWindowForViewport();
     }
     if (!fromDrag) _refreshSnapHighlightColors();
@@ -3419,6 +3559,7 @@ class PlotViewModel extends BaseViewModel {
   /// 最终视口保存到配置和历史记录。
   void saveDragViewport() {
     _cancelPendingDragViewportNotification();
+    _cancelDragWindowLoad();
     _saveViewport();
     _loadWindowForViewport();
     _refreshSnapHighlightColors();
@@ -3428,6 +3569,28 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
     Future.microtask(() => notifyListeners());
+  }
+
+  /// 定位条拖动期间只在鼠标短暂停顿后换载精确窗口。
+  ///
+  /// 连续移动时由 LOD 提供有界预览，避免每个指针事件都解析
+  /// 一整块精确数据；停住不松手也会自动补齐当前位置。
+  void _scheduleDragWindowLoad() {
+    if (_historyPointCount == 0) return;
+    _dragWindowLoadTimer?.cancel();
+    _dragWindowLoadTimer = Timer(
+      PlotConfiguration.locatorDragWindowLoadDebounce,
+      () {
+        _dragWindowLoadTimer = null;
+        if (_disposed) return;
+        _loadWindowForViewport();
+      },
+    );
+  }
+
+  void _cancelDragWindowLoad() {
+    _dragWindowLoadTimer?.cancel();
+    _dragWindowLoadTimer = null;
   }
 
   /// 指针事件可能高于显示器刷新率；拖动时只在下一帧通知 UI，
@@ -4456,6 +4619,33 @@ class PlotViewModel extends BaseViewModel {
     if (_keepPlotOnRestart == value) return;
     _keepPlotOnRestart = value;
     _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 设置单次绘图历史内存上限。
+  ///
+  /// 调低到当前已用量以下时立即进入容量停止状态；调高后若已有
+  /// 历史仍在新上限内，则重新允许继续绘图。
+  void setPlotRetentionLimitGiB(int value) {
+    final nextGiB = value.clamp(
+      PlotConfiguration.minHistoryMemoryLimitGiB,
+      PlotConfiguration.maxHistoryMemoryLimitGiB,
+    );
+    final nextBytes = nextGiB * PlotConfiguration.bytesPerGiB;
+    if (nextBytes == _plotRetentionLimitBytes) return;
+    _plotRetentionLimitBytes = nextBytes;
+    _saveSettings();
+
+    if (_estimatedPlotAllocatedBytes >= _plotRetentionLimitBytes) {
+      _resetPlotRetentionState();
+      _reachPlotRetentionLimit(
+        '绘图历史已达到 ${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限，绘图已停止',
+      );
+      return;
+    }
+
+    _resetPlotRetentionState();
+    _updatePlotRetentionWarning();
     Future.microtask(() => notifyListeners());
   }
 

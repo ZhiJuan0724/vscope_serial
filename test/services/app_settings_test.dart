@@ -14,6 +14,7 @@ void main() {
             ..plotFontBold = true
             ..lastMainPage = 'plot'
             ..maxVisiblePoints = 40000000
+            ..plotHistoryMemoryLimitGiB = 8
             ..discardInitialPacketCount = 8
             ..keepPlotOnRestart = true
             ..snapHighlightEnabled = false
@@ -80,6 +81,7 @@ void main() {
       expect(settings.plotFontBold, isFalse);
       expect(settings.lastMainPage, 'rawData');
       expect(settings.maxVisiblePoints, 1000000);
+      expect(settings.plotHistoryMemoryLimitGiB, 2);
       expect(settings.discardInitialPacketCount, 0);
       expect(settings.keepPlotOnRestart, isFalse);
       expect(settings.snapHighlightEnabled, isTrue);

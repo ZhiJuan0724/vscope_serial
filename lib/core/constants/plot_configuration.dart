@@ -108,8 +108,38 @@ abstract final class PlotConfiguration {
   /// Flutter 层同时物化的精确 PlotDataPoint 对象上限。
   static const int maxMaterializedPointCount = 250000;
 
+  /// 视口进入精确缓存边缘这一比例时，提前预取下一个窗口。
+  static const double materializedWindowReloadMarginRatio = 0.2;
+
+  /// 定位条拖动停顿达到该时间后，再开始加载精确窗口。
+  static const Duration locatorDragWindowLoadDebounce = Duration(
+    milliseconds: 120,
+  );
+
   /// 开始绘图时允许丢弃的前置有效数据包上限。
   static const int maxDiscardInitialPacketCount = 10000;
+
+  /// GiB 与字节之间的换算常量。
+  static const int bytesPerGiB = 1024 * 1024 * 1024;
+
+  /// 用户可配置的绘图历史内存下限。
+  static const int minHistoryMemoryLimitGiB = 1;
+
+  /// 绘图历史内存的默认上限。
+  static const int defaultHistoryMemoryLimitGiB = 2;
+
+  /// 用户可配置的绘图历史内存上限。
+  static const int maxHistoryMemoryLimitGiB = 8;
+
+  /// 默认绘图历史内存上限的字节数。
+  static const int defaultHistoryMemoryLimitBytes =
+      defaultHistoryMemoryLimitGiB * bytesPerGiB;
+
+  /// 默认进程 RSS 紧急保护线。
+  static const int baseEmergencyRssLimitBytes = 4 * bytesPerGiB;
+
+  /// 历史预算之外为界面、解析和导入等内存保留的 RSS 余量。
+  static const int emergencyRssHeadroomBytes = 2 * bytesPerGiB;
 
   /// 均衡和质量优先模式允许使用精确像素桶绘制的数据密度上限。
   ///
