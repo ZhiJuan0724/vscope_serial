@@ -40,6 +40,13 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Run native serial time tests
+        shell: pwsh
+        run: |
+          cmake -S windows/native_serial_reader -B build/native_serial_tests -DBUILD_TESTING=ON
+          cmake --build build/native_serial_tests --config Release --target native_serial_time_test
+          ctest --test-dir build/native_serial_tests -C Release --output-on-failure
+
       - name: Verify plot rebuild isolation
         run: flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METRICS=true
 

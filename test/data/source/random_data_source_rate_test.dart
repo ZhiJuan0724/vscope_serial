@@ -22,9 +22,9 @@ void main() {
         receivedData.add(data);
       });
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: durationMs));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final actualRate = receivedData.length * 1000 / durationMs;
@@ -54,9 +54,9 @@ void main() {
         receivedData.add(data);
       });
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: durationMs));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final actualRate = receivedData.length * 1000 / durationMs;

@@ -235,3 +235,18 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 
 - `-Preset`：测试场景集合，支持 `quick`（默认，快速覆盖典型负载）和 `soak`（长时间高负载测试）。
 - `-Label`：报告文件名标签，默认 `optimized`；只允许字母、数字、点、下划线和连字符。
+
+## P1 稳定性压测
+
+`run_p1_stability_soak.ps1` 独立执行不进入 CI 的大输入门禁：默认分别向
+FireWater/JustFloat 投入 `1 GiB` 无分隔噪声，并生成、导入约 `1 GiB` 的
+16 通道 BIN。临时导入文件默认在完成后删除。
+
+```bash
+pwsh -File test_tools/run_p1_stability_soak.ps1
+pwsh -File test_tools/run_p1_stability_soak.ps1 -NoiseGiB 2 -ImportGiB 2 -KeepImportFile
+```
+
+24 小时真实串口 soak 仍需虚拟串口或实体设备：使用本目录的
+`zobow_device.py`/`justfloat_device.py` 持续发送，期间执行断开、重连和拔插，
+结束后核对应用接收字节、原生连接周期汇总日志及系统内存曲线。

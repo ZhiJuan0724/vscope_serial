@@ -1,4 +1,5 @@
 #include "native_serial_reader.h"
+#include "native_time_utils.h"
 #include "dart_api_dl.h"
 
 #include <windows.h>
@@ -292,10 +293,8 @@ static DWORD CALLBACK port_notification_callback(
 static int64_t get_monotonic_time_us() {
     LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
-    const int64_t frequency = g_qpcFrequency.QuadPart;
-    const int64_t seconds = count.QuadPart / frequency;
-    const int64_t remainder = count.QuadPart % frequency;
-    return seconds * 1000000LL + (remainder * 1000000LL) / frequency;
+    return vscope::native_time::qpc_ticks_to_microseconds(
+        count.QuadPart, g_qpcFrequency.QuadPart);
 }
 
 static int64_t get_wall_clock_time_us() {
@@ -304,9 +303,7 @@ static int64_t get_wall_clock_time_us() {
     ULARGE_INTEGER ticks = {};
     ticks.LowPart = fileTime.dwLowDateTime;
     ticks.HighPart = fileTime.dwHighDateTime;
-    constexpr uint64_t kWindowsToUnixEpoch100ns = 116444736000000000ULL;
-    return static_cast<int64_t>(
-        (ticks.QuadPart - kWindowsToUnixEpoch100ns) / 10ULL);
+    return vscope::native_time::filetime_to_unix_microseconds(ticks.QuadPart);
 }
 
 static void update_max_read_block(uint64_t bytesRead) {

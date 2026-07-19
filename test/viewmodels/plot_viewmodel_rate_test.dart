@@ -57,5 +57,22 @@ void main() {
             '实际$pointCount包(达成率${achievement.toStringAsFixed(1)}%)',
       );
     });
+
+    test('运行中修改随机源频率不会清空现有绘图历史', () async {
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(100);
+      await vm.startPlotting();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final beforeUpdate = vm.pointCount;
+
+      vm.setRandomFrequency(1000);
+      expect(vm.pointCount, beforeUpdate);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final afterUpdate = vm.pointCount;
+      await vm.stopPlotting();
+
+      expect(beforeUpdate, greaterThan(0));
+      expect(afterUpdate, greaterThan(beforeUpdate));
+    });
   });
 }

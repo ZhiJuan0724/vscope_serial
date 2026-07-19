@@ -36,7 +36,7 @@ void main() {
         receivedData.add(data);
       });
 
-      source.start();
+      await source.start();
 
       // 等待 Isolate 启动完成
       await Future.delayed(const Duration(milliseconds: 20));
@@ -45,7 +45,7 @@ void main() {
       // 等待生成至少3包数据
       await Future.delayed(const Duration(milliseconds: 50));
 
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       // 验证收到了数据
@@ -75,12 +75,12 @@ void main() {
         receivedData.add(data);
       });
 
-      source.start();
+      await source.start();
 
       // 运行100ms，理论上应该生成约100包
       await Future.delayed(const Duration(milliseconds: 100));
 
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       // 允许一定误差，但至少应该生成50包以上
@@ -128,9 +128,9 @@ void main() {
       final receivedData = <Uint8List>[];
       final subscription = source.byteStream.listen(receivedData.add);
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: 30));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final packetCount = receivedData
@@ -154,9 +154,9 @@ void main() {
           }
         });
 
-        source.start();
+        await source.start();
         final data = await completer.future.timeout(const Duration(seconds: 1));
-        source.stop();
+        await source.stop();
         await subscription.cancel();
 
         final text = String.fromCharCodes(data);
@@ -177,9 +177,9 @@ void main() {
         receivedData.add(data);
       });
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: 30));
-      source.stop();
+      await source.stop();
 
       final countAfterStop = receivedData.length;
 
@@ -206,9 +206,9 @@ void main() {
         }
       });
 
-      source.start();
+      await source.start();
       final data = await completer.future.timeout(const Duration(seconds: 1));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final text = String.fromCharCodes(data);

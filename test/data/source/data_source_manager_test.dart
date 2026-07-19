@@ -31,9 +31,9 @@ void main() {
         receivedData.add(data);
       });
 
-      manager.start();
+      await manager.start();
       await Future.delayed(const Duration(milliseconds: durationMs));
-      manager.stop();
+      await manager.stop();
       await subscription.cancel();
 
       final actualRate = receivedData.length * 1000 / durationMs;
@@ -46,6 +46,37 @@ void main() {
             'Manager+1KHz随机源应达到90%速率(≥$minExpected包)，'
             '实际${receivedData.length}包(达成率${achievement.toStringAsFixed(1)}%)',
       );
+    });
+
+    test('并发生命周期操作串行收敛且停止后不再输出旧事件', () async {
+      final config = DataSourceConfig(
+        useSerial: false,
+        useRandom: true,
+        randomChannelCount: 4,
+        randomFrequencyHz: 1000,
+      );
+      final manager = DataSourceManager(serialService, config: config);
+      var received = 0;
+      final subscription = manager.byteStream.listen((_) => received++);
+
+      await Future.wait([
+        manager.start(),
+        manager.updateConfig(config.copyWith(randomFrequencyHz: 500)),
+        manager.stop(),
+      ]);
+      final countAfterStop = received;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(manager.isActive, isFalse);
+      expect(received, countAfterStop);
+
+      await manager.start();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(manager.isActive, isTrue);
+      expect(received, greaterThan(countAfterStop));
+      await manager.stop();
+      await subscription.cancel();
+      await manager.dispose();
     });
   });
 }

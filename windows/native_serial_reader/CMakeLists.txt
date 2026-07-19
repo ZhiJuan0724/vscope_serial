@@ -14,6 +14,16 @@ add_library(native_serial_reader SHARED
 target_compile_definitions(native_serial_reader PRIVATE NATIVE_SERIAL_READER_EXPORTS)
 target_compile_options(native_serial_reader PRIVATE /utf-8)
 
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(native_serial_time_test EXCLUDE_FROM_ALL
+    tests/native_serial_time_test.cpp
+    native_time_utils.h
+  )
+  target_compile_options(native_serial_time_test PRIVATE /utf-8)
+  add_test(NAME native_serial_time_test COMMAND native_serial_time_test)
+endif()
+
 # 链接 Windows 库
 target_link_libraries(native_serial_reader PRIVATE
   kernel32
