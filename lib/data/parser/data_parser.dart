@@ -4,6 +4,17 @@ import 'dart:typed_data';
 import '../models/parse_result.dart';
 import '../models/parser_config.dart';
 
+/// 解析器在错误输入下执行有界重同步的累计诊断信息。
+class ParserDiagnostics {
+  final int droppedBytes;
+  final int resyncCount;
+
+  const ParserDiagnostics({
+    required this.droppedBytes,
+    required this.resyncCount,
+  });
+}
+
 /// 数据解析器抽象接口
 abstract class IDataParser {
   /// 解析器配置
@@ -11,6 +22,10 @@ abstract class IDataParser {
 
   /// 解析结果输出流
   Stream<ParseResult> get outputStream;
+
+  /// 错误协议或损坏帧导致的累计丢弃信息。
+  ParserDiagnostics get diagnostics =>
+      const ParserDiagnostics(droppedBytes: 0, resyncCount: 0);
 
   /// 输入原始字节数据，并通过 [outputStream] 逐项发送结果。
   ///

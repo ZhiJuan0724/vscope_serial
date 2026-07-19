@@ -99,6 +99,29 @@ void main() {
       );
     });
 
+    test('运行中更新频率沿用当前数据流并立即生效', () async {
+      final source = RandomDataSource(channelCount: 4, frequencyHz: 10);
+      var packetCount = 0;
+      final subscription = source.byteStream.listen((data) {
+        packetCount += '\n'.allMatches(String.fromCharCodes(data)).length;
+      });
+
+      await source.start();
+      await Future.delayed(const Duration(milliseconds: 120));
+      final lowRateCount = packetCount;
+
+      await source.updateFrequency(1000);
+      await Future.delayed(const Duration(milliseconds: 120));
+      final highRateCount = packetCount - lowRateCount;
+
+      await source.stop();
+      await subscription.cancel();
+
+      expect(lowRateCount, lessThanOrEqualTo(3));
+      expect(highRateCount, greaterThanOrEqualTo(60));
+      expect(source.frequencyHz, 1000);
+    });
+
     test('100KHz 高频模式按批量数据生成', () async {
       final source = RandomDataSource(channelCount: 4, frequencyHz: 100000);
 

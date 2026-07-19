@@ -129,5 +129,20 @@ void main() {
       expect(results.length, 1);
       expect(results[0].success, false);
     });
+
+    test('超长残行保持有界并在换行后恢复', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+
+      parser.feedBatch(Uint8List(FireWaterParser.maxLineBytes + 1024));
+      final recovered = parser.feedBatch(
+        Uint8List.fromList('\n1,2,3,4\n'.codeUnits),
+      );
+
+      expect(parser.diagnostics.resyncCount, 1);
+      expect(parser.diagnostics.droppedBytes, greaterThan(0));
+      expect(recovered, hasLength(1));
+      expect(recovered.single.values, [1.0, 2.0, 3.0, 4.0]);
+    });
   });
 }

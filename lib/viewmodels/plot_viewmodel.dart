@@ -1636,7 +1636,7 @@ class PlotViewModel extends BaseViewModel {
         _parserConfig.fireWaterChannelCount > 0
             ? _parserConfig.fireWaterChannelCount
             : 4;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sourceManager.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '随机源${value ? '启用' : '关闭'}，解析器=${_parserType.label}，'
@@ -1660,17 +1660,13 @@ class PlotViewModel extends BaseViewModel {
     final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000).toInt();
     _sourceConfig.randomFrequencyHz = clampedHz;
     _sourceConfig.randomIntervalMs = intervalMs;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sourceManager.updateRandomFrequency(clampedHz));
     _saveSettings();
     AppLogger().info(
       '随机源频率设置为 ${clampedHz.toInt()} Hz，生成间隔=${intervalMs}ms',
       category: 'PLOT',
     );
 
-    // 如果正在绘图，重启数据源以应用新频率
-    if (_isPlotting) {
-      _restartPlotting();
-    }
     Future.microtask(() => notifyListeners());
   }
 
@@ -1883,7 +1879,7 @@ class PlotViewModel extends BaseViewModel {
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sourceManager.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '解析器配置已更新：协议=${_parserConfig.type.label}，'
@@ -2069,9 +2065,9 @@ class PlotViewModel extends BaseViewModel {
           _parserConfig.fireWaterChannelCount > 0
               ? _parserConfig.fireWaterChannelCount
               : 4;
-      _sourceManager.updateConfig(_sourceConfig);
+      await _sourceManager.updateConfig(_sourceConfig);
       _isPlotting = true;
-      _sourceManager.start();
+      await _sourceManager.start();
 
       // 连接数据源 → 解析器 → 数据缓冲区。
       // 一个原始字节块内的多帧结果直接批量消费，避免每包经过一次 Stream 调度。
@@ -2123,7 +2119,7 @@ class PlotViewModel extends BaseViewModel {
     }
     _parseSubscription = null;
     try {
-      _sourceManager.stop();
+      await _sourceManager.stop();
     } catch (cleanupError) {
       AppLogger().warning('绘图启动失败后停止数据源失败: $cleanupError', category: 'PLOT');
     }
@@ -2183,7 +2179,7 @@ class PlotViewModel extends BaseViewModel {
         }
         await _parseSubscription?.cancel();
         _parseSubscription = null;
-        _sourceManager.stop();
+        await _sourceManager.stop();
         _parser?.dispose();
         _parser = null;
       } catch (e) {
@@ -2266,14 +2262,6 @@ class PlotViewModel extends BaseViewModel {
 
   @visibleForTesting
   Future<void> autoConnectSerialForTest() => _autoConnectSerial();
-
-  /// 重启绘图（用于配置变更时）
-  void _restartPlotting() {
-    AppLogger().info('配置变更触发绘图重启', category: 'PLOT');
-    stopPlotting().then((_) {
-      if (!_disposed) unawaited(startPlotting());
-    });
-  }
 
   /// 清空所有数据、速率统计、视口和光标
   void clearData() {
@@ -5681,7 +5669,7 @@ class PlotViewModel extends BaseViewModel {
     _cancelPendingDragViewportNotification();
     _parseSubscription?.cancel();
     _parseSubscription = null;
-    _sourceManager.stop();
+    unawaited(_sourceManager.stop());
     _parser?.dispose();
     _parser = null;
     _isPlotting = false;
@@ -5695,7 +5683,7 @@ class PlotViewModel extends BaseViewModel {
     _notifyTimer = null;
     _pendingNotifyCount = 0;
     _stopRefreshTimer();
-    _sourceManager.dispose();
+    unawaited(_sourceManager.dispose());
     super.dispose();
   }
 }

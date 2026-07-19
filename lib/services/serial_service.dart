@@ -17,6 +17,7 @@ import 'app_settings.dart';
 import 'native_serial_reader.dart';
 import 'serial_port_catalog.dart';
 import 'serial_transport.dart';
+import 'shell_stream_decoder.dart';
 import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
 import 'windows_code_page_codec.dart';
@@ -454,6 +455,8 @@ class SerialService extends ChangeNotifier {
 
   // 文本收发编码（非 HEX 模式下生效）
   String _textEncoding = 'UTF-8';
+  final ShellStreamDecoder _rawTextDecoder = ShellStreamDecoder('UTF-8');
+  DateTime? _lastRawTextTimestamp;
 
   String get textEncoding => _textEncoding;
 
@@ -1191,8 +1194,9 @@ class SerialService extends ChangeNotifier {
       final prefix = showTimestamp ? '← [${_formatTimestamp(timestamp)}] ' : '';
       _addDisplayLine('$prefix$text (${data.length} bytes)');
     } else {
+      _lastRawTextTimestamp = timestamp;
       _addTextDataLines(
-        _decodeBytes(data),
+        _rawTextDecoder.add(data),
         timestamp: timestamp,
         isReceive: true,
       );
@@ -1588,6 +1592,7 @@ class SerialService extends ChangeNotifier {
     if (receiveHex == value) return;
     _flushAutoLineBreakWindow();
     receiveHex = value;
+    _rawTextDecoder.reset(encoding: _textEncoding);
     _resetTextLineBuffers();
     AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
@@ -1597,6 +1602,7 @@ class SerialService extends ChangeNotifier {
   void setTextEncoding(String encoding) {
     if (_textEncoding == encoding) return;
     _textEncoding = encoding;
+    _rawTextDecoder.reset(encoding: encoding);
     unawaited(_persistEncoding());
     _resetTextLineBuffers();
     AppLogger().info('文本收发编码切换为: $encoding', category: 'DATA');
@@ -1644,6 +1650,8 @@ class SerialService extends ChangeNotifier {
     _rawRetentionLimitShown = false;
     _receivedLines.clear();
     _receivedTextBytes = 0;
+    _rawTextDecoder.reset(encoding: _textEncoding);
+    _lastRawTextTimestamp = null;
     _resetTextLineBuffers();
     Future.microtask(() => notifyListeners());
   }
@@ -2054,6 +2062,7 @@ class SerialService extends ChangeNotifier {
   /// 停止接收原始数据
   void stopRawReceiving() {
     _flushAutoLineBreakWindow();
+    _flushRawTextDecoder();
     isRawReceiving = false;
     _releaseActivity(SerialActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
@@ -2106,7 +2115,10 @@ class SerialService extends ChangeNotifier {
 
   void _releaseActivity(SerialActivityOwner owner) {
     if (_activityOwner != owner) return;
-    if (owner == SerialActivityOwner.rawData) _flushAutoLineBreakWindow();
+    if (owner == SerialActivityOwner.rawData) {
+      _flushAutoLineBreakWindow();
+      _flushRawTextDecoder();
+    }
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
@@ -2115,11 +2127,28 @@ class SerialService extends ChangeNotifier {
   void _releaseAllActivities() {
     if (_activityOwner == SerialActivityOwner.rawData) {
       _flushAutoLineBreakWindow();
+      _flushRawTextDecoder();
     }
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
     if (ymodemService.isActive) ymodemService.abort('串口已断开');
+  }
+
+  void _flushRawTextDecoder() {
+    if (receiveHex) {
+      _rawTextDecoder.reset(encoding: _textEncoding);
+      return;
+    }
+    final text = _rawTextDecoder.flush();
+    if (text.isNotEmpty) {
+      _addTextDataLines(
+        text,
+        timestamp: _lastRawTextTimestamp ?? DateTime.now(),
+        isReceive: true,
+      );
+    }
+    _lastRawTextTimestamp = null;
   }
 
   @override

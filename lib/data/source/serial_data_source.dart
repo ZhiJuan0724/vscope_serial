@@ -22,7 +22,7 @@ class SerialDataSource implements IDataSource {
   String get name => '串口';
 
   @override
-  void start() {
+  Future<void> start() async {
     if (_subscription != null) return;
     _subscription = _serialService.dataStream.listen(
       (packet) {
@@ -37,13 +37,13 @@ class SerialDataSource implements IDataSource {
   }
 
   @override
-  void stop() {
-    _subscription?.cancel();
+  Future<void> stop() async {
+    await _subscription?.cancel();
     _subscription = null;
   }
 
-  void dispose() {
-    stop();
-    _controller.close();
+  Future<void> dispose() async {
+    await stop();
+    await _controller.close();
   }
 }

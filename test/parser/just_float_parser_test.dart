@@ -121,5 +121,21 @@ void main() {
       expect(result.success, isFalse);
       expect(result.error, contains('帧长度异常'));
     });
+
+    test('missing tail remains bounded and recovers at the next frame', () {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 2,
+      );
+      addTearDown(parser.dispose);
+
+      parser.feedBatch(Uint8List(4096));
+      parser.feedBatch(Uint8List.fromList(JustFloatParser.tail));
+      final result = parser.feedBatch(buildFrame([3, 4]));
+
+      expect(parser.diagnostics.resyncCount, 1);
+      expect(parser.diagnostics.droppedBytes, greaterThan(0));
+      expect(result, hasLength(1));
+      expect(result.single.values, [3.0, 4.0]);
+    });
   });
 }

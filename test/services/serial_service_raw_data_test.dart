@@ -80,6 +80,33 @@ void main() {
       },
     );
 
+    test('text mode preserves UTF-8 characters split across packets', () {
+      final bytes = utf8.encode('中文\n');
+
+      service.debugAddRawReceiveData(
+        Uint8List.fromList(bytes.take(1).toList()),
+      );
+      service.debugAddRawReceiveData(
+        Uint8List.fromList(bytes.skip(1).take(2).toList()),
+      );
+      service.debugAddRawReceiveData(
+        Uint8List.fromList(bytes.skip(3).toList()),
+      );
+
+      expect(service.receivedLines, ['中文']);
+    });
+
+    test('text mode preserves GBK characters split across packets', () {
+      service.setTextEncoding('GBK');
+      final bytes = gbk.encode('中文\n');
+
+      for (final byte in bytes) {
+        service.debugAddRawReceiveData(Uint8List.fromList([byte]));
+      }
+
+      expect(service.receivedLines, ['中文']);
+    });
+
     test('text mode shows receive marker only when timestamp is enabled', () {
       service.setShowTimestamp(true);
       service.debugAddRawReceiveData(

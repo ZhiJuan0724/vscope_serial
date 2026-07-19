@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../../core/constants/plot_configuration.dart';
@@ -12,15 +13,25 @@ import 'data_parser.dart';
 /// 帧内容为小端 float32 数组，末尾跟随 VOFA 帧尾：00 00 80 7F。
 class JustFloatParser extends IDataParser {
   static const List<int> tail = [0x00, 0x00, 0x80, 0x7F];
+  static const int maxPayloadBytes =
+      PlotConfiguration.rawChannelCount * Float32List.bytesPerElement;
 
   final _buffer = <int>[];
   final _controller = StreamController<ParseResult>.broadcast();
+  bool _discardingUntilTail = false;
+  int _droppedBytes = 0;
+  int _resyncCount = 0;
+  DateTime? _lastLimitLogAt;
 
   JustFloatParser([ParserConfig? config])
     : super(config ?? ParserConfig.justFloatDefault());
 
   @override
   Stream<ParseResult> get outputStream => _controller.stream;
+
+  @override
+  ParserDiagnostics get diagnostics =>
+      ParserDiagnostics(droppedBytes: _droppedBytes, resyncCount: _resyncCount);
 
   @override
   void feed(Uint8List data) {
@@ -34,49 +45,117 @@ class JustFloatParser extends IDataParser {
   @override
   List<ParseResult> feedBatch(Uint8List data) {
     try {
-      _buffer.addAll(data);
-      return _processBuffer();
+      final results = <ParseResult>[];
+      for (final byte in data) {
+        _buffer.add(byte);
+        if (_discardingUntilTail) {
+          _droppedBytes++;
+          if (_endsWithTail()) {
+            results.add(
+              ParseResult.fail(
+                'JustFloat通道数异常或帧长度超过最大值 $maxPayloadBytes 字节，已重新同步',
+              ),
+            );
+            _buffer.clear();
+            _discardingUntilTail = false;
+          } else if (_buffer.length > tail.length) {
+            _buffer.removeAt(0);
+          }
+          continue;
+        }
+        _processAvailableBuffer(results);
+      }
+      return results;
     } catch (e) {
       AppLogger().debug('JustFloat 解析异常: $e', category: 'PARSER');
       return const [];
     }
   }
 
-  List<ParseResult> _processBuffer() {
-    final results = <ParseResult>[];
-    var readOffset = 0;
-    while (_buffer.length - readOffset >= tail.length) {
-      final tailIndex = _indexOfTail(readOffset);
-      if (tailIndex < 0) {
-        break;
-      }
+  void _processAvailableBuffer(List<ParseResult> results) {
+    final configuredChannels = config.channelCount;
+    final expectedPayloadBytes =
+        configuredChannels * Float32List.bytesPerElement;
+    final maximumPayload =
+        configuredChannels > 0 ? expectedPayloadBytes : maxPayloadBytes;
 
-      final payloadLength = tailIndex - readOffset;
-      final payload = Uint8List(payloadLength);
-      for (var i = 0; i < payloadLength; i++) {
-        payload[i] = _buffer[readOffset + i];
+    if (configuredChannels > 0) {
+      final expectedFrameBytes = expectedPayloadBytes + tail.length;
+      if (_buffer.length < expectedFrameBytes) return;
+      if (_endsWithTail()) {
+        results.add(
+          _parsePayload(
+            Uint8List.fromList(_buffer.take(expectedPayloadBytes).toList()),
+          ),
+        );
+        _buffer.clear();
+        return;
       }
-      results.add(_parsePayload(payload));
-      readOffset = tailIndex + tail.length;
+      _enterResync();
+      return;
     }
-    if (readOffset > 0) {
-      _buffer.removeRange(0, readOffset);
+
+    if (_endsWithTail()) {
+      final payloadLength = _buffer.length - tail.length;
+      results.add(
+        _parsePayload(Uint8List.fromList(_buffer.take(payloadLength).toList())),
+      );
+      _buffer.clear();
+      return;
     }
-    return results;
+    if (_buffer.length > maximumPayload + tail.length) {
+      _enterResync();
+    }
   }
 
-  int _indexOfTail(int start) {
-    for (int i = start; i <= _buffer.length - tail.length; i++) {
-      var matched = true;
-      for (int j = 0; j < tail.length; j++) {
-        if (_buffer[i + j] != tail[j]) {
-          matched = false;
+  bool _endsWithTail() {
+    if (_buffer.length < tail.length) return false;
+    final start = _buffer.length - tail.length;
+    for (var i = 0; i < tail.length; i++) {
+      if (_buffer[start + i] != tail[i]) return false;
+    }
+    return true;
+  }
+
+  void _enterResync() {
+    final retainedSuffixLength = _tailPrefixSuffixLength();
+    final retained =
+        retainedSuffixLength == 0
+            ? const <int>[]
+            : _buffer.sublist(_buffer.length - retainedSuffixLength);
+    _droppedBytes += _buffer.length - retainedSuffixLength;
+    _buffer
+      ..clear()
+      ..addAll(retained);
+    _discardingUntilTail = true;
+    _resyncCount++;
+    final now = DateTime.now();
+    if (_lastLimitLogAt != null &&
+        now.difference(_lastLimitLogAt!) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastLimitLogAt = now;
+    AppLogger().warning(
+      'JustFloat 帧超过允许长度，已丢弃并等待下一处帧尾重新同步；'
+      '累计丢弃 $_droppedBytes 字节',
+      category: 'PARSER',
+    );
+  }
+
+  int _tailPrefixSuffixLength() {
+    final maximum = math.min(tail.length - 1, _buffer.length);
+    for (var length = maximum; length > 0; length--) {
+      var matches = true;
+      final start = _buffer.length - length;
+      for (var i = 0; i < length; i++) {
+        if (_buffer[start + i] != tail[i]) {
+          matches = false;
           break;
         }
       }
-      if (matched) return i;
+      if (matches) return length;
     }
-    return -1;
+    return 0;
   }
 
   ParseResult _parsePayload(Uint8List payload) {
@@ -113,6 +192,7 @@ class JustFloatParser extends IDataParser {
   @override
   void reset() {
     _buffer.clear();
+    _discardingUntilTail = false;
   }
 
   @override
