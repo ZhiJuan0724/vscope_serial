@@ -110,6 +110,10 @@ class UpdateDownloadException implements Exception {
   String toString() => message;
 }
 
+class _UpdateDownloadCancelled extends UpdateDownloadException {
+  const _UpdateDownloadCancelled() : super('下载已取消');
+}
+
 typedef ReleaseFetcher =
     Future<ReleaseInfo> Function(
       String tagName,
@@ -137,6 +141,7 @@ class UpdateService {
   final Directory? _updatesRootOverride;
   final UpdateRuntimeGuard _runtimeGuard;
   HttpClient? _downloadClient;
+  int _downloadGeneration = 0;
   static const _maxNetworkAttempts = 3;
 
   UpdateService({
@@ -157,9 +162,11 @@ class UpdateService {
     bool allowSourceFallback = true,
     required void Function(UpdateDownloadProgress progress) onProgress,
   }) async {
+    final generation = ++_downloadGeneration;
     return _runtimeGuard.runWithUpdateLock(
       () => _downloadAndPrepareLocked(
         checkedRelease,
+        generation: generation,
         channel: channel,
         allowSourceFallback: allowSourceFallback,
         onProgress: onProgress,
@@ -169,10 +176,12 @@ class UpdateService {
 
   Future<PreparedUpdate> _downloadAndPrepareLocked(
     ReleaseInfo checkedRelease, {
+    required int generation,
     required UpdateChannel channel,
     bool allowSourceFallback = true,
     required void Function(UpdateDownloadProgress progress) onProgress,
   }) async {
+    _throwIfDownloadCancelled(generation);
     if (!Platform.isWindows) {
       throw const UpdateDownloadException('自动安装目前仅支持 Windows');
     }
@@ -194,6 +203,7 @@ class UpdateService {
             : [checkedRelease.source];
     for (final source in sources) {
       try {
+        _throwIfDownloadCancelled(generation);
         final release =
             checkedRelease.source == source
                 ? checkedRelease
@@ -202,6 +212,7 @@ class UpdateService {
                   source,
                   channel,
                 );
+        _throwIfDownloadCancelled(generation);
         final manifestName = 'update-manifest-${checkedRelease.tagName}.json';
         final packageName =
             'vscope_serial-windows-${checkedRelease.tagName}.zip';
@@ -214,12 +225,14 @@ class UpdateService {
         final manifestBytes = await _bytesFetcher(
           Uri.parse(manifestAsset.downloadUrl),
         );
+        _throwIfDownloadCancelled(generation);
         final manifest = UpdateManifest.fromJson(
           _decodeJsonObject(utf8.decode(manifestBytes), '更新清单'),
         )..validateFor(release);
         await File(
           '${updateDir.path}/update-manifest.json',
         ).writeAsBytes(manifestBytes, flush: true);
+        _throwIfDownloadCancelled(generation);
         if (packageAsset.size > 0 &&
             packageAsset.size != manifest.packageSize) {
           throw const UpdateDownloadException('发布附件大小与更新清单不一致');
@@ -230,17 +243,21 @@ class UpdateService {
           packagePart,
           manifest.packageSize,
           onProgress,
+          generation,
         );
+        _throwIfDownloadCancelled(generation);
         if (await packagePart.length() != manifest.packageSize) {
           throw const UpdateDownloadException('更新包大小校验失败');
         }
         final digest = await _sha256File(packagePart);
+        _throwIfDownloadCancelled(generation);
         if (digest != manifest.sha256) {
           throw const UpdateDownloadException('更新包 SHA-256 校验失败');
         }
         if (await packageFile.exists()) await packageFile.delete();
         await packagePart.rename(packageFile.path);
         await extractPackageSafely(packageFile, payloadDir);
+        _throwIfDownloadCancelled(generation);
         _validatePayload(payloadDir, manifest);
         await File('${updateDir.path}/prepared.json').writeAsString(
           jsonEncode({
@@ -257,7 +274,11 @@ class UpdateService {
           updateDirectory: updateDir,
           payloadDirectory: payloadDir,
         );
+      } on _UpdateDownloadCancelled {
+        if (await packagePart.exists()) await packagePart.delete();
+        rethrow;
       } catch (error) {
+        _throwIfDownloadCancelled(generation);
         lastError = error;
         if (await packagePart.exists()) await packagePart.delete();
       }
@@ -268,8 +289,10 @@ class UpdateService {
   }
 
   void cancelDownload() {
-    _downloadClient?.close(force: true);
+    _downloadGeneration++;
+    final client = _downloadClient;
     _downloadClient = null;
+    client?.close(force: true);
   }
 
   Future<PreparedUpdate?> findPreparedUpdate(ReleaseInfo release) async {
@@ -552,15 +575,19 @@ class UpdateService {
     File destination,
     int total,
     void Function(UpdateDownloadProgress progress) onProgress,
+    int generation,
   ) async {
+    _throwIfDownloadCancelled(generation);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
     _downloadClient = client;
     try {
       final request = await client.getUrl(uri);
+      _throwIfDownloadCancelled(generation);
       request.headers.set(HttpHeaders.userAgentHeader, 'SerialTools Updater');
       final response = await request.close().timeout(
         const Duration(seconds: 15),
       );
+      _throwIfDownloadCancelled(generation);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('HTTP ${response.statusCode}', uri: uri);
       }
@@ -570,6 +597,7 @@ class UpdateService {
       var lastTime = DateTime.now();
       try {
         await for (final chunk in response) {
+          _throwIfDownloadCancelled(generation);
           sink.add(chunk);
           received += chunk.length;
           final now = DateTime.now();
@@ -589,6 +617,7 @@ class UpdateService {
             lastTime = now;
           }
         }
+        _throwIfDownloadCancelled(generation);
       } finally {
         await sink.close();
       }
@@ -603,20 +632,29 @@ class UpdateService {
     File destination,
     int total,
     void Function(UpdateDownloadProgress progress) onProgress,
+    int generation,
   ) async {
+    _throwIfDownloadCancelled(generation);
     final fileDownloader = _fileDownloader;
     if (fileDownloader != null) {
       await fileDownloader(uri, destination, total, onProgress);
+      _throwIfDownloadCancelled(generation);
       return;
     }
 
     Object? lastError;
     for (var attempt = 1; attempt <= _maxNetworkAttempts; attempt++) {
       try {
+        _throwIfDownloadCancelled(generation);
         if (await destination.exists()) await destination.delete();
-        await _download(uri, destination, total, onProgress);
+        await _download(uri, destination, total, onProgress, generation);
+        _throwIfDownloadCancelled(generation);
         return;
+      } on _UpdateDownloadCancelled {
+        if (await destination.exists()) await destination.delete();
+        rethrow;
       } catch (error) {
+        _throwIfDownloadCancelled(generation);
         lastError = error;
         if (await destination.exists()) await destination.delete();
         if (attempt == _maxNetworkAttempts) break;
@@ -626,6 +664,12 @@ class UpdateService {
     throw UpdateDownloadException(
       '更新包下载失败，已重试 $_maxNetworkAttempts 次：$lastError',
     );
+  }
+
+  void _throwIfDownloadCancelled(int generation) {
+    if (generation != _downloadGeneration) {
+      throw const _UpdateDownloadCancelled();
+    }
   }
 
   static Future<String> _sha256File(File file) async {

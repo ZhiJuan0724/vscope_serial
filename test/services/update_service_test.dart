@@ -246,6 +246,77 @@ void main() {
     );
   });
 
+  test('cancelled package download does not retry or fall back', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-update-test-');
+    addTearDown(() => root.delete(recursive: true));
+    const tag = 'v9.9.9-beta.1';
+    final package = _validPackage();
+    final manifest = utf8.encode(
+      jsonEncode({
+        'schemaVersion': 1,
+        'version': '9.9.9-beta.1',
+        'packageName': 'vscope_serial-windows-$tag.zip',
+        'packageSize': package.length,
+        'sha256': sha256.convert(package).toString(),
+        'executable': 'vscope_serial.exe',
+      }),
+    );
+    final release = ReleaseInfo(
+      tagName: tag,
+      htmlUrl: '',
+      source: 'GitHub',
+      body: '',
+      prerelease: true,
+      assets: [
+        ReleaseAsset(
+          name: 'update-manifest-$tag.json',
+          size: manifest.length,
+          downloadUrl: 'https://example.com/manifest',
+        ),
+        ReleaseAsset(
+          name: 'vscope_serial-windows-$tag.zip',
+          size: package.length,
+          downloadUrl: 'https://example.com/package',
+        ),
+      ],
+    );
+    var downloadAttempts = 0;
+    var fallbackAttempts = 0;
+    late final UpdateService service;
+    service = UpdateService(
+      updatesRoot: root,
+      releaseFetcher: (_, _, _) async {
+        fallbackAttempts++;
+        throw StateError('取消后不应切换来源');
+      },
+      bytesFetcher: (_) async => manifest,
+      fileDownloader: (_, destination, total, onProgress) async {
+        downloadAttempts++;
+        service.cancelDownload();
+        throw const HttpException('连接已取消');
+      },
+    );
+
+    await expectLater(
+      service.downloadAndPrepare(
+        release,
+        channel: UpdateChannel.beta,
+        onProgress: (_) {},
+      ),
+      throwsA(
+        isA<UpdateDownloadException>().having(
+          (error) => error.message,
+          'message',
+          '下载已取消',
+        ),
+      ),
+    );
+
+    expect(downloadAttempts, 1);
+    expect(fallbackAttempts, 0);
+    expect(File('${root.path}/$tag/package.zip.part').existsSync(), isFalse);
+  });
+
   test('download starts from checked release source', () async {
     final root = await Directory.systemTemp.createTemp('vscope-update-test-');
     addTearDown(() => root.delete(recursive: true));
