@@ -10,82 +10,10 @@ import '../../core/utils/plot_performance_metrics.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
+import 'plot_render_snapshot.dart';
 import 'plot_viewport.dart';
 
-/// 垂直光标状态（鼠标悬停跟随）
-class CursorState {
-  /// 光标 X 位置（数据坐标）
-  final double x;
-
-  /// 光标 Y 位置（数据坐标）
-  final double? y;
-
-  /// 鼠标屏幕位置（用于显示tooltip）
-  final Offset? screenPosition;
-
-  /// 各通道在光标X位置的Y值
-  final List<double>? channelValues;
-
-  /// 该X位置是否有实际数据
-  final bool hasData;
-
-  CursorState({
-    required this.x,
-    this.y,
-    this.screenPosition,
-    this.channelValues,
-    this.hasData = true,
-  });
-}
-
-class PlotObservation {
-  final CursorState cursor;
-  final String note;
-  final bool locked;
-
-  const PlotObservation({
-    required this.cursor,
-    this.note = '',
-    this.locked = false,
-  });
-
-  double get x => cursor.x;
-  double? get y => cursor.y;
-  Offset? get screenPosition => cursor.screenPosition;
-  List<double>? get channelValues => cursor.channelValues;
-  bool get hasData => cursor.hasData;
-
-  PlotObservation copyWith({CursorState? cursor, String? note, bool? locked}) {
-    return PlotObservation(
-      cursor: cursor ?? this.cursor,
-      note: note ?? this.note,
-      locked: locked ?? this.locked,
-    );
-  }
-}
-
-class SnapHighlightPoint {
-  final double x;
-  final double y;
-  final Color color;
-
-  const SnapHighlightPoint({
-    required this.x,
-    required this.y,
-    required this.color,
-  });
-}
-
-/// 网格密度枚举
-///
-/// - [sparse]: 每 160px 一条线（最稀疏）
-/// - [normal]: 每 80px 一条线（默认）
-/// - [dense]: 每 40px 一条线（最密集）
-enum GridDensity { sparse, normal, dense }
-
-enum PlotBackgroundStyle { dark, light }
-
-enum PlotPaintLayer { background, data, axis, overlay }
+export 'plot_render_snapshot.dart';
 
 class _PlotPalette {
   final Color background;
@@ -121,120 +49,105 @@ class PlotLayerPainter extends CustomPainter {
   static const double _invalidPointThresholdRatio = 0.5;
 
   final PlotPaintLayer layer;
+  final PlotRenderSnapshot snapshot;
 
-  /// 当前绘图视口
-  final PlotViewport viewport;
-
-  /// 数据点列表
-  final List<PlotDataPoint> data;
-
-  /// 数据版本，窗口长度不变但内容滚动时也会变化
-  final int dataRevision;
-  final int channelConfigRevision;
-  final int viewportRevision;
-  final int overlayRevision;
-
-  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放预览。
-  final PlotLodSource? lodIndex;
-
-  /// 大范围历史绘制时使用的 LOD 质量策略。
-  final PlotLodQuality lodQuality;
-
-  /// 通道配置列表
-  final List<ChannelConfig> channels;
-
-  /// 当前数据实际包含的活动通道数
-  final int activeChannelCount;
-
-  /// 是否显示网格
-  final bool showGrid;
-
-  /// 网格密度
-  final GridDensity gridDensity;
-
-  /// 绘图区背景风格
-  final PlotBackgroundStyle backgroundStyle;
-
-  /// 绘图区悬浮窗不透明度。
-  final double floatingPanelOpacity;
-
-  /// 垂直光标状态（鼠标悬停跟随）
-  final CursorState? cursor;
-
-  /// X-X 测量第一条线位置
-  final double? xCursor1;
-
-  /// X-X 测量第二条线位置
-  final double? xCursor2;
-
-  /// Y-Y 测量第一条线位置
-  final double? yCursor1;
-
-  /// Y-Y 测量第二条线位置
-  final double? yCursor2;
-
-  /// 统计测量开关
-  final bool statsEnabled;
-
-  /// 统计范围开关
-  final bool statsRangeEnabled;
-
-  /// 统计范围左边界
-  final double? statsX1;
-
-  /// 统计范围右边界
-  final double? statsX2;
-  final List<SnapHighlightPoint> snapHighlights;
-  final bool snapHighlightEnabled;
-  final double snapHighlightDiameter;
-
-  /// 抗锯齿状态。高级设置中不再提供开关，默认固定开启。
-  final bool antiAliasEnabled;
-
-  /// 当前显示通道是否都只包含整数值。
-  final bool yValuesAreInteger;
-
-  /// 绘图文本字体大小偏移，基于默认字号调整，范围 -3~6
-  final int plotFontSizeDelta;
-
-  final bool plotFontBold;
+  PlotViewport get viewport => snapshot.viewport;
+  List<PlotDataPoint> get data => snapshot.data;
+  int get dataRevision => snapshot.dataRevision;
+  int get channelConfigRevision => snapshot.channelConfigRevision;
+  int get viewportRevision => snapshot.viewportRevision;
+  int get overlayRevision => snapshot.overlayRevision;
+  PlotLodSource? get lodIndex => snapshot.lodIndex;
+  PlotLodQuality get lodQuality => snapshot.lodQuality;
+  List<ChannelConfig> get channels => snapshot.channels;
+  int get activeChannelCount => snapshot.activeChannelCount;
+  bool get showGrid => snapshot.showGrid;
+  GridDensity get gridDensity => snapshot.gridDensity;
+  PlotBackgroundStyle get backgroundStyle => snapshot.backgroundStyle;
+  double get floatingPanelOpacity => snapshot.floatingPanelOpacity;
+  CursorState? get cursor => snapshot.cursor;
+  double? get xCursor1 => snapshot.xCursor1;
+  double? get xCursor2 => snapshot.xCursor2;
+  double? get yCursor1 => snapshot.yCursor1;
+  double? get yCursor2 => snapshot.yCursor2;
+  bool get statsEnabled => snapshot.statsEnabled;
+  bool get statsRangeEnabled => snapshot.statsRangeEnabled;
+  double? get statsX1 => snapshot.statsX1;
+  double? get statsX2 => snapshot.statsX2;
+  List<SnapHighlightPoint> get snapHighlights => snapshot.snapHighlights;
+  bool get snapHighlightEnabled => snapshot.snapHighlightEnabled;
+  double get snapHighlightDiameter => snapshot.snapHighlightDiameter;
+  bool get antiAliasEnabled => snapshot.antiAliasEnabled;
+  bool get yValuesAreInteger => snapshot.yValuesAreInteger;
+  int get plotFontSizeDelta => snapshot.plotFontSizeDelta;
+  bool get plotFontBold => snapshot.plotFontBold;
 
   PlotLayerPainter({
     required this.layer,
-    required this.viewport,
-    required this.data,
-    this.dataRevision = 0,
-    this.channelConfigRevision = 0,
-    this.viewportRevision = 0,
-    this.overlayRevision = 0,
-    this.lodIndex,
-    this.lodQuality = PlotLodQuality.performance,
-    required this.channels,
+    required PlotViewport viewport,
+    required List<PlotDataPoint> data,
+    int dataRevision = 0,
+    int channelConfigRevision = 0,
+    int viewportRevision = 0,
+    int overlayRevision = 0,
+    PlotLodSource? lodIndex,
+    PlotLodQuality lodQuality = PlotLodQuality.performance,
+    required List<ChannelConfig> channels,
     int? activeChannelCount,
-    this.showGrid = true,
-    this.gridDensity = GridDensity.normal,
-    this.backgroundStyle = PlotBackgroundStyle.dark,
-    this.floatingPanelOpacity = 0.85,
-    this.cursor,
-    this.xCursor1,
-    this.xCursor2,
-    this.yCursor1,
-    this.yCursor2,
-    this.statsEnabled = false,
-    this.statsRangeEnabled = false,
-    this.statsX1,
-    this.statsX2,
-    this.snapHighlights = const [],
-    this.snapHighlightEnabled = true,
-    this.snapHighlightDiameter = 8,
-    this.antiAliasEnabled = true,
-    this.yValuesAreInteger = false,
-    this.plotFontSizeDelta = 0,
-    this.plotFontBold = false,
-  }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
-         0,
-         channels.length,
+    bool showGrid = true,
+    GridDensity gridDensity = GridDensity.normal,
+    PlotBackgroundStyle backgroundStyle = PlotBackgroundStyle.dark,
+    double floatingPanelOpacity = 0.85,
+    CursorState? cursor,
+    double? xCursor1,
+    double? xCursor2,
+    double? yCursor1,
+    double? yCursor2,
+    bool statsEnabled = false,
+    bool statsRangeEnabled = false,
+    double? statsX1,
+    double? statsX2,
+    List<SnapHighlightPoint> snapHighlights = const [],
+    bool snapHighlightEnabled = true,
+    double snapHighlightDiameter = 8,
+    bool antiAliasEnabled = true,
+    bool yValuesAreInteger = false,
+    int plotFontSizeDelta = 0,
+    bool plotFontBold = false,
+  }) : snapshot = PlotRenderSnapshot(
+         viewport: viewport,
+         data: data,
+         dataRevision: dataRevision,
+         channelConfigRevision: channelConfigRevision,
+         viewportRevision: viewportRevision,
+         overlayRevision: overlayRevision,
+         lodIndex: lodIndex,
+         lodQuality: lodQuality,
+         channels: channels,
+         activeChannelCount: activeChannelCount,
+         showGrid: showGrid,
+         gridDensity: gridDensity,
+         backgroundStyle: backgroundStyle,
+         floatingPanelOpacity: floatingPanelOpacity,
+         cursor: cursor,
+         xCursor1: xCursor1,
+         xCursor2: xCursor2,
+         yCursor1: yCursor1,
+         yCursor2: yCursor2,
+         statsEnabled: statsEnabled,
+         statsRangeEnabled: statsRangeEnabled,
+         statsX1: statsX1,
+         statsX2: statsX2,
+         snapHighlights: snapHighlights,
+         snapHighlightEnabled: snapHighlightEnabled,
+         snapHighlightDiameter: snapHighlightDiameter,
+         antiAliasEnabled: antiAliasEnabled,
+         yValuesAreInteger: yValuesAreInteger,
+         plotFontSizeDelta: plotFontSizeDelta,
+         plotFontBold: plotFontBold,
        );
+
+  PlotLayerPainter.fromSnapshot({required this.layer, required this.snapshot});
 
   double _fontSize(double base) {
     return (base + 1 + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -774,7 +687,7 @@ class PlotLayerPainter extends CustomPainter {
     final canUseLod =
         !useExactQualityBuckets &&
         lodIndex != null &&
-        !lodIndex!.isEmpty &&
+        lodIndex!.isNotEmpty &&
         (lodIndex!.canQuery(viewportDataCount, plotW) ||
             !exactWindowCoversViewport) &&
         activeChannelCount > 0;

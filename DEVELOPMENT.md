@@ -98,13 +98,13 @@ docs/                     # 长期上下文、历史和设计文档
 - `lib/core/` 只承载通用底层能力。日志统一使用 `AppLogger`，不要直接 `print()`。
 - 固定 UI 文本优先放入 `lib/core/localization/app_strings.dart`。
 - 协议解析器兼容 `IDataParser.feed()` 和 `outputStream`；绘图高频接收链优先使用 `feedBatch()`，避免逐包 Stream 调度。
-- `lib/services/` 管理串口、文件、设置、更新和系统资源，不承载页面布局。
-- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态；`ShellViewModel` 独立管理终端会话和文件传输。
+- `lib/services/` 管理串口、文件、设置、更新和系统资源，不承载页面布局。连接、原始接收和设置文件分别由 `SerialConnectionCoordinator`、`RawReceiveSession`、`SettingsRepository` 独占生命周期。
+- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态，历史、精确窗口和数据源会话分别委托给 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController`；`ShellViewModel` 独立管理终端会话和文件传输。
 - `lib/views/` 只处理页面、弹窗、Painter 和交互。
 - `SerialService` 通过 `SerialActivityOwner` 原子管理数据收发、Shell 和绘图的接收活动；页面只能在所有者为 `none` 时切换。
 - 所有串口写入入口共用有序后台写队列，页面和 ViewModel 不得绕过队列直接并发调用同步 FFI 写入。
 - 绘图页使用 `Selector` 隔离工具栏、通道面板、绘图区和状态栏重建。
-- 绘图区分为背景网格、数据、坐标轴和交互覆盖四层 Painter。
+- 绘图区由单一不可变 `PlotRenderSnapshot` 驱动，并通过 `PlotLayerStack` 分为背景网格、数据、坐标轴和交互覆盖四层 Painter。
 - 三个主页面使用统一工具栏组件；设置弹窗使用左侧分类导航和右侧连续内容，不为纯颜色、固定像素或图标外观编写脆弱测试。
 
 ## 代码检查与测试
@@ -138,7 +138,9 @@ flutter test test/views/raw_data_page_test.dart
 flutter test test/parser/just_float_parser_test.dart
 ```
 
-当前测试基线以行为、状态流转、数据格式和关键交互为主，不保留只断言颜色、字体、固定像素或单个图标的测试。最近一次完整验证结果为 `415 passed, 2 skipped`，并通过 `flutter analyze` 与 `git diff --check`；该数字只用于核对当前仓库状态，新增或删除测试后应同步更新。
+当前测试基线以行为、状态流转、数据格式和关键交互为主，不保留只断言颜色、字体、固定像素或单个图标的测试。最近一次完整验证结果为 `472 passed, 4 skipped`，并通过 `flutter analyze`、原生 CTest 和 Windows Debug 构建；该数字只用于核对当前仓库状态，新增或删除测试后应同步更新。
+
+`analysis_options.yaml` 额外启用 `unawaited_futures`、`close_sinks` 和 `cancel_subscriptions`。明确的后台任务必须使用 `unawaited()`；创建订阅、Controller 或 sink 的模块必须在自己的 stop/dispose 路径中释放。`discarded_futures` 尚未全局启用，新增代码仍应避免静默丢弃 Future。
 
 更新器独立测试：
 

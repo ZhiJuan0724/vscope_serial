@@ -13,11 +13,9 @@ import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/atomic_file.dart';
 import '../core/utils/crc.dart';
-import '../core/utils/math_expression.dart';
 import '../core/utils/plot_value_formatter.dart';
 import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
-import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_source_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parse_result.dart';
@@ -30,7 +28,6 @@ import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
 import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
-import '../data/source/data_source_manager.dart';
 import '../data/models/address_config_profile.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
@@ -39,6 +36,13 @@ import '../services/address_profile_service.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
+import 'plot_history_store.dart';
+import 'plot_math_engine.dart';
+import 'plot_observation_assembler.dart';
+import 'plot_session_controller.dart';
+import 'plot_statistics_calculator.dart';
+import 'plot_trigger_runtime.dart';
+import 'plot_window_provider.dart';
 
 part 'plot_viewmodel/plot_import_export.dart';
 part 'plot_viewmodel/plot_profiles.dart';
@@ -170,35 +174,23 @@ class PlotExportCancelToken {
 ///
 /// 这里同时维护“全量历史”和“当前绘图窗口”两套数据结构：
 /// - 当前窗口 `_dataPoints` 只保存 UI 正在绘制的点，避免 Flutter 持有过多对象。
-/// - 文本/浮点协议的历史值进入 `_parsedHistory`，按视口重建窗口。
+/// - 文本/浮点协议的历史值进入 `_historyStore`，按视口重建窗口。
 /// - Zobow/FixedFrame 的历史以原始固定帧保存，导出和回看都能复用原始字节。
-/// - `_lodIndex` 始终跟随全量历史更新，用于大范围拖动/缩放时快速预览。
+/// - 历史存储中的 LOD 始终增量更新，用于大范围拖动/缩放时快速预览。
 ///
 /// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建。
 class PlotViewModel extends BaseViewModel {
   // ========== 数据源 ==========
-  /// 数据源管理器，封装串口和随机数据源的统一接口
-  late final DataSourceManager _sourceManager;
-
-  // ========== 解析器 ==========
-  /// 当前使用的数据解析器（FireWater 或固定帧）
-  IDataParser? _parser;
-
-  /// 数据源字节流的订阅，dispose 时需要取消
-  StreamSubscription? _parseSubscription;
+  /// 唯一拥有 parser、数据订阅和 start/stop single-flight 的会话控制器。
+  late final PlotSessionController _sessionController;
 
   // ========== 数据缓冲区 ==========
-  /// 当前绘图窗口的数据点（按 index 递增排序）
-  final List<PlotDataPoint> _dataPoints = [];
+  /// 唯一拥有当前精确窗口和异步加载 generation 的窗口提供器。
+  late final PlotWindowProvider _windowProvider;
+  List<PlotDataPoint> get _dataPoints => _windowProvider.points;
 
-  /// FireWater 等无法按固定帧随机访问的协议使用紧凑历史值缓存。
-  ///
-  /// Zobow 和固定帧协议使用原始帧缓存作为历史源；文本协议保存解析后
-  /// 的数值块，并按视口重建当前绘图窗口。
-  final _ParsedValueHistory _parsedHistory = _ParsedValueHistory();
-
-  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放绘制。
-  final PlotLodIndex _lodIndex = PlotLodIndex();
+  /// 唯一拥有紧凑值、固定原始帧和 LOD 的历史存储。
+  final PlotHistoryStore _historyStore = PlotHistoryStore();
 
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
   static const int maxObservationCount = PlotConfiguration.maxObservationCount;
@@ -229,18 +221,6 @@ class PlotViewModel extends BaseViewModel {
     false,
   );
 
-  /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
-  ///
-  /// 固定帧类协议需要支持基于原始帧导出，并且能在视口变化时按帧序号
-  /// 重新解析窗口数据，因此不只保存解析后的 double 值。
-  FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
-    packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
-  );
-
-  FixedPacketByteBuffer _fixedFrameRawFrames = FixedPacketByteBuffer(
-    packetSize: ParserConfig.fixedFrameDefault().totalFrameLength,
-  );
-
   static const int plotRetentionLimitBytes =
       PlotConfiguration.defaultHistoryMemoryLimitBytes;
   static const double _retentionWarningRatio = 0.8;
@@ -249,15 +229,6 @@ class PlotViewModel extends BaseViewModel {
   bool _plotRetentionWarningShown = false;
   bool _plotRetentionLimitReached = false;
   String? _plotRetentionStopReason;
-
-  /// 当前窗口起始点序号
-  int _visibleStartIndex = 0;
-  bool _isWindowLoading = false;
-  int _windowLoadGeneration = 0;
-  int _pendingWindowPointCount = 0;
-  int? _pendingWindowStartIndex;
-  int? _pendingWindowEndIndex;
-  Timer? _dragWindowLoadTimer;
 
   /// 下一个数据点的索引序号（单调递增）
   int _nextIndex = 0;
@@ -320,7 +291,11 @@ class PlotViewModel extends BaseViewModel {
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
   final List<MathChannelConfig> mathChannels =
       MathChannelConfig.createDefaults();
-  final Map<int, MathExpression> _compiledMathExpressions = {};
+  final PlotMathEngine _mathEngine = PlotMathEngine();
+  final PlotObservationAssembler _observationAssembler =
+      const PlotObservationAssembler();
+  final PlotStatisticsCalculator _statisticsCalculator =
+      const PlotStatisticsCalculator();
   int _nextOffsetBindingGroupId = 1;
   List<PlotDataPoint>? _cachedDisplayDataPoints;
   String? _cachedDisplayDataKey;
@@ -336,21 +311,9 @@ class PlotViewModel extends BaseViewModel {
           : List.unmodifiable(_importedChannelAddresses!);
 
   // ========== 状态 ==========
-  /// 是否正在绘图（数据源运行中）
-  bool _isPlotting = false;
-
-  /// 启动流程也属于一个显式会话。并发开始共享同一个 Future，停止/销毁则
-  /// 递增 generation，使所有尚未发布的启动结果立即失效。
-  bool _isStarting = false;
-  Future<void>? _startFuture;
-  int _plotSessionGeneration = 0;
-
-  /// 是否正在停止绘图。
-  ///
-  /// 停止过程可能包含取消订阅、停止数据源、释放解析器等耗时操作。
-  /// UI 先切换到停止中状态，避免用户重复点击造成并发清理。
-  bool _isStopping = false;
-  Future<void>? _stopFuture;
+  bool get _isPlotting => _sessionController.isRunning;
+  bool get _isStarting => _sessionController.isStarting;
+  bool get _isStopping => _sessionController.isStopping;
 
   /// 是否显示网格
   bool _showGrid = true;
@@ -432,12 +395,9 @@ class PlotViewModel extends BaseViewModel {
   bool _observationPlacementActive = false;
   CursorState? _observationPreview;
   final PlotTriggerConfig _triggerConfig = PlotTriggerConfig();
-  final List<PlotDataPoint> _triggerHitPoints = [];
-  double? _triggerPreviousValue;
-  int _triggerHitCount = 0;
-  int _triggeredCount = 0;
-  int? _triggerStopPacketsRemaining;
-  bool _triggerStopRequested = false;
+  final PlotTriggerRuntime<PlotDataPoint> _triggerRuntime =
+      PlotTriggerRuntime<PlotDataPoint>();
+  bool _triggerStopDispatchScheduled = false;
   bool _triggerConfigured = false;
 
   /// 当前解析器类型
@@ -592,7 +552,26 @@ class PlotViewModel extends BaseViewModel {
             '${PlotConfiguration.maxMaterializedPointCount}',
       );
     }
-    _sourceManager = DataSourceManager(serialService);
+    _windowProvider = PlotWindowProvider(
+      isDisposed: () => _disposed,
+      onStateChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+      onCommitted: () {
+        _dataRevision++;
+        _invalidateDisplayCaches();
+      },
+    );
+    _sessionController = PlotSessionController(
+      serialService,
+      onStateChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+    );
     _loadSettings();
     _initAddressProfileServices();
     _startRefreshTimer();
@@ -621,9 +600,11 @@ class PlotViewModel extends BaseViewModel {
       _rProfileService.selectProfile(savedRProfileId);
     }
     _profileRevision++;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
+    unawaited(
+      Future.microtask(() {
+        if (!_disposed) notifyListeners();
+      }),
+    );
   }
 
   /// 从 AppSettings 加载绘图配置
@@ -822,9 +803,9 @@ class PlotViewModel extends BaseViewModel {
   ///
   /// 这里直接返回稳定窗口引用，避免每次 build 复制大列表。
   List<PlotDataPoint> get dataPoints => _dataPoints;
-  bool get isPlotting => _isPlotting;
-  bool get isStarting => _isStarting;
-  bool get isStopping => _isStopping;
+  bool get isPlotting => _sessionController.isRunning;
+  bool get isStarting => _sessionController.isStarting;
+  bool get isStopping => _sessionController.isStopping;
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
@@ -887,7 +868,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   bool _canUseMathChannelForTrigger(MathChannelConfig channel) {
-    final expression = _compiledMathExpressions[channel.index];
+    final expression = _mathEngine.expressionFor(channel.index);
     return channel.enabled &&
         channel.display.visible &&
         expression != null &&
@@ -970,16 +951,12 @@ class PlotViewModel extends BaseViewModel {
     final mathValues = <double>[];
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
-      final expression = _compiledMathExpressions[channel.index];
-      final value =
-          expression?.evaluateWithContext(
-            MathEvalContext(
-              currentIndex: pointIndex,
-              pointCount: historyCount,
-              valueAt: _rawHistoryValueAt,
-            ),
-          ) ??
-          double.nan;
+      final value = _mathEngine.evaluateAt(
+        channelIndex: channel.index,
+        currentIndex: pointIndex,
+        pointCount: historyCount,
+        valueAt: _rawHistoryValueAt,
+      );
       mathValues.add(value);
     }
 
@@ -1076,9 +1053,9 @@ class PlotViewModel extends BaseViewModel {
   bool get triggerEnabled => _triggerConfig.enabled;
   bool get triggerConfigured => _triggerConfigured;
   bool get keepPlotOnRestart => _keepPlotOnRestart;
-  int get triggerHitCount => _triggerHitCount;
-  int get triggeredCount => _triggeredCount;
-  int? get triggerStopPacketsRemaining => _triggerStopPacketsRemaining;
+  int get triggerHitCount => _triggerRuntime.hitCount;
+  int get triggeredCount => _triggerRuntime.triggeredCount;
+  int? get triggerStopPacketsRemaining => _triggerRuntime.stopItemsRemaining;
   List<SnapHighlightPoint> get snapHighlights {
     if (!_snapHighlightEnabled) return const [];
     return [
@@ -1100,8 +1077,8 @@ class PlotViewModel extends BaseViewModel {
   List<String> get rChannelAddresses =>
       List.unmodifiable(_sendProtocolConfig.rChannelAddresses);
   bool get rProtocolLooseChannelSettings => _rProtocolLooseChannelSettings;
-  PlotLodIndex get lodIndex => _lodIndex;
-  int get zobowRawFrameCount => _zobowRawFrames.packetCount;
+  PlotLodSource get lodIndex => _historyStore.lodSource;
+  int get zobowRawFrameCount => _historyStore.zobowFrameCount;
   RetentionUsage get plotRetentionUsage {
     final used = _estimatedPlotAllocatedBytes;
     final ratio = used / _plotRetentionLimitBytes;
@@ -1130,8 +1107,8 @@ class PlotViewModel extends BaseViewModel {
   int get visiblePointCount => _dataPoints.length;
 
   /// 当前窗口起始点序号
-  int get visibleStartIndex => _visibleStartIndex;
-  bool get isWindowLoading => _isWindowLoading;
+  int get visibleStartIndex => _windowProvider.visibleStartIndex;
+  bool get isWindowLoading => _windowProvider.isLoading;
 
   /// 当前窗口点数上限
   int get maxVisiblePoints => _maxVisiblePoints;
@@ -1180,7 +1157,7 @@ class PlotViewModel extends BaseViewModel {
 
   @visibleForTesting
   int get parsedHistoryAllocatedValueSlotsForTest =>
-      _parsedHistory.allocatedValueSlots;
+      _historyStore.parsedAllocatedValueSlots;
 
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
@@ -1203,7 +1180,8 @@ class PlotViewModel extends BaseViewModel {
   /// 是否有可撤回的视口历史
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
 
-  int get _visibleEndIndex => _visibleStartIndex + _dataPoints.length;
+  int get _visibleStartIndex => _windowProvider.visibleStartIndex;
+  int get _visibleEndIndex => _windowProvider.visibleEndIndex;
 
   void _invalidateDisplayCaches() {
     _cachedDisplayDataPoints = null;
@@ -1371,18 +1349,8 @@ class PlotViewModel extends BaseViewModel {
     _overlayRevision++;
   }
 
-  int get _mathDisplayFutureLookahead {
-    var lookahead = 0;
-    for (final channel in mathChannels) {
-      if (!channel.enabled) continue;
-      final expression = _compiledMathExpressions[channel.index];
-      if (expression == null) continue;
-      if (expression.futureLookahead > lookahead) {
-        lookahead = expression.futureLookahead;
-      }
-    }
-    return lookahead;
-  }
+  int get _mathDisplayFutureLookahead =>
+      _mathEngine.futureLookahead(mathChannels);
 
   void _replaceMathChannels(
     List<MathChannelConfig> nextChannels, {
@@ -1395,24 +1363,13 @@ class PlotViewModel extends BaseViewModel {
               : MathChannelConfig(index: i);
       mathChannels[i].display.alias = mathChannels[i].name;
     }
-    _compiledMathExpressions.clear();
-    for (final channel in mathChannels) {
-      _compileMathChannel(channel);
-    }
+    _mathEngine.rebuild(mathChannels);
     _invalidateDisplayCaches();
     if (save) _saveSettings();
   }
 
   void _compileMathChannel(MathChannelConfig channel) {
-    _compiledMathExpressions.remove(channel.index);
-    if (!channel.enabled || channel.expression.trim().isEmpty) return;
-    try {
-      _compiledMathExpressions[channel.index] = MathExpression.parse(
-        channel.expression,
-      );
-    } catch (_) {
-      // 表达式语法错误时保持通道启用，但运行时显示为无效点。
-    }
+    _mathEngine.compile(channel);
   }
 
   double _evaluateMathChannel(
@@ -1420,15 +1377,12 @@ class PlotViewModel extends BaseViewModel {
     int pointPosition,
     List<PlotDataPoint> sourcePoints,
   ) {
-    final expression = _compiledMathExpressions[channel.index];
-    if (expression == null) return double.nan;
     final historyIndex = sourcePoints[pointPosition].index;
-    return expression.evaluateWithContext(
-      MathEvalContext(
-        currentIndex: historyIndex,
-        pointCount: _historyPointCount,
-        valueAt: _rawHistoryValueAt,
-      ),
+    return _mathEngine.evaluateAt(
+      channelIndex: channel.index,
+      currentIndex: historyIndex,
+      pointCount: _historyPointCount,
+      valueAt: _rawHistoryValueAt,
     );
   }
 
@@ -1699,7 +1653,7 @@ class PlotViewModel extends BaseViewModel {
         _parserConfig.fireWaterChannelCount > 0
             ? _parserConfig.fireWaterChannelCount
             : 4;
-    unawaited(_sourceManager.updateConfig(_sourceConfig));
+    unawaited(_sessionController.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '随机源${value ? '启用' : '关闭'}，解析器=${_parserType.label}，'
@@ -1713,7 +1667,7 @@ class PlotViewModel extends BaseViewModel {
       showStatusMessage(value ? '随机源已启用' : '随机源已关闭');
     }
 
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
   }
 
   /// 设置随机源频率（Hz），范围 1~100000
@@ -1723,14 +1677,14 @@ class PlotViewModel extends BaseViewModel {
     final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000).toInt();
     _sourceConfig.randomFrequencyHz = clampedHz;
     _sourceConfig.randomIntervalMs = intervalMs;
-    unawaited(_sourceManager.updateRandomFrequency(clampedHz));
+    unawaited(_sessionController.updateRandomFrequency(clampedHz));
     _saveSettings();
     AppLogger().info(
       '随机源频率设置为 ${clampedHz.toInt()} Hz，生成间隔=${intervalMs}ms',
       category: 'PLOT',
     );
 
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
   }
 
   // ========== 解析器控制 ==========
@@ -1942,7 +1896,7 @@ class PlotViewModel extends BaseViewModel {
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
-    unawaited(_sourceManager.updateConfig(_sourceConfig));
+    unawaited(_sessionController.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '解析器配置已更新：协议=${_parserConfig.type.label}，'
@@ -1982,40 +1936,68 @@ class PlotViewModel extends BaseViewModel {
   ///   但解析链实际没有启动。
   /// - 启动前清空所有历史缓存，避免上一轮自动识别通道数影响本轮显示。
   Future<void> startPlotting() {
-    final activeStart = _startFuture;
-    if (activeStart != null) return activeStart;
     if (_isStopping) {
       showStatusMessage('正在停止绘图，请稍候', duration: const Duration(seconds: 1));
       return Future.value();
     }
     if (_isPlotting) return Future.value();
 
-    final generation = ++_plotSessionGeneration;
-    _isStarting = true;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-
-    late final Future<void> operation;
-    operation = _startPlottingInternal(generation).whenComplete(() {
-      if (identical(_startFuture, operation)) {
-        _startFuture = null;
-        _isStarting = false;
-        if (!_disposed) {
-          Future.microtask(() {
-            if (!_disposed) notifyListeners();
-          });
+    return _sessionController.start(
+      config: _sourceConfig,
+      prepare: _preparePlotSessionStart,
+      createParser: _createParser,
+      initializeProtocol: () async {
+        _protocolInitFailureMessage = null;
+        return _sendProtocolInitData();
+      },
+      onData: (results, receivedAt) {
+        for (final result in results) {
+          _onParseResult(
+            result,
+            receivedAt: receivedAt,
+            updateFollowViewport: false,
+          );
         }
-      }
-    });
-    _startFuture = operation;
-    return operation;
+        if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+          final lastIndex = _dataPoints.last.index;
+          _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
+        }
+      },
+      onSourceError: (error) {
+        AppLogger().error('数据源错误: $error', category: 'PLOT');
+      },
+      releaseActivity: () {
+        serialService.releaseActivity(SerialActivityOwner.plot);
+      },
+      onStarted: () {
+        Future.microtask(() => serialService.notifyListeners());
+        _startRefreshTimer();
+        AppLogger().info('开始绘图', category: 'PLOT');
+        showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
+        Future.microtask(() => notifyListeners());
+      },
+      onStartRejected: () {
+        _sourceConfig.useSerial = false;
+        _sourceConfig.useRandom = false;
+        final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        Future.microtask(() => notifyListeners());
+      },
+      onStartFailed: (error, stackTrace) {
+        _sourceConfig.useSerial = false;
+        _sourceConfig.useRandom = false;
+        AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
+        showStatusMessage('绘图启动失败，已恢复页面操作');
+        Future.microtask(() => notifyListeners());
+      },
+    );
   }
 
   bool _isPlotSessionCurrent(int generation) =>
-      !_disposed && generation == _plotSessionGeneration;
+      !_disposed && _sessionController.isCurrent(generation);
 
-  Future<void> _startPlottingInternal(int generation) async {
+  Future<bool> _preparePlotSessionStart(int generation) async {
     AppLogger().info(
       '用户请求开始绘图：接收协议=${_parserType.label}，发送协议=${effectiveSendProtocolType.label}，'
       '串口连接=${serialService.isConnected}，随机源=$_useRandomSource，'
@@ -2025,12 +2007,12 @@ class PlotViewModel extends BaseViewModel {
 
     if (serialService.isConnected) {
       final connected = await serialService.refreshConnectionStatus();
-      if (!_isPlotSessionCurrent(generation)) return;
+      if (!_isPlotSessionCurrent(generation)) return false;
       if (!connected && !_useRandomSource) {
         const message = '检测到串口已断开，无法绘图；请重新连接串口';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
-        return;
+        return false;
       }
     }
 
@@ -2049,12 +2031,12 @@ class PlotViewModel extends BaseViewModel {
     // 检查是否有数据源，尝试自动连接串口
     if (!serialService.isConnected && !_useRandomSource) {
       await _autoConnectSerial();
-      if (!_isPlotSessionCurrent(generation)) return;
+      if (!_isPlotSessionCurrent(generation)) return false;
       if (!serialService.isConnected) {
         const message = '串口未连接，无法绘图；请连接串口或启用随机源';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
-        return;
+        return false;
       }
     }
 
@@ -2062,14 +2044,14 @@ class PlotViewModel extends BaseViewModel {
       const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或连接串口';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      return;
+      return false;
     }
 
     if (_keepPlotOnRestart && _plotRetentionLimitReached) {
       const message = '保留历史已达到容量上限，请先清空绘图数据再继续';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      return;
+      return false;
     }
 
     // 再次确认数据源配置与实际状态一致
@@ -2084,175 +2066,51 @@ class PlotViewModel extends BaseViewModel {
       const message = '其他页面正在接收数据，请先停止后再开始绘图';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      return;
+      return false;
     }
 
-    try {
-      if (!_isPlotSessionCurrent(generation)) {
-        serialService.releaseActivity(SerialActivityOwner.plot);
-        return;
-      }
-      _prepareHistoryForStart();
-
-      // 创建解析器
-      _parser = _createParser();
-
-      // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
-      // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
-      _protocolInitFailureMessage = null;
-      if (!await _sendProtocolInitData()) {
-        _parser?.dispose();
-        _parser = null;
-        _sourceConfig.useSerial = false;
-        _sourceConfig.useRandom = false;
-        serialService.releaseActivity(SerialActivityOwner.plot);
-        final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
-        showStatusMessage(message);
-        AppLogger().warning(message, category: 'PLOT');
-        Future.microtask(() => notifyListeners());
-        return;
-      }
-      if (!_isPlotSessionCurrent(generation)) {
-        _parser?.dispose();
-        _parser = null;
-        _sourceConfig.useSerial = false;
-        _sourceConfig.useRandom = false;
-        serialService.releaseActivity(SerialActivityOwner.plot);
-        return;
-      }
-
-      // 配置并启动数据源
-      // 注意：useSerial/useRandom 已在开头同步
-      // 根据 FireWater 配置设置随机数据源通道数
-      _sourceConfig.randomChannelCount =
-          _parserConfig.fireWaterChannelCount > 0
-              ? _parserConfig.fireWaterChannelCount
-              : 4;
-      await _sourceManager.updateConfig(_sourceConfig);
-      _isPlotting = true;
-      await _sourceManager.start();
-
-      // 连接数据源 → 解析器 → 数据缓冲区。
-      // 一个原始字节块内的多帧结果直接批量消费，避免每包经过一次 Stream 调度。
-      _parseSubscription = _sourceManager.byteStream.listen(
-        (data) {
-          if (!_isPlotSessionCurrent(generation) || !_isPlotting) return;
-          final parser = _parser;
-          if (parser == null) return;
-          final results = parser.feedBatch(data);
-          if (results.isEmpty) return;
-          final receivedAt = DateTime.now();
-          for (final result in results) {
-            _onParseResult(
-              result,
-              receivedAt: receivedAt,
-              updateFollowViewport: false,
-            );
-          }
-          if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
-            final lastIndex = _dataPoints.last.index;
-            _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
-          }
-        },
-        onError: (error) {
-          if (!_isPlotSessionCurrent(generation)) return;
-          AppLogger().error('数据源错误: $error', category: 'PLOT');
-        },
-      );
-
-      Future.microtask(() => serialService.notifyListeners());
-      _startRefreshTimer();
-      AppLogger().info('开始绘图', category: 'PLOT');
-      showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
-      Future.microtask(() => notifyListeners());
-    } catch (error, stackTrace) {
-      await _rollbackFailedPlotStart(error, stackTrace);
+    if (!_isPlotSessionCurrent(generation)) {
+      serialService.releaseActivity(SerialActivityOwner.plot);
+      return false;
     }
-  }
-
-  /// 回滚取得活动所有权后发生的意外启动失败，避免主页面永久被锁定。
-  Future<void> _rollbackFailedPlotStart(
-    Object error,
-    StackTrace stackTrace,
-  ) async {
-    try {
-      await _parseSubscription?.cancel();
-    } catch (cleanupError) {
-      AppLogger().warning('绘图启动失败后取消订阅失败: $cleanupError', category: 'PLOT');
-    }
-    _parseSubscription = null;
-    try {
-      await _sourceManager.stop();
-    } catch (cleanupError) {
-      AppLogger().warning('绘图启动失败后停止数据源失败: $cleanupError', category: 'PLOT');
-    }
-    try {
-      _parser?.dispose();
-    } catch (cleanupError) {
-      AppLogger().warning('绘图启动失败后释放解析器失败: $cleanupError', category: 'PLOT');
-    }
-    _parser = null;
-    _isPlotting = false;
-    _sourceConfig.useSerial = false;
-    _sourceConfig.useRandom = false;
-    serialService.releaseActivity(SerialActivityOwner.plot);
-    AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
-    showStatusMessage('绘图启动失败，已恢复页面操作');
-    Future.microtask(() => notifyListeners());
+    _prepareHistoryForStart();
+    _sourceConfig.randomChannelCount =
+        _parserConfig.fireWaterChannelCount > 0
+            ? _parserConfig.fireWaterChannelCount
+            : 4;
+    return true;
   }
 
   /// 停止绘图
   ///
-  /// 取消数据流订阅、停止数据源、释放解析器，但保持定时刷新运行
-  /// 以确保交互响应及时。
+  /// 会话控制器按订阅、数据源、解析器的固定顺序释放资源；ViewModel 只负责
+  /// 业务状态、触发器和用户提示收尾。
   Future<void> stopPlotting() {
     if (_isStopping) {
-      return _stopFuture ?? Future.value();
+      return _sessionController.pendingStop ?? Future.value();
     }
-    final pendingStart = _startFuture;
-    if (!_isPlotting && pendingStart == null) {
+    if (!_isPlotting && _sessionController.pendingStart == null) {
       _resetRateState();
       return Future.value();
     }
 
-    // 先取消启动意图。启动流程在下一次 await 后只能清理自身，不能再发布
-    // parser、订阅或活动所有权。
-    _plotSessionGeneration++;
-    _isStopping = true;
-    _isPlotting = false;
     _resetRateState();
     AppLogger().info(
       '用户请求停止绘图：已接收点=$_nextIndex，当前显示点=${_dataPoints.length}',
       category: 'PLOT',
     );
-    // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
     showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
     Future.microtask(() => serialService.notifyListeners());
-    Future.microtask(() => notifyListeners());
 
-    _stopFuture = Future<void>(() async {
-      try {
-        if (pendingStart != null) {
-          try {
-            await pendingStart;
-          } catch (error) {
-            AppLogger().warning('等待绘图启动收敛失败: $error', category: 'PLOT');
-          }
-        }
-        await _parseSubscription?.cancel();
-        _parseSubscription = null;
-        await _sourceManager.stop();
-        _parser?.dispose();
-        _parser = null;
-      } catch (e) {
-        AppLogger().error('停止绘图清理失败: $e', category: 'PLOT');
-      } finally {
+    return _sessionController.stop(
+      releaseActivity: () {
+        serialService.releaseActivity(SerialActivityOwner.plot);
+      },
+      onStopped: () {
         _notifyTimer?.cancel();
         _notifyTimer = null;
         _pendingNotifyCount = 0;
-        _isStopping = false;
-        serialService.releaseActivity(SerialActivityOwner.plot);
         if (_triggerConfig.enabled) {
           _triggerConfig.enabled = false;
         }
@@ -2260,19 +2118,16 @@ class PlotViewModel extends BaseViewModel {
         if (!_disposed) {
           showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
           AppLogger().info(
-            '绘图已停止：总点数=$_nextIndex，Zobow原始帧=${_zobowRawFrames.packetCount}，'
-            '固定帧原始帧=${_fixedFrameRawFrames.packetCount}',
+            '绘图已停止：总点数=$_nextIndex，Zobow原始帧=${_historyStore.zobowFrameCount}，'
+            '固定帧原始帧=${_historyStore.fixedFrameCount}',
             category: 'PLOT',
           );
           Future.microtask(() {
             if (!_disposed) notifyListeners();
           });
         }
-      }
-    }).whenComplete(() {
-      _stopFuture = null;
-    });
-    return _stopFuture!;
+      },
+    );
   }
 
   /// 开始绘图时自动尝试连接串口。
@@ -2333,14 +2188,10 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
     _cancelWindowLoad();
-    _dataPoints.clear();
-    _parsedHistory.clear();
-    _lodIndex.clear();
-    _zobowRawFrames.clear();
-    _fixedFrameRawFrames.clear();
+    _windowProvider.clear();
+    _historyStore.clear();
     _resetPlotRetentionState();
     _importedChannelAddresses = null;
-    _visibleStartIndex = 0;
     _dataRevision++;
     _invalidateDisplayCaches();
     _resetObservedValueMetadata();
@@ -2374,14 +2225,10 @@ class PlotViewModel extends BaseViewModel {
       // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
       // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
       _cancelWindowLoad();
-      _dataPoints.clear();
-      _parsedHistory.clear();
-      _lodIndex.clear();
-      _zobowRawFrames.clear();
-      _fixedFrameRawFrames.clear();
+      _windowProvider.clear();
+      _historyStore.clear();
       _resetPlotRetentionState();
       _importedChannelAddresses = null;
-      _visibleStartIndex = 0;
       _dataRevision++;
       _invalidateDisplayCaches();
       _resetObservedValueMetadata();
@@ -2416,54 +2263,27 @@ class PlotViewModel extends BaseViewModel {
 
   bool _isRetainedHistoryCompatible() {
     if (_nextIndex == 0) return true;
-    return switch (_parserType) {
-      ParserType.fireWater || ParserType.justFloat =>
-        _parsedHistory.length == _nextIndex &&
-            _zobowRawFrames.isEmpty &&
-            _fixedFrameRawFrames.isEmpty,
-      ParserType.zobow =>
-        _zobowRawFrames.packetCount == _nextIndex &&
-            _parsedHistory.isEmpty &&
-            _fixedFrameRawFrames.isEmpty,
-      ParserType.fixedFrame =>
-        _fixedFrameRawFrames.packetCount == _nextIndex &&
-            _parsedHistory.isEmpty &&
-            _zobowRawFrames.isEmpty,
-    };
+    return _historyStore.isCompatible(_parserType, _nextIndex);
   }
 
   // ========== 数据接收 ==========
   int get _estimatedPlotAllocatedBytes =>
-      _parsedHistory.allocatedBytes +
-      _zobowRawFrames.allocatedCapacity +
-      _fixedFrameRawFrames.allocatedCapacity +
-      _lodIndex.estimatedAllocatedBytes +
+      _historyStore.estimatedAllocatedBytes +
       _dataPoints.length * 192 +
-      _pendingWindowPointCount * 192 +
+      _windowProvider.pendingPointCount * 192 +
       (_cachedDisplayDataPoints?.length ?? 0) * 192;
 
   int _projectedAllocationFor(ParseResult result) {
     final values = result.values!;
-    var additional = _lodIndex.estimatedAdditionalBytesFor(
-      _nextIndex,
-      enabledMathChannels.isEmpty
-          ? math.min(values.length, PlotLodIndex.maxChannels)
-          : PlotLodIndex.maxChannels,
+    var additional = _historyStore.projectedAdditionalBytes(
+      result: result,
+      parserType: _parserType,
+      pointIndex: _nextIndex,
+      lodChannelCount:
+          enabledMathChannels.isEmpty
+              ? math.min(values.length, PlotLodIndex.maxChannels)
+              : PlotLodIndex.maxChannels,
     );
-    if (_parserType == ParserType.zobow && result.rawBytes != null) {
-      additional += _zobowRawFrames.additionalAllocatedCapacityForAppend(
-        result.rawBytes!.length,
-      );
-    } else if (_parserType == ParserType.fixedFrame &&
-        result.rawBytes != null) {
-      additional += _fixedFrameRawFrames.additionalAllocatedCapacityForAppend(
-        result.rawBytes!.length,
-      );
-    } else {
-      additional += _parsedHistory.additionalAllocatedBytesForAppend(
-        values.length,
-      );
-    }
     if ((_isViewingTail || _followEnabled) &&
         _dataPoints.length < PlotConfiguration.maxMaterializedPointCount) {
       additional += 192;
@@ -2535,60 +2355,39 @@ class PlotViewModel extends BaseViewModel {
   }
 
   List<double> _rawValuesAtHistoryIndex(int pointIndex) {
-    if (pointIndex < 0 || pointIndex >= _historyPointCount) return const [];
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-      return ZobowParser.decodeFrameValues(
-        _zobowRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      );
-    }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      return FixedFrameParser.decodeFrameValues(
-        _fixedFrameRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      );
-    }
-    return _parsedHistory.valuesAt(pointIndex);
+    return _historyStore.valuesAt(pointIndex, _parserType, _parserConfig);
   }
 
   double _rawHistoryValueAt(int pointIndex, int channelIndex) {
-    if (pointIndex < 0 ||
-        pointIndex >= _historyPointCount ||
-        channelIndex < 0) {
-      return double.nan;
-    }
-    if (_parserType != ParserType.zobow &&
-        !(_parserType == ParserType.fixedFrame &&
-            _fixedFrameRawFrames.isNotEmpty)) {
-      final count = _parsedHistory.valueCountAt(pointIndex);
-      return channelIndex < count
-          ? _parsedHistory.valueAt(pointIndex, channelIndex)
-          : double.nan;
-    }
-    final values = _rawValuesAtHistoryIndex(pointIndex);
-    return channelIndex < values.length ? values[channelIndex] : double.nan;
+    return _historyStore.valueAt(
+      pointIndex,
+      channelIndex,
+      _parserType,
+      _parserConfig,
+    );
   }
 
   void _appendReadyLodPoint(int currentPointIndex, List<double> currentValues) {
     // 速率测试可只推进计数器而不构造历史；生产采集始终连续。保留该
     // 测试入口的 LOD 长度语义，同时不让虚拟缺口触发历史随机读取。
     if (currentPointIndex != _historyPointCount - 1) {
-      _lodIndex.addSampled(currentPointIndex, currentValues, _lodSampleStep);
+      _historyStore.addSampledLod(
+        currentPointIndex,
+        currentValues,
+        _lodSampleStep,
+      );
       return;
     }
     final enabled = enabledMathChannels;
     if (enabled.isEmpty) {
-      _lodIndex.addSampled(currentPointIndex, currentValues, _lodSampleStep);
+      _historyStore.addSampledLod(
+        currentPointIndex,
+        currentValues,
+        _lodSampleStep,
+      );
       return;
     }
-    var futureLookahead = 0;
-    for (final channel in enabled) {
-      final expression = _compiledMathExpressions[channel.index];
-      if (expression != null && expression.futureLookahead > futureLookahead) {
-        futureLookahead = expression.futureLookahead;
-      }
-    }
+    final futureLookahead = _mathEngine.futureLookahead(enabled);
     final readyIndex = currentPointIndex - futureLookahead;
     if (readyIndex < 0 || readyIndex >= _historyPointCount) return;
     final rawValues = _rawValuesAtHistoryIndex(readyIndex);
@@ -2606,18 +2405,15 @@ class PlotViewModel extends BaseViewModel {
       lodValues[i] = rawValues[i];
     }
     for (final channel in enabled) {
-      final expression = _compiledMathExpressions[channel.index];
-      if (expression == null) continue;
-      lodValues[PlotConfiguration.rawChannelCount + channel.index] = expression
-          .evaluateWithContext(
-            MathEvalContext(
-              currentIndex: readyIndex,
-              pointCount: _historyPointCount,
-              valueAt: _rawHistoryValueAt,
-            ),
+      lodValues[PlotConfiguration.rawChannelCount + channel.index] = _mathEngine
+          .evaluateAt(
+            channelIndex: channel.index,
+            currentIndex: readyIndex,
+            pointCount: _historyPointCount,
+            valueAt: _rawHistoryValueAt,
           );
     }
-    _lodIndex.addSampled(readyIndex, lodValues, _lodSampleStep);
+    _historyStore.addSampledLod(readyIndex, lodValues, _lodSampleStep);
   }
 
   @visibleForTesting
@@ -2637,7 +2433,7 @@ class PlotViewModel extends BaseViewModel {
   }) {
     _parserType = ParserType.fireWater;
     _nextIndex = pointCount;
-    _parsedHistory.debugSetLengthForTest(
+    _historyStore.debugSetParsedLength(
       pointCount,
       maxChannelCount: channelCount,
     );
@@ -2650,7 +2446,7 @@ class PlotViewModel extends BaseViewModel {
       _discardedInitialPacketCount = 0;
       _resetTriggerRuntimeState();
     }
-    _isPlotting = value;
+    _sessionController.debugSetRunning(value);
   }
 
   @visibleForTesting
@@ -2693,37 +2489,26 @@ class PlotViewModel extends BaseViewModel {
             ? now.difference(_startTime!).inMilliseconds.toDouble()
             : 0.0;
 
+    final pointIndex = _nextIndex++;
     final point = PlotDataPoint(
-      index: _nextIndex++,
+      index: pointIndex,
       timestamp: timestamp,
       values: result.values!,
     );
     _recordObservedValues(point.values);
 
-    // 历史缓存按协议分流：
-    // - Zobow/FixedFrame 保留原始帧，导出和视口重建都从原始帧重新解析。
-    // - 其他协议只保存解析后的紧凑 double 块，降低大数据量下的对象开销。
-    var visiblePoint = point;
-    if (_parserType == ParserType.zobow && result.rawBytes != null) {
-      _zobowRawFrames.appendPacket(result.rawBytes!);
-    } else if (_parserType == ParserType.fixedFrame &&
-        result.rawBytes != null) {
-      _fixedFrameRawFrames.appendPacket(result.rawBytes!);
-    } else {
-      final historyIndex = _parsedHistory.length;
-      _parsedHistory.add(point.values);
-      visiblePoint = PlotDataPoint(
-        index: point.index,
-        timestamp: point.timestamp,
-        values: _ParsedHistoryValues(_parsedHistory, historyIndex),
-      );
-    }
+    final historyValues = _historyStore.appendResult(result, _parserType);
+    final visiblePoint = PlotDataPoint(
+      index: point.index,
+      timestamp: point.timestamp,
+      values: historyValues,
+    );
     _appendReadyLodPoint(point.index, point.values);
     _updatePlotRetentionWarning();
 
     final appendToVisibleWindow = _isViewingTail || _followEnabled;
     if (appendToVisibleWindow) {
-      _dataPoints.add(visiblePoint);
+      _windowProvider.append(visiblePoint);
       _trimVisibleWindowToLimit();
       _dataRevision++;
     }
@@ -2809,369 +2594,83 @@ class PlotViewModel extends BaseViewModel {
   }
 
   int get _historyPointCount {
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-      return _zobowRawFrames.packetCount;
-    }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      return _fixedFrameRawFrames.packetCount;
-    }
-    return _parsedHistory.length;
+    return _historyStore.pointCount(_parserType);
   }
 
   void _trimVisibleWindowToLimit() {
-    final limit = effectiveMaterializedPointLimit;
-    if (_dataPoints.length <= limit) {
-      _visibleStartIndex = _dataPoints.isEmpty ? 0 : _dataPoints.first.index;
-      return;
-    }
-
-    final removeCount = math.min(_visibleTrimBatchSize, _dataPoints.length);
-    _dataPoints.removeRange(0, removeCount);
-    _visibleStartIndex = _dataPoints.first.index;
-  }
-
-  (int, int) _materializedWindowForRange(int start, int end, int total) {
-    if (total <= 0) return (0, 0);
-    final requestedStart = start.clamp(0, total);
-    final requestedEnd = end.clamp(requestedStart, total);
-    final count = math.min(total, effectiveMaterializedPointLimit);
-    final center = requestedStart + (requestedEnd - requestedStart) ~/ 2;
-    var materializedStart = center - count ~/ 2;
-    materializedStart = materializedStart.clamp(0, total - count);
-    return (materializedStart, materializedStart + count);
-  }
-
-  bool _windowKeepsRangePrefetched({
-    required int windowStart,
-    required int windowEnd,
-    required int requestedStart,
-    required int requestedEnd,
-    required int total,
-  }) {
-    if (requestedStart < windowStart || requestedEnd > windowEnd) return false;
-
-    final windowLength = windowEnd - windowStart;
-    final requestedLength = requestedEnd - requestedStart;
-    final spare = windowLength - requestedLength;
-    if (spare <= 0) return true;
-
-    final desiredMargin =
-        (windowLength * PlotConfiguration.materializedWindowReloadMarginRatio)
-            .round();
-    final margin = math.min(desiredMargin, spare ~/ 2);
-    final safeStart = windowStart == 0 ? windowStart : windowStart + margin;
-    final safeEnd = windowEnd == total ? windowEnd : windowEnd - margin;
-    return requestedStart >= safeStart && requestedEnd <= safeEnd;
-  }
-
-  bool _hasPrefetchedWindowForRange({
-    required int requestedStart,
-    required int requestedEnd,
-    required int total,
-  }) {
-    if (requestedEnd - requestedStart >= effectiveMaterializedPointLimit) {
-      final (targetStart, targetEnd) = _materializedWindowForRange(
-        requestedStart,
-        requestedEnd,
-        total,
-      );
-      final currentMatches =
-          _visibleStartIndex == targetStart && _visibleEndIndex == targetEnd;
-      final pendingMatches =
-          _isWindowLoading &&
-          _pendingWindowStartIndex == targetStart &&
-          _pendingWindowEndIndex == targetEnd;
-      if (currentMatches && _isWindowLoading && !pendingMatches) {
-        _cancelWindowLoad();
-      }
-      return currentMatches || pendingMatches;
-    }
-
-    final currentKeepsRange = _windowKeepsRangePrefetched(
-      windowStart: _visibleStartIndex,
-      windowEnd: _visibleEndIndex,
-      requestedStart: requestedStart,
-      requestedEnd: requestedEnd,
-      total: total,
+    _windowProvider.trimToLimit(
+      limit: effectiveMaterializedPointLimit,
+      trimBatchSize: _visibleTrimBatchSize,
     );
-    final pendingStart = _pendingWindowStartIndex;
-    final pendingEnd = _pendingWindowEndIndex;
-    final pendingKeepsRange =
-        _isWindowLoading &&
-        pendingStart != null &&
-        pendingEnd != null &&
-        _windowKeepsRangePrefetched(
-          windowStart: pendingStart,
-          windowEnd: pendingEnd,
-          requestedStart: requestedStart,
-          requestedEnd: requestedEnd,
-          total: total,
-        );
-    if (currentKeepsRange && _isWindowLoading && !pendingKeepsRange) {
-      _cancelWindowLoad();
-    }
-    return currentKeepsRange || pendingKeepsRange;
   }
 
   void _cancelWindowLoad() {
-    _cancelDragWindowLoad();
-    _windowLoadGeneration++;
-    _isWindowLoading = false;
-    _pendingWindowPointCount = 0;
-    _pendingWindowStartIndex = null;
-    _pendingWindowEndIndex = null;
-  }
-
-  void _rebuildWindowChunked(
-    int start,
-    int count,
-    List<double> Function(int pointIndex) valuesAt,
-  ) {
-    if (count <= 4096) {
-      _cancelWindowLoad();
-      final points = <PlotDataPoint>[
-        for (var i = 0; i < count; i++)
-          PlotDataPoint(
-            index: start + i,
-            timestamp: (start + i).toDouble(),
-            values: valuesAt(start + i),
-          ),
-      ];
-      _commitMaterializedWindow(start, points);
-      return;
-    }
-
-    final projectedBytes = _estimatedPlotAllocatedBytes + count * 192;
-    if (projectedBytes > _plotRetentionLimitBytes) {
-      _cancelWindowLoad();
-      AppLogger().warning(
-        '精确窗口预计超过绘图预算，保持 LOD 显示：start=$start, count=$count',
-        category: 'PLOT',
-      );
-      return;
-    }
-
-    final generation = ++_windowLoadGeneration;
-    _isWindowLoading = true;
-    _pendingWindowPointCount = count;
-    _pendingWindowStartIndex = start;
-    _pendingWindowEndIndex = start + count;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-    unawaited(() async {
-      try {
-        final points = <PlotDataPoint>[];
-        for (var i = 0; i < count; i++) {
-          if (_disposed || generation != _windowLoadGeneration) return;
-          final pointIndex = start + i;
-          points.add(
-            PlotDataPoint(
-              index: pointIndex,
-              timestamp: pointIndex.toDouble(),
-              values: valuesAt(pointIndex),
-            ),
-          );
-          if ((i + 1) % 4096 == 0) await Future<void>.delayed(Duration.zero);
-        }
-        if (_disposed || generation != _windowLoadGeneration) return;
-        _commitMaterializedWindow(start, points);
-      } catch (error, stackTrace) {
-        AppLogger().error('精确窗口加载失败: $error\n$stackTrace', category: 'PLOT');
-      } finally {
-        if (!_disposed && generation == _windowLoadGeneration) {
-          _isWindowLoading = false;
-          _pendingWindowPointCount = 0;
-          _pendingWindowStartIndex = null;
-          _pendingWindowEndIndex = null;
-          Future.microtask(() {
-            if (!_disposed) notifyListeners();
-          });
-        }
-      }
-    }());
+    _windowProvider.cancelLoad();
   }
 
   void _commitMaterializedWindow(int start, List<PlotDataPoint> points) {
-    _dataPoints
-      ..clear()
-      ..addAll(points);
-    _visibleStartIndex = start;
-    _pendingWindowStartIndex = null;
-    _pendingWindowEndIndex = null;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-  }
-
-  void _loadZobowWindowForViewport({bool force = false}) {
-    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
-
-    final requestedStart =
-        viewport.xMin.floor().clamp(0, _zobowRawFrames.packetCount).toInt();
-    final requestedEnd =
-        viewport.xMax.floor().toInt().clamp(
-          0,
-          _zobowRawFrames.packetCount - 1,
-        ) +
-        1;
-    if (!force &&
-        _hasPrefetchedWindowForRange(
-          requestedStart: requestedStart,
-          requestedEnd: requestedEnd,
-          total: _zobowRawFrames.packetCount,
-        )) {
-      return;
-    }
-    final (start, end) = _materializedWindowForRange(
-      requestedStart,
-      requestedEnd,
-      _zobowRawFrames.packetCount,
-    );
-
-    _rebuildWindowChunked(
-      start,
-      end - start,
-      (pointIndex) => ZobowParser.decodeFrameValues(
-        _zobowRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      ),
-    );
+    _windowProvider.replaceSynchronously(start, points);
   }
 
   void _loadWindowForViewport({bool force = false}) {
-    switch (_parserType) {
-      case ParserType.zobow:
-        _loadZobowWindowForViewport(force: force);
-        break;
-      case ParserType.fireWater:
-      case ParserType.justFloat:
-        _loadParsedWindowForViewport(force: force);
-        break;
-      case ParserType.fixedFrame:
-        if (_fixedFrameRawFrames.isNotEmpty) {
-          _loadFixedFrameWindowForViewport(force: force);
-        } else {
-          _loadParsedWindowForViewport(force: force);
-        }
-        break;
-    }
-  }
-
-  void _loadFixedFrameWindowForViewport({bool force = false}) {
-    if (_fixedFrameRawFrames.isEmpty) return;
-
-    final requestedStart =
-        viewport.xMin
-            .floor()
-            .clamp(0, _fixedFrameRawFrames.packetCount)
-            .toInt();
-    final requestedEnd =
-        viewport.xMax.floor().toInt().clamp(
-          0,
-          _fixedFrameRawFrames.packetCount - 1,
-        ) +
-        1;
-    if (!force &&
-        _hasPrefetchedWindowForRange(
-          requestedStart: requestedStart,
-          requestedEnd: requestedEnd,
-          total: _fixedFrameRawFrames.packetCount,
-        )) {
-      return;
-    }
-    final (start, end) = _materializedWindowForRange(
-      requestedStart,
-      requestedEnd,
-      _fixedFrameRawFrames.packetCount,
-    );
-
-    _rebuildWindowChunked(
-      start,
-      end - start,
-      (pointIndex) => FixedFrameParser.decodeFrameValues(
-        _fixedFrameRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      ),
-    );
-  }
-
-  void _loadParsedWindowForViewport({bool force = false}) {
-    if (_parsedHistory.isEmpty) return;
-
-    final requestedStart =
-        viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
-    final requestedEnd =
-        viewport.xMax.floor().toInt().clamp(0, _parsedHistory.length - 1) + 1;
-    if (!force &&
-        _hasPrefetchedWindowForRange(
-          requestedStart: requestedStart,
-          requestedEnd: requestedEnd,
-          total: _parsedHistory.length,
-        )) {
-      return;
-    }
-    final (start, end) = _materializedWindowForRange(
-      requestedStart,
-      requestedEnd,
-      _parsedHistory.length,
-    );
-
-    _rebuildWindowChunked(
-      start,
-      end - start,
-      (pointIndex) => _ParsedHistoryValues(_parsedHistory, pointIndex),
+    final total = _historyPointCount;
+    if (total <= 0) return;
+    _windowProvider.loadViewport(
+      xMin: viewport.xMin,
+      xMax: viewport.xMax,
+      total: total,
+      materializedPointLimit: effectiveMaterializedPointLimit,
+      allocatedBytes: _estimatedPlotAllocatedBytes,
+      retentionLimitBytes: _plotRetentionLimitBytes,
+      valuesAt:
+          (pointIndex) =>
+              _historyStore.valuesAt(pointIndex, _parserType, _parserConfig),
+      force: force,
     );
   }
 
   void _loadTailWindow() {
-    switch (_parserType) {
-      case ParserType.zobow:
-        _loadZobowTailWindow();
-        break;
-      case ParserType.fireWater:
-      case ParserType.justFloat:
-        final count =
-            _parsedHistory.length
-                .clamp(0, effectiveMaterializedPointLimit)
-                .toInt();
-        final start = _parsedHistory.length - count;
-        _rebuildWindowChunked(
-          start,
-          count,
-          (pointIndex) => _ParsedHistoryValues(_parsedHistory, pointIndex),
-        );
-        break;
-      case ParserType.fixedFrame:
-        if (_fixedFrameRawFrames.isNotEmpty) {
-          _loadFixedFrameTailWindow();
-        } else {
-          final count =
-              _parsedHistory.length
-                  .clamp(0, effectiveMaterializedPointLimit)
-                  .toInt();
-          final start = _parsedHistory.length - count;
-          _rebuildWindowChunked(
-            start,
-            count,
-            (pointIndex) => _ParsedHistoryValues(_parsedHistory, pointIndex),
-          );
-        }
-        break;
-    }
+    final total = _historyPointCount;
+    if (total <= 0) return;
+    _windowProvider.loadTail(
+      total: total,
+      materializedPointLimit: effectiveMaterializedPointLimit,
+      allocatedBytes: _estimatedPlotAllocatedBytes,
+      retentionLimitBytes: _plotRetentionLimitBytes,
+      valuesAt:
+          (pointIndex) =>
+              _historyStore.valuesAt(pointIndex, _parserType, _parserConfig),
+    );
   }
 
-  Future<void> _rebuildParsedWindow(int start, int count) async {
+  Future<void> _rebuildParsedWindow(int start, int count) {
+    return _rebuildHistoryWindowAsync(start, count);
+  }
+
+  Future<void> _rebuildZobowWindowAsync(
+    int start,
+    int count, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _rebuildHistoryWindowAsync(start, count, onProgress: onProgress);
+  }
+
+  Future<void> _rebuildHistoryWindowAsync(
+    int start,
+    int count, {
+    PlotImportProgressCallback? onProgress,
+  }) async {
     final points = <PlotDataPoint>[];
     _resetObservedValueMetadata();
-    if (count <= 0) {
-      _commitMaterializedWindow(start, points);
-      return;
-    }
 
-    for (int i = 0; i < count; i++) {
-      final pointIndex = start + i;
-      final values = _ParsedHistoryValues(_parsedHistory, pointIndex);
+    const batchSize = 4096;
+    for (var offset = 0; offset < count; offset++) {
+      final pointIndex = start + offset;
+      final values = _historyStore.valuesAt(
+        pointIndex,
+        _parserType,
+        _parserConfig,
+      );
       _recordObservedValues(values);
       points.add(
         PlotDataPoint(
@@ -3180,59 +2679,18 @@ class PlotViewModel extends BaseViewModel {
           values: values,
         ),
       );
-      if ((i + 1) % 4096 == 0) await Future<void>.delayed(Duration.zero);
-    }
-    _commitMaterializedWindow(start, points);
-  }
-
-  void _loadZobowTailWindow() {
-    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
-    final count =
-        _zobowRawFrames.packetCount
-            .clamp(0, effectiveMaterializedPointLimit)
-            .toInt();
-    final start = _zobowRawFrames.packetCount - count;
-    _rebuildWindowChunked(
-      start,
-      count,
-      (pointIndex) => ZobowParser.decodeFrameValues(
-        _zobowRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      ),
-    );
-  }
-
-  Future<void> _rebuildZobowWindowAsync(
-    int start,
-    int count, {
-    PlotImportProgressCallback? onProgress,
-  }) async {
-    _dataPoints.clear();
-    _visibleStartIndex = start;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-
-    const batchSize = 4096;
-    for (int i = 0; i < count; i++) {
-      final packetIndex = start + i;
-      final frame = _zobowRawFrames.readPacket(packetIndex);
-      final values = ZobowParser.decodeFrameValues(frame, _parserConfig);
-      _recordObservedValues(values);
-      _dataPoints.add(
-        PlotDataPoint(
-          index: packetIndex,
-          timestamp: packetIndex.toDouble(),
-          values: values,
-        ),
-      );
-      if ((i + 1) % batchSize == 0 || i + 1 == count) {
+      if ((offset + 1) % batchSize == 0 || offset + 1 == count) {
         onProgress?.call(
-          PlotImportProgress(stage: '刷新绘图窗口', current: i + 1, total: count),
+          PlotImportProgress(
+            stage: '刷新绘图窗口',
+            current: offset + 1,
+            total: count,
+          ),
         );
         await Future<void>.delayed(Duration.zero);
       }
     }
+    _commitMaterializedWindow(start, points);
   }
 
   /// 根据当前解析器类型创建对应的解析器实例
@@ -3540,16 +2998,14 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _resetZobowRawFrameBuffer() {
-    _zobowRawFrames = FixedPacketByteBuffer(
-      packetSize: ZobowParser.frameLengthForConfig(_parserConfig),
+    _historyStore.resetZobowFrames(
+      ZobowParser.frameLengthForConfig(_parserConfig),
     );
   }
 
   /// 字节转16进制字符串（用于日志）
   void _resetFixedFrameRawFrameBuffer() {
-    _fixedFrameRawFrames = FixedPacketByteBuffer(
-      packetSize: _parserConfig.totalFrameLength,
-    );
+    _historyStore.resetFixedFrames(_parserConfig.totalFrameLength);
   }
 
   String _bytesToHex(Uint8List bytes) {
@@ -3628,20 +3084,11 @@ class PlotViewModel extends BaseViewModel {
   /// 一整块精确数据；停住不松手也会自动补齐当前位置。
   void _scheduleDragWindowLoad() {
     if (_historyPointCount == 0) return;
-    _dragWindowLoadTimer?.cancel();
-    _dragWindowLoadTimer = Timer(
-      PlotConfiguration.locatorDragWindowLoadDebounce,
-      () {
-        _dragWindowLoadTimer = null;
-        if (_disposed) return;
-        _loadWindowForViewport();
-      },
-    );
+    _windowProvider.scheduleDragLoad(_loadWindowForViewport);
   }
 
   void _cancelDragWindowLoad() {
-    _dragWindowLoadTimer?.cancel();
-    _dragWindowLoadTimer = null;
+    _windowProvider.cancelDragLoad();
   }
 
   /// 指针事件可能高于显示器刷新率；拖动时只在下一帧通知 UI，
@@ -3727,12 +3174,12 @@ class PlotViewModel extends BaseViewModel {
   }
 
   (double, double)? _lodDisplayYRange(double xMin, double xMax) {
-    if (_lodIndex.isEmpty || xMax <= xMin) return null;
+    if (_historyStore.lodSource.isEmpty || xMax <= xMin) return null;
     var minY = double.infinity;
     var maxY = double.negativeInfinity;
     for (final channel in displayChannels) {
       if (!channel.visible || channel.offsetEnabled) continue;
-      final series = _lodIndex.query(
+      final series = _historyStore.queryLod(
         channelIndex: channel.index,
         xMin: xMin,
         xMax: xMax,
@@ -3872,23 +3319,6 @@ class PlotViewModel extends BaseViewModel {
     _loadTailWindow();
     _saveSettings();
     Future.microtask(() => notifyListeners());
-  }
-
-  void _loadFixedFrameTailWindow() {
-    if (_fixedFrameRawFrames.isEmpty) return;
-    final count =
-        _fixedFrameRawFrames.packetCount
-            .clamp(0, effectiveMaterializedPointLimit)
-            .toInt();
-    final start = _fixedFrameRawFrames.packetCount - count;
-    _rebuildWindowChunked(
-      start,
-      count,
-      (pointIndex) => FixedFrameParser.decodeFrameValues(
-        _fixedFrameRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      ),
-    );
   }
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
@@ -4262,14 +3692,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   String? validateMathExpression(String expression) {
-    final trimmed = expression.trim();
-    if (trimmed.isEmpty) return '表达式不能为空';
-    try {
-      MathExpression.parse(trimmed);
-      return null;
-    } catch (e) {
-      return e is FormatException ? e.message : '表达式格式错误';
-    }
+    return _mathEngine.validate(expression);
   }
 
   bool enableMathChannel(int index, String expression) {
@@ -4298,7 +3721,7 @@ class PlotViewModel extends BaseViewModel {
     _rebuildObservedRawValueMetadata();
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
     return true;
   }
 
@@ -4324,7 +3747,7 @@ class PlotViewModel extends BaseViewModel {
     old.display.offsetBindingGroupId = null;
     mathChannels[index] = MathChannelConfig(index: old.index);
     _cleanupOffsetBindingGroups();
-    _compiledMathExpressions.remove(index);
+    _mathEngine.remove(index);
     _invalidateDisplayCaches();
     _rebuildObservedRawValueMetadata();
     _markChannelConfigChanged();
@@ -4353,7 +3776,7 @@ class PlotViewModel extends BaseViewModel {
     }
     _invalidateDisplayCaches();
     _cleanupOffsetBindingGroups();
-    _compiledMathExpressions.clear();
+    _mathEngine.clear();
     _sendProtocolConfig.rChannelAddresses = List.filled(
       SendProtocolConfig.maxChannelCount,
       '',
@@ -4519,16 +3942,16 @@ class PlotViewModel extends BaseViewModel {
     _parserConfig.zobowChannelTypes[index] = type;
     _saveSettings();
 
-    final total = _zobowRawFrames.packetCount;
+    final total = _historyStore.zobowFrameCount;
     if (total > 0) {
       final visibleStart = _visibleStartIndex;
       final visibleCount = _dataPoints.length;
       final stopwatch = Stopwatch()..start();
-      _lodIndex.clear();
+      _historyStore.clearLod();
       const batchSize = 4096;
       for (int packetIndex = 0; packetIndex < total; packetIndex++) {
-        final frame = _zobowRawFrames.readPacket(packetIndex);
-        _lodIndex.add(
+        final frame = _historyStore.readZobowFrame(packetIndex);
+        _historyStore.addLod(
           packetIndex,
           ZobowParser.decodeFrameValues(frame, _parserConfig),
         );
@@ -4555,7 +3978,7 @@ class PlotViewModel extends BaseViewModel {
       );
     }
 
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
     return true;
   }
 
@@ -4574,7 +3997,7 @@ class PlotViewModel extends BaseViewModel {
     _saveSettings();
     _resetFixedFrameRawFrameBuffer();
     clearData();
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
     return true;
   }
 
@@ -4956,50 +4379,29 @@ class PlotViewModel extends BaseViewModel {
   void _handleTriggerForPoint(PlotDataPoint point, DateTime now) {
     final triggerChannelIndex = _triggerConfig.channelIndex;
     final currentValue = _triggerValueForPoint(point, triggerChannelIndex);
-    final previousValue = _triggerPreviousValue;
-
-    if (_triggerStopPacketsRemaining != null) {
-      _recordTriggerPreviousValue(currentValue);
-      final remaining = _triggerStopPacketsRemaining! - 1;
-      if (remaining <= 0) {
-        _triggerStopPacketsRemaining = null;
-        _requestTriggerStop();
-      } else {
-        _triggerStopPacketsRemaining = remaining;
-      }
+    final evaluation = _triggerRuntime.process(
+      item: point,
+      value: _canUseTriggerChannel(triggerChannelIndex) ? currentValue : null,
+      enabled: _triggerConfig.enabled,
+      hitThreshold: _triggerConfig.hitThreshold,
+      triggerLimit: _triggerConfig.triggerLimit,
+      stopAtLimit: _triggerConfig.action != PlotTriggerAction.markOnly,
+      postStopItemCount:
+          _triggerConfig.action == PlotTriggerAction.stopAfterPackets
+              ? _triggerConfig.postTriggerPacketCount
+              : 0,
+      matches: _matchesTriggerCondition,
+    );
+    if (evaluation.stopRequested && !evaluation.thresholdReached) {
+      _requestTriggerStop();
       return;
     }
+    if (!evaluation.thresholdReached) return;
 
-    if (!_triggerConfig.enabled || _triggerStopRequested) {
-      _recordTriggerPreviousValue(currentValue);
-      return;
-    }
-
-    if (!_canUseTriggerChannel(triggerChannelIndex) || currentValue == null) {
-      _recordTriggerPreviousValue(currentValue);
-      return;
-    }
-
-    if (!_matchesTriggerCondition(currentValue, previousValue)) {
-      _recordTriggerPreviousValue(currentValue);
-      return;
-    }
-
-    _recordTriggerPreviousValue(currentValue);
-
-    _triggerHitCount++;
-    _triggerHitPoints.add(point);
-    if (_triggerHitCount < _triggerConfig.hitThreshold) return;
-
-    _triggeredCount++;
-    final hitPoints = List<PlotDataPoint>.from(_triggerHitPoints);
     final note = _buildTriggerObservationNote(now);
-    _addTriggerObservations(hitPoints, note);
-    _triggerHitCount = 0;
-    _triggerHitPoints.clear();
+    _addTriggerObservations(evaluation.hitItems, note);
 
-    final reachedTriggerLimit = _triggeredCount >= _triggerConfig.triggerLimit;
-    if (!reachedTriggerLimit) {
+    if (!evaluation.limitReached) {
       _markOverlayChanged();
       Future.microtask(() => notifyListeners());
       return;
@@ -5018,8 +4420,6 @@ class PlotViewModel extends BaseViewModel {
       case PlotTriggerAction.stopAfterPackets:
         if (_triggerConfig.postTriggerPacketCount <= 0) {
           _requestTriggerStop();
-        } else {
-          _triggerStopPacketsRemaining = _triggerConfig.postTriggerPacketCount;
         }
         break;
     }
@@ -5046,7 +4446,7 @@ class PlotViewModel extends BaseViewModel {
     if (mathIndex < 0 || mathIndex >= mathChannels.length) return null;
     final channel = mathChannels[mathIndex];
     if (!_canUseMathChannelForTrigger(channel)) return null;
-    final value = _compiledMathExpressions[mathIndex]!.evaluate(point.values);
+    final value = _mathEngine.evaluateValues(mathIndex, point.values);
     return value.isFinite ? value : null;
   }
 
@@ -5066,10 +4466,6 @@ class PlotViewModel extends BaseViewModel {
             previousValue > _triggerConfig.targetValue &&
             value <= _triggerConfig.targetValue,
     };
-  }
-
-  void _recordTriggerPreviousValue(double? value) {
-    _triggerPreviousValue = value;
   }
 
   void _addTriggerObservations(List<PlotDataPoint> hitPoints, String note) {
@@ -5099,7 +4495,7 @@ class PlotViewModel extends BaseViewModel {
       '$channel ${_triggerConfig.comparison.label} ${formatPlotValue(_triggerConfig.targetValue)}',
     );
     parts.add('累计 ${_triggerConfig.hitThreshold} 次');
-    parts.add('第 $_triggeredCount 次触发');
+    parts.add('第 ${_triggerRuntime.triggeredCount} 次触发');
     return parts.join('，');
   }
 
@@ -5110,8 +4506,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _requestTriggerStop() {
-    if (_triggerStopRequested) return;
-    _triggerStopRequested = true;
+    if (_triggerStopDispatchScheduled) return;
+    _triggerStopDispatchScheduled = true;
+    _triggerRuntime.requestStop();
     _triggerConfig.enabled = false;
     Future.microtask(() {
       if (!_disposed) unawaited(stopPlotting());
@@ -5119,12 +4516,8 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _resetTriggerRuntimeState() {
-    _triggerHitCount = 0;
-    _triggeredCount = 0;
-    _triggerHitPoints.clear();
-    _triggerPreviousValue = null;
-    _triggerStopPacketsRemaining = null;
-    _triggerStopRequested = false;
+    _triggerRuntime.reset();
+    _triggerStopDispatchScheduled = false;
   }
 
   /// 更新垂直光标（跟随鼠标模式）
@@ -5269,22 +4662,12 @@ class PlotViewModel extends BaseViewModel {
   }
 
   List<double> _buildTriggerObservationValues(PlotDataPoint point) {
-    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
-    final values = List<double>.generate(
-      rawCount,
-      (index) => index < point.values.length ? point.values[index] : double.nan,
-      growable: true,
+    return _observationAssembler.fromPoint(
+      point: point,
+      rawChannelCount: rawDisplayChannelCount,
+      mathChannels: mathChannels,
+      mathEngine: _mathEngine,
     );
-    for (final channel in mathChannels) {
-      if (!channel.enabled) continue;
-      final expression = _compiledMathExpressions[channel.index];
-      if (expression == null || expression.hasChannelOffset) {
-        values.add(double.nan);
-        continue;
-      }
-      values.add(expression.evaluate(point.values));
-    }
-    return values;
   }
 
   String _appendObservationLimitNote(String note) {
@@ -5337,16 +4720,13 @@ class PlotViewModel extends BaseViewModel {
     ];
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
-      final expression = _compiledMathExpressions[channel.index];
       values.add(
-        expression?.evaluateWithContext(
-              MathEvalContext(
-                currentIndex: pointIndex,
-                pointCount: _historyPointCount,
-                valueAt: _rawHistoryValueAt,
-              ),
-            ) ??
-            double.nan,
+        _mathEngine.evaluateAt(
+          channelIndex: channel.index,
+          currentIndex: pointIndex,
+          pointCount: _historyPointCount,
+          valueAt: _rawHistoryValueAt,
+        ),
       );
     }
     return PlotDataPoint(
@@ -5607,46 +4987,19 @@ class PlotViewModel extends BaseViewModel {
     }
 
     final buffer = StringBuffer();
-    final commonCount = rangeEnd - rangeStart + 1;
-    const exactStatsPointLimit = 100000;
-    final approximate = commonCount > exactStatsPointLimit;
-    final sampleStep =
-        approximate
-            ? (commonCount / exactStatsPointLimit).ceil().clamp(1, commonCount)
-            : 1;
-    final statPrefix = approximate ? '约' : '';
-
-    final maxValues = List<double?>.filled(currentChannels.length, null);
-    final minValues = List<double?>.filled(currentChannels.length, null);
-    final sums = List<double>.filled(currentChannels.length, 0);
-    final counts = List<int>.filled(currentChannels.length, 0);
-    for (
-      var pointIndex = rangeStart;
-      pointIndex <= rangeEnd;
-      pointIndex += sampleStep
-    ) {
-      final point = _displayPointAtHistoryIndex(pointIndex);
-      if (point == null) continue;
-      for (var i = 0; i < currentChannels.length; i++) {
-        if (!currentChannels[i].visible || i >= point.channelCount) continue;
-        final value = point.values[i];
-        if (!value.isFinite) continue;
-        maxValues[i] =
-            maxValues[i] == null || value > maxValues[i]!
-                ? value
-                : maxValues[i];
-        minValues[i] =
-            minValues[i] == null || value < minValues[i]!
-                ? value
-                : minValues[i];
-        sums[i] += value;
-        counts[i]++;
-      }
-    }
+    final result = _statisticsCalculator.calculate(
+      rangeStart: rangeStart,
+      rangeEnd: rangeEnd,
+      channelCount: currentChannels.length,
+      isChannelVisible: (index) => currentChannels[index].visible,
+      valuesAt: (index) => _displayPointAtHistoryIndex(index)?.values,
+    );
+    final statPrefix = result.approximate ? '约' : '';
 
     var hasVisibleChannel = false;
     for (var i = 0; i < currentChannels.length; i++) {
-      if (counts[i] == 0) continue;
+      final channelStats = result.channels[i];
+      if (channelStats == null) continue;
       if (hasVisibleChannel) buffer.writeln('---');
       hasVisibleChannel = true;
 
@@ -5656,13 +5009,13 @@ class PlotViewModel extends BaseViewModel {
               : 'Ch$i';
       buffer.writeln('$name:');
       buffer.writeln(
-        '  Max: $statPrefix${_formatDisplayNumber(maxValues[i]!)}',
+        '  Max: $statPrefix${_formatDisplayNumber(channelStats.maximum)}',
       );
       buffer.writeln(
-        '  Min: $statPrefix${_formatDisplayNumber(minValues[i]!)}',
+        '  Min: $statPrefix${_formatDisplayNumber(channelStats.minimum)}',
       );
       buffer.writeln(
-        '  Avg: $statPrefix${_formatDisplayNumber(sums[i] / counts[i])}',
+        '  Avg: $statPrefix${_formatDisplayNumber(channelStats.average)}',
       );
     }
 
@@ -5674,8 +5027,10 @@ class PlotViewModel extends BaseViewModel {
 
     // 统一显示 N 和 Range
     buffer.writeln('---');
-    buffer.writeln('N: $commonCount');
-    if (approximate) buffer.writeln('Mode: 约 $exactStatsPointLimit samples');
+    buffer.writeln('N: ${result.rangePointCount}');
+    if (result.approximate) {
+      buffer.writeln('Mode: 约 ${result.sampleLimit} samples');
+    }
     buffer.writeln('Range: $rangeStart ~ $rangeEnd');
 
     _cachedStatsKey = cacheKey;
@@ -5727,33 +5082,15 @@ class PlotViewModel extends BaseViewModel {
   @override
   void dispose() {
     _disposed = true;
-    _plotSessionGeneration++;
-    _cancelWindowLoad();
+    _windowProvider.dispose();
     _cancelPendingDragViewportNotification();
-    _parseSubscription?.cancel();
-    _parseSubscription = null;
-    unawaited(_sourceManager.stop());
-    _parser?.dispose();
-    _parser = null;
-    _isPlotting = false;
-    _isStarting = false;
-    _startFuture = null;
-    _isStopping = false;
-    _stopFuture = null;
+    unawaited(_sessionController.dispose());
     _resetRateState();
     serialService.releaseActivity(SerialActivityOwner.plot);
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;
     _stopRefreshTimer();
-    unawaited(_sourceManager.dispose());
     super.dispose();
   }
 }
-
-/// 文本/浮点协议的全量数值历史缓存。
-///
-/// 直接保存 `List<PlotDataPoint>` 会为每个点和每个通道产生大量 Dart 对象，
-/// 百万级数据下 GC 压力很大。这里改用分块的 typed data：
-/// - `_valueChunks` 连续保存每个点最多 16 个 double 值。
-/// - `_countChunks` 记录每个点真实通道数，支持 JustFloat 自动通道数变化。

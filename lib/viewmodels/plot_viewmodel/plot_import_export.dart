@@ -405,19 +405,16 @@ extension PlotViewModelImportExport on PlotViewModel {
     }
     final mathIndex = column.channelIndex - PlotConfiguration.rawChannelCount;
     if (mathIndex < 0 || mathIndex >= mathChannels.length) return double.nan;
-    final expression = _compiledMathExpressions[mathIndex];
-    if (expression == null) return double.nan;
-    return expression.evaluateWithContext(
-      MathEvalContext(
-        currentIndex: pointIndex,
-        pointCount: _exportPointCount,
-        valueAt:
-            (sourcePointIndex, sourceChannelIndex) => _exportRawValueAt(
-              sourcePointIndex,
-              sourceChannelIndex,
-              decodedCache,
-            ),
-      ),
+    return _mathEngine.evaluateAt(
+      channelIndex: mathIndex,
+      currentIndex: pointIndex,
+      pointCount: _exportPointCount,
+      valueAt:
+          (sourcePointIndex, sourceChannelIndex) => _exportRawValueAt(
+            sourcePointIndex,
+            sourceChannelIndex,
+            decodedCache,
+          ),
     );
   }
 
@@ -430,9 +427,9 @@ extension PlotViewModelImportExport on PlotViewModel {
       return double.nan;
     }
     if (_exportsParsedHistory) {
-      final valueCount = _parsedHistory.valueCountAt(pointIndex);
+      final valueCount = _historyStore.parsedValueCountAt(pointIndex);
       return channelIndex < valueCount
-          ? _parsedHistory.valueAt(pointIndex, channelIndex)
+          ? _historyStore.parsedValueAt(pointIndex, channelIndex)
           : double.nan;
     }
     final values = decodedCache.putIfAbsent(
@@ -443,26 +440,16 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   int get _exportChannelCount {
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
+    if (_parserType == ParserType.zobow && _historyStore.hasZobowFrames) {
       return _parserConfig.zobowChannelCount;
     }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
+    if (_parserType == ParserType.fixedFrame && _historyStore.hasFixedFrames) {
       return _parserConfig.channelCount;
     }
-    return _parsedHistory.maxChannelCount;
+    return _historyStore.parsedMaxChannelCount;
   }
 
-  int get _exportPointCount {
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-      return _zobowRawFrames.packetCount;
-    }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      return _fixedFrameRawFrames.packetCount;
-    }
-    return _parsedHistory.length;
-  }
+  int get _exportPointCount => _historyStore.pointCount(_parserType);
 
   (int, int)? _normalizeExportRange(int? startIndex, int? endIndex) {
     final total = _exportPointCount;
@@ -479,23 +466,12 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   bool get _exportsParsedHistory =>
-      !(_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) &&
-      !(_parserType == ParserType.fixedFrame &&
-          _fixedFrameRawFrames.isNotEmpty);
+      !(_parserType == ParserType.zobow && _historyStore.hasZobowFrames) &&
+      !(_parserType == ParserType.fixedFrame && _historyStore.hasFixedFrames);
 
   List<double> _decodeExportValuesAt(int pointIndex) {
-    if (_parserType == ParserType.zobow && _zobowRawFrames.isNotEmpty) {
-      return ZobowParser.decodeFrameValues(
-        _zobowRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      );
-    }
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      return FixedFrameParser.decodeFrameValues(
-        _fixedFrameRawFrames.readPacket(pointIndex),
-        _parserConfig,
-      );
+    if (!_exportsParsedHistory) {
+      return _historyStore.valuesAt(pointIndex, _parserType, _parserConfig);
     }
     throw StateError('文本历史无需解码');
   }
@@ -1204,11 +1180,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     final expressions = <String>[];
     for (final value in headerParts.skip(17)) {
       final expression = value.trim();
-      try {
-        MathExpression.parse(expression);
-      } catch (_) {
-        return null;
-      }
+      if (_mathEngine.validate(expression) != null) return null;
       expressions.add(expression);
     }
     return expressions;
@@ -1235,11 +1207,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       if (descriptor is! Map || descriptor['type'] != 'math') return null;
       final expression = descriptor['expression'];
       if (expression is! String) return null;
-      try {
-        MathExpression.parse(expression);
-      } catch (_) {
-        return null;
-      }
+      if (_mathEngine.validate(expression) != null) return null;
       expressions.add(expression);
     }
     return expressions;
@@ -1273,11 +1241,8 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   void _beginImportedReplacement() {
-    _dataPoints.clear();
-    _parsedHistory.clear();
-    _lodIndex.clear();
-    _zobowRawFrames.clear();
-    _fixedFrameRawFrames.clear();
+    _windowProvider.clear();
+    _historyStore.clear();
     _resetPlotRetentionState();
     _importedChannelAddresses = null;
   }
@@ -1287,8 +1252,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     List<double> values,
     _ImportValueRange range,
   ) {
-    _parsedHistory.add(values);
-    _lodIndex.add(pointIndex, values);
+    _historyStore.appendImportedParsedPoint(pointIndex, values);
     range.include(values);
   }
 
@@ -1435,13 +1399,13 @@ extension PlotViewModelImportExport on PlotViewModel {
     if ((x - index).abs() > 0.000001 || !canJumpToXIndex(index)) {
       return CursorState(x: x, hasData: false);
     }
-    final valueCount = _parsedHistory.valueCountAt(index);
+    final valueCount = _historyStore.parsedValueCountAt(index);
     if (valueCount <= 0) return CursorState(x: x, hasData: false);
     return CursorState(
       x: x,
       channelValues: [
         for (var channel = 0; channel < valueCount; channel++)
-          _parsedHistory.valueAt(index, channel),
+          _historyStore.parsedValueAt(index, channel),
       ],
       hasData: true,
     );

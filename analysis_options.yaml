@@ -21,8 +21,12 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    # 所有明确的后台异步任务必须使用 unawaited()，避免 Future 被意外丢弃。
+    unawaited_futures: true
+    # 资源所有者必须显式关闭创建的 StreamController 和 IOSink。
+    close_sinks: true
+    # 资源所有者必须显式取消创建的 StreamSubscription。
+    cancel_subscriptions: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

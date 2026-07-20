@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,121 +6,19 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/utils/app_logger.dart';
-import '../core/utils/atomic_file.dart';
 import '../core/utils/crc.dart';
-import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_packet.dart';
 import '../data/models/retention_usage.dart';
 import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'native_serial_reader.dart';
+import 'raw_receive_session.dart';
+import 'serial_connection_coordinator.dart';
 import 'serial_port_catalog.dart';
 import 'serial_transport.dart';
-import 'shell_stream_decoder.dart';
-import 'time_window_aggregator.dart';
 import 'ymodem_service.dart';
 import 'windows_code_page_codec.dart';
-
-/// 支持 O(1) 头部淘汰的字符串列表。
-///
-/// 原始收发达到显示上限后会持续删除最旧行。普通 List 的 removeAt(0)
-/// 每次都要移动所有元素，环形存储可以避免高行数下的重复整体搬移。
-class _CircularStringList extends ListBase<String> {
-  List<String?> _items = List<String?>.filled(16, null);
-  int _head = 0;
-  int _length = 0;
-
-  @override
-  int get length => _length;
-
-  @override
-  set length(int value) {
-    if (value < 0) {
-      throw RangeError.range(value, 0, null, 'length');
-    }
-    if (value > _length) {
-      throw UnsupportedError('不能通过 length 扩展环形列表');
-    }
-    while (_length > value) {
-      removeLast();
-    }
-  }
-
-  @override
-  String operator [](int index) {
-    RangeError.checkValidIndex(index, this);
-    return _items[_physicalIndex(index)]!;
-  }
-
-  @override
-  void operator []=(int index, String value) {
-    RangeError.checkValidIndex(index, this);
-    _items[_physicalIndex(index)] = value;
-  }
-
-  @override
-  void add(String value) {
-    _ensureCapacity(_length + 1);
-    _items[_physicalIndex(_length)] = value;
-    _length++;
-  }
-
-  String removeFirst() {
-    if (_length == 0) throw StateError('列表为空');
-    final value = _items[_head]!;
-    _items[_head] = null;
-    _head = (_head + 1) % _items.length;
-    _length--;
-    if (_length == 0) _head = 0;
-    return value;
-  }
-
-  @override
-  String removeLast() {
-    if (_length == 0) throw StateError('列表为空');
-    final index = _physicalIndex(_length - 1);
-    final value = _items[index]!;
-    _items[index] = null;
-    _length--;
-    if (_length == 0) _head = 0;
-    return value;
-  }
-
-  @override
-  String removeAt(int index) {
-    RangeError.checkValidIndex(index, this);
-    if (index == 0) return removeFirst();
-    if (index == _length - 1) return removeLast();
-
-    final value = this[index];
-    for (var i = index; i < _length - 1; i++) {
-      this[i] = this[i + 1];
-    }
-    removeLast();
-    return value;
-  }
-
-  @override
-  void clear() {
-    _items = List<String?>.filled(16, null);
-    _head = 0;
-    _length = 0;
-  }
-
-  int _physicalIndex(int logicalIndex) =>
-      (_head + logicalIndex) % _items.length;
-
-  void _ensureCapacity(int required) {
-    if (required <= _items.length) return;
-    final next = List<String?>.filled(_items.length * 2, null);
-    for (var i = 0; i < _length; i++) {
-      next[i] = this[i];
-    }
-    _items = next;
-    _head = 0;
-  }
-}
 
 enum SendDisplaySource { user, plot }
 
@@ -230,6 +127,16 @@ class SerialService extends ChangeNotifier {
   }) : this._withTransport(transportFactory);
 
   SerialService._withTransport(this._transportFactory) {
+    _rawSession = RawReceiveSession(
+      onChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+      onRetentionLimitReached: () {
+        if (isRawReceiving) stopRawReceiving();
+      },
+    );
     _portCatalog = SerialPortCatalog(
       enumerator: () {
         final debugEnumerator = debugPortEnumerator;
@@ -249,13 +156,8 @@ class SerialService extends ChangeNotifier {
   SerialConfig config = SerialConfig();
   bool isConnected = false;
   bool isConnecting = false;
-  Future<void> _connectionTail = Future<void>.value();
-  Future<void>? _connectFuture;
-  int? _connectFutureGeneration;
-  Future<void>? _ioDisconnectFuture;
-  Future<void>? _shutdownFuture;
-  int _connectionGeneration = 0;
-  bool _shuttingDown = false;
+  final SerialConnectionCoordinator _connectionCoordinator =
+      SerialConnectionCoordinator();
   late final SerialPortCatalog _portCatalog;
   NativeSerialPortMonitor? _portMonitor;
   StreamSubscription<void>? _portMonitorSubscription;
@@ -284,18 +186,6 @@ class SerialService extends ChangeNotifier {
 
   /// 仅测试使用：替换原生句柄打开状态。
   bool? debugNativePortOpen;
-
-  Future<T> _enqueueConnectionOperation<T>(Future<T> Function() operation) {
-    final completer = Completer<T>();
-    _connectionTail = _connectionTail.catchError((_) {}).then((_) async {
-      try {
-        completer.complete(await operation());
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    });
-    return completer.future;
-  }
 
   List<String> get availablePorts => _portCatalog.ports;
   bool get isRefreshingPorts =>
@@ -329,9 +219,6 @@ class SerialService extends ChangeNotifier {
   String? get portRefreshError => _portCatalog.lastError;
   Duration? get lastPortRefreshDuration => _portCatalog.lastDuration;
 
-  // 自动换行时间窗口聚合器
-  TimeWindowAggregator? _aggregator;
-
   Timer? _receiveLogFlushTimer;
   DateTime? _receiveLogWindowStart;
   bool _receiveLogHighFrequency = false;
@@ -351,16 +238,12 @@ class SerialService extends ChangeNotifier {
   static const Duration _ioLogDetectWindow = Duration(milliseconds: 200);
   static const Duration _ioLogMaxBatchWindow = Duration(seconds: 1);
 
-  static const int minAutoLineBreakIntervalMs = 1;
-  static const int defaultAutoLineBreakIntervalMs = 100;
-  static const int maxAutoLineBreakIntervalMs = 10000;
-
-  /// 连续数据始终没有空闲时，到达此上限后强制换行，避免单行无限增长。
-  static const int _maxAutoLineBreakBufferBytes = 64 * 1024;
-
-  // 自动换行默认开启，时间窗口与时间戳及 HEX 显示相互独立。
-  bool autoLineBreak = true;
-  int autoLineBreakIntervalMs = defaultAutoLineBreakIntervalMs;
+  static const int minAutoLineBreakIntervalMs =
+      RawReceiveSession.minAutoLineBreakIntervalMs;
+  static const int defaultAutoLineBreakIntervalMs =
+      RawReceiveSession.defaultAutoLineBreakIntervalMs;
+  static const int maxAutoLineBreakIntervalMs =
+      RawReceiveSession.maxAutoLineBreakIntervalMs;
 
   // 当前连接的串口标识（用于判断是否需要清空数据）
   String? _lastConnectedPort;
@@ -372,62 +255,36 @@ class SerialService extends ChangeNotifier {
   final _shellDataController = StreamController<Uint8List>.broadcast();
   Stream<Uint8List> get shellDataStream => _shellDataController.stream;
 
-  // 原始字节数据（内部保留）
-  final ChunkedByteBuffer _rawBytes = ChunkedByteBuffer();
-  int get _rawBytesSize => _rawBytes.length;
-  static const int rawRetentionLimitBytes = 512 * 1024 * 1024;
-  static const double _retentionWarningRatio = 0.8;
-  int? debugRawRetentionLimitBytes;
-  bool _rawRetentionWarningShown = false;
-  bool _rawRetentionLimitShown = false;
+  late final RawReceiveSession _rawSession;
+  static const int rawRetentionLimitBytes =
+      RawReceiveSession.rawRetentionLimitBytes;
+  static const int minDisplayLineLimit = RawReceiveSession.minDisplayLineLimit;
+  static const int defaultDisplayLineLimit =
+      RawReceiveSession.defaultDisplayLineLimit;
+  static const int maxDisplayLineLimit = RawReceiveSession.maxDisplayLineLimit;
 
-  int get _effectiveRawRetentionLimitBytes =>
-      debugRawRetentionLimitBytes ?? rawRetentionLimitBytes;
+  List<String> get receivedLines => _rawSession.receivedLines;
+  int get displayRevision => _rawSession.displayRevision;
+  int get displayTrimRevision => _rawSession.displayTrimRevision;
+  List<String> get lastTrimmedDisplayLines =>
+      _rawSession.lastTrimmedDisplayLines;
+  int get displayLineLimit => _rawSession.displayLineLimit;
+  bool get receiveHex => _rawSession.receiveHex;
+  bool get showTimestamp => _rawSession.showTimestamp;
+  bool get autoLineBreak => _rawSession.autoLineBreak;
+  int get autoLineBreakIntervalMs => _rawSession.autoLineBreakIntervalMs;
+  String get textEncoding => _rawSession.textEncoding;
+  RetentionUsage get rawRetentionUsage => _rawSession.retentionUsage;
+  Uint8List get rawBytes => _rawSession.rawBytes;
+  bool get hasRawData => _rawSession.hasRawData;
+  Map<String, String> get dataStats => _rawSession.dataStats;
 
-  RetentionUsage get rawRetentionUsage {
-    final limit = _effectiveRawRetentionLimitBytes;
-    final ratio = limit <= 0 ? 0.0 : _rawBytesSize / limit;
-    final state =
-        _rawBytesSize >= limit
-            ? RetentionState.limitReached
-            : ratio >= _retentionWarningRatio
-            ? RetentionState.warning
-            : RetentionState.normal;
-    return RetentionUsage(
-      usedBytes: _rawBytesSize,
-      limitBytes: limit,
-      state: state,
-    );
+  int? get debugRawRetentionLimitBytes => _rawSession.debugRetentionLimitBytes;
+  set debugRawRetentionLimitBytes(int? value) {
+    _rawSession.debugRetentionLimitBytes = value;
   }
 
-  // 原始文本数据（用于原始数据页面显示）
-  final _CircularStringList _receivedLines = _CircularStringList();
-  List<String> get receivedLines => _receivedLines;
-  int _receivedTextBytes = 0;
-  Timer? _displayNotifyTimer;
-  int _displayRevision = 0;
-  int get displayRevision => _displayRevision;
-  bool _displayBatchHasTrim = false;
-  int _displayTrimRevision = 0;
-  List<String> _lastTrimmedDisplayLines = <String>[];
-  int get displayTrimRevision => _displayTrimRevision;
-  List<String> get lastTrimmedDisplayLines => _lastTrimmedDisplayLines;
-  String _pendingReceiveText = '';
-  int? _pendingReceiveLineIndex;
-  String _pendingReceiveLinePrefix = '';
-  String _pendingSendText = '';
-  int? _pendingSendLineIndex;
-  String _pendingSendLinePrefix = '';
-  static const int _maxReceivedTextBytes = 128 * 1024 * 1024; // 128MB 文本缓存
-  static const int minDisplayLineLimit = 100;
-  static const int defaultDisplayLineLimit = 100000;
-  static const int maxDisplayLineLimit = 100000;
-  int _displayLineLimit = defaultDisplayLineLimit;
-  int get displayLineLimit => _displayLineLimit;
-
   // 显示选项
-  bool receiveHex = false;
-  bool showTimestamp = false;
   bool autoScroll = true;
   bool rawDataShellEnabled = false;
   RawShellInputMode rawShellInputMode = RawShellInputMode.line;
@@ -439,16 +296,6 @@ class SerialService extends ChangeNotifier {
   String shellLineEnding = '\r\n';
   bool shellLocalEcho = true;
   int shellScrollbackLines = 10000;
-
-  // 文本收发编码（非 HEX 模式下生效）
-  String _textEncoding = 'UTF-8';
-  final ShellStreamDecoder _rawTextDecoder = ShellStreamDecoder('UTF-8');
-  DateTime? _lastRawTextTimestamp;
-
-  String get textEncoding => _textEncoding;
-
-  /// 文本模式单行最大长度（超过此长度即使没有换行符也强制换行）
-  static const int _maxTextLineLength = 4096;
 
   // 发送选项
   bool sendHex = false;
@@ -485,13 +332,9 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings();
     config = settings.saveToSerialConfig();
     useRandomSource = settings.useRandomSource;
-    _displayLineLimit = settings.rawDataDisplayLineLimit.clamp(
-      minDisplayLineLimit,
-      maxDisplayLineLimit,
-    );
-    autoLineBreakIntervalMs = settings.rawDataAutoLineBreakIntervalMs.clamp(
-      minAutoLineBreakIntervalMs,
-      maxAutoLineBreakIntervalMs,
+    _rawSession.setDisplayLineLimit(settings.rawDataDisplayLineLimit);
+    _rawSession.setAutoLineBreakIntervalMs(
+      settings.rawDataAutoLineBreakIntervalMs,
     );
     rawDataShellEnabled = settings.rawDataShellEnabled;
     rawShellInputMode = RawShellInputMode.fromString(
@@ -513,7 +356,7 @@ class SerialService extends ChangeNotifier {
     shellLocalEcho = settings.shellLocalEcho;
     shellScrollbackLines = settings.shellScrollbackLines;
     ymodemService.attach(shellDataStream);
-    _textEncoding = settings.rawDataEncoding;
+    _rawSession.setTextEncoding(settings.rawDataEncoding);
   }
 
   /// 保存配置到 AppSettings
@@ -649,7 +492,7 @@ class SerialService extends ChangeNotifier {
   ///
   /// 健康连接不触发端口枚举。只有句柄异常后才刷新一次目录并决定是否重连。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
-    return _enqueueConnectionOperation(
+    return _connectionCoordinator.enqueue(
       () => _refreshConnectionStatusLocked(reconnectOnce: reconnectOnce),
     );
   }
@@ -691,7 +534,7 @@ class SerialService extends ChangeNotifier {
     if (healthy) return true;
 
     AppLogger().warning('检测到串口连接异常: $selectedPort', category: 'SERIAL');
-    _connectionGeneration++;
+    _connectionCoordinator.invalidate();
     await _cleanupPortLocked();
 
     final reconnectPortsRefreshed = await refreshPorts(reason: '连接异常复查');
@@ -700,16 +543,16 @@ class SerialService extends ChangeNotifier {
       config = config.copyWith(port: null);
       _saveSettings();
       AppNotifications.show('串口已断开，请重新连接');
-      Future.microtask(() => notifyListeners());
+      unawaited(Future.microtask(() => notifyListeners()));
       return false;
     }
 
     config = config.copyWith(port: selectedPort);
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
     if (!reconnectOnce) return false;
 
     AppLogger().info('尝试自动重连串口: $selectedPort', category: 'SERIAL');
-    final generation = ++_connectionGeneration;
+    final generation = _connectionCoordinator.nextGeneration();
     await _connectLocked(generation);
     return isConnected;
   }
@@ -722,35 +565,15 @@ class SerialService extends ChangeNotifier {
   }
 
   Future<void> connect() {
-    if (_shuttingDown) return Future<void>.value();
-    final existing = _connectFuture;
-    if (existing != null && _connectFutureGeneration == _connectionGeneration) {
-      return existing;
-    }
-    final generation = ++_connectionGeneration;
-    isConnecting = true;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-    late final Future<void> operation;
-    operation = _enqueueConnectionOperation(() => _connectLocked(generation));
-    _connectFuture = operation;
-    _connectFutureGeneration = generation;
-    operation.then(
-      (_) {
-        if (identical(_connectFuture, operation)) {
-          _connectFuture = null;
-          _connectFutureGeneration = null;
-        }
+    return _connectionCoordinator.connect(
+      onStart: () {
+        isConnecting = true;
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
       },
-      onError: (Object _, StackTrace stackTrace) {
-        if (identical(_connectFuture, operation)) {
-          _connectFuture = null;
-          _connectFutureGeneration = null;
-        }
-      },
+      operation: _connectLocked,
     );
-    return operation;
   }
 
   Future<void> _connectLocked(int generation) async {
@@ -765,7 +588,7 @@ class SerialService extends ChangeNotifier {
     }
 
     isConnecting = true;
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
     // 先让 Flutter 绘制连接中状态，再开始原生耗时操作。
     await Future<void>.delayed(Duration.zero);
@@ -780,7 +603,7 @@ class SerialService extends ChangeNotifier {
       // 直接使用 NativeSerialReader 打开串口（跳过 Isolate 探测）
       AppLogger().trace('使用 NativeSerialReader 打开串口...', category: 'SERIAL');
       await _openPort(generation);
-      if (_shuttingDown || generation != _connectionGeneration) {
+      if (!_connectionCoordinator.isCurrent(generation)) {
         throw const _ConnectionCancelled();
       }
 
@@ -801,7 +624,7 @@ class SerialService extends ChangeNotifier {
     } finally {
       isConnecting = false;
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
-      Future.microtask(() => notifyListeners());
+      unawaited(Future.microtask(() => notifyListeners()));
     }
   }
 
@@ -821,7 +644,7 @@ class SerialService extends ChangeNotifier {
       await transport.close();
       throw Exception('无法打开串口');
     }
-    if (_shuttingDown || generation != _connectionGeneration) {
+    if (!_connectionCoordinator.isCurrent(generation)) {
       await transport.close();
       throw const _ConnectionCancelled();
     }
@@ -837,7 +660,7 @@ class SerialService extends ChangeNotifier {
     _transport = transport;
     _nativeSubscription = transport.dataStream.listen(
       (nativeData) {
-        if (generation == _connectionGeneration &&
+        if (_connectionCoordinator.isCurrent(generation) &&
             identical(transport, _transport)) {
           _onNativeDataReceived(nativeData);
         }
@@ -855,7 +678,7 @@ class SerialService extends ChangeNotifier {
       throw Exception('failed to start native serial read thread');
     }
 
-    if (_shuttingDown || generation != _connectionGeneration) {
+    if (!_connectionCoordinator.isCurrent(generation)) {
       await _cleanupPortLocked();
       throw const _ConnectionCancelled();
     }
@@ -864,14 +687,13 @@ class SerialService extends ChangeNotifier {
   }
 
   Future<void> disconnect() {
-    _connectionGeneration++;
-    return _enqueueConnectionOperation(_disconnectLocked);
+    return _connectionCoordinator.disconnect(_disconnectLocked);
   }
 
   Future<void> _disconnectLocked() async {
     await _cleanupPortLocked();
     AppLogger().info('串口已断开', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
   }
 
   Future<void> _cleanupPortLocked() async {
@@ -883,26 +705,20 @@ class SerialService extends ChangeNotifier {
     _transport = null;
     isConnected = false;
     _releaseAllActivities();
-    if (!_disposed) Future.microtask(notifyListeners);
+    if (!_disposed) unawaited(Future.microtask(notifyListeners));
     await subscription?.cancel();
     await transport?.close();
   }
 
   /// 应用退出专用：立即取消当前连接意图，再等待所有串口操作有序收敛。
   Future<void> shutdown() {
-    final existing = _shutdownFuture;
-    if (existing != null) return existing;
-    _shuttingDown = true;
-    _connectionGeneration++;
-    final operation = _enqueueConnectionOperation(() async {
+    return _connectionCoordinator.shutdown(() async {
       await _cleanupPortLocked();
       await _portMonitorSubscription?.cancel();
       _portMonitorSubscription = null;
       _portMonitor?.dispose();
       _portMonitor = null;
     });
-    _shutdownFuture = operation;
-    return operation;
   }
 
   /// 原生串口数据接收回调
@@ -930,17 +746,14 @@ class SerialService extends ChangeNotifier {
       _recordReceiveLog(data.length);
       // YMODEM 文件本身由接收服务直接落盘；原始追踪达到上限后不再增长，
       // 但不能因此截断正在进行的文件传输。
-      _appendRawBytesWithinLimit(data, stopRawReceivingAtLimit: false);
+      _rawSession.appendRawBytes(data, stopAtLimit: false);
       ymodemService.addIncomingBytes(data);
       return;
     }
 
     if (shouldReceiveRaw) {
       _recordReceiveLog(data.length);
-      final accepted = _appendRawBytesWithinLimit(
-        data,
-        stopRawReceivingAtLimit: true,
-      );
+      final accepted = _rawSession.appendRawBytes(data, stopAtLimit: true);
       if (accepted.isEmpty) return;
 
       // 单调时间用于分包，墙钟时间只负责用户可见的时间戳。
@@ -948,7 +761,7 @@ class SerialService extends ChangeNotifier {
         nativeData.wallClockUs,
       );
 
-      _displayReceivedData(
+      _rawSession.feedReceivedData(
         accepted,
         receiveTime,
         monotonicUs: nativeData.monotonicUs,
@@ -959,53 +772,6 @@ class SerialService extends ChangeNotifier {
       _recordReceiveLog(data.length);
       _shellDataController.add(data);
     }
-  }
-
-  Uint8List _appendRawBytesWithinLimit(
-    Uint8List data, {
-    required bool stopRawReceivingAtLimit,
-  }) {
-    if (data.isEmpty) return data;
-    final limit = _effectiveRawRetentionLimitBytes;
-    final remaining = (limit - _rawBytesSize).clamp(0, limit);
-    final acceptedLength = data.length.clamp(0, remaining).toInt();
-    final accepted =
-        acceptedLength == data.length
-            ? data
-            : Uint8List.sublistView(data, 0, acceptedLength);
-    if (accepted.isNotEmpty) _rawBytes.append(accepted);
-
-    final usage = rawRetentionUsage;
-    if (!_rawRetentionWarningShown && usage.ratio >= _retentionWarningRatio) {
-      _rawRetentionWarningShown = true;
-      final message =
-          '原始数据已使用 ${(usage.ratio * 100).clamp(0, 100).toStringAsFixed(0)}%，'
-          '达到 ${_formatByteSize(usage.limitBytes)} 后将自动停止接收';
-      AppLogger().warning(message, category: 'DATA');
-      AppNotifications.show(message);
-    }
-
-    if (usage.state == RetentionState.limitReached &&
-        !_rawRetentionLimitShown) {
-      _rawRetentionLimitShown = true;
-      final message =
-          '原始数据已达到 ${_formatByteSize(usage.limitBytes)} 上限，'
-          '${stopRawReceivingAtLimit ? '已自动停止接收' : '后续传输不再写入原始追踪'}';
-      AppLogger().warning(message, category: 'DATA');
-      AppNotifications.show(message);
-      if (stopRawReceivingAtLimit && isRawReceiving) stopRawReceiving();
-    }
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
-    return accepted;
-  }
-
-  static String _formatByteSize(int bytes) {
-    if (bytes >= 1024 * 1024 * 1024) {
-      return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GiB';
-    }
-    return '${(bytes / 1024 / 1024).toStringAsFixed(0)} MiB';
   }
 
   /// 测试独立 Shell 的接收调度，不绕过活动所有权约束。
@@ -1171,95 +937,31 @@ class SerialService extends ChangeNotifier {
 
   /// 使用当前选择的编码解码字节数据
   String _decodeBytes(Uint8List data) =>
-      _decodeBytesWithEncoding(data, _textEncoding);
+      _decodeBytesWithEncoding(data, textEncoding);
 
   /// 使用当前文本编码解码数据，供 Shell 等原始文本显示复用。
   String decodeText(Uint8List data) => _decodeBytes(data);
 
-  /// 添加一行接收数据显示
-  void _addRawDataLine(DateTime timestamp, Uint8List data) {
-    if (receiveHex) {
-      final text = data
-          .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-          .join(' ');
-      final prefix = showTimestamp ? '← [${_formatTimestamp(timestamp)}] ' : '';
-      _addDisplayLine('$prefix$text (${data.length} bytes)');
-    } else {
-      _lastRawTextTimestamp = timestamp;
-      _addTextDataLines(
-        _rawTextDecoder.add(data),
-        timestamp: timestamp,
-        isReceive: true,
-      );
-    }
-  }
-
-  void _displayReceivedData(
-    Uint8List data,
-    DateTime timestamp, {
-    int? monotonicUs,
-  }) {
-    if (!autoLineBreak) {
-      _addRawDataLine(timestamp, data);
-      return;
-    }
-    _aggregator ??= _createAutoLineBreakAggregator();
-    _aggregator!.feed(
-      data,
-      monotonicUs ?? timestamp.microsecondsSinceEpoch,
-      timestamp,
-    );
-  }
-
-  TimeWindowAggregator _createAutoLineBreakAggregator() {
-    return TimeWindowAggregator(
-      idleTimeoutUs:
-          autoLineBreakIntervalMs * Duration.microsecondsPerMillisecond,
-      maxBufferBytes: _maxAutoLineBreakBufferBytes,
-      onWindowComplete: (timestamp, data) {
-        _addRawDataLine(timestamp, data);
-        if (!receiveHex) _finishPendingReceiveLine();
-      },
-    );
-  }
-
-  void _finishPendingReceiveLine() {
-    _pendingReceiveText = '';
-    _pendingReceiveLineIndex = null;
-    _pendingReceiveLinePrefix = '';
-  }
-
-  void _flushAutoLineBreakWindow() {
-    _aggregator?.flush();
-    _aggregator = null;
-  }
-
   @visibleForTesting
   void debugAddRawReceiveData(Uint8List data, {DateTime? timestamp}) {
-    final accepted = _appendRawBytesWithinLimit(
-      data,
-      stopRawReceivingAtLimit: true,
-    );
+    final accepted = _rawSession.appendRawBytes(data, stopAtLimit: true);
     if (accepted.isNotEmpty) {
-      _addRawDataLine(timestamp ?? DateTime.now(), accepted);
+      _rawSession.addReceivedData(accepted, timestamp ?? DateTime.now());
     }
   }
 
   /// 按真实接收显示流程喂入数据，用于验证自动换行窗口。
   @visibleForTesting
   void debugFeedRawReceiveData(Uint8List data, {DateTime? timestamp}) {
-    final accepted = _appendRawBytesWithinLimit(
-      data,
-      stopRawReceivingAtLimit: true,
-    );
+    final accepted = _rawSession.appendRawBytes(data, stopAtLimit: true);
     if (accepted.isNotEmpty) {
-      _displayReceivedData(accepted, timestamp ?? DateTime.now());
+      _rawSession.feedReceivedData(accepted, timestamp ?? DateTime.now());
     }
   }
 
   @visibleForTesting
   void debugFlushAutoLineBreakForTest() {
-    _flushAutoLineBreakWindow();
+    _rawSession.flushAutoLineBreak();
   }
 
   @visibleForTesting
@@ -1279,202 +981,26 @@ class SerialService extends ChangeNotifier {
     );
   }
 
-  /// 添加一行发送数据显示
   void _addSendDataLine(
     Uint8List data, {
     SendDisplaySource source = SendDisplaySource.user,
     bool? displayAsHex,
   }) {
-    final shouldDisplayAsHex = displayAsHex ?? sendHex;
-    if (shouldDisplayAsHex) {
-      final text = data
-          .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
-          .join(' ');
-      final prefix = _sendLinePrefix(DateTime.now(), source: source);
-      final hexMark = !receiveHex ? '[HEX] ' : '';
-      _addDisplayLine('$prefix$hexMark$text (${data.length} bytes)');
-    } else {
-      _addTextDataLines(
-        _decodeBytes(data),
-        timestamp: DateTime.now(),
-        isReceive: false,
-        sendSource: source,
-      );
-    }
-  }
-
-  void _addTextDataLines(
-    String text, {
-    required DateTime timestamp,
-    required bool isReceive,
-    SendDisplaySource sendSource = SendDisplaySource.user,
-  }) {
-    if (text.isEmpty) return;
-
-    final prefix =
-        isReceive
-            ? (showTimestamp ? '← [${_formatTimestamp(timestamp)}] ' : '')
-            : _sendLinePrefix(timestamp, source: sendSource);
-    var pendingText = isReceive ? _pendingReceiveText : _pendingSendText;
-    var pendingIndex =
-        isReceive ? _pendingReceiveLineIndex : _pendingSendLineIndex;
-    var pendingPrefix =
-        isReceive ? _pendingReceiveLinePrefix : _pendingSendLinePrefix;
-    if (!isReceive && pendingPrefix != prefix) {
-      pendingText = '';
-      pendingIndex = null;
-      pendingPrefix = '';
-    }
-
-    void savePending() {
-      if (isReceive) {
-        _pendingReceiveText = pendingText;
-        _pendingReceiveLineIndex = pendingIndex;
-        _pendingReceiveLinePrefix = pendingPrefix;
-      } else {
-        _pendingSendText = pendingText;
-        _pendingSendLineIndex = pendingIndex;
-        _pendingSendLinePrefix = pendingPrefix;
-      }
-    }
-
-    void ensureLine() {
-      if (pendingIndex != null &&
-          pendingIndex! >= 0 &&
-          pendingIndex! < receivedLines.length) {
-        return;
-      }
-      // 接收数据没有行尾时属于同一条连续文本；后续数据包即使时间戳不同，
-      // 也应更新首次创建的显示行，直到收到 CR/LF 后再使用新的时间戳建行。
-      pendingPrefix = prefix;
-      pendingIndex = _addDisplayLine(pendingPrefix);
-    }
-
-    void updateLine() {
-      ensureLine();
-      _updateDisplayLine(pendingIndex!, '$pendingPrefix$pendingText');
-    }
-
-    for (var i = 0; i < text.length; i++) {
-      final codeUnit = text.codeUnitAt(i);
-      if (codeUnit == 13 || codeUnit == 10) {
-        updateLine();
-        pendingText = '';
-        pendingIndex = null;
-        pendingPrefix = '';
-        if (codeUnit == 13 &&
-            i + 1 < text.length &&
-            text.codeUnitAt(i + 1) == 10) {
-          i++;
-        }
-      } else {
-        pendingText += text[i];
-        // 单行超过上限时强制换行，避免长时间等不到换行符导致卡死
-        if (pendingText.length >= _maxTextLineLength) {
-          updateLine();
-          pendingText = '';
-          pendingIndex = null;
-          pendingPrefix = '';
-        }
-      }
-    }
-
-    if (pendingText.isNotEmpty) {
-      updateLine();
-    }
-    savePending();
-  }
-
-  String _sendLinePrefix(
-    DateTime timestamp, {
-    required SendDisplaySource source,
-  }) {
-    final buffer = StringBuffer();
-    if (showTimestamp) {
-      buffer.write('→ [${_formatTimestamp(timestamp)}] ');
-    }
-    if (source == SendDisplaySource.plot) {
-      buffer.write('[绘图发送] ');
-    }
-    return buffer.toString();
-  }
-
-  /// 添加一行到显示列表（通用）
-  int _addDisplayLine(String line) {
-    _beginDisplayMutation();
-    _receivedLines.add(line);
-    _receivedTextBytes += line.length * 2; // UTF-16 编码估算
-
-    _trimDisplayLines();
-    _scheduleDisplayNotify();
-    return _receivedLines.length - 1;
-  }
-
-  void _updateDisplayLine(int index, String line) {
-    if (index < 0 || index >= _receivedLines.length) return;
-    _beginDisplayMutation();
-    final oldLine = _receivedLines[index];
-    _receivedLines[index] = line;
-    _receivedTextBytes += (line.length - oldLine.length) * 2;
-    _trimDisplayLines();
-    _scheduleDisplayNotify();
-  }
-
-  void _trimDisplayLines() {
-    // 文本缓存限制（按字节）
-    while (_receivedTextBytes > _maxReceivedTextBytes &&
-        _receivedLines.isNotEmpty) {
-      final removed = _receivedLines.removeFirst();
-      _receivedTextBytes -= removed.length * 2;
-      _recordTrimmedDisplayLine(removed);
-      _shiftPendingLineIndexesAfterRemove();
-    }
-    // 显示行数限制，超出时按 FIFO 丢弃最早内容。
-    while (_receivedLines.length > _displayLineLimit) {
-      final removed = _receivedLines.removeFirst();
-      _receivedTextBytes -= removed.length * 2;
-      _recordTrimmedDisplayLine(removed);
-      _shiftPendingLineIndexesAfterRemove();
-    }
-  }
-
-  void _beginDisplayMutation() {
-    if (_displayNotifyTimer == null) {
-      _displayBatchHasTrim = false;
-    }
-  }
-
-  void _recordTrimmedDisplayLine(String line) {
-    if (!_displayBatchHasTrim) {
-      _displayBatchHasTrim = true;
-      _displayTrimRevision++;
-      _lastTrimmedDisplayLines = <String>[];
-    }
-    _lastTrimmedDisplayLines.add(line);
-  }
-
-  /// 合并同一帧内的接收更新，避免一个串口数据块中的多行触发多次重建。
-  void _scheduleDisplayNotify() {
-    if (_displayNotifyTimer != null) return;
-    _displayNotifyTimer = Timer(const Duration(milliseconds: 16), () {
-      _displayNotifyTimer = null;
-      _displayRevision++;
-      notifyListeners();
-    });
+    _rawSession.addSendData(
+      data,
+      decodedText: _decodeBytes(data),
+      displayAsHex: displayAsHex ?? sendHex,
+      isPlot: source == SendDisplaySource.plot,
+    );
   }
 
   void setDisplayLineLimit(int value) {
-    final next = value.clamp(minDisplayLineLimit, maxDisplayLineLimit).toInt();
-    if (next == _displayLineLimit) return;
+    final changed = _rawSession.setDisplayLineLimit(value);
+    if (!changed) return;
 
-    _displayLineLimit = next;
-    _beginDisplayMutation();
-    _trimDisplayLines();
-    final settings = AppSettings();
-    settings.rawDataDisplayLineLimit = next;
+    final settings = AppSettings()..rawDataDisplayLineLimit = displayLineLimit;
     unawaited(settings.save());
-    AppLogger().info('接收区最多显示 $next 行', category: 'DATA');
-    _scheduleDisplayNotify();
+    AppLogger().info('接收区最多显示 $displayLineLimit 行', category: 'DATA');
   }
 
   void setRawDataShellEnabled(bool value) {
@@ -1485,7 +1011,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellMode = false;
     unawaited(settings.save());
     AppLogger().info('Shell页面${value ? '显示' : '隐藏'}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
   }
 
   /// 设置独立 Shell 标签是否显示；保留旧字段名以兼容已有配置文件。
@@ -1576,242 +1102,60 @@ class SerialService extends ChangeNotifier {
     Future.microtask(() => notifyListeners());
   }
 
-  void _shiftPendingLineIndexesAfterRemove() {
-    _pendingReceiveLineIndex = _shiftPendingLineIndex(_pendingReceiveLineIndex);
-    _pendingSendLineIndex = _shiftPendingLineIndex(_pendingSendLineIndex);
-  }
-
-  int? _shiftPendingLineIndex(int? index) {
-    if (index == null) return null;
-    if (index <= 0) return null;
-    return index - 1;
-  }
-
   void setReceiveHex(bool value) {
-    if (receiveHex == value) return;
-    _flushAutoLineBreakWindow();
-    receiveHex = value;
-    _rawTextDecoder.reset(encoding: _textEncoding);
-    _resetTextLineBuffers();
+    if (!_rawSession.setReceiveHex(value)) return;
     AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置文本收发编码（仅非 HEX 模式生效）
+  /// 设置文本收发编码（仅非 HEX 模式生效）。
   void setTextEncoding(String encoding) {
-    if (_textEncoding == encoding) return;
-    _textEncoding = encoding;
-    _rawTextDecoder.reset(encoding: encoding);
+    if (!_rawSession.setTextEncoding(encoding)) return;
     unawaited(_persistEncoding());
-    _resetTextLineBuffers();
     AppLogger().info('文本收发编码切换为: $encoding', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
   Future<void> _persistEncoding() async {
-    final settings = AppSettings();
-    settings.rawDataEncoding = _textEncoding;
+    final settings = AppSettings()..rawDataEncoding = textEncoding;
     await settings.save();
   }
 
   void setShowTimestamp(bool value) {
-    if (showTimestamp == value) return;
-    _flushAutoLineBreakWindow();
-    showTimestamp = value;
-    _resetTextLineBuffers();
+    if (!_rawSession.setShowTimestamp(value)) return;
     AppLogger().info('接收时间戳${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
-  void _resetTextLineBuffers() {
-    _pendingReceiveText = '';
-    _pendingReceiveLineIndex = null;
-    _pendingReceiveLinePrefix = '';
-    _pendingSendText = '';
-    _pendingSendLineIndex = null;
-    _pendingSendLinePrefix = '';
-  }
-
-  String _formatTimestamp(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    final s = dt.second.toString().padLeft(2, '0');
-    final ms = dt.millisecond.toString().padLeft(3, '0');
-    return '$h:$m:$s.$ms';
-  }
-
-  /// 清空所有数据（切换串口时调用）
+  /// 清空所有数据（切换串口时调用）。
   void _clearAllData() {
-    _aggregator?.reset();
-    _aggregator = null;
-    _rawBytes.clear();
-    _rawRetentionWarningShown = false;
-    _rawRetentionLimitShown = false;
-    _receivedLines.clear();
-    _receivedTextBytes = 0;
-    _rawTextDecoder.reset(encoding: _textEncoding);
-    _lastRawTextTimestamp = null;
-    _resetTextLineBuffers();
-    Future.microtask(() => notifyListeners());
+    _rawSession.clear();
   }
 
-  /// 手动清空数据
+  /// 手动清空数据。
   void clearReceivedData() {
     _clearAllData();
     AppLogger().info('接收区已清空', category: 'SERIAL');
   }
 
-  /// 将完整原始接收字节按当前编码重新解码并导出为文本。
-  ///
-  /// 显示行数上限只影响界面缓存，不影响这里的导出内容。界面生成的时间戳、
-  /// 收发方向标记以及手动发送记录不属于原始接收字节，因此不会写入文本文件。
   Future<String?> exportAsText({
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
-  }) async {
-    if (!hasRawData) {
-      AppLogger().warning('没有原始接收数据，已取消文本导出', category: 'DATA');
-      return null;
-    }
-    String? partPath;
-    try {
-      onProgress?.call(0.05);
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
-      await dir.create(recursive: true);
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '${dir.path}/vscope_serial_$timestamp.txt';
-      const committer = AtomicFileCommitter();
-      partPath = committer.partPath(path);
-      final file = File(partPath);
-      if (await file.exists()) await file.delete();
-      final encoding = _textEncoding;
-      await _exportTextStreaming(file, encoding, onProgress);
-      await committer.commitPart(path);
-      partPath = null;
-      onProgress?.call(1);
-      AppLogger().info(
-        '已导出完整接收文本: $path，编码=$encoding，原始字节=$_rawBytesSize',
-        category: 'DATA',
-      );
-      return path;
-    } catch (e) {
-      await _deleteExportPart(partPath);
-      AppLogger().error('导出失败: $e', category: 'DATA');
-      return null;
-    }
+  }) {
+    return _rawSession.exportAsText(
+      outputDirectory: outputDirectory,
+      onProgress: onProgress,
+    );
   }
 
-  /// 导出数据为原始字节文件（末尾附加 CRC-32 校验）
   Future<String?> exportAsRawBytes({
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
-  }) async {
-    if (!hasRawData) {
-      AppLogger().warning('没有原始接收数据，已取消BIN导出', category: 'DATA');
-      return null;
-    }
-    String? partPath;
-    try {
-      onProgress?.call(0.05);
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      final dir = outputDirectory ?? Directory('${exeDir.path}/exports');
-      await dir.create(recursive: true);
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final path = '${dir.path}/vscope_serial_$timestamp.bin';
-      const committer = AtomicFileCommitter();
-      partPath = committer.partPath(path);
-      final file = File(partPath);
-      if (await file.exists()) await file.delete();
-
-      await _exportRawBytesStreaming(file, onProgress);
-      await committer.commitPart(path);
-      partPath = null;
-      onProgress?.call(1);
-
-      AppLogger().info('已导出原始字节: $path', category: 'DATA');
-      return path;
-    } catch (e) {
-      await _deleteExportPart(partPath);
-      AppLogger().error('导出失败: $e', category: 'DATA');
-      return null;
-    }
-  }
-
-  Future<void> _deleteExportPart(String? path) async {
-    if (path == null) return;
-    try {
-      final file = File(path);
-      if (await file.exists()) await file.delete();
-    } catch (_) {}
-  }
-
-  Future<void> _exportTextStreaming(
-    File file,
-    String encoding,
-    ExportProgressCallback? onProgress,
-  ) async {
-    final output = file.openWrite();
-    final decoder = ShellStreamDecoder(encoding);
-    var written = 0;
-    try {
-      for (final chunk in _rawBytes.readChunks()) {
-        output.write(decoder.add(chunk));
-        written += chunk.length;
-        onProgress?.call(0.05 + 0.9 * written / _rawBytesSize);
-        await Future<void>.delayed(Duration.zero);
-      }
-      output.write(decoder.flush());
-      await output.flush();
-      await output.close();
-    } catch (_) {
-      await output.close();
-      rethrow;
-    }
-  }
-
-  Future<void> _exportRawBytesStreaming(
-    File file,
-    ExportProgressCallback? onProgress,
-  ) async {
-    final crc = CrcCalculator(crc32Polys['CRC-32']!);
-    final output = await file.open(mode: FileMode.write);
-    var written = 0;
-    try {
-      for (final chunk in _rawBytes.readChunks()) {
-        crc.add(chunk);
-        await output.writeFrom(chunk);
-        written += chunk.length;
-        onProgress?.call(0.05 + 0.9 * written / _rawBytesSize);
-        await Future<void>.delayed(Duration.zero);
-      }
-      await output.writeFrom(Uint8List.fromList(crcToBytes(crc.digest, 32)));
-      await output.flush();
-      await output.close();
-    } catch (_) {
-      await output.close();
-      rethrow;
-    }
-  }
-
-  /// 获取原始字节数据（不含校验）
-  Uint8List get rawBytes => _rawBytes.toBytes();
-
-  bool get hasRawData => _rawBytesSize > 0;
-
-  /// 获取数据大小信息
-  Map<String, String> get dataStats {
-    final retention = rawRetentionUsage;
-    return <String, String>{
-      '显示行数': '${receivedLines.length} / $_displayLineLimit',
-      '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
-      '完整原始数据':
-          '$_rawBytesSize B (${(_rawBytesSize / 1024 / 1024).toStringAsFixed(2)} MB)',
-      '原始数据容量':
-          '${(retention.ratio * 100).clamp(0, 100).toStringAsFixed(1)}% / '
-          '${_formatByteSize(retention.limitBytes)}',
-      '文本导出编码': _textEncoding,
-    };
+  }) {
+    return _rawSession.exportAsRawBytes(
+      outputDirectory: outputDirectory,
+      onProgress: onProgress,
+    );
   }
 
   Uint8List? prepareSendData(String text) {
@@ -1834,7 +1178,7 @@ class SerialService extends ChangeNotifier {
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) {
     if (!isConnected || _transport == null || text.isEmpty) return null;
     try {
-      if (!isHex) return _encodeTextWithEncoding(text, _textEncoding);
+      if (!isHex) return _encodeTextWithEncoding(text, textEncoding);
       final hex = text.replaceAll(RegExp(r'\s+'), '');
       if (hex.isEmpty || hex.length.isOdd) return null;
       final bytes = <int>[];
@@ -1852,7 +1196,7 @@ class SerialService extends ChangeNotifier {
   @visibleForTesting
   Uint8List? prepareMultiSendDataForTest(String text, {required bool isHex}) {
     if (text.isEmpty) return null;
-    if (!isHex) return _encodeTextWithEncoding(text, _textEncoding);
+    if (!isHex) return _encodeTextWithEncoding(text, textEncoding);
     final hex = text.replaceAll(RegExp(r'\s+'), '');
     if (hex.isEmpty || hex.length.isOdd) return null;
     final bytes = <int>[];
@@ -1915,7 +1259,7 @@ class SerialService extends ChangeNotifier {
   @visibleForTesting
   Uint8List prepareTextSendData(String text) {
     final content = appendLineEnding ? '$text$lineEnding' : text;
-    return _encodeTextWithEncoding(content, _textEncoding);
+    return _encodeTextWithEncoding(content, textEncoding);
   }
 
   Uint8List prepareShellTextData(String text) {
@@ -1930,7 +1274,7 @@ class SerialService extends ChangeNotifier {
       _decodeBytesWithEncoding(data, shellEncoding);
 
   Uint8List encodeText(String text) =>
-      _encodeTextWithEncoding(text, _textEncoding);
+      _encodeTextWithEncoding(text, textEncoding);
 
   Future<void> send(
     Uint8List data, {
@@ -1972,17 +1316,9 @@ class SerialService extends ChangeNotifier {
 
   void _handleIoDisconnected(String message) {
     AppLogger().warning(message, category: 'SERIAL');
-    if (_ioDisconnectFuture != null) return;
-    _connectionGeneration++;
-    late final Future<void> operation;
-    operation = _enqueueConnectionOperation(_cleanupPortLocked).whenComplete(
-      () {
-        if (identical(_ioDisconnectFuture, operation)) {
-          _ioDisconnectFuture = null;
-        }
-      },
+    final operation = _connectionCoordinator.disconnectFromIo(
+      _cleanupPortLocked,
     );
-    _ioDisconnectFuture = operation;
     unawaited(operation);
     Future.microtask(() => notifyListeners());
   }
@@ -2012,22 +1348,15 @@ class SerialService extends ChangeNotifier {
   }
 
   void setAutoLineBreak(bool value) {
-    if (autoLineBreak == value) return;
-    _flushAutoLineBreakWindow();
-    autoLineBreak = value;
+    if (!_rawSession.setAutoLineBreak(value)) return;
     AppLogger().info('接收自动换行${value ? '启用' : '关闭'}', category: 'DATA');
     Future.microtask(() => notifyListeners());
   }
 
   /// 设置相邻接收包的自动换行超时，范围为 1~10000ms。
   void setAutoLineBreakIntervalMs(int milliseconds) {
-    final next = milliseconds.clamp(
-      minAutoLineBreakIntervalMs,
-      maxAutoLineBreakIntervalMs,
-    );
-    if (autoLineBreakIntervalMs == next) return;
-    _flushAutoLineBreakWindow();
-    autoLineBreakIntervalMs = next;
+    if (!_rawSession.setAutoLineBreakIntervalMs(milliseconds)) return;
+    final next = autoLineBreakIntervalMs;
     final settings = AppSettings()..rawDataAutoLineBreakIntervalMs = next;
     unawaited(settings.save());
     AppLogger().info('接收自动换行时间: $next ms', category: 'SERIAL');
@@ -2060,8 +1389,8 @@ class SerialService extends ChangeNotifier {
 
   /// 停止接收原始数据
   void stopRawReceiving() {
-    _flushAutoLineBreakWindow();
-    _flushRawTextDecoder();
+    _rawSession.flushAutoLineBreak();
+    _rawSession.flushTextDecoder();
     isRawReceiving = false;
     _releaseActivity(SerialActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
@@ -2089,7 +1418,7 @@ class SerialService extends ChangeNotifier {
     }
     _releaseActivity(SerialActivityOwner.shell);
     AppLogger().info('Shell 会话已停止', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(() => notifyListeners()));
   }
 
   /// 尝试原子取得串口活动所有权；同一所有者重复调用视为成功。
@@ -2115,8 +1444,8 @@ class SerialService extends ChangeNotifier {
   void _releaseActivity(SerialActivityOwner owner) {
     if (_activityOwner != owner) return;
     if (owner == SerialActivityOwner.rawData) {
-      _flushAutoLineBreakWindow();
-      _flushRawTextDecoder();
+      _rawSession.flushAutoLineBreak();
+      _rawSession.flushTextDecoder();
     }
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
@@ -2125,8 +1454,8 @@ class SerialService extends ChangeNotifier {
 
   void _releaseAllActivities() {
     if (_activityOwner == SerialActivityOwner.rawData) {
-      _flushAutoLineBreakWindow();
-      _flushRawTextDecoder();
+      _rawSession.flushAutoLineBreak();
+      _rawSession.flushTextDecoder();
     }
     _activityOwner = SerialActivityOwner.none;
     isRawReceiving = false;
@@ -2134,39 +1463,18 @@ class SerialService extends ChangeNotifier {
     if (ymodemService.isActive) ymodemService.abort('串口已断开');
   }
 
-  void _flushRawTextDecoder() {
-    if (receiveHex) {
-      _rawTextDecoder.reset(encoding: _textEncoding);
-      return;
-    }
-    final text = _rawTextDecoder.flush();
-    if (text.isNotEmpty) {
-      _addTextDataLines(
-        text,
-        timestamp: _lastRawTextTimestamp ?? DateTime.now(),
-        isReceive: true,
-      );
-    }
-    _lastRawTextTimestamp = null;
-  }
-
   @override
   void dispose() {
     // 不要在这里调用 disconnect()，它会触发 notifyListeners()。
     // 如果发生在 super.dispose() 之后会抛异常，因此这里只直接清理资源。
     _disposed = true;
-    _shuttingDown = true;
-    _connectionGeneration++;
     _flushReceiveLog();
     _flushSendLog();
-    _displayNotifyTimer?.cancel();
-    _displayNotifyTimer = null;
-    _aggregator?.reset();
-    _aggregator = null;
+    _rawSession.dispose();
     _portChangeDebounce?.cancel();
     _portChangeDebounce = null;
     unawaited(
-      _enqueueConnectionOperation(() async {
+      _connectionCoordinator.shutdown(() async {
         await _cleanupPortLocked();
         await _portMonitorSubscription?.cancel();
         _portMonitorSubscription = null;

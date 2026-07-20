@@ -24,6 +24,7 @@ import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_layer_stack.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_locator_bar.dart';
 import '../plot/plot_viewport.dart';
@@ -1709,51 +1710,38 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         final renderViewport = vm.viewport.copyWith(marginLeft: leftAxisWidth)
           ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
 
-        PlotLayerPainter createPainter(PlotPaintLayer layer) {
-          return PlotLayerPainter(
-            layer: layer,
-            viewport: renderViewport,
-            data: displayDataPoints,
-            dataRevision: vm.dataRevision,
-            channelConfigRevision: vm.channelConfigRevision,
-            viewportRevision: vm.viewportRevision,
-            overlayRevision: vm.overlayRevision,
-            lodIndex: vm.lodIndex,
-            lodQuality: vm.lodQuality,
-            channels: displayChannels,
-            activeChannelCount: activeChannelCount,
-            showGrid: vm.showGrid,
-            gridDensity: gridDensity,
-            backgroundStyle: plotBackground,
-            floatingPanelOpacity: vm.floatingPanelOpacity,
-            cursor: vm.cursor,
-            xCursor1: vm.xCursor1,
-            xCursor2: vm.xCursor2,
-            yCursor1: vm.yCursor1,
-            yCursor2: vm.yCursor2,
-            statsEnabled: vm.statsEnabled,
-            statsRangeEnabled: vm.statsRangeEnabled,
-            statsX1: vm.statsX1,
-            statsX2: vm.statsX2,
-            snapHighlights: vm.snapHighlights,
-            snapHighlightEnabled: vm.snapHighlightEnabled,
-            snapHighlightDiameter: vm.snapHighlightDiameter,
-            antiAliasEnabled: vm.antiAliasEnabled,
-            yValuesAreInteger: vm.displayYValuesAreInteger,
-            plotFontSizeDelta: vm.plotFontSizeDelta,
-            plotFontBold: vm.plotFontBold,
-          );
-        }
-
-        Widget buildLayer(PlotPaintLayer layer) {
-          return RepaintBoundary(
-            key: ValueKey<String>('plot-layer-${layer.name}'),
-            child: CustomPaint(
-              painter: createPainter(layer),
-              size: Size.infinite,
-            ),
-          );
-        }
+        final renderSnapshot = PlotRenderSnapshot(
+          viewport: renderViewport,
+          data: displayDataPoints,
+          dataRevision: vm.dataRevision,
+          channelConfigRevision: vm.channelConfigRevision,
+          viewportRevision: vm.viewportRevision,
+          overlayRevision: vm.overlayRevision,
+          lodIndex: vm.lodIndex,
+          lodQuality: vm.lodQuality,
+          channels: displayChannels,
+          activeChannelCount: activeChannelCount,
+          showGrid: vm.showGrid,
+          gridDensity: gridDensity,
+          backgroundStyle: plotBackground,
+          floatingPanelOpacity: vm.floatingPanelOpacity,
+          cursor: vm.cursor,
+          xCursor1: vm.xCursor1,
+          xCursor2: vm.xCursor2,
+          yCursor1: vm.yCursor1,
+          yCursor2: vm.yCursor2,
+          statsEnabled: vm.statsEnabled,
+          statsRangeEnabled: vm.statsRangeEnabled,
+          statsX1: vm.statsX1,
+          statsX2: vm.statsX2,
+          snapHighlights: vm.snapHighlights,
+          snapHighlightEnabled: vm.snapHighlightEnabled,
+          snapHighlightDiameter: vm.snapHighlightDiameter,
+          antiAliasEnabled: vm.antiAliasEnabled,
+          yValuesAreInteger: vm.displayYValuesAreInteger,
+          plotFontSizeDelta: vm.plotFontSizeDelta,
+          plotFontBold: vm.plotFontBold,
+        );
 
         final previewPanelHeight =
             _previewVisible && vm.previewToolbarEnabled
@@ -1834,15 +1822,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     onChannelYScaleZoom:
                         (index, scaleDelta) =>
                             vm.zoomChannelYScale(index, scaleDelta),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        buildLayer(PlotPaintLayer.background),
-                        buildLayer(PlotPaintLayer.data),
-                        buildLayer(PlotPaintLayer.axis),
-                        buildLayer(PlotPaintLayer.overlay),
-                      ],
-                    ),
+                    child: PlotLayerStack(snapshot: renderSnapshot),
                   ),
                   Positioned.fill(
                     child: LayoutBuilder(

@@ -635,7 +635,7 @@ class NativeSerialReader {
     await writeQueue?.close();
     await Isolate.run(_closeNativePort);
     _isOpen = false;
-    _dataController.close();
+    await _dataController.close();
   }
 }
 

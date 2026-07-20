@@ -30,6 +30,7 @@ enum PlotLodQuality {
 abstract interface class PlotLodSource {
   int get length;
   bool get isEmpty;
+  bool get isNotEmpty;
 
   bool canQuery(double visiblePointCount, double plotWidth);
 
@@ -75,6 +76,7 @@ class PlotLodIndex implements PlotLodSource {
   int get maxChannelCount => _maxChannelCount;
   @override
   bool get isEmpty => _length == 0;
+  @override
   bool get isNotEmpty => _length > 0;
   int get allocatedBucketCount =>
       _levels.fold(0, (total, level) => total + level.allocatedBucketCount);

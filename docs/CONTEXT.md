@@ -45,9 +45,9 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - `lib/core/`：日志、CRC 等底层工具。底层模块优先使用 `AppLogger`，不要直接 `print()`。
 - `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
 - `lib/data/`：数据模型、协议解析器、数据源和 LOD 索引。解析器兼容 `IDataParser.feed()`/`outputStream`，绘图高频接收链优先使用 `feedBatch()` 批量返回结果，避免逐包 Stream 调度。
-- `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。
-- `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
-- `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；绘图区按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。
+- `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。`SerialService` 是 UI 门面，连接生命周期由 `SerialConnectionCoordinator` 独占，原始接收缓存由 `RawReceiveSession` 独占；`SettingsRepository` 独占设置 JSON、备份恢复和串行原子写入。
+- `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；绘图历史、精确窗口和数据源会话分别由 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController` 独占，数学/触发/统计/观察值计算保持无 UI 依赖；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
+- `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；页面只构造一个 `PlotRenderSnapshot`，`PlotLayerStack` 按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。
 - `integration_test/`：Windows Profile 模式的绘图性能场景，不作为 CI 耗时门禁。
 - `test_tools/`：本地模拟设备和测试数据生成脚本。
 - `windows/`：Flutter Windows runner、原生串口读取 DLL 和外置更新器。
@@ -106,6 +106,7 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - 开发环境、依赖、目录结构、构建、测试、发布流程和完整工程约束统一维护在 `DEVELOPMENT.md`。
 - 测试工具的用途、全部参数和虚拟串口流程统一维护在 `test_tools/README.md`。
 - 常规提交前至少执行格式化、`flutter analyze` 和 `flutter test`；发布前还需验证 Windows Release 构建。
+- 静态检查额外启用 `unawaited_futures`、`close_sinks` 和 `cancel_subscriptions`；明确的后台 Future 必须使用 `unawaited()`，资源所有者必须在 stop/dispose 中关闭订阅和 sink。
 
 ## Windows Shell 与编码
 

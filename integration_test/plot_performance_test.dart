@@ -132,7 +132,7 @@ Future<Map<String, Object?>> _runScenario(
 
   // 场景运行期间不主动操作 UI，只让随机源持续推数据。
   // 这样采到的是“持续接收 + 自动刷新”的基线性能。
-  vm.startPlotting();
+  await vm.startPlotting();
   final targetPointCount = scenario.targetPointCount;
   if (targetPointCount == null) {
     await Future<void>.delayed(scenario.duration);

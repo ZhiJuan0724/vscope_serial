@@ -1,15 +1,13 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import '../core/constants/plot_configuration.dart';
 import '../core/utils/app_logger.dart';
-import '../core/utils/atomic_file.dart';
 import '../data/models/address_config_profile.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
+import 'settings_repository.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
 ///
@@ -29,19 +27,13 @@ class AppSettings {
   /// 配置文件名称
   static const String _settingsFileName = 'settings.json';
 
-  /// 配置文件完整路径（由 [init] 设置）
-  String? _settingsPath;
-
   /// 是否已完成初始化
   bool _initialized = false;
 
-  final AtomicFileCommitter _fileCommitter = const AtomicFileCommitter();
-  Timer? _saveDebounceTimer;
-  Completer<void>? _pendingSave;
-  Future<void> _saveChain = Future<void>.value();
+  late final SettingsRepository _repository = SettingsRepository(
+    validator: _validateSettingsSnapshot,
+  );
   String? _recoveryNotice;
-
-  static const Duration _saveDebounce = Duration(milliseconds: 200);
 
   // ========== 串口设置 ==========
   /// 上次连接成功的串口名称（启动时自动连接）
@@ -278,7 +270,7 @@ class AppSettings {
     if (!appDir.existsSync()) {
       appDir.createSync(recursive: true);
     }
-    _settingsPath = '${appDir.path}/$_settingsFileName';
+    await _repository.setPath('${appDir.path}/$_settingsFileName');
 
     await _load();
     _initialized = true;
@@ -388,38 +380,29 @@ class AppSettings {
   ///
   /// 文件不存在时使用默认值；主文件损坏时优先恢复上一代备份。
   Future<void> _load() async {
-    if (_settingsPath == null) return;
-    final path = _settingsPath!;
-    await _fileCommitter.recoverMissingTarget(path);
-    if (!await File(path).exists()) return;
-
-    late Map<String, dynamic> json;
-    try {
-      json = await _readValidatedSettings(path);
-    } catch (primaryError, primaryStack) {
-      final backupPath = _fileCommitter.backupPath(path);
-      try {
-        json = await _readValidatedSettings(backupPath);
-        await _fileCommitter.restoreBackup(path);
-        _recoveryNotice = '应用设置文件损坏，已自动恢复上一份有效设置。';
-        AppLogger().warning(
-          '应用设置损坏，已从备份恢复: $primaryError',
-          category: 'SETTINGS',
-        );
-      } catch (backupError, backupStack) {
-        _applyDefaults();
-        AppLogger().error(
-          '应用设置与备份均无法读取，已使用默认值',
-          category: 'SETTINGS',
-          error: backupError,
-          stackTrace: backupStack,
-        );
-        AppLogger().debug(
-          '主设置读取异常: $primaryError\n$primaryStack',
-          category: 'SETTINGS',
-        );
-        return;
-      }
+    final result = await _repository.load();
+    if (result.failed) {
+      _applyDefaults();
+      AppLogger().error(
+        '应用设置与备份均无法读取，已使用默认值',
+        category: 'SETTINGS',
+        error: result.error,
+        stackTrace: result.stackTrace,
+      );
+      AppLogger().debug(
+        '主设置读取异常: ${result.primaryError}\n${result.primaryStackTrace}',
+        category: 'SETTINGS',
+      );
+      return;
+    }
+    final json = result.snapshot;
+    if (json == null) return;
+    if (result.recoveredFromBackup) {
+      _recoveryNotice = '应用设置文件损坏，已自动恢复上一份有效设置。';
+      AppLogger().warning(
+        '应用设置损坏，已从备份恢复: ${result.primaryError}',
+        category: 'SETTINGS',
+      );
     }
 
     try {
@@ -637,14 +620,6 @@ class AppSettings {
     }
   }
 
-  Future<Map<String, dynamic>> _readValidatedSettings(String path) async {
-    final decoded = jsonDecode(await File(path).readAsString());
-    if (decoded is! Map) throw const FormatException('设置根节点必须为对象');
-    final snapshot = Map<String, dynamic>.from(decoded);
-    _validateSettingsSnapshot(snapshot);
-    return snapshot;
-  }
-
   static void _validateSettingsSnapshot(Map<String, dynamic> json) {
     const stringKeys = <String>{
       'lastPort',
@@ -769,43 +744,10 @@ class AppSettings {
   /// 保存所有设置到配置文件
   ///
   /// 200ms 内的连续修改合并为一次原子写入，所有写入保持严格串行。
-  Future<void> save() {
-    if (_settingsPath == null) return Future<void>.value();
-    _saveDebounceTimer?.cancel();
-    final pending = _pendingSave ??= Completer<void>();
-    _saveDebounceTimer = Timer(_saveDebounce, _enqueueSave);
-    return pending.future;
-  }
-
-  void _enqueueSave() {
-    _saveDebounceTimer?.cancel();
-    _saveDebounceTimer = null;
-    final path = _settingsPath;
-    final pending = _pendingSave;
-    _pendingSave = null;
-    if (path == null || pending == null) return;
-    final content = jsonEncode(_toJson());
-    final write = _saveChain.then(
-      (_) => _fileCommitter.writeString(path, content, keepBackup: true),
-    );
-    _saveChain = write.catchError((Object _) {});
-    write.then<void>(
-      (_) => pending.complete(),
-      onError: (Object error, StackTrace stackTrace) {
-        pending.completeError(error, stackTrace);
-      },
-    );
-  }
+  Future<void> save() => _repository.save(_toJson());
 
   /// 应用退出前提交尚在合并窗口内的设置，并等待串行写链结束。
-  Future<void> flushPendingSave() async {
-    if (_pendingSave != null) _enqueueSave();
-    await _saveChain;
-    if (_pendingSave != null) {
-      _enqueueSave();
-      await _saveChain;
-    }
-  }
+  Future<void> flushPendingSave() => _repository.flush();
 
   /// 返回并清除本次启动期间的设置恢复提示。
   String? takeRecoveryNotice() {
@@ -816,11 +758,7 @@ class AppSettings {
 
   /// 测试专用：在隔离目录重新加载单例，避免改写实际应用设置。
   Future<void> debugInitializeAt(String settingsPath) async {
-    await flushPendingSave();
-    _saveDebounceTimer?.cancel();
-    _saveDebounceTimer = null;
-    _pendingSave = null;
-    _settingsPath = settingsPath;
+    await _repository.setPath(settingsPath);
     _initialized = false;
     _recoveryNotice = null;
     _applyDefaults();
@@ -830,11 +768,7 @@ class AppSettings {
 
   /// 测试专用：解除文件路径并恢复内存默认值。
   Future<void> debugDetach() async {
-    await flushPendingSave();
-    _saveDebounceTimer?.cancel();
-    _saveDebounceTimer = null;
-    _pendingSave = null;
-    _settingsPath = null;
+    await _repository.setPath(null);
     _initialized = false;
     _recoveryNotice = null;
     _applyDefaults();
