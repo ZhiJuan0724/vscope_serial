@@ -6,6 +6,9 @@ import 'dart:typed_data';
 /// 队列按串口回调块保留边界；达到上限时丢弃最旧的完整待处理块，避免
 /// 高频输入长期快于界面消费速度时无限占用内存。
 class ShellReceiveQueue {
+  /// Shell UI 尚未消费的接收数据默认上限。
+  static const int defaultMaxBytes = 256 * 1024 * 1024;
+
   ShellReceiveQueue({required this.maxBytes})
     : assert(maxBytes > 0, 'maxBytes must be positive');
 

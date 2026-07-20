@@ -25,7 +25,10 @@ import '../widgets/common_widgets.dart';
 /// 高频串口回调只进入 [_receiveQueue]，终端更新限制为每帧一次且每帧最多
 /// 消费 64 KiB，避免小包风暴反复触发布局、绘制和滚动。
 class ShellPage extends StatefulWidget {
-  const ShellPage({super.key, this.receiveQueueLimitBytes = 256 * 1024 * 1024});
+  const ShellPage({
+    super.key,
+    this.receiveQueueLimitBytes = ShellReceiveQueue.defaultMaxBytes,
+  });
 
   /// Shell UI 尚未消费的接收数据上限；测试可注入较小值验证过载路径。
   final int receiveQueueLimitBytes;
@@ -95,6 +98,7 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   void dispose() {
+    _viewModel?.serialService.updateShellPendingReceiveBytes(0);
     unawaited(_receiveSubscription?.cancel());
     _terminalScrollController.removeListener(_handleScrollPosition);
     _terminalScrollController.dispose();
@@ -129,6 +133,7 @@ class _ShellPageState extends State<ShellPage> {
   void _enqueueReceivedData(Uint8List data) {
     if (data.isEmpty) return;
     final dropped = _receiveQueue.add(data);
+    _syncReceiveQueueUsage();
     if (dropped > 0) _handleReceiveOverflow();
     _scheduleReceiveDrain();
   }
@@ -173,6 +178,7 @@ class _ShellPageState extends State<ShellPage> {
       remaining -= chunk.length;
       consumed += chunk.length;
     }
+    _syncReceiveQueueUsage();
     if (output.isNotEmpty) {
       final decoded = output.toString();
       final detectionText = '$_ansiDetectionTail$decoded';
@@ -195,6 +201,12 @@ class _ShellPageState extends State<ShellPage> {
       _newOutputBytes += consumed;
     }
     setState(() {});
+  }
+
+  void _syncReceiveQueueUsage() {
+    _viewModel?.serialService.updateShellPendingReceiveBytes(
+      _receiveQueue.queuedBytes,
+    );
   }
 
   bool get _isAtBottom {
@@ -231,6 +243,7 @@ class _ShellPageState extends State<ShellPage> {
     }
     if (!vm.start()) return;
     _receiveQueue.reset();
+    _syncReceiveQueueUsage();
     _receivedBytes = 0;
     _newOutputBytes = 0;
     _terminalAtBottom = true;

@@ -3,16 +3,22 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/constants/plot_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/changelog_service.dart';
+import '../../services/raw_receive_session.dart';
 import '../../services/serial_service.dart';
+import '../../services/shell_receive_queue.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
+import '../../services/ymodem_service.dart';
+import '../../viewmodels/plot_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
 Future<void> showAppInfoDialog(BuildContext context) {
@@ -338,6 +344,9 @@ class AppInfoDialog extends StatefulWidget {
 class _AppInfoDialogState extends State<AppInfoDialog> {
   final _checker = UpdateChecker();
   final _advancedSettingsScrollController = ScrollController();
+  final _plotHistoryLimitController = TextEditingController(
+    text: AppSettings().plotHistoryMemoryLimitGiB.toString(),
+  );
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
   UpdateChannel _updateChannel = UpdateChannel.fromString(
@@ -376,6 +385,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   @override
   void dispose() {
     _advancedSettingsScrollController.dispose();
+    _plotHistoryLimitController.dispose();
     super.dispose();
   }
 
@@ -699,6 +709,90 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
+  Widget _buildMemoryLimitsSection(
+    BuildContext context, {
+    required int plotHistoryLimitGiB,
+    required int plotHistoryUsedBytes,
+    required int processRssBytes,
+    required int rawRetentionUsedBytes,
+    required int rawTextCacheUsedBytes,
+    required int shellQueueUsedBytes,
+    required int ymodemQueueUsedBytes,
+    required VoidCallback onApplyPlotHistoryLimit,
+  }) {
+    final emergencyRssLimitBytes = math.max(
+      PlotConfiguration.baseEmergencyRssLimitBytes,
+      (plotHistoryLimitGiB * PlotConfiguration.bytesPerGiB) +
+          PlotConfiguration.emergencyRssHeadroomBytes,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.plotHistoryMemoryLimit,
+          subtitle: AppStrings.appInfo.plotHistoryMemoryLimitSummary,
+          usedBytes: plotHistoryUsedBytes,
+          limitBytes: plotHistoryLimitGiB * PlotConfiguration.bytesPerGiB,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: kSecondaryDialogFieldWidth,
+                child: TextField(
+                  key: const ValueKey('app-plot-history-memory-limit'),
+                  controller: _plotHistoryLimitController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: secondaryDialogFieldDecoration(
+                    suffixText: AppStrings.plot.unitGiB,
+                  ),
+                  onSubmitted: (_) => onApplyPlotHistoryLimit(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: onApplyPlotHistoryLimit,
+                child: Text(AppStrings.common.apply),
+              ),
+            ],
+          ),
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.plotEmergencyRssLimit,
+          subtitle: AppStrings.appInfo.plotEmergencyRssLimitSummary,
+          usedBytes: processRssBytes,
+          limitBytes: emergencyRssLimitBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rawRetentionMemoryLimit,
+          subtitle: AppStrings.appInfo.rawRetentionMemoryLimitSummary,
+          usedBytes: rawRetentionUsedBytes,
+          limitBytes: RawReceiveSession.rawRetentionLimitBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rawTextCacheMemoryLimit,
+          subtitle: AppStrings.appInfo.rawTextCacheMemoryLimitSummary,
+          usedBytes: rawTextCacheUsedBytes,
+          limitBytes: RawReceiveSession.textDisplayCacheLimitBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.shellQueueMemoryLimit,
+          subtitle: AppStrings.appInfo.shellQueueMemoryLimitSummary,
+          usedBytes: shellQueueUsedBytes,
+          limitBytes: ShellReceiveQueue.defaultMaxBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.ymodemQueueMemoryLimit,
+          subtitle: AppStrings.appInfo.ymodemQueueMemoryLimitSummary,
+          usedBytes: ymodemQueueUsedBytes,
+          limitBytes: YmodemService.defaultInputHighWaterBytes,
+          showDivider: false,
+        ),
+      ],
+    );
+  }
+
   Widget _buildResetSettingsSection(
     BuildContext context, {
     required Future<void> Function() onReset,
@@ -739,6 +833,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     var shellEnabled = AppSettings().rawDataShellEnabled;
     final notificationSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
+    final memorySectionKey = GlobalKey();
     final rollbackSectionKey = GlobalKey();
     final resetSectionKey = GlobalKey();
     return StatefulBuilder(
@@ -756,6 +851,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   anchorKey: notificationSectionKey,
                 ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                SettingsNavigationItem(
+                  label: AppStrings.appInfo.memoryLimits,
+                  anchorKey: memorySectionKey,
+                ),
                 SettingsNavigationItem(
                   label: '版本回退',
                   anchorKey: rollbackSectionKey,
@@ -823,6 +922,46 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ),
                   const Divider(height: 16),
                   KeyedSubtree(
+                    key: memorySectionKey,
+                    child: StreamBuilder<int>(
+                      stream: Stream<int>.periodic(
+                        const Duration(milliseconds: 500),
+                        (tick) => tick,
+                      ),
+                      builder: (context, _) {
+                        final plotViewModel = context.read<PlotViewModel>();
+                        final serialService = context.read<SerialService>();
+                        final plotUsage = plotViewModel.plotRetentionUsage;
+                        return _buildMemoryLimitsSection(
+                          context,
+                          plotHistoryLimitGiB:
+                              plotViewModel.plotRetentionLimitGiB,
+                          plotHistoryUsedBytes: plotUsage.usedBytes,
+                          processRssBytes: ProcessInfo.currentRss,
+                          rawRetentionUsedBytes:
+                              serialService.rawRetentionUsage.usedBytes,
+                          rawTextCacheUsedBytes:
+                              serialService.rawTextDisplayCacheBytes,
+                          shellQueueUsedBytes:
+                              serialService.shellPendingReceiveBytes,
+                          ymodemQueueUsedBytes:
+                              serialService.ymodemService.incomingBytes,
+                          onApplyPlotHistoryLimit: () {
+                            final value = int.tryParse(
+                              _plotHistoryLimitController.text,
+                            );
+                            if (value == null) return;
+                            plotViewModel.setPlotRetentionLimitGiB(value);
+                            _plotHistoryLimitController.text =
+                                plotViewModel.plotRetentionLimitGiB.toString();
+                            setDialogState(() {});
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                  const Divider(height: 16),
+                  KeyedSubtree(
                     key: rollbackSectionKey,
                     child: _buildRollbackSection(context),
                   ),
@@ -834,9 +973,18 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       onReset: () async {
                         final didReset = await _confirmResetSettings();
                         if (didReset) {
+                          if (!context.mounted) return;
+                          final resetPlotLimit =
+                              AppSettings().plotHistoryMemoryLimitGiB;
+                          context
+                              .read<PlotViewModel>()
+                              .setPlotRetentionLimitGiB(resetPlotLimit);
                           setDialogState(() {
                             disableNotifications =
                                 AppSettings().disableNotifications;
+                            shellEnabled = AppSettings().rawDataShellEnabled;
+                            _plotHistoryLimitController.text =
+                                resetPlotLimit.toString();
                           });
                         }
                       },
@@ -1063,6 +1211,87 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       source: release.source,
     );
   }
+}
+
+class _MemoryLimitRow extends StatelessWidget {
+  const _MemoryLimitRow({
+    required this.title,
+    required this.subtitle,
+    required this.usedBytes,
+    required this.limitBytes,
+    this.trailing,
+    this.showDivider = true,
+  });
+
+  final String title;
+  final String subtitle;
+  final int usedBytes;
+  final int limitBytes;
+  final Widget? trailing;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      AppStrings.appInfo.memoryUsage(
+                        _formatMemoryLimit(usedBytes),
+                        _formatMemoryLimit(limitBytes),
+                        _formatMemoryPercent(usedBytes, limitBytes),
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[const SizedBox(width: 16), trailing!],
+            ],
+          ),
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+String _formatMemoryLimit(int bytes) {
+  const gib = 1024 * 1024 * 1024;
+  const mib = 1024 * 1024;
+  if (bytes <= 0) return '0 B';
+  if (bytes % gib == 0) return '${bytes ~/ gib} GiB';
+  if (bytes % mib == 0) return '${bytes ~/ mib} MiB';
+  return '${(bytes / mib).toStringAsFixed(1)} MiB';
+}
+
+String _formatMemoryPercent(int usedBytes, int limitBytes) {
+  if (limitBytes <= 0) return '0.0%';
+  return '${(usedBytes / limitBytes * 100).toStringAsFixed(1)}%';
 }
 
 class _ChangelogPreview extends StatelessWidget {

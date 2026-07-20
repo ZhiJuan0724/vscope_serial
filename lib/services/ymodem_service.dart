@@ -107,7 +107,7 @@ class YmodemService {
     required FutureOr<void> Function(Uint8List data) sendBytes,
     Duration packetTimeout = const Duration(seconds: 8),
     int maxRetries = 10,
-    int inputHighWaterBytes = 4 * 1024 * 1024,
+    int inputHighWaterBytes = defaultInputHighWaterBytes,
   }) : _sendBytes = sendBytes,
        _packetTimeout = packetTimeout,
        _maxRetries = maxRetries,
@@ -122,6 +122,9 @@ class YmodemService {
   static const int can = 0x18;
   static const int crcRequest = 0x43;
   static const int eof = 0x1A;
+
+  /// YMODEM 尚未处理的串口输入队列上限。
+  static const int defaultInputHighWaterBytes = 4 * 1024 * 1024;
   static const int maxFileSize = 4 * 1024 * 1024 * 1024;
 
   final FutureOr<void> Function(Uint8List data) _sendBytes;
@@ -130,6 +133,8 @@ class YmodemService {
   final int _inputHighWaterBytes;
   final _statusController = StreamController<YmodemTransferStatus>.broadcast();
   final Queue<Uint8List> _incoming = Queue<Uint8List>();
+
+  int get incomingBytes => _incomingBytes;
 
   StreamSubscription<Uint8List>? _subscription;
   YmodemTransferStatus _status = const YmodemTransferStatus.idle();

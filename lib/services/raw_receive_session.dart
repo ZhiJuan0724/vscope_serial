@@ -26,6 +26,7 @@ class RawReceiveSession {
        _onRetentionLimitReached = onRetentionLimitReached;
 
   static const int rawRetentionLimitBytes = 512 * 1024 * 1024;
+  static const int textDisplayCacheLimitBytes = 128 * 1024 * 1024;
   static const int minDisplayLineLimit = 100;
   static const int defaultDisplayLineLimit = 100000;
   static const int maxDisplayLineLimit = 100000;
@@ -34,7 +35,6 @@ class RawReceiveSession {
   static const int maxAutoLineBreakIntervalMs = 10000;
 
   static const double _retentionWarningRatio = 0.8;
-  static const int _maxReceivedTextBytes = 128 * 1024 * 1024;
   static const int _maxTextLineLength = 4096;
   static const int _maxAutoLineBreakBufferBytes = 64 * 1024;
 
@@ -74,6 +74,7 @@ class RawReceiveSession {
   int get displayTrimRevision => _displayTrimRevision;
   List<String> get lastTrimmedDisplayLines => _lastTrimmedDisplayLines;
   int get displayLineLimit => _displayLineLimit;
+  int get textDisplayCacheBytes => _receivedTextBytes;
   bool get hasRawData => _rawBytes.isNotEmpty;
   Uint8List get rawBytes => _rawBytes.toBytes();
 
@@ -491,7 +492,7 @@ class RawReceiveSession {
   }
 
   void _trimDisplayLines() {
-    while (_receivedTextBytes > _maxReceivedTextBytes &&
+    while (_receivedTextBytes > textDisplayCacheLimitBytes &&
         _receivedLines.isNotEmpty) {
       _removeFirstDisplayLine();
     }

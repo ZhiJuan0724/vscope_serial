@@ -102,9 +102,28 @@ void main() {
     );
     expect(find.text('通知'), findsOneWidget);
     expect(find.text('页面'), findsOneWidget);
+    expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
     expect(find.text('版本回退'), findsWidgets);
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    final plotMemoryField = find.byKey(
+      const ValueKey('app-plot-history-memory-limit'),
+    );
+    expect(plotMemoryField, findsOneWidget);
+    expect(tester.widget<TextField>(plotMemoryField), isA<TextField>());
+    expect(
+      find.text(AppStrings.appInfo.rawRetentionMemoryLimit),
+      findsOneWidget,
+    );
+    expect(find.text(AppStrings.appInfo.shellQueueMemoryLimit), findsOneWidget);
+    expect(
+      find.text(AppStrings.appInfo.ymodemQueueMemoryLimit),
+      findsOneWidget,
+    );
+    expect(find.textContaining('当前占用: 0 B / 512 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 128 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 256 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 4 MiB'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     plotViewModel.dispose();

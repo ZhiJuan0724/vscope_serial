@@ -285,6 +285,15 @@ class SerialService extends ChangeNotifier {
   int get autoLineBreakIntervalMs => _rawSession.autoLineBreakIntervalMs;
   String get textEncoding => _rawSession.textEncoding;
   RetentionUsage get rawRetentionUsage => _rawSession.retentionUsage;
+  int get rawTextDisplayCacheBytes => _rawSession.textDisplayCacheBytes;
+  int _shellPendingReceiveBytes = 0;
+  int get shellPendingReceiveBytes => _shellPendingReceiveBytes;
+
+  /// Shell 页面同步尚未消费的本地队列字节数，供统一内存视图读取。
+  void updateShellPendingReceiveBytes(int value) {
+    _shellPendingReceiveBytes = value < 0 ? 0 : value;
+  }
+
   Uint8List get rawBytes => _rawSession.rawBytes;
   bool get hasRawData => _rawSession.hasRawData;
   Map<String, String> get dataStats => _rawSession.dataStats;

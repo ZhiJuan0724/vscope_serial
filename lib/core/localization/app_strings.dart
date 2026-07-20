@@ -478,6 +478,22 @@ final class _AppInfoStrings {
       '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。';
   String get disableNotifications => '关闭提示信息';
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
+  String get memoryLimits => '内存上限';
+  String get plotHistoryMemoryLimit => '绘图历史';
+  String get plotHistoryMemoryLimitSummary => '达到上限后停止绘图并保留已有历史';
+  String get plotEmergencyRssLimit => '应用进程 RSS 紧急保护线';
+  String get plotEmergencyRssLimitSummary =>
+      '占用包含 Flutter 和全部功能；绘图追加数据时检查，达到保护线后停止绘图';
+  String get rawRetentionMemoryLimit => '数据收发完整记录';
+  String get rawRetentionMemoryLimitSummary => '达到上限后停止接收并保留已有数据';
+  String get rawTextCacheMemoryLimit => '数据收发文本显示缓存';
+  String get rawTextCacheMemoryLimitSummary => '超出后移除最早的显示文本';
+  String get shellQueueMemoryLimit => 'Shell 待处理接收队列';
+  String get shellQueueMemoryLimitSummary => '超出后丢弃最早的完整数据块';
+  String get ymodemQueueMemoryLimit => 'YMODEM 输入队列';
+  String get ymodemQueueMemoryLimitSummary => '超出后取消当前文件传输';
+  String memoryUsage(String used, String limit, String percent) =>
+      '当前占用: $used / $limit ($percent)';
   String get confirmResetSettingsTitle => '确认恢复默认设置';
   String get resetSettingsWarning => '此操作会重置串口、绘图、数据收发、Shell、更新等应用设置，操作不可撤销。';
   String get resetSettingsKeepsProfiles => '绘图配置功能保存的 JSON 配置文件不会被删除。';
