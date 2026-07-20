@@ -170,6 +170,42 @@ void main() {
       expect(smallVm.dataPoints, hasLength(100));
     });
 
+    test('latest display point keeps updating while viewing history', () {
+      final smallVm = PlotViewModel(
+        SerialService(),
+        materializedPointLimit: 100,
+      );
+      smallVm.setParserType(ParserType.zobow);
+      addTearDown(smallVm.dispose);
+      for (var i = 0; i < 300; i++) {
+        final frame = _zobowFrame(i);
+        smallVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(frame, smallVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: frame,
+          ),
+        );
+      }
+
+      smallVm.updateViewport(smallVm.viewport.copyWith(xMin: 10, xMax: 20));
+      expect(smallVm.followEnabled, isFalse);
+      expect(smallVm.dataPoints.last.index, 99);
+
+      final newestFrame = _zobowFrame(900);
+      smallVm.ingestParsedResultForTest(
+        ParseResult.ok(
+          ZobowParser.decodeFrameValues(newestFrame, smallVm.parserConfig),
+          bytesConsumed: 10,
+          rawBytes: newestFrame,
+        ),
+      );
+
+      expect(smallVm.dataPoints.last.index, 99);
+      expect(smallVm.latestDisplayDataPoint?.index, 300);
+      expect(smallVm.latestDisplayDataPoint?.values, [900, 901, 902, 903]);
+    });
+
     test('clearData clears LOD index', () {
       for (int i = 0; i < 512; i++) {
         final frame = _zobowFrame(i);

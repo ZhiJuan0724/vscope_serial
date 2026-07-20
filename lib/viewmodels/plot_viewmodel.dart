@@ -324,6 +324,8 @@ class PlotViewModel extends BaseViewModel {
   int _nextOffsetBindingGroupId = 1;
   List<PlotDataPoint>? _cachedDisplayDataPoints;
   String? _cachedDisplayDataKey;
+  PlotDataPoint? _cachedLatestDisplayPoint;
+  String? _cachedLatestDisplayPointKey;
   List<ChannelConfig>? _cachedDisplayChannels;
   String? _cachedDisplayChannelKey;
   List<int>? _importedChannelAddresses;
@@ -944,6 +946,64 @@ class PlotViewModel extends BaseViewModel {
     return cache;
   }
 
+  /// 全量历史中的最新显示点，不受当前视口窗口和跟随模式影响。
+  ///
+  /// 实时值浮窗必须持续展示最新接收数据。用户回看历史时，[_dataPoints]
+  /// 会固定为当前加载窗口，因此不能从 [displayDataPoints] 的末尾取值。
+  PlotDataPoint? get latestDisplayDataPoint {
+    final historyCount = _historyPointCount;
+    if (historyCount <= 0) return null;
+
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    final mathKey = mathChannels
+        .map((channel) => '${channel.enabled}:${channel.expression}')
+        .join('|');
+    final cacheKey = '$historyCount|$rawCount|$mathKey';
+    if (_cachedLatestDisplayPointKey == cacheKey) {
+      return _cachedLatestDisplayPoint;
+    }
+
+    final pointIndex = historyCount - 1;
+    final rawValues = _rawValuesAtHistoryIndex(pointIndex);
+    if (rawValues.isEmpty) return null;
+
+    final mathValues = <double>[];
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      final expression = _compiledMathExpressions[channel.index];
+      final value =
+          expression?.evaluateWithContext(
+            MathEvalContext(
+              currentIndex: pointIndex,
+              pointCount: historyCount,
+              valueAt: _rawHistoryValueAt,
+            ),
+          ) ??
+          double.nan;
+      mathValues.add(value);
+    }
+
+    final timestamp =
+        _dataPoints.isNotEmpty && _dataPoints.last.index == pointIndex
+            ? _dataPoints.last.timestamp
+            : pointIndex.toDouble();
+    final point = PlotDataPoint(
+      index: pointIndex,
+      timestamp: timestamp,
+      values:
+          mathValues.isEmpty
+              ? rawValues
+              : _CombinedChannelValues(
+                rawValues: rawValues,
+                rawChannelCount: rawCount,
+                mathValues: mathValues,
+              ),
+    );
+    _cachedLatestDisplayPointKey = cacheKey;
+    _cachedLatestDisplayPoint = point;
+    return point;
+  }
+
   int get displayActiveChannelCount => displayChannels.length;
   bool get vCursorEnabled => _vCursorEnabled;
   bool get xMeasurementEnabled => _xMeasurementEnabled;
@@ -1148,6 +1208,8 @@ class PlotViewModel extends BaseViewModel {
   void _invalidateDisplayCaches() {
     _cachedDisplayDataPoints = null;
     _cachedDisplayDataKey = null;
+    _cachedLatestDisplayPoint = null;
+    _cachedLatestDisplayPointKey = null;
     _invalidateDisplayChannelCaches();
   }
 

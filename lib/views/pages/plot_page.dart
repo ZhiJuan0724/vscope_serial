@@ -2112,8 +2112,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildLiveValuesBox(PlotViewModel vm) {
-    final latestPoint =
-        vm.displayDataPoints.isEmpty ? null : vm.displayDataPoints.last;
+    final latestPoint = vm.latestDisplayDataPoint;
     if (latestPoint == null) return const SizedBox.shrink();
 
     final displayChannels = vm.displayChannels;
