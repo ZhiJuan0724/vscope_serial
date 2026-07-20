@@ -162,8 +162,16 @@ void main() {
       service.setAutoLineBreak(true);
       service.setAutoLineBreakIntervalMs(1);
 
-      service.debugFeedRawReceiveData(Uint8List.fromList([0x01]));
-      service.debugFeedRawReceiveData(Uint8List.fromList([0x02]));
+      // 两包属于同一个接收窗口；固定时刻避免测试结果依赖 CI 机器执行速度。
+      final receivedAt = DateTime.utc(2026, 7, 20);
+      service.debugFeedRawReceiveData(
+        Uint8List.fromList([0x01]),
+        timestamp: receivedAt,
+      );
+      service.debugFeedRawReceiveData(
+        Uint8List.fromList([0x02]),
+        timestamp: receivedAt,
+      );
       service.debugFlushAutoLineBreakForTest();
 
       expect(service.receivedLines, ['01 02 (2 bytes)']);
