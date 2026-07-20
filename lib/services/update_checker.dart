@@ -15,6 +15,12 @@ enum UpdateChannel {
   static UpdateChannel fromString(String value) {
     return value == beta.value ? beta : stable;
   }
+
+  /// 回退槽归属于升级前的当前版本，不取决于即将安装的目标版本。
+  static UpdateChannel fromVersion(String version) {
+    final tag = version.startsWith(RegExp(r'[vV]')) ? version : 'v$version';
+    return UpdateChecker.isBetaTag(tag) ? beta : stable;
+  }
 }
 
 enum UpdateReleaseSource {

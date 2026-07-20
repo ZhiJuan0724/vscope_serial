@@ -95,7 +95,7 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - 自动更新下载缓存、解压 payload 和回退槽保存在 `<exe_dir>/updates/`，不写入用户目录；因此应用所在目录必须可写。
 - Release 必须同时提供 `vscope_serial-windows-vX.Y.Z.zip` 和 `update-manifest-vX.Y.Z.json`，客户端使用清单中的大小和 SHA-256 校验更新包。
 - 自动更新支持稳定版与 Beta 通道：稳定版 tag 使用 `vX.Y.Z`，Beta tag 使用 `vX.Y.Z-beta.N` 且 GitHub Release 必须标记为 prerelease；`pubspec.yaml` 中版本不带 `v` 且必须与 tag 去掉 `v` 后一致；Gitee Release 由 CI 同步创建，客户端按 tag 名识别稳定版或 Beta。
-- 自动更新安装前会按目标通道保存一个本地回退槽，稳定版和 Beta 各保留 1 个可手动回退版本。
+- 自动更新安装前按当前运行版本所属通道保存本地回退槽，与目标版本通道无关；当前为稳定版时覆盖稳定版槽，当前为 Beta 时覆盖 Beta 槽，两类各保留 1 个可手动回退版本。
 - `.github/workflows/windows-release.yml` 负责 PR 检查、手动构建和 tag 发布。
 - PR 到 `main` 会运行 `flutter analyze`、`flutter test` 和 Windows Release 构建。
 - `v*` tag 会测试、构建、压缩发布包并创建 GitHub Release，随后同步创建 Gitee Release 并上传同一批附件。

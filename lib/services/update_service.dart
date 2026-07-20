@@ -416,21 +416,15 @@ class UpdateService {
     }
   }
 
-  Future<void> launchInstaller(
-    PreparedUpdate update, {
-    required UpdateChannel channel,
-  }) async {
-    await _runtimeGuard.runWithUpdateLock(
-      () async {
-        await _ensureNoOtherRunningInstances();
-        await _launchInstaller(
-          manifest: update.manifest,
-          updateDirectory: update.updateDirectory,
-          payloadDirectory: update.payloadDirectory,
-          channel: channel,
-        );
-      },
-    );
+  Future<void> launchInstaller(PreparedUpdate update) async {
+    await _runtimeGuard.runWithUpdateLock(() async {
+      await _ensureNoOtherRunningInstances();
+      await _launchInstaller(
+        manifest: update.manifest,
+        updateDirectory: update.updateDirectory,
+        payloadDirectory: update.payloadDirectory,
+      );
+    });
   }
 
   Future<List<RollbackUpdate>> findRollbackUpdates() async {
@@ -482,25 +476,22 @@ class UpdateService {
   }
 
   Future<void> launchRollbackInstaller(RollbackUpdate update) async {
-    await _runtimeGuard.runWithUpdateLock(
-      () async {
-        await _ensureNoOtherRunningInstances();
-        final stagingDir = await _rollbackInstallDirectory(update.channel);
-        if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
-        await stagingDir.create(recursive: true);
-        final stagedPayload = Directory('${stagingDir.path}/payload');
-        await _copyDirectory(update.payloadDirectory, stagedPayload);
-        await File(
-          '${update.rollbackDirectory.path}/update-manifest.json',
-        ).copy('${stagingDir.path}/update-manifest.json');
-        await _launchInstaller(
-          manifest: update.manifest,
-          updateDirectory: stagingDir,
-          payloadDirectory: stagedPayload,
-          channel: update.channel,
-        );
-      },
-    );
+    await _runtimeGuard.runWithUpdateLock(() async {
+      await _ensureNoOtherRunningInstances();
+      final stagingDir = await _rollbackInstallDirectory(update.channel);
+      if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+      await stagingDir.create(recursive: true);
+      final stagedPayload = Directory('${stagingDir.path}/payload');
+      await _copyDirectory(update.payloadDirectory, stagedPayload);
+      await File(
+        '${update.rollbackDirectory.path}/update-manifest.json',
+      ).copy('${stagingDir.path}/update-manifest.json');
+      await _launchInstaller(
+        manifest: update.manifest,
+        updateDirectory: stagingDir,
+        payloadDirectory: stagedPayload,
+      );
+    });
   }
 
   Future<List<int>> findOtherRunningInstanceProcessIds() =>
@@ -523,7 +514,6 @@ class UpdateService {
     required UpdateManifest manifest,
     required Directory updateDirectory,
     required Directory payloadDirectory,
-    required UpdateChannel channel,
   }) async {
     if (!const bool.fromEnvironment('dart.vm.product')) {
       throw const UpdateDownloadException('Debug/Profile 构建不允许覆盖安装');
@@ -540,7 +530,9 @@ class UpdateService {
     final installDir = File(Platform.resolvedExecutable).parent;
     final plan = File('${updaterDir.path}/update-plan.json');
     final resultFile = File('${updateDirectory.path}/result.json');
-    final rollbackDir = await _rollbackDirectory(channel);
+    final currentVersion = await AppInfo.version();
+    final rollbackChannel = UpdateChannel.fromVersion(currentVersion);
+    final rollbackDir = await _rollbackDirectory(rollbackChannel);
     await plan.writeAsString(
       jsonEncode({
         'schemaVersion': 1,
@@ -551,8 +543,8 @@ class UpdateService {
         'resultFile': resultFile.path,
         'cleanupDir': updateDirectory.path,
         'rollbackDir': rollbackDir.path,
-        'rollbackChannel': channel.value,
-        'currentVersion': await AppInfo.version(),
+        'rollbackChannel': rollbackChannel.value,
+        'currentVersion': currentVersion,
       }),
     );
     await Process.start(

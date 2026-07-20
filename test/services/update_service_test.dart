@@ -439,44 +439,47 @@ void main() {
     );
   });
 
-  test('installer launch rejects other running instances before starting updater', () async {
-    final root = await Directory.systemTemp.createTemp('vscope-launch-test-');
-    addTearDown(() => root.delete(recursive: true));
-    final service = UpdateService(
-      updatesRoot: root,
-      runtimeGuard: _FakeUpdateRuntimeGuard(otherProcessIds: [1234]),
-    );
-    final release = ReleaseInfo(
-      tagName: 'v1.2.3',
-      htmlUrl: '',
-      source: 'GitHub',
-      body: '',
-    );
-    final update = PreparedUpdate(
-      release: release,
-      manifest: const UpdateManifest(
-        schemaVersion: 1,
-        version: '1.2.3',
-        packageName: '',
-        packageSize: 0,
-        sha256: '',
-        executable: 'vscope_serial.exe',
-      ),
-      updateDirectory: Directory('${root.path}/update'),
-      payloadDirectory: Directory('${root.path}/payload'),
-    );
-
-    expect(
-      () => service.launchInstaller(update, channel: UpdateChannel.stable),
-      throwsA(
-        isA<UpdateDownloadException>().having(
-          (error) => error.message,
-          'message',
-          contains('请先关闭其他 Vscope Serial 窗口'),
+  test(
+    'installer launch rejects other running instances before starting updater',
+    () async {
+      final root = await Directory.systemTemp.createTemp('vscope-launch-test-');
+      addTearDown(() => root.delete(recursive: true));
+      final service = UpdateService(
+        updatesRoot: root,
+        runtimeGuard: _FakeUpdateRuntimeGuard(otherProcessIds: [1234]),
+      );
+      final release = ReleaseInfo(
+        tagName: 'v1.2.3',
+        htmlUrl: '',
+        source: 'GitHub',
+        body: '',
+      );
+      final update = PreparedUpdate(
+        release: release,
+        manifest: const UpdateManifest(
+          schemaVersion: 1,
+          version: '1.2.3',
+          packageName: '',
+          packageSize: 0,
+          sha256: '',
+          executable: 'vscope_serial.exe',
         ),
-      ),
-    );
-  });
+        updateDirectory: Directory('${root.path}/update'),
+        payloadDirectory: Directory('${root.path}/payload'),
+      );
+
+      expect(
+        () => service.launchInstaller(update),
+        throwsA(
+          isA<UpdateDownloadException>().having(
+            (error) => error.message,
+            'message',
+            contains('请先关闭其他 Vscope Serial 窗口'),
+          ),
+        ),
+      );
+    },
+  );
 
   test('rejects zip path traversal', () async {
     final root = await Directory.systemTemp.createTemp('vscope-zip-test-');

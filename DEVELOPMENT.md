@@ -303,7 +303,7 @@ git push origin v1.0.7-beta.4
 
 - 发布构建必须注入 `BUILD_TIME`。
 - 更新器只覆盖 `app-files.json` 管理的文件，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件。
-- 更新缓存和稳定版/Beta 回退槽保存在 `<exe_dir>/updates/`。
+- 更新缓存和稳定版/Beta 回退槽保存在 `<exe_dir>/updates/`；安装前按当前运行版本所属通道写入对应槽位，不使用目标版本通道选择槽位。
 - 更新包安装前必须校验清单、文件大小和 SHA-256。
 
 ### Git 与文档

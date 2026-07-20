@@ -269,7 +269,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       _error = null;
     });
     try {
-      await _service.launchInstaller(prepared, channel: _channel);
+      await _service.launchInstaller(prepared);
       if (mounted) Navigator.of(context).pop();
       await windowManager.close();
     } catch (error) {
