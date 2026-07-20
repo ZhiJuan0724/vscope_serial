@@ -26,6 +26,7 @@ void main() {
             ..statsToolbarEnabled = true
             ..triggerToolbarEnabled = true
             ..previewToolbarEnabled = true
+            ..plotReceiveAggregationEnabled = true
             ..plotLodQuality = 'quality'
             ..showGrid = false
             ..gridDensity = 'dense'
@@ -93,6 +94,7 @@ void main() {
       expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.triggerToolbarEnabled, isFalse);
       expect(settings.previewToolbarEnabled, isFalse);
+      expect(settings.plotReceiveAggregationEnabled, isFalse);
       expect(settings.plotLodQuality, 'performance');
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');

@@ -840,8 +840,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var shellEnabled = AppSettings().rawDataShellEnabled;
+    var plotReceiveAggregationEnabled =
+        AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
+    final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
     final rollbackSectionKey = GlobalKey();
     final resetSectionKey = GlobalKey();
@@ -860,6 +863,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   anchorKey: notificationSectionKey,
                 ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                SettingsNavigationItem(
+                  label: AppStrings.appInfo.receivePerformance,
+                  anchorKey: receivePerformanceSectionKey,
+                ),
                 SettingsNavigationItem(
                   label: AppStrings.appInfo.memoryLimits,
                   anchorKey: memorySectionKey,
@@ -930,6 +937,33 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             },
                   ),
                   const Divider(height: 16),
+                  SwitchListTile(
+                    key: receivePerformanceSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.appInfo.plotReceiveAggregation,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.appInfo.plotReceiveAggregationHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: plotReceiveAggregationEnabled,
+                    onChanged: (value) {
+                      setDialogState(
+                        () => plotReceiveAggregationEnabled = value,
+                      );
+                      context
+                          .read<SerialService>()
+                          .setPlotReceiveAggregationEnabled(value);
+                    },
+                  ),
+                  const Divider(height: 16),
                   KeyedSubtree(
                     key: memorySectionKey,
                     child: StreamBuilder<int>(
@@ -992,6 +1026,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             disableNotifications =
                                 AppSettings().disableNotifications;
                             shellEnabled = AppSettings().rawDataShellEnabled;
+                            plotReceiveAggregationEnabled =
+                                AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =
                                 resetPlotLimit.toString();
                           });

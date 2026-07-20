@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
@@ -138,6 +139,34 @@ void main() {
       // 刷新 start/stop 安排的通知；销毁后的回调必须静默退出。
       await Future<void>.delayed(Duration.zero);
     });
+
+    test('绘图活动才启用原生高频接收合并', () async {
+      final previous = AppSettings().plotReceiveAggregationEnabled;
+      AppSettings().plotReceiveAggregationEnabled = true;
+      final transport = _AggregationFakeTransport();
+      final service = SerialService.forTesting(
+        transportFactory: () => transport,
+      )..config = SerialConfig(port: 'COM7');
+
+      try {
+        await service.connect();
+        expect(transport.aggregationStates, [false]);
+
+        expect(service.startRawReceiving(), isTrue);
+        expect(transport.aggregationStates, [false, false]);
+        service.stopRawReceiving();
+
+        expect(service.tryAcquireActivity(SerialActivityOwner.plot), isTrue);
+        expect(transport.aggregationStates.last, isTrue);
+        service.releaseActivity(SerialActivityOwner.plot);
+        expect(transport.aggregationStates.last, isFalse);
+
+        await service.shutdown();
+      } finally {
+        AppSettings().plotReceiveAggregationEnabled = previous;
+        service.dispose();
+      }
+    });
   });
 }
 
@@ -205,4 +234,14 @@ class _FakeTransport implements SerialTransport {
 
   @override
   Future<int> write(Uint8List data) async => writeResult ?? data.length;
+}
+
+class _AggregationFakeTransport extends _FakeTransport
+    implements PlotReceiveAggregationTransport {
+  final List<bool> aggregationStates = <bool>[];
+
+  @override
+  void setPlotReceiveAggregation(bool enabled) {
+    aggregationStates.add(enabled);
+  }
 }

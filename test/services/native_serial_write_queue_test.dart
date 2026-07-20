@@ -24,19 +24,25 @@ void _exitAfterReadyWriteIsolate(SendPort readyPort) {
 }
 
 void main() {
-  test('NativeSerialData 分别解析单调时间、墙钟时间和数据', () {
-    final packet = Uint8List(19);
+  test('NativeSerialData 解析聚合块首末时间和数据', () {
+    final packet = Uint8List(35);
     final header = ByteData.sublistView(packet);
-    header.setInt64(0, 123456789, Endian.little);
-    header.setInt64(8, 1784500000000000, Endian.little);
-    packet.setRange(16, 19, [1, 2, 3]);
+    header.setInt64(0, 123456000, Endian.little);
+    header.setInt64(8, 123456789, Endian.little);
+    header.setInt64(16, 1784499000000000, Endian.little);
+    header.setInt64(24, 1784500000000000, Endian.little);
+    packet.setRange(32, 35, [1, 2, 3]);
 
     final parsed = NativeSerialData.tryParse(packet)!;
 
+    expect(parsed.firstMonotonicUs, 123456000);
+    expect(parsed.lastMonotonicUs, 123456789);
+    expect(parsed.firstWallClockUs, 1784499000000000);
+    expect(parsed.lastWallClockUs, 1784500000000000);
     expect(parsed.monotonicUs, 123456789);
-    expect(parsed.wallClockUs, 1784500000000000);
+    expect(parsed.wallClockUs, 1784499000000000);
     expect(parsed.data, [1, 2, 3]);
-    expect(NativeSerialData.tryParse(Uint8List(15)), isNull);
+    expect(NativeSerialData.tryParse(Uint8List(31)), isNull);
   });
 
   group('NativeSerialWriteQueue', () {

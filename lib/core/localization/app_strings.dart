@@ -479,6 +479,10 @@ final class _AppInfoStrings {
       '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。';
   String get disableNotifications => '关闭提示信息';
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
+  String get receivePerformance => '接收性能';
+  String get plotReceiveAggregation => '绘图高频接收合并';
+  String get plotReceiveAggregationHelp =>
+      '仅绘图接收时短暂合并连续小块数据，降低高频大量数据的处理开销；可能轻微增加绘图显示延迟。';
   String get memoryLimits => '内存上限';
   String get plotHistoryMemoryLimit => '绘图历史';
   String get plotHistoryMemoryLimitSummary => '达到上限后停止绘图并保留已有历史';

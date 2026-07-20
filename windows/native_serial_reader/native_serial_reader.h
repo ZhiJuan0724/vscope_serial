@@ -40,6 +40,10 @@ NSR_API void nsr_set_dtr(int on);
 // 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_start_reading(int64_t dartPort, int timeoutMs);
 
+// 设置绘图高频接收合并模式。启用后读取线程按短时空闲、块大小和最大等待时间
+// 合并连续数据再投递；调用方只应在绘图接收活动期间启用。
+NSR_API void nsr_set_plot_receive_aggregation(int enabled);
+
 // 取消未完成读取并等待读取线程退出。
 NSR_API void nsr_stop_reading();
 

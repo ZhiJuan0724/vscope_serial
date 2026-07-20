@@ -56,6 +56,9 @@ typedef NsrSetDtrDart = void Function(int on);
 typedef NsrStartReadingC = Int32 Function(Int64 dartPort, Int32 timeoutMs);
 typedef NsrStartReadingDart = int Function(int dartPort, int timeoutMs);
 
+typedef NsrSetPlotReceiveAggregationC = Void Function(Int32 enabled);
+typedef NsrSetPlotReceiveAggregationDart = void Function(int enabled);
+
 typedef NsrStopReadingC = Void Function();
 typedef NsrStopReadingDart = void Function();
 
@@ -117,6 +120,10 @@ final _nsrSetDtr = _dll.lookupFunction<NsrSetDtrC, NsrSetDtrDart>(
 );
 final _nsrStartReading = _dll
     .lookupFunction<NsrStartReadingC, NsrStartReadingDart>('nsr_start_reading');
+final _nsrSetPlotReceiveAggregation = _dll.lookupFunction<
+  NsrSetPlotReceiveAggregationC,
+  NsrSetPlotReceiveAggregationDart
+>('nsr_set_plot_receive_aggregation');
 final _nsrStopReading = _dll
     .lookupFunction<NsrStopReadingC, NsrStopReadingDart>('nsr_stop_reading');
 final _nsrGetReadMetrics = _dll
@@ -559,6 +566,13 @@ class NativeSerialReader {
     return true;
   }
 
+  /// 控制原生读取线程是否仅为绘图会话合并连续小块数据。
+  ///
+  /// 设置在读取线程运行期间可即时切换；关闭时线程会先交付已缓存的残留字节。
+  void setPlotReceiveAggregation(bool enabled) {
+    _nsrSetPlotReceiveAggregation(enabled ? 1 : 0);
+  }
+
   /// 停止读取
   void stopReading() {
     _nsrStopReading();
@@ -713,25 +727,44 @@ class NativeSerialReadMetrics {
 
 /// 原生串口数据：单调时间用于间隔计算，墙钟时间用于界面显示。
 class NativeSerialData {
-  static const int headerBytes = 16;
+  static const int headerBytes = 32;
 
   final Uint8List data;
-  final int monotonicUs;
-  final int wallClockUs;
+  final int firstMonotonicUs;
+  final int lastMonotonicUs;
+  final int firstWallClockUs;
+  final int lastWallClockUs;
 
   NativeSerialData({
     required this.data,
-    required this.monotonicUs,
-    required this.wallClockUs,
-  });
+    required int monotonicUs,
+    required int wallClockUs,
+    int? firstMonotonicUs,
+    int? lastMonotonicUs,
+    int? firstWallClockUs,
+    int? lastWallClockUs,
+  }) : firstMonotonicUs = firstMonotonicUs ?? monotonicUs,
+       lastMonotonicUs = lastMonotonicUs ?? monotonicUs,
+       firstWallClockUs = firstWallClockUs ?? wallClockUs,
+       lastWallClockUs = lastWallClockUs ?? wallClockUs;
+
+  /// 与旧调用方兼容：显示时间取聚合块的第一个原生读取块。
+  int get wallClockUs => firstWallClockUs;
+
+  /// 与旧调用方兼容：间隔判断取聚合块的最后一个原生读取块。
+  int get monotonicUs => lastMonotonicUs;
 
   /// 解析原生 DLL 投递的双时间戳包头。
   static NativeSerialData? tryParse(Uint8List message) {
     if (message.length < headerBytes) return null;
     final header = ByteData.sublistView(message, 0, headerBytes);
     return NativeSerialData(
-      monotonicUs: header.getInt64(0, Endian.little),
-      wallClockUs: header.getInt64(8, Endian.little),
+      monotonicUs: header.getInt64(8, Endian.little),
+      wallClockUs: header.getInt64(16, Endian.little),
+      firstMonotonicUs: header.getInt64(0, Endian.little),
+      lastMonotonicUs: header.getInt64(8, Endian.little),
+      firstWallClockUs: header.getInt64(16, Endian.little),
+      lastWallClockUs: header.getInt64(24, Endian.little),
       data: Uint8List.sublistView(message, headerBytes),
     );
   }

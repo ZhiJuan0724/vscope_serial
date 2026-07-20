@@ -90,6 +90,12 @@ class AppSettings {
   bool triggerToolbarEnabled = false;
   bool previewToolbarEnabled = false;
 
+  /// 绘图接收时是否在原生层短暂合并连续小块数据。
+  ///
+  /// 默认关闭。启用后只在 [SerialActivityOwner.plot] 持有接收活动时生效，
+  /// 数据收发、Shell 和 YMODEM 始终保持逐块即时交付。
+  bool plotReceiveAggregationEnabled = false;
+
   /// 大范围绘图 LOD 策略：performance、balanced 或 qualityHigh。
   /// quality 是两档版本遗留值，加载时迁移为 balanced。
   String plotLodQuality = 'performance';
@@ -308,6 +314,7 @@ class AppSettings {
     statsToolbarEnabled = false;
     triggerToolbarEnabled = false;
     previewToolbarEnabled = false;
+    plotReceiveAggregationEnabled = false;
     plotLodQuality = 'performance';
     showGrid = true;
     gridDensity = 'normal';
@@ -460,6 +467,8 @@ class AppSettings {
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       triggerToolbarEnabled = json['triggerToolbarEnabled'] as bool? ?? false;
       previewToolbarEnabled = json['previewToolbarEnabled'] as bool? ?? false;
+      plotReceiveAggregationEnabled =
+          json['plotReceiveAggregationEnabled'] as bool? ?? false;
       final savedLodQuality = json['plotLodQuality'] as String?;
       plotLodQuality = switch (savedLodQuality) {
         'balanced' || 'quality' => 'balanced',
@@ -656,6 +665,7 @@ class AppSettings {
       'statsToolbarEnabled',
       'triggerToolbarEnabled',
       'previewToolbarEnabled',
+      'plotReceiveAggregationEnabled',
       'showGrid',
       'observationClickToPlace',
       'useRandomSource',
@@ -799,6 +809,7 @@ class AppSettings {
     'statsToolbarEnabled': statsToolbarEnabled,
     'triggerToolbarEnabled': triggerToolbarEnabled,
     'previewToolbarEnabled': previewToolbarEnabled,
+    'plotReceiveAggregationEnabled': plotReceiveAggregationEnabled,
     'plotLodQuality': plotLodQuality,
     'showGrid': showGrid,
     'gridDensity': gridDensity,

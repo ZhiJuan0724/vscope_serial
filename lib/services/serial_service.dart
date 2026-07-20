@@ -348,6 +348,10 @@ class SerialService extends ChangeNotifier {
   SerialActivityOwner _activityOwner = SerialActivityOwner.none;
   SerialActivityOwner get activityOwner => _activityOwner;
   bool get isShellReceiving => _activityOwner == SerialActivityOwner.shell;
+
+  /// 是否在绘图接收期间请求原生层合并连续小块数据。
+  bool get plotReceiveAggregationEnabled =>
+      AppSettings().plotReceiveAggregationEnabled;
   late final YmodemService ymodemService = YmodemService(
     sendBytes: sendRawBytes,
   );
@@ -382,6 +386,16 @@ class SerialService extends ChangeNotifier {
     shellScrollbackLines = settings.shellScrollbackLines;
     ymodemService.attach(shellDataStream);
     _rawSession.setTextEncoding(settings.rawDataEncoding);
+    _syncPlotReceiveAggregation();
+  }
+
+  /// 修改绘图专用高频接收合并开关并立即同步当前原生读取线程。
+  void setPlotReceiveAggregationEnabled(bool enabled) {
+    if (AppSettings().plotReceiveAggregationEnabled == enabled) return;
+    final settings = AppSettings()..plotReceiveAggregationEnabled = enabled;
+    unawaited(settings.save());
+    _syncPlotReceiveAggregation();
+    _notifyListenersSoon();
   }
 
   /// 保存配置到 AppSettings
@@ -681,6 +695,7 @@ class SerialService extends ChangeNotifier {
 
     // 监听数据流
     _transport = transport;
+    _syncPlotReceiveAggregation();
     _nativeSubscription = transport.dataStream.listen(
       (nativeData) {
         if (_connectionCoordinator.isCurrent(generation) &&
@@ -725,6 +740,7 @@ class SerialService extends ChangeNotifier {
     final subscription = _nativeSubscription;
     _nativeSubscription = null;
     final transport = _transport;
+    _setPlotReceiveAggregation(transport, enabled: false);
     _transport = null;
     isConnected = false;
     _releaseAllActivities();
@@ -1456,6 +1472,7 @@ class SerialService extends ChangeNotifier {
     _activityOwner = owner;
     isRawReceiving = owner == SerialActivityOwner.rawData;
     isPlotting = owner == SerialActivityOwner.plot;
+    _syncPlotReceiveAggregation();
     return true;
   }
 
@@ -1466,6 +1483,9 @@ class SerialService extends ChangeNotifier {
 
   void _releaseActivity(SerialActivityOwner owner) {
     if (_activityOwner != owner) return;
+    if (owner == SerialActivityOwner.plot) {
+      _setPlotReceiveAggregation(_transport, enabled: false);
+    }
     if (owner == SerialActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
       _rawSession.flushTextDecoder();
@@ -1476,6 +1496,7 @@ class SerialService extends ChangeNotifier {
   }
 
   void _releaseAllActivities() {
+    _setPlotReceiveAggregation(_transport, enabled: false);
     if (_activityOwner == SerialActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
       _rawSession.flushTextDecoder();
@@ -1484,6 +1505,25 @@ class SerialService extends ChangeNotifier {
     isRawReceiving = false;
     isPlotting = false;
     if (ymodemService.isActive) ymodemService.abort('串口已断开');
+  }
+
+  /// 仅 Windows 原生 transport 支持该优化；其它实现保持原有逐块交付。
+  void _syncPlotReceiveAggregation() {
+    _setPlotReceiveAggregation(
+      _transport,
+      enabled:
+          _activityOwner == SerialActivityOwner.plot &&
+          AppSettings().plotReceiveAggregationEnabled,
+    );
+  }
+
+  void _setPlotReceiveAggregation(
+    SerialTransport? transport, {
+    required bool enabled,
+  }) {
+    if (transport case final PlotReceiveAggregationTransport aggregator) {
+      aggregator.setPlotReceiveAggregation(enabled);
+    }
   }
 
   @override

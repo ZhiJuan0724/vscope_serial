@@ -20,7 +20,15 @@ abstract interface class SerialTransport {
   Future<void> close();
 }
 
-class NativeSerialTransport implements SerialTransport {
+/// 支持由 [SerialService] 按活动页面切换原生接收合并策略的 transport。
+///
+/// 测试 transport 和未来非 Windows 实现可以不实现此接口，串口基础收发不受影响。
+abstract interface class PlotReceiveAggregationTransport {
+  void setPlotReceiveAggregation(bool enabled);
+}
+
+class NativeSerialTransport
+    implements SerialTransport, PlotReceiveAggregationTransport {
   final NativeSerialReader _reader = NativeSerialReader();
 
   @override
@@ -49,6 +57,10 @@ class NativeSerialTransport implements SerialTransport {
   @override
   bool startReading({required int timeoutMs}) =>
       _reader.startReading(timeoutMs: timeoutMs);
+
+  @override
+  void setPlotReceiveAggregation(bool enabled) =>
+      _reader.setPlotReceiveAggregation(enabled);
 
   @override
   Future<int> write(Uint8List data) => _reader.write(data);

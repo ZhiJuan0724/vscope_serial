@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/widgets/status_bar.dart';
@@ -42,6 +43,11 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final service = SerialService();
     final plotViewModel = PlotViewModel(service);
+    final previousAggregation = AppSettings().plotReceiveAggregationEnabled;
+    AppSettings().plotReceiveAggregationEnabled = false;
+    addTearDown(
+      () => AppSettings().plotReceiveAggregationEnabled = previousAggregation,
+    );
 
     await tester.pumpWidget(
       MultiProvider(
@@ -102,10 +108,20 @@ void main() {
     );
     expect(find.text('通知'), findsOneWidget);
     expect(find.text('页面'), findsOneWidget);
+    expect(find.text(AppStrings.appInfo.receivePerformance), findsOneWidget);
     expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
     expect(find.text('版本回退'), findsWidgets);
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    final aggregationToggle = find.ancestor(
+      of: find.text(AppStrings.appInfo.plotReceiveAggregation),
+      matching: find.byType(SwitchListTile),
+    );
+    expect(aggregationToggle, findsOneWidget);
+    expect(AppSettings().plotReceiveAggregationEnabled, isFalse);
+    await tester.tap(aggregationToggle);
+    await tester.pump();
+    expect(AppSettings().plotReceiveAggregationEnabled, isTrue);
     final plotMemoryField = find.byKey(
       const ValueKey('app-plot-history-memory-limit'),
     );
