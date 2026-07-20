@@ -5,7 +5,7 @@ import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/parser/fixed_frame_parser.dart';
-import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/data/protocol/r_protocol_codec.dart';
 
 void main() {
   group('FixedFrameParser', () {
@@ -187,7 +187,7 @@ void main() {
     });
 
     test('固定帧r协议按固定通道数发送并保留0地址', () {
-      final addresses = PlotViewModel.validateRProtocolAddresses([
+      final addresses = rSendProtocol.validateAddresses([
         '1',
         '0',
         '0x10',
@@ -195,7 +195,7 @@ void main() {
 
       expect(addresses, ['1', '0', '0x10']);
       expect(
-        String.fromCharCodes(PlotViewModel.buildRProtocolCommand(addresses)),
+        String.fromCharCodes(rSendProtocol.buildCommand(addresses)),
         'r 1 0 0x10\n',
       );
     });

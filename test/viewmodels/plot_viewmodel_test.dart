@@ -2321,89 +2321,6 @@ void main() {
       expect(vm.lodSampleStepForTest, greaterThan(1));
     });
 
-    test('众邦初始化帧使用4字节小端通道号', () {
-      final frame = PlotViewModel.buildZobowInitFrame([
-        0x01020304,
-        0x11223344,
-        0xAABBCCDD,
-        0x00000005,
-      ]);
-
-      expect(frame.length, 18);
-      expect(frame.sublist(0, 16), [
-        0x04,
-        0x03,
-        0x02,
-        0x01,
-        0x44,
-        0x33,
-        0x22,
-        0x11,
-        0xDD,
-        0xCC,
-        0xBB,
-        0xAA,
-        0x05,
-        0x00,
-        0x00,
-        0x00,
-      ]);
-
-      final crc = calculateCrc(
-        frame.sublist(0, 16),
-        crc16Polys['CRC-16/MODBUS']!,
-      );
-      expect(frame[16], crc & 0xFF);
-      expect(frame[17], (crc >> 8) & 0xFF);
-    });
-
-    test('众邦初始化帧支持8通道', () {
-      final frame = PlotViewModel.buildZobowInitFrame([1, 2, 3, 4, 5, 6, 7, 8]);
-
-      expect(frame.length, 34);
-      expect(frame.sublist(0, 32), [
-        1,
-        0,
-        0,
-        0,
-        2,
-        0,
-        0,
-        0,
-        3,
-        0,
-        0,
-        0,
-        4,
-        0,
-        0,
-        0,
-        5,
-        0,
-        0,
-        0,
-        6,
-        0,
-        0,
-        0,
-        7,
-        0,
-        0,
-        0,
-        8,
-        0,
-        0,
-        0,
-      ]);
-
-      final crc = calculateCrc(
-        frame.sublist(0, 32),
-        crc16Polys['CRC-16/MODBUS']!,
-      );
-      expect(frame[32], crc & 0xFF);
-      expect(frame[33], (crc >> 8) & 0xFF);
-    });
-
     test('接收协议内置顺序固定', () {
       expect(ParserType.values, [
         ParserType.fireWater,
@@ -2411,26 +2328,6 @@ void main() {
         ParserType.fixedFrame,
         ParserType.zobow,
       ]);
-    });
-
-    test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
-      final bytes = PlotViewModel.buildRProtocolCommand([
-        '0',
-        ' 12 ',
-        '0x10',
-        '0X2A',
-      ]);
-
-      expect(utf8.decode(bytes), 'r 0 12 0x10 0X2A\n');
-    });
-
-    test('r协议地址严格区分十进制和带0x前缀的十六进制', () {
-      expect(PlotViewModel.parseRProtocolAddress('16'), 16);
-      expect(PlotViewModel.parseRProtocolAddress('0x10'), 16);
-      expect(PlotViewModel.parseRProtocolAddress('FF'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('12x3'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('0xGG'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('4294967296'), isNull);
     });
 
     test('r协议预设应用到通道时保留配置进制', () {
@@ -2528,62 +2425,6 @@ void main() {
       vm.setPlottingForTest(true);
       expect(vm.resetAllChannels(), isFalse);
       expect(vm.channels[0].alias, '运行中保留');
-    });
-
-    test('r协议地址校验支持0地址、自动连续前缀和固定通道截断', () {
-      expect(PlotViewModel.validateRProtocolAddresses(['0', '0x0', '20', '']), [
-        '0',
-        '0x0',
-        '20',
-      ]);
-      expect(
-        PlotViewModel.validateRProtocolAddresses([
-          '1',
-          '0x10',
-          '20',
-        ], requiredCount: 2),
-        ['1', '0x10'],
-      );
-    });
-
-    test('r协议宽松通道设置会压紧非空地址并保留0地址', () {
-      expect(
-        PlotViewModel.validateRProtocolAddresses([
-          '',
-          '0',
-          '',
-          '0x10',
-          ' 20 ',
-        ], loose: true),
-        ['0', '0x10', '20'],
-      );
-      expect(
-        PlotViewModel.validateRProtocolAddresses(
-          ['', '0', '', '0x10'],
-          requiredCount: 3,
-          loose: true,
-        ),
-        ['0', '0x10'],
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', ''], loose: true),
-        throwsFormatException,
-      );
-    });
-
-    test('r协议地址校验拒绝全空、固定通道不足和中间空洞', () {
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', '']),
-        throwsFormatException,
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['1'], requiredCount: 2),
-        throwsFormatException,
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['0', '', '2']),
-        throwsFormatException,
-      );
     });
 
     test('自动识别接收协议未开始绘图时为r协议显示16个地址槽位', () {

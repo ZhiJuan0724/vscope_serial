@@ -75,6 +75,7 @@ lib/
 ├── data/
 │   ├── models/           # 协议、通道、绘图和配置模型
 │   ├── parser/           # 接收协议解析器
+│   ├── protocol/         # 无 UI、无 IO 的发送协议编码规则
 │   └── source/           # 实时与导入数据源
 ├── services/             # 串口、设置、更新、文件和系统服务
 ├── viewmodels/           # 页面状态与业务流程
@@ -97,9 +98,10 @@ docs/                     # 长期上下文、历史和设计文档
 
 - `lib/core/` 只承载通用底层能力。日志统一使用 `AppLogger`，不要直接 `print()`。
 - 固定 UI 文本优先放入 `lib/core/localization/app_strings.dart`。
-- 协议解析器兼容 `IDataParser.feed()` 和 `outputStream`；绘图高频接收链优先使用 `feedBatch()`，避免逐包 Stream 调度。
+- 接收解析器统一实现 `IDataParser`，兼容 `feed()` 和 `outputStream`；绘图高频接收链优先使用 `feedBatch()`，避免逐包 Stream 调度。
 - `lib/services/` 管理串口、文件、设置、更新和系统资源，不承载页面布局。连接、原始接收和设置文件分别由 `SerialConnectionCoordinator`、`RawReceiveSession`、`SettingsRepository` 独占生命周期。
-- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态，历史、精确窗口和数据源会话分别委托给 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController`；`ShellViewModel` 独立管理终端会话和文件传输。
+- `lib/viewmodels/` 管理业务状态；`PlotViewModel` 是全局 Provider，页面切换不得丢失绘图状态，历史、精确窗口和数据源会话分别委托给 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController`。通道、显示、视口和交互控制按 `plot_viewmodel/` 下的 `part` 模块维护，不再堆入主文件；`ShellViewModel` 独立管理终端会话和文件传输。
+- 发送协议统一实现 `SendProtocol<TConfig>`，每个具体协议在 `lib/data/protocol/` 中使用独立实现文件，不得依赖 Flutter、页面状态或串口。`ZobowDeviceProtocolCodec` 与 `RProtocolCodec` 是当前实现；绘图启动命令由 `PlotProtocolInitializer` 发送，`SerialService` 只提供通用有序字节写入，不感知具体协议。
 - `lib/views/` 只处理页面、弹窗、Painter 和交互。
 - `SerialService` 通过 `SerialActivityOwner` 原子管理数据收发、Shell 和绘图的接收活动；页面只能在所有者为 `none` 时切换。
 - 所有串口写入入口共用有序后台写队列，页面和 ViewModel 不得绕过队列直接并发调用同步 FFI 写入。

@@ -179,7 +179,7 @@ class _ChannelItemState extends State<_ChannelItem> {
   void _saveRAddress() {
     if (widget.vm.isPlotting || widget.vm.isStopping) return;
     final text = _idController.text.trim();
-    final address = PlotViewModel.parseRProtocolAddress(text);
+    final address = rSendProtocol.parseAddress(text);
     if (text.isEmpty || (address != null && address >= 0)) {
       widget.vm.setRChannelAddress(widget.ch.index, text);
       return;

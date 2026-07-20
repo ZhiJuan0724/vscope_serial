@@ -20,6 +20,7 @@ import '../../data/models/math_channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
+import '../../data/protocol/r_protocol_codec.dart';
 import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/address_profile_dialog.dart';

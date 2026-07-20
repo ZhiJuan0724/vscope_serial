@@ -218,7 +218,7 @@ class ConsoleCommandReader:
                 return commands
 
 
-class JackFourChannelDevice:
+class ZobowDevice:
     """众邦电控协议下位机模拟器"""
     
     def __init__(
@@ -523,7 +523,7 @@ def main():
     print(f"批量窗口: {args.batch_ms}ms")
     print("=" * 50)
     
-    device = JackFourChannelDevice(
+    device = ZobowDevice(
         port=args.port,
         baudrate=args.baud,
         data_mode=args.mode,

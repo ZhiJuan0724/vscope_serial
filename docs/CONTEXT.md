@@ -45,9 +45,10 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 
 - `lib/core/`：日志、CRC 等底层工具。底层模块优先使用 `AppLogger`，不要直接 `print()`。
 - `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
-- `lib/data/`：数据模型、协议解析器、数据源和 LOD 索引。解析器兼容 `IDataParser.feed()`/`outputStream`，绘图高频接收链优先使用 `feedBatch()` 批量返回结果，避免逐包 Stream 调度。
+- `lib/data/`：数据模型、接收解析器、发送协议、数据源和 LOD 索引。接收解析器统一实现 `IDataParser`，兼容 `feed()`/`outputStream`；绘图高频接收链优先使用 `feedBatch()` 批量返回结果，避免逐包 Stream 调度。
 - `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。`SerialService` 是 UI 门面，连接生命周期由 `SerialConnectionCoordinator` 独占，原始接收缓存由 `RawReceiveSession` 独占；`SettingsRepository` 独占设置 JSON、备份恢复和串行原子写入。
-- `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；绘图历史、精确窗口和数据源会话分别由 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController` 独占，数学/触发/统计/观察值计算保持无 UI 依赖；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
+- `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；绘图历史、精确窗口和数据源会话分别由 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController` 独占，通道、显示、视口和交互控制拆分在 `plot_viewmodel/` 的独立 `part` 模块中，数学/触发/统计/观察值计算保持无 UI 依赖；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
+- 发送协议统一实现 `SendProtocol<TConfig>`，并且每个具体协议使用独立文件；`ZobowDeviceProtocolCodec` 和 `RProtocolCodec` 分别编码 ZobowDevice 初始化帧和 r 命令。`PlotProtocolInitializer` 负责绘图启动前的协议发送和错误归一化；`PlotViewModel` 只提供配置快照并处理启动结果，`SerialService` 不得依赖具体发送协议。接收侧始终由 `IDataParser` 实现负责，不能与发送协议合并。
 - `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；页面只构造一个 `PlotRenderSnapshot`，`PlotLayerStack` 按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。
 - `integration_test/`：Windows Profile 模式的绘图性能场景，不作为 CI 耗时门禁。
 - `test_tools/`：本地模拟设备和测试数据生成脚本。
