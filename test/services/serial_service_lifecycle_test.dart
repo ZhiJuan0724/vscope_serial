@@ -127,6 +127,17 @@ void main() {
         service.dispose();
       },
     );
+
+    test('queued activity notifications are ignored after disposal', () async {
+      final service = SerialService()..isConnected = true;
+
+      expect(service.startRawReceiving(), isTrue);
+      service.stopRawReceiving();
+      service.dispose();
+
+      // 刷新 start/stop 安排的通知；销毁后的回调必须静默退出。
+      await Future<void>.delayed(Duration.zero);
+    });
   });
 }
 

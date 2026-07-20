@@ -164,6 +164,16 @@ class SerialService extends ChangeNotifier {
   Timer? _portChangeDebounce;
   bool _portDiscoveryStarted = false;
   bool _disposed = false;
+
+  /// 将状态通知推迟到当前同步操作之后，并在服务销毁后静默取消。
+  void _notifyListenersSoon() {
+    unawaited(
+      Future<void>.microtask(() {
+        if (!_disposed) notifyListeners();
+      }),
+    );
+  }
+
   Map<String, String> _portFriendlyNames = const {};
   Future<bool>? _pendingPortDetailsRefresh;
   bool _isRefreshingPortDetails = false;
@@ -543,12 +553,12 @@ class SerialService extends ChangeNotifier {
       config = config.copyWith(port: null);
       _saveSettings();
       AppNotifications.show('串口已断开，请重新连接');
-      unawaited(Future.microtask(() => notifyListeners()));
+      _notifyListenersSoon();
       return false;
     }
 
     config = config.copyWith(port: selectedPort);
-    unawaited(Future.microtask(() => notifyListeners()));
+    _notifyListenersSoon();
     if (!reconnectOnce) return false;
 
     AppLogger().info('尝试自动重连串口: $selectedPort', category: 'SERIAL');
@@ -568,9 +578,7 @@ class SerialService extends ChangeNotifier {
     return _connectionCoordinator.connect(
       onStart: () {
         isConnecting = true;
-        Future.microtask(() {
-          if (!_disposed) notifyListeners();
-        });
+        _notifyListenersSoon();
       },
       operation: _connectLocked,
     );
@@ -588,7 +596,7 @@ class SerialService extends ChangeNotifier {
     }
 
     isConnecting = true;
-    unawaited(Future.microtask(() => notifyListeners()));
+    _notifyListenersSoon();
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
     // 先让 Flutter 绘制连接中状态，再开始原生耗时操作。
     await Future<void>.delayed(Duration.zero);
@@ -624,7 +632,7 @@ class SerialService extends ChangeNotifier {
     } finally {
       isConnecting = false;
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');
-      unawaited(Future.microtask(() => notifyListeners()));
+      _notifyListenersSoon();
     }
   }
 
@@ -693,7 +701,7 @@ class SerialService extends ChangeNotifier {
   Future<void> _disconnectLocked() async {
     await _cleanupPortLocked();
     AppLogger().info('串口已断开', category: 'SERIAL');
-    unawaited(Future.microtask(() => notifyListeners()));
+    _notifyListenersSoon();
   }
 
   Future<void> _cleanupPortLocked() async {
@@ -705,7 +713,7 @@ class SerialService extends ChangeNotifier {
     _transport = null;
     isConnected = false;
     _releaseAllActivities();
-    if (!_disposed) unawaited(Future.microtask(notifyListeners));
+    _notifyListenersSoon();
     await subscription?.cancel();
     await transport?.close();
   }
@@ -1011,7 +1019,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellMode = false;
     unawaited(settings.save());
     AppLogger().info('Shell页面${value ? '显示' : '隐藏'}', category: 'DATA');
-    unawaited(Future.microtask(() => notifyListeners()));
+    _notifyListenersSoon();
   }
 
   /// 设置独立 Shell 标签是否显示；保留旧字段名以兼容已有配置文件。
@@ -1024,7 +1032,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellInputMode = value.value;
     unawaited(settings.save());
     AppLogger().info('Shell输入模式切换为 ${value.label}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setShellEncoding(String value) {
@@ -1032,7 +1040,7 @@ class SerialService extends ChangeNotifier {
     shellEncoding = value;
     final settings = AppSettings()..shellEncoding = value;
     unawaited(settings.save());
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setShellLineEnding(String value) {
@@ -1040,7 +1048,7 @@ class SerialService extends ChangeNotifier {
     shellLineEnding = value;
     final settings = AppSettings()..shellLineEnding = value;
     unawaited(settings.save());
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setShellLocalEcho(bool value) {
@@ -1048,7 +1056,7 @@ class SerialService extends ChangeNotifier {
     shellLocalEcho = value;
     final settings = AppSettings()..shellLocalEcho = value;
     unawaited(settings.save());
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setShellScrollbackLines(int value) {
@@ -1057,7 +1065,7 @@ class SerialService extends ChangeNotifier {
     shellScrollbackLines = next;
     final settings = AppSettings()..shellScrollbackLines = next;
     unawaited(settings.save());
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setRawDataTerminalFontSize(double value) {
@@ -1068,7 +1076,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataTerminalFontSize = next;
     unawaited(settings.save());
     AppLogger().info('Shell字体大小设置为 $next', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setRawDataTerminalFontFamily(String value) {
@@ -1079,7 +1087,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataTerminalFontFamily = next;
     unawaited(settings.save());
     AppLogger().info('Shell字体设置为 $next', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setRawShellThemeMode(RawShellThemeMode value) {
@@ -1089,7 +1097,7 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellTheme = value.value;
     unawaited(settings.save());
     AppLogger().info('Shell主题切换为 ${value.label}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setRawShellCursorMode(RawShellCursorMode value) {
@@ -1099,13 +1107,13 @@ class SerialService extends ChangeNotifier {
     settings.rawDataShellCursor = value.value;
     unawaited(settings.save());
     AppLogger().info('Shell光标样式切换为 ${value.label}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setReceiveHex(bool value) {
     if (!_rawSession.setReceiveHex(value)) return;
     AppLogger().info('接收显示格式切换为 ${value ? 'HEX' : '文本'}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   /// 设置文本收发编码（仅非 HEX 模式生效）。
@@ -1113,7 +1121,7 @@ class SerialService extends ChangeNotifier {
     if (!_rawSession.setTextEncoding(encoding)) return;
     unawaited(_persistEncoding());
     AppLogger().info('文本收发编码切换为: $encoding', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   Future<void> _persistEncoding() async {
@@ -1124,7 +1132,7 @@ class SerialService extends ChangeNotifier {
   void setShowTimestamp(bool value) {
     if (!_rawSession.setShowTimestamp(value)) return;
     AppLogger().info('接收时间戳${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   /// 清空所有数据（切换串口时调用）。
@@ -1320,7 +1328,7 @@ class SerialService extends ChangeNotifier {
       _cleanupPortLocked,
     );
     unawaited(operation);
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void updateRts(bool value) {
@@ -1332,7 +1340,7 @@ class SerialService extends ChangeNotifier {
       }
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void updateDtr(bool value) {
@@ -1344,13 +1352,13 @@ class SerialService extends ChangeNotifier {
       }
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void setAutoLineBreak(bool value) {
     if (!_rawSession.setAutoLineBreak(value)) return;
     AppLogger().info('接收自动换行${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   /// 设置相邻接收包的自动换行超时，范围为 1~10000ms。
@@ -1360,7 +1368,7 @@ class SerialService extends ChangeNotifier {
     final settings = AppSettings()..rawDataAutoLineBreakIntervalMs = next;
     unawaited(settings.save());
     AppLogger().info('接收自动换行时间: $next ms', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   // ========== 原始数据接收控制 ==========
@@ -1383,7 +1391,7 @@ class SerialService extends ChangeNotifier {
     }
     isRawReceiving = true;
     AppLogger().info('开始接收原始数据', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
     return true;
   }
 
@@ -1394,7 +1402,7 @@ class SerialService extends ChangeNotifier {
     isRawReceiving = false;
     _releaseActivity(SerialActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   /// 开始独立 Shell 会话。未成功取得接收所有权时不会进入运行状态。
@@ -1408,7 +1416,7 @@ class SerialService extends ChangeNotifier {
       return false;
     }
     AppLogger().info('Shell 会话已启动', category: 'SERIAL');
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
     return true;
   }
 
@@ -1418,7 +1426,7 @@ class SerialService extends ChangeNotifier {
     }
     _releaseActivity(SerialActivityOwner.shell);
     AppLogger().info('Shell 会话已停止', category: 'SERIAL');
-    unawaited(Future.microtask(() => notifyListeners()));
+    _notifyListenersSoon();
   }
 
   /// 尝试原子取得串口活动所有权；同一所有者重复调用视为成功。
@@ -1438,7 +1446,7 @@ class SerialService extends ChangeNotifier {
 
   void releaseActivity(SerialActivityOwner owner) {
     _releaseActivity(owner);
-    Future.microtask(() => notifyListeners());
+    _notifyListenersSoon();
   }
 
   void _releaseActivity(SerialActivityOwner owner) {
