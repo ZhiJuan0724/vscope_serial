@@ -959,14 +959,10 @@ void main() {
       await vm.stopPlotting();
     });
 
-    test('保持绘图不会跨协议保留不兼容历史', () async {
-      vm.setParserType(ParserType.fixedFrame);
-      vm.ingestParsedResultForTest(
-        ParseResult.ok([1], rawBytes: Uint8List(10)),
-      );
-      vm.ingestParsedResultForTest(
-        ParseResult.ok([2], rawBytes: Uint8List(10)),
-      );
+    test('保持绘图只续接相同接收协议', () async {
+      vm.setParserType(ParserType.justFloat);
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 4));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 4));
       expect(vm.pointCount, 2);
 
       vm.setKeepPlotOnRestart(true);
@@ -979,6 +975,25 @@ void main() {
       expect(vm.pointCount, 0);
       expect(vm.visiblePointCount, 0);
       expect(vm.lodIndex.isEmpty, isTrue);
+
+      await vm.stopPlotting();
+    });
+
+    test('保持绘图在自动识别通道数变化时清空旧历史', () async {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 2));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 4], bytesConsumed: 2));
+      expect(vm.pointCount, 2);
+
+      vm.setKeepPlotOnRestart(true);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+      await vm.startPlotting();
+
+      vm.ingestParsedResultForTest(ParseResult.ok([5, 6, 7], bytesConsumed: 3));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.index, 0);
+      expect(vm.dataPoints.single.values, [5, 6, 7]);
 
       await vm.stopPlotting();
     });

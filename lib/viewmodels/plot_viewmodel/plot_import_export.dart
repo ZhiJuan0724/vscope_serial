@@ -1252,7 +1252,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     List<double> values,
     _ImportValueRange range,
   ) {
-    _historyStore.appendImportedParsedPoint(pointIndex, values);
+    _historyStore.appendImportedParsedPoint(pointIndex, values, _parserType);
     range.include(values);
   }
 

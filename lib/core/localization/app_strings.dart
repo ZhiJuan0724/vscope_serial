@@ -212,7 +212,8 @@ final class _PlotStrings {
   String get triggerFeatureToggle => '显示触发工具';
   String get triggerFeatureHelp => '开启后在工具栏添加触发入口，左键启停触发，右键配置触发条件';
   String get keepPlotOnRestart => '保持绘图';
-  String get keepPlotOnRestartHelp => '开启后停止绘图再开始时不自动清空旧数据，新数据会在原有绘图后继续追加。';
+  String get keepPlotOnRestartHelp =>
+      '仅续接同一接收协议且通道数一致的数据流；切换协议、自动识别通道数变化或导入数据后会清空旧数据。';
   String get snapHighlight => '吸附点高亮';
   String get snapHighlightColorMode => '吸附点颜色';
   String get snapHighlightColorCursor => '跟随光标线';

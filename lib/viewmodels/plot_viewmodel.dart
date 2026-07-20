@@ -267,6 +267,7 @@ class PlotViewModel extends BaseViewModel {
   /// 以最新有效帧为准，这样设备从 8 通道切到 4 通道后不会继续显示
   /// 已经没有数据的偏置轴和 r 协议地址槽位。
   int _activeChannelCount = 0;
+  int? _retainedAutoChannelCount;
 
   bool _hasStartedPlottingOnce = false;
 
@@ -2198,6 +2199,7 @@ class PlotViewModel extends BaseViewModel {
     _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
+    _retainedAutoChannelCount = null;
     _activeDiscardInitialPacketLimit = 0;
     _discardedInitialPacketCount = 0;
     _resetTriggerRuntimeState();
@@ -2218,36 +2220,20 @@ class PlotViewModel extends BaseViewModel {
         _keepPlotOnRestart && !retainedHistoryIsCompatible;
     if (!_keepPlotOnRestart || clearIncompatibleHistory) {
       if (clearIncompatibleHistory) {
-        const message = '接收协议已变化，已清空不兼容的历史绘图数据';
+        const message = '接收协议已变化或历史来自导入，已清空不可续接的绘图数据';
         AppLogger().warning(message, category: 'PLOT');
         showStatusMessage(message);
       }
-      // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
-      // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
-      _cancelWindowLoad();
-      _windowProvider.clear();
-      _historyStore.clear();
-      _resetPlotRetentionState();
-      _importedChannelAddresses = null;
-      _dataRevision++;
-      _invalidateDisplayCaches();
-      _resetObservedValueMetadata();
-      _nextIndex = 0;
-      _activeChannelCount = 0;
-
-      // 保留上一轮缩放比例；首次启动仍使用默认视口。
-      if (_hasStartedPlottingOnce) {
-        final xRange = viewport.xRange;
-        _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
-      } else {
-        _setViewport(viewport.reset());
-        _hasStartedPlottingOnce = true;
-      }
-      _viewportHistory.clear();
-      _resetCursorPositions();
+      _clearHistoryForRestart();
     } else {
       _importedChannelAddresses = null;
       _hasStartedPlottingOnce = true;
+      _retainedAutoChannelCount =
+          _nextIndex > 0 &&
+                  _usesAutoDetectedReceiveChannels &&
+                  _activeChannelCount > 0
+              ? _activeChannelCount
+              : null;
     }
 
     _resetRateState();
@@ -2264,6 +2250,51 @@ class PlotViewModel extends BaseViewModel {
   bool _isRetainedHistoryCompatible() {
     if (_nextIndex == 0) return true;
     return _historyStore.isCompatible(_parserType, _nextIndex);
+  }
+
+  void _clearHistoryForRestart() {
+    // 窗口、全量历史、LOD 和原始帧分别服务于绘制、回看、定位和导出，
+    // 重开数据流时必须作为同一份历史一起清理。
+    _cancelWindowLoad();
+    _windowProvider.clear();
+    _historyStore.clear();
+    _resetPlotRetentionState();
+    _importedChannelAddresses = null;
+    _dataRevision++;
+    _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
+    _nextIndex = 0;
+    _activeChannelCount = 0;
+    _retainedAutoChannelCount = null;
+
+    // 保留上一轮缩放比例；首次启动仍使用默认视口。
+    if (_hasStartedPlottingOnce) {
+      final xRange = viewport.xRange;
+      _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
+    } else {
+      _setViewport(viewport.reset());
+      _hasStartedPlottingOnce = true;
+    }
+    _viewportHistory.clear();
+    _resetCursorPositions();
+  }
+
+  void _validateRetainedAutoChannelCount(int channelCount) {
+    final retainedChannelCount = _retainedAutoChannelCount;
+    _retainedAutoChannelCount = null;
+    if (retainedChannelCount == null || retainedChannelCount == channelCount) {
+      return;
+    }
+
+    final message = '自动识别通道数已从 $retainedChannelCount 变为 $channelCount，已清空旧历史';
+    AppLogger().warning(message, category: 'PLOT');
+    showStatusMessage(message);
+    _clearHistoryForRestart();
+    _resetRateState();
+    _lastRateLogTime = null;
+    _lastRateLogIndex = 0;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
   }
 
   // ========== 数据接收 ==========
@@ -2481,6 +2512,7 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
 
+    _validateRetainedAutoChannelCount(result.values!.length);
     if (!_canAcceptPlotPoint(result)) return;
 
     final now = receivedAt ?? DateTime.now();

@@ -17,6 +17,8 @@ import '../data/parser/zobow_parser.dart';
 class PlotHistoryStore {
   final _ParsedValueHistory _parsed = _ParsedValueHistory();
   final PlotLodIndex _lod = PlotLodIndex();
+  ParserType? _historyParserType;
+  bool _containsImportedData = false;
   FixedPacketByteBuffer _zobowFrames = FixedPacketByteBuffer(
     packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
   );
@@ -52,6 +54,9 @@ class PlotHistoryStore {
   }
 
   bool isCompatible(ParserType parserType, int expectedPointCount) {
+    // “保持绘图”只续接实时数据流；导入历史用于查看和导出，不与后续接收拼接。
+    if (_containsImportedData) return false;
+    if (_historyParserType != parserType) return false;
     return switch (parserType) {
       ParserType.fireWater || ParserType.justFloat =>
         parsedLength == expectedPointCount &&
@@ -69,6 +74,8 @@ class PlotHistoryStore {
   }
 
   void clear() {
+    _historyParserType = null;
+    _containsImportedData = false;
     _parsed.clear();
     _lod.clear();
     _zobowFrames.clear();
@@ -77,6 +84,7 @@ class PlotHistoryStore {
 
   /// 追加协议结果，并返回当前点可直接用于精确窗口的只读值视图。
   List<double> appendResult(ParseResult result, ParserType parserType) {
+    _historyParserType ??= parserType;
     final values = result.values!;
     if (parserType == ParserType.zobow && result.rawBytes != null) {
       _zobowFrames.appendPacket(result.rawBytes!);
@@ -210,10 +218,16 @@ class PlotHistoryStore {
   }
 
   /// 导入事务通过此入口提交已验证的普通解析点。
-  void appendImportedParsedPoint(int pointIndex, List<double> values) {
+  void appendImportedParsedPoint(
+    int pointIndex,
+    List<double> values,
+    ParserType parserType,
+  ) {
     if (pointIndex != _parsed.length) {
       throw StateError('导入点序号不连续: expected=${_parsed.length}, got=$pointIndex');
     }
+    _historyParserType ??= parserType;
+    _containsImportedData = true;
     _parsed.add(values);
     _lod.add(pointIndex, values);
   }
@@ -222,6 +236,7 @@ class PlotHistoryStore {
     int length, {
     int maxChannelCount = PlotConfiguration.rawChannelCount,
   }) {
+    _historyParserType = ParserType.fireWater;
     _parsed.debugSetLengthForTest(length, maxChannelCount: maxChannelCount);
   }
 }
