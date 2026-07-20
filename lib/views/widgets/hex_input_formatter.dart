@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-/// Filters HEX input to hexadecimal characters and spaces only.
+/// 仅保留十六进制字符和空白的输入过滤器。
 class HexInputFormatter extends TextInputFormatter {
   const HexInputFormatter();
 
@@ -17,7 +17,7 @@ class HexInputFormatter extends TextInputFormatter {
   }
 }
 
-/// Groups HEX characters as byte pairs separated by spaces.
+/// 将十六进制字符按两位字节自动以空格分组。
 String formatHexByteGroups(String value) {
   final hexOnly = value.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
   final formatted = <String>[];

@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-// Global state
+// 连接周期共享状态；访问读取线程相关资源时必须遵循 stop/close 的同步顺序。
 static HANDLE g_hSerial = INVALID_HANDLE_VALUE;
 static std::thread g_readThread;
 static std::atomic<bool> g_running(false);
@@ -288,8 +288,8 @@ static DWORD CALLBACK port_notification_callback(
     return ERROR_SUCCESS;
 }
 
-// Convert QPC ticks without multiplying the full counter by one million.
-// The quotient/remainder split avoids overflow after long process uptimes.
+// QPC 计数换算时不直接对完整计数乘一百万。
+// 商余数拆分可避免进程长期运行后的整数乘法溢出。
 static int64_t get_monotonic_time_us() {
     LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
@@ -313,7 +313,7 @@ static void update_max_read_block(uint64_t bytesRead) {
     }
 }
 
-// Read thread
+// 读取线程：复用 OVERLAPPED/event，停止时由 CancelIoEx 唤醒未完成 ReadFile。
 static void read_thread_func() {
     constexpr DWORD kReadBufferBytes = 64 * 1024;
     constexpr size_t kPacketHeaderBytes = 16;
@@ -371,8 +371,8 @@ static void read_thread_func() {
             g_readBytes.fetch_add(bytesRead);
             update_max_read_block(bytesRead);
             
-            // Send data to Dart using Dart_PostCObject_DL
-            // Only post if Dart API is initialized (Dart_PostCObject_DL != NULL)
+            // 通过 Dart_PostCObject_DL 向 Dart 投递数据。
+            // 仅在 Dart API 已初始化（Dart_PostCObject_DL 非 NULL）时投递。
             if (dartPort != 0 && Dart_PostCObject_DL != NULL) {
                 memcpy(message.data(), &monotonicUs, sizeof(monotonicUs));
                 memcpy(
@@ -478,7 +478,7 @@ int nsr_open_port(const char* portName, int baudRate) {
 }
 
 void nsr_close_port() {
-    // nsr_stop_reading() already closes g_hSerial and waits for thread
+    // nsr_stop_reading() 已关闭 g_hSerial 并等待读取线程退出。
     nsr_stop_reading();
 }
 

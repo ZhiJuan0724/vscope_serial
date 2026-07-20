@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-/// Central registry for app-owned SVG icons.
+/// 应用自有 SVG 图标的集中注册表。
 ///
-/// Keep asset names here instead of scattering string paths through pages, so
-/// future P1/P2 icon replacement can stay mechanical and easy to audit.
+/// 资源名称只在此处维护，避免页面散落字符串路径，后续替换图标时可机械检查影响范围。
 abstract final class AppIcons {
   static const plotMeasureXx = 'ic_plot_measure_xx';
   static const plotMeasureYy = 'ic_plot_measure_yy';

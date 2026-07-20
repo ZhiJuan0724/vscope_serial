@@ -6,6 +6,10 @@ import '../../data/models/multi_send_profile.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
 import 'hex_input_formatter.dart';
 
+/// 数据收发页右侧的多条发送扩展面板。
+///
+/// 面板只负责配置与操作呈现；发送顺序、取消令牌和运行锁由
+/// [MultiSendViewModel] 持有，运行期间必须禁止会改变执行序列的编辑操作。
 class MultiSendPanel extends StatelessWidget {
   final VoidCallback onClose;
 
@@ -17,6 +21,7 @@ class MultiSendPanel extends StatelessWidget {
       builder: (context, vm, _) {
         if (vm.loading) return const Center(child: CircularProgressIndicator());
         final profile = vm.selectedProfile;
+        // 批量发送开始后锁定配置选择、编辑、排序和单条发送，避免执行序列漂移。
         final locked = vm.isRunning;
         final manualSendEnabled = vm.canSendManually;
         return Material(
@@ -373,6 +378,7 @@ class MultiSendPanel extends StatelessWidget {
   }
 }
 
+/// 单个发送条目的紧凑行；拖动排序和操作按钮共享 ViewModel 的运行锁。
 class _EntryRow extends StatelessWidget {
   final MultiSendEntry entry;
   final bool active;
@@ -537,6 +543,7 @@ class _EntryRow extends StatelessWidget {
   }
 }
 
+/// 发送条目编辑器，同时负责文本/HEX 模式切换时的输入归一化。
 class _EntryEditor extends StatefulWidget {
   final MultiSendEntry? entry;
   final int nextIndex;
@@ -607,6 +614,7 @@ class _EntryEditorState extends State<_EntryEditor> {
   }
 
   void _setHexMode(bool value) {
+    // 从文本切到 HEX 时清空旧内容，不能把任意文本误解释为字节序列。
     final wasHex = _hex;
     setState(() => _hex = value);
     if (!wasHex && value) {
@@ -615,6 +623,7 @@ class _EntryEditorState extends State<_EntryEditor> {
   }
 
   void _formatHexContent(String value) {
+    // 使用与普通发送区相同的格式化规则，输入始终按两位字节分组。
     final newText = formatHexByteGroups(value);
     if (newText != value) {
       _content.value = TextEditingValue(

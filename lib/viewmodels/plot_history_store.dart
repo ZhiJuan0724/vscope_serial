@@ -105,6 +105,7 @@ class PlotHistoryStore {
     required int pointIndex,
     required int lodChannelCount,
   }) {
+    // 按下一块实际扩容估算，而不是只按单点逻辑大小，供追加前的历史预算判断。
     final values = result.values!;
     var additional = _lod.estimatedAdditionalBytesFor(
       pointIndex,
@@ -241,6 +242,7 @@ class PlotHistoryStore {
   }
 }
 
+/// 按固定点数块存放可变通道数数值的紧凑历史。
 class _ParsedValueHistory {
   static const int _chunkPointCount = 4096;
   static const int _maxChannels = PlotConfiguration.rawChannelCount;
@@ -328,6 +330,7 @@ class _ParsedValueHistory {
   }
 }
 
+/// 一个解析值块；通道容量随首次遇到的较宽数据帧增长但不逐点重新分配。
 class _ParsedValueChunk {
   final int pointCapacity;
   int channelCapacity;

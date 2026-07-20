@@ -7,6 +7,7 @@ sealed class SendProtocolInitializationConfig {
   const SendProtocolInitializationConfig();
 }
 
+/// ZobowDevice 初始化帧的通道号快照。
 final class ZobowDeviceProtocolInitializationConfig
     extends SendProtocolInitializationConfig {
   ZobowDeviceProtocolInitializationConfig(List<int> channelIds)
@@ -15,6 +16,7 @@ final class ZobowDeviceProtocolInitializationConfig
   final List<int> channelIds;
 }
 
+/// r 协议初始化命令的地址与通道校验快照。
 final class RProtocolInitializationConfig
     extends SendProtocolInitializationConfig {
   RProtocolInitializationConfig({

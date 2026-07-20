@@ -15,6 +15,7 @@ abstract interface class UpdateRuntimeGuard {
   Future<bool> waitForOtherInstancesToExit(Duration timeout);
 }
 
+/// 更新前运行环境检查失败，例如仍有其它应用实例未退出。
 final class UpdateRuntimeGuardException implements Exception {
   final String message;
   const UpdateRuntimeGuardException(this.message);
@@ -23,18 +24,15 @@ final class UpdateRuntimeGuardException implements Exception {
   String toString() => message;
 }
 
+/// Windows 更新安装前的多实例检查和关闭协调实现。
 final class WindowsUpdateRuntimeGuard implements UpdateRuntimeGuard {
   static const String updateMutexName = r'Local\vscope_serial_update_lock';
   static const int _maxPathChars = 32768;
   static Set<int> _closeTargetProcessIds = <int>{};
 
   static final DynamicLibrary _kernel32 = DynamicLibrary.open('kernel32.dll');
-  static final int Function(
-    Pointer<Void>,
-    int,
-    Pointer<Utf16>,
-  ) _createMutex = _kernel32
-      .lookupFunction<
+  static final int Function(Pointer<Void>, int, Pointer<Utf16>) _createMutex =
+      _kernel32.lookupFunction<
         IntPtr Function(Pointer<Void>, Int32, Pointer<Utf16>),
         int Function(Pointer<Void>, int, Pointer<Utf16>)
       >('CreateMutexW');
@@ -135,9 +133,7 @@ final class WindowsUpdateRuntimeGuard implements UpdateRuntimeGuard {
       );
       if (ok == 0) return const <int>[];
       final count = bytesNeeded.value ~/ sizeOf<Uint32>();
-      return [
-        for (var i = 0; i < count && i < capacity; i++) processIds[i],
-      ];
+      return [for (var i = 0; i < count && i < capacity; i++) processIds[i]];
     } finally {
       calloc.free(processIds);
       calloc.free(bytesNeeded);

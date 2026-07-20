@@ -808,7 +808,7 @@ class PlotViewModel extends BaseViewModel {
     settings.save();
   }
 
-  // ========== Getters ==========
+  // ========== 状态读取接口 ==========
   /// 当前绘图窗口的数据点列表（供 UI 读取）。
   ///
   /// 这里直接返回稳定窗口引用，避免每次 build 复制大列表。

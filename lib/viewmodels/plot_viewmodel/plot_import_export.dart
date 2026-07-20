@@ -1,5 +1,6 @@
 part of '../plot_viewmodel.dart';
 
+/// 用户主动取消导出时使用的内部控制流异常；调用方不将其当作错误提示。
 class _PlotExportCancelled implements Exception {}
 
 class _PlotExportColumn {
@@ -11,6 +12,9 @@ class _PlotExportColumn {
   bool get isMath => channelIndex >= PlotConfiguration.rawChannelCount;
 }
 
+/// CSV 预检完成后可安全提交的导入计划。
+///
+/// 预检不清空当前历史；只有计划完整通过容量和格式校验后才进入替换阶段。
 class _CsvImportPlan {
   final int pointCount;
   final int sourceChannelCount;
@@ -25,6 +29,7 @@ class _CsvImportPlan {
   });
 }
 
+/// BIN 预检结果，保留构建正式紧凑历史所需的元数据和偏移量。
 class _BinImportPlan {
   final int version;
   final int pointCount;
@@ -71,6 +76,10 @@ class _ImportValueRange {
 }
 
 /// PlotViewModel 的数据导入导出能力，包含 CSV、BIN 和旧版 DAT 格式。
+/// 绘图历史的事务导入导出实现。
+///
+/// 导出始终写同目录 .part；导入先流式预检并暂存，预检失败保留当前绘图，提交后
+/// 只维护新历史，避免旧新双份完整数据同时占用内存。
 extension PlotViewModelImportExport on PlotViewModel {
   static const int _binMaxUint32 = 0xFFFFFFFF;
   static const int _binExportBatchSize = 65536;
@@ -128,6 +137,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       }
       final sourceStart = exportRange.$1;
       final pointCount = exportRange.$2;
+      // 正式目标保留到全部批次写入并关闭后才由原子提交替换。
       partPath = _atomicFiles.partPath(path);
       final file = File(partPath);
       if (await file.exists()) await file.delete();
@@ -703,6 +713,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     String stage,
     PlotImportProgressCallback? onProgress,
   ) async {
+    // 暂存为稳定副本，后续预检和构建两遍读取不会受原文件移动或覆盖影响。
     final length = await source.length();
     final separator = Platform.pathSeparator;
     final staged = File(
@@ -1225,6 +1236,7 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   void _validateImportCapacity(int pointCount, int channelCount) {
+    // 用与精确窗口相同的保守投影在替换旧历史前拒绝超预算文件。
     final normalizedChannelCount = channelCount.clamp(
       1,
       PlotConfiguration.rawChannelCount,
@@ -1241,6 +1253,7 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   void _beginImportedReplacement() {
+    // 至此预检已完成；导入历史不可用于保持绘图续接，因此先彻底重置实时来源状态。
     _windowProvider.clear();
     _historyStore.clear();
     _resetPlotRetentionState();

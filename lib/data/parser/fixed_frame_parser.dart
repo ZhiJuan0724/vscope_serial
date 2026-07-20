@@ -11,6 +11,9 @@ import 'data_parser.dart';
 /// 固定帧协议解析器
 /// 格式：[帧头] + [数据] + [可选 CRC] + [可选帧尾]
 /// 或：[帧头] + [数据] + [可选帧尾] + [可选 CRC]
+/// 可配置帧头、帧尾、校验和与逐通道类型的固定长度接收解析器。
+///
+/// 缓冲区只保留完成下一帧所需的后缀；格式错误后从下一个可能帧头重新同步。
 class FixedFrameParser extends IDataParser {
   final _buffer = <int>[];
   final _controller = StreamController<ParseResult>.broadcast();

@@ -9,6 +9,10 @@ import 'app_info.dart';
 import 'update_checker.dart';
 import 'update_runtime_guard.dart';
 
+/// 发布包随附的完整性清单。
+///
+/// 清单绑定目标版本、压缩包名称、长度和 SHA-256，避免下载到同 tag 下但并非
+/// 当前 Windows 安装包的附件。
 class UpdateManifest {
   final int schemaVersion;
   final String version;
@@ -37,6 +41,7 @@ class UpdateManifest {
     );
   }
 
+  /// 校验清单能否用于指定 Release；回退槽没有 zip 附件时可跳过包校验。
   void validateFor(ReleaseInfo release, {bool requirePackage = true}) {
     final normalizedTag = release.tagName.replaceFirst(RegExp(r'^[vV]'), '');
     final packageValid =
@@ -53,6 +58,7 @@ class UpdateManifest {
   }
 }
 
+/// 已完成下载、校验和安全解压，能够交给外置更新器安装的更新目录。
 class PreparedUpdate {
   final ReleaseInfo release;
   final UpdateManifest manifest;
@@ -67,6 +73,7 @@ class PreparedUpdate {
   });
 }
 
+/// 当前稳定/Beta 槽位中可恢复的上一版本快照。
 class RollbackUpdate {
   final UpdateChannel channel;
   final String version;
@@ -88,6 +95,7 @@ class RollbackUpdate {
       version.startsWith(RegExp(r'[vV]')) ? version : 'v$version';
 }
 
+/// 下载阶段向 UI 报告的累计进度；总长度未知时 [fraction] 为 null。
 class UpdateDownloadProgress {
   final int received;
   final int total;
@@ -129,6 +137,10 @@ typedef UpdateFileDownloader =
       void Function(UpdateDownloadProgress progress) onProgress,
     );
 
+/// 更新包下载、校验、解压、安装和回退槽管理服务。
+///
+/// 文件准备与安装计划被同一运行时锁串行化。下载通过 generation 取消，旧请求
+/// 即使网络稍后返回也不能覆盖新请求写出的临时文件或 UI 状态。
 class UpdateService {
   static const _githubReleaseByTag =
       'https://api.github.com/repos/ZhiJuan0724/vscope_serial/releases/tags/';
@@ -201,6 +213,7 @@ class UpdateService {
                 if (source != checkedRelease.source) source,
             ]
             : [checkedRelease.source];
+    // 同一候选版本允许切换镜像源，但每个源都必须重新取得并校验自己的清单。
     for (final source in sources) {
       try {
         _throwIfDownloadCancelled(generation);
@@ -238,6 +251,7 @@ class UpdateService {
           throw const UpdateDownloadException('发布附件大小与更新清单不一致');
         }
 
+        // 始终下载到 .part；只有长度和摘要均通过才提升为正式 zip。
         await _downloadWithRetry(
           Uri.parse(packageAsset.downloadUrl),
           packagePart,
@@ -256,6 +270,7 @@ class UpdateService {
         }
         if (await packageFile.exists()) await packageFile.delete();
         await packagePart.rename(packageFile.path);
+        // 解压后继续校验 payload，防止 zip-slip 或缺少运行所需文件。
         await extractPackageSafely(packageFile, payloadDir);
         _throwIfDownloadCancelled(generation);
         _validatePayload(payloadDir, manifest);
@@ -289,6 +304,7 @@ class UpdateService {
   }
 
   void cancelDownload() {
+    // 关闭 HttpClient 只负责打断当前网络 IO；generation 同时使后续检查失效。
     _downloadGeneration++;
     final client = _downloadClient;
     _downloadClient = null;
@@ -478,6 +494,7 @@ class UpdateService {
   Future<void> launchRollbackInstaller(RollbackUpdate update) async {
     await _runtimeGuard.runWithUpdateLock(() async {
       await _ensureNoOtherRunningInstances();
+      // 回退槽不可直接交给更新器修改，先复制到一次性安装目录以保留原始快照。
       final stagingDir = await _rollbackInstallDirectory(update.channel);
       if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
       await stagingDir.create(recursive: true);
@@ -531,6 +548,7 @@ class UpdateService {
     final plan = File('${updaterDir.path}/update-plan.json');
     final resultFile = File('${updateDirectory.path}/result.json');
     final currentVersion = await AppInfo.version();
+    // 回退槽归属由安装前版本决定，不能按目标版本通道覆盖另一类槽位。
     final rollbackChannel = UpdateChannel.fromVersion(currentVersion);
     final rollbackDir = await _rollbackDirectory(rollbackChannel);
     await plan.writeAsString(

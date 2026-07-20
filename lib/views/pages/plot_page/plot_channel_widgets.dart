@@ -11,6 +11,7 @@ void _showMathChannelDialog(
   );
 }
 
+/// Zobow 通道号输入格式化器，只接受十六进制数值并统一显示形式。
 class _ZobowChannelIdInputFormatter extends TextInputFormatter {
   const _ZobowChannelIdInputFormatter();
 
@@ -37,6 +38,7 @@ class _ZobowChannelIdInputFormatter extends TextInputFormatter {
   }
 }
 
+/// r 协议地址输入格式化器，保留十进制或带 `0x` 前缀的十六进制文本。
 class _RProtocolAddressInputFormatter extends TextInputFormatter {
   const _RProtocolAddressInputFormatter();
 
@@ -64,6 +66,7 @@ class _RProtocolAddressInputFormatter extends TextInputFormatter {
 }
 
 /// 绘图页面左侧通道列表、通道编辑弹窗和通道预设入口。
+/// 普通通道行；控制器只在行存活期间保存编辑态，提交后交由 ViewModel 持久化。
 class _ChannelItem extends StatefulWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;
@@ -167,6 +170,7 @@ class _ChannelItemState extends State<_ChannelItem> {
   }
 
   void _saveZobowId() {
+    // 运行期间地址被冻结，失焦提交时也必须再次检查，避免列表回收后的旧事件写入。
     if (widget.vm.isPlotting || widget.vm.isStopping) return;
     final text = _idController.text.trim();
     final hex = text.replaceAll('0x', '').replaceAll('0X', '');
@@ -177,6 +181,7 @@ class _ChannelItemState extends State<_ChannelItem> {
   }
 
   void _saveRAddress() {
+    // r 地址的语法和范围由发送协议对象统一校验，页面不复制协议规则。
     if (widget.vm.isPlotting || widget.vm.isStopping) return;
     final text = _idController.text.trim();
     final address = rSendProtocol.parseAddress(text);
@@ -624,6 +629,7 @@ class _ChannelVisibilityButton extends StatelessWidget {
   }
 }
 
+/// 数学通道表达式、显示样式和可见状态的编辑窗口。
 class _MathChannelEditDialog extends StatefulWidget {
   final PlotViewModel vm;
   final MathChannelConfig channel;
@@ -963,6 +969,8 @@ Widget _buildTwoRowColorSwatches(List<Widget> swatches) {
 /// 通道编辑对话框
 ///
 /// 可修改通道颜色、别名、连线开关。
+/// 普通通道属性编辑窗口；数据类型变更可能影响固定帧解码，因此由 ViewModel
+/// 在保存时统一执行运行状态与协议约束检查。
 class _ChannelEditDialog extends StatefulWidget {
   final PlotViewModel vm;
   final ChannelConfig ch;

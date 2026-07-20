@@ -7,6 +7,10 @@ import '../core/utils/atomic_file.dart';
 typedef SettingsSnapshotValidator =
     void Function(Map<String, dynamic> snapshot);
 
+/// 设置读取及备份恢复结果。
+///
+/// 读取失败不会半量应用字段：调用方只能使用已完整校验的 [snapshot]，或保留内存
+/// 默认值并根据错误提示用户。
 class SettingsLoadResult {
   const SettingsLoadResult({
     this.snapshot,
@@ -52,6 +56,7 @@ class SettingsRepository {
   String? get path => _path;
 
   Future<void> setPath(String? path) async {
+    // 切换路径前先排空旧写链，避免旧目录的延迟写入落到新会话之后。
     await flush();
     _saveDebounceTimer?.cancel();
     _saveDebounceTimer = null;
@@ -69,6 +74,7 @@ class SettingsRepository {
     try {
       return SettingsLoadResult(snapshot: await _readValidated(path));
     } catch (primaryError, primaryStackTrace) {
+      // 主文件损坏时只接受同样通过字段校验的一代备份。
       final backupPath = _fileCommitter.backupPath(path);
       try {
         final snapshot = await _readValidated(backupPath);
@@ -99,6 +105,7 @@ class SettingsRepository {
   }
 
   Future<void> save(Map<String, dynamic> snapshot) {
+    // 防抖将连续 UI 修改合并为一次原子提交；调用者仍可用 flush 等待落盘。
     if (_path == null) return Future<void>.value();
     _pendingContent = jsonEncode(snapshot);
     _saveDebounceTimer?.cancel();
@@ -116,6 +123,7 @@ class SettingsRepository {
     _pendingContent = null;
     _pendingSave = null;
     if (path == null || content == null || pending == null) return;
+    // 所有提交串行执行，避免两个 .part/备份替换流程交叉。
     final write = _saveChain.then(
       (_) => _fileCommitter.writeString(path, content, keepBackup: true),
     );

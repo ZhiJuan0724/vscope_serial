@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""生成可用于绘图导入、LOD 与大范围交互验证的 BIN 测试数据。"""
 """
 Generate VScope plot BIN files for import/performance testing.
 

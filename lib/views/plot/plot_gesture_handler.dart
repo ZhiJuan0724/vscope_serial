@@ -23,6 +23,10 @@ import 'plot_viewport.dart';
 ///
 /// 拖动使用 [Listener] 的原始指针事件（onPointerDown/Move/Up）而非 [GestureDetector] 的 pan，
 /// 避免 GestureDetector 在快速移动时合并/丢帧导致拖动距离丢失的问题。
+/// 绘图区指针手势协调器。
+///
+/// 平移、缩放、测量、观察、定位条和偏置轴共享同一命中测试顺序；拖动过程只更新
+/// 内存视口并按帧通知，松手后才写设置和记录视口历史。
 class PlotGestureHandler extends StatefulWidget {
   /// 当前绘图视口
   final PlotViewport viewport;
@@ -406,9 +410,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// - 普通滚轮：以鼠标位置为中心缩放 X 轴
   /// - Shift+滚轮：根据鼠标所在区域（Y轴区/X轴区/绘图区）缩放对应轴
   void _handlePointerSignal(PointerSignalEvent event) {
+    // 鼠标滚轮与工具栏 X/Y 缩放共享视口限制，缩放中心固定在指针所在数据位置。
     if (event is PointerScrollEvent) {
       final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
-      // final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
 
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
@@ -670,6 +674,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   }
 
   void _initializeDragViewport() {
+    // 开始平移立即退出跟随，但延迟精确窗口加载，连续拖动期间由 LOD 保持响应。
     _dragViewport = widget.viewport.copy();
     _lastNotifiedViewport = _dragViewport!.copy();
     _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
@@ -1103,6 +1108,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   ///
   /// 框选结束时，将框选区域转换为数据坐标并回调 [onViewportChanged]。
   void _handlePointerUp(PointerUpEvent event) {
+    // 仅在拖动结束时提交视口历史和持久化，避免每个指针事件触发磁盘写入。
     AppLogger().trace(
       '拖动结束: box=$_isBoxSelecting, drag=$_isDragging, target=$_dragTarget',
       category: 'GESTURE',

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""JustFloat/r 协议虚拟串口模拟器，用于验证地址初始化与浮点帧接收。"""
 """
 VOFA JustFloat 协议下位机模拟器
 
@@ -199,7 +200,7 @@ class ConsoleCommandReader:
 
             key = msvcrt.getwch()
             if key in ("\x00", "\xe0"):
-                # Consume extended-key suffix.
+                # 消费扩展键的后缀字节。
                 if msvcrt.kbhit():
                     msvcrt.getwch()
                 continue

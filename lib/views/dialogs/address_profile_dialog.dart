@@ -14,6 +14,9 @@ import '../../services/address_profile_csv_importer.dart';
 import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 
+/// 地址配置弹窗的协议差异策略。
+///
+/// UI 共享导入、编辑和预设流程，地址格式化与校验规则委托给具体协议实现。
 abstract class _AddressProfileBehavior {
   const _AddressProfileBehavior();
 
@@ -30,6 +33,7 @@ abstract class _AddressProfileBehavior {
   void selectProfile(PlotViewModel vm, String id);
 }
 
+/// Zobow 配置行为：地址按十六进制数值处理，可导入 C 定义。
 class _ZobowProfileBehavior extends _AddressProfileBehavior {
   const _ZobowProfileBehavior();
 
@@ -74,6 +78,7 @@ class _ZobowProfileBehavior extends _AddressProfileBehavior {
   void selectProfile(PlotViewModel vm, String id) => vm.selectZobowProfile(id);
 }
 
+/// r 协议配置行为：保留用户输入的十进制或 `0x` 十六进制文本。
 class _RProtocolProfileBehavior extends _AddressProfileBehavior {
   const _RProtocolProfileBehavior();
 
@@ -112,6 +117,7 @@ class _RProtocolProfileBehavior extends _AddressProfileBehavior {
   void selectProfile(PlotViewModel vm, String id) => vm.selectRProfile(id);
 }
 
+/// Zobow 通道地址预设管理窗口入口。
 class ZobowProfileDialog extends StatelessWidget {
   final PlotViewModel vm;
   final AddressConfigProfile? profile;
@@ -128,6 +134,7 @@ class ZobowProfileDialog extends StatelessWidget {
   }
 }
 
+/// r 协议通道地址预设管理窗口入口。
 class RProtocolProfileDialog extends StatelessWidget {
   final PlotViewModel vm;
   final AddressConfigProfile? profile;

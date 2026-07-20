@@ -7,9 +7,14 @@ import '../services/app_settings.dart';
 import '../services/multi_send_profile_service.dart';
 import '../services/serial_service.dart';
 
+/// 多条发送调度模式：仅执行一轮或在末条间隔后继续循环。
 enum MultiSendRunMode { once, loop }
 
 /// 管理配置及串行发送调度；接收数据更新不会驱动本 ViewModel 重建。
+/// 多条发送配置和串行调度器的状态门面。
+///
+/// 循环发送不使用重叠周期定时器：每次串口写完成后才等待下一条间隔，停止、断线
+/// 或页面离开会使取消 token 失效并阻止继续调度。
 class MultiSendViewModel extends ChangeNotifier {
   final SerialService _serialService;
   final MultiSendProfileService _profileService;

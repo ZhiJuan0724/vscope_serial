@@ -11,6 +11,10 @@ import 'data_parser.dart';
 /// VOFA JustFloat 解析器。
 ///
 /// 帧内容为小端 float32 数组，末尾跟随 VOFA 帧尾：00 00 80 7F。
+/// 以可配置帧尾分隔的 little-endian Float32 接收解析器。
+///
+/// 自动通道模式的残留长度受最大 payload 限制；超限后只保留可能构成帧尾前缀的
+/// 后缀并进入重同步，避免无帧尾输入无限占用内存。
 class JustFloatParser extends IDataParser {
   static const List<int> tail = [0x00, 0x00, 0x80, 0x7F];
   static const int maxPayloadBytes =
@@ -63,6 +67,7 @@ class JustFloatParser extends IDataParser {
           }
           continue;
         }
+        // 连续输入可能一次包含多帧，统一在循环中提取，避免按 Stream 逐包调度。
         _processAvailableBuffer(results);
       }
       return results;
@@ -118,6 +123,7 @@ class JustFloatParser extends IDataParser {
   }
 
   void _enterResync() {
+    // 保留与帧尾前缀重叠的最短后缀，下一数据块仍可能完成该帧尾。
     final retainedSuffixLength = _tailPrefixSuffixLength();
     final retained =
         retainedSuffixLength == 0
@@ -159,6 +165,7 @@ class JustFloatParser extends IDataParser {
   }
 
   ParseResult _parsePayload(Uint8List payload) {
+    // 固定通道模式必须严格匹配帧长；自动模式才从 payload 推导通道数。
     if (payload.isEmpty || payload.length % 4 != 0) {
       return ParseResult.fail('JustFloat帧长度异常，实际 ${payload.length} 字节');
     }

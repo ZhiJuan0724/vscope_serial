@@ -1,5 +1,6 @@
 typedef PlotTriggerMatcher = bool Function(double value, double? previousValue);
 
+/// 单次触发条件评估结果，泛型负载由调用方定义。
 class PlotTriggerEvaluation<T> {
   const PlotTriggerEvaluation({
     this.thresholdReached = false,

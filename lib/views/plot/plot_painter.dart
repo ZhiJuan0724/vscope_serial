@@ -44,6 +44,10 @@ class _PlotPalette {
 /// 分层绘图 CustomPainter
 ///
 /// 四个实例共享绘制算法，但每个实例只绘制一个图层，并按该层依赖判断重绘。
+/// 主绘图区四层渲染中的数据、坐标轴和交互覆盖 Painter。
+///
+/// Painter 只消费不可变 [PlotRenderSnapshot]：大范围优先查询 LOD，精确窗口覆盖
+/// 当前视口时才使用原始点，避免在 paint 阶段遍历全量历史或修改 ViewModel。
 class PlotLayerPainter extends CustomPainter {
   static const double _denseLinePointThresholdRatio = 0.5;
   static const double _invalidPointThresholdRatio = 0.5;
@@ -661,6 +665,7 @@ class PlotLayerPainter extends CustomPainter {
   /// 2. 根据像素宽度计算降采样步长
   /// 3. 逐通道批量绘制（Path + 点）
   void _drawChannels(Canvas canvas, Size size) {
+    // 逐通道选择精确点或 LOD；背景、网格和坐标轴与数据绘制保持分层。
     if (data.isEmpty && (lodIndex == null || lodIndex!.isEmpty)) return;
 
     // 找到可见范围内的数据索引（缓存）

@@ -43,6 +43,8 @@ part 'plot_page/plot_preset_selector_dialog.dart';
 ///
 /// PlotViewModel 已提升为全局 Provider（在 main.dart 中注册），
 /// 此处直接消费全局实例，确保页面切换后数据不丢失。
+/// 绘图页面 Provider 入口；实际交互状态保存在 [_PlotPageContent]，以便页面切换时
+/// 保留全局 [PlotViewModel] 中的运行会话和历史数据。
 class PlotPage extends StatelessWidget {
   const PlotPage({super.key});
 
@@ -58,6 +60,7 @@ class PlotPage extends StatelessWidget {
 /// - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
 /// - 主区域：左侧通道面板 + 右侧绘图区域
 /// - 状态栏：视口范围、数据点数、光标信息
+/// 绘图布局、悬浮层和菜单路由的局部状态容器。
 class _PlotPageContent extends StatefulWidget {
   const _PlotPageContent();
 
@@ -1649,6 +1652,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// - [PlotLayerPainter]：分层绘制波形
   /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
+    // 绘图区只订阅渲染快照相关 revision，工具栏和通道面板不随高频数据重建。
     PlotPerformanceMetrics.instance.increment(
       PlotPerformanceMetric.plotAreaBuild,
     );
@@ -1862,6 +1866,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildLocatorBar(BuildContext context, PlotViewModel vm) {
+    // 定位条只反映完整 X 范围与当前视口；它不绘制曲线，也不依赖主图 Y 轴状态。
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: PlotLocatorBar(
@@ -2817,6 +2822,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Future<void> _runExportWithProgress({
+    // 文件 IO 在 ViewModel 分批执行；页面仅托管可取消的进度弹窗和最终提示。
     required BuildContext context,
     required PlotViewModel vm,
     required String title,
@@ -3534,6 +3540,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Future<void> _runImportWithProgress({
+    // 导入预检失败时 ViewModel 保留旧历史，页面不应预先清空图面。
     required BuildContext context,
     required PlotViewModel vm,
     required String filePath,

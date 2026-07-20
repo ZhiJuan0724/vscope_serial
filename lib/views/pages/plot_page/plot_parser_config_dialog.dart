@@ -617,6 +617,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   }
 }
 
+/// 帧头、帧尾等字节输入的格式化器，统一将输入限制为两位十六进制字节。
 class _HexByteInputFormatter extends TextInputFormatter {
   const _HexByteInputFormatter();
 

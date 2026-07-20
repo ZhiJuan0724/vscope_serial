@@ -71,6 +71,7 @@ class PlotWindowProvider {
     if (total <= 0) return;
     final requestedStart = xMin.floor().clamp(0, total).toInt();
     final requestedEnd = xMax.floor().toInt().clamp(0, total - 1) + 1;
+    // 命中预取窗口时不重建；短距离拖动只交换视口，避免重复物化同一批点。
     if (!force &&
         _hasPrefetchedRange(
           requestedStart: requestedStart,
@@ -142,6 +143,7 @@ class PlotWindowProvider {
       return;
     }
 
+    // 每次重建递增 generation，异步分块完成时只允许最新请求提交结果。
     final generation = ++_generation;
     _isLoading = true;
     _pendingPointCount = count;
@@ -169,6 +171,7 @@ class PlotWindowProvider {
             values: valuesAt(pointIndex),
           ),
         );
+        // 定期让出 UI，长窗口加载不能阻塞输入和定位条拖动。
         if ((offset + 1) % 4096 == 0) {
           await Future<void>.delayed(Duration.zero);
         }
@@ -194,6 +197,7 @@ class PlotWindowProvider {
   }
 
   void scheduleDragLoad(void Function() load) {
+    // 连续拖动只在用户停顿后加载精确窗口，期间由有界 LOD 维持预览。
     _dragLoadTimer?.cancel();
     _dragLoadTimer = Timer(PlotConfiguration.locatorDragWindowLoadDebounce, () {
       _dragLoadTimer = null;
@@ -207,6 +211,7 @@ class PlotWindowProvider {
   }
 
   void cancelLoad() {
+    // 递增 generation 即可使已在运行的分块任务自然失效，无需强行中断遍历。
     cancelDragLoad();
     _generation++;
     _isLoading = false;

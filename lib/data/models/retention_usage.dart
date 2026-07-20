@@ -1,3 +1,4 @@
+/// 容量使用状态；warning 为首次预警，limitReached 表示必须停止继续追加。
 enum RetentionState { normal, warning, limitReached }
 
 /// 有界采集缓存的容量快照。

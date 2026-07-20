@@ -1,5 +1,6 @@
 typedef PlotStatisticsValueReader = List<double>? Function(int pointIndex);
 
+/// 单个通道在选定 X 范围内的聚合统计值。
 class PlotChannelStatistics {
   const PlotChannelStatistics({
     required this.minimum,
@@ -14,6 +15,7 @@ class PlotChannelStatistics {
   final int sampleCount;
 }
 
+/// 一次统计计算的结果及是否因大范围采样而近似。
 class PlotStatisticsResult {
   const PlotStatisticsResult({
     required this.channels,

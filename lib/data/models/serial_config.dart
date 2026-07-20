@@ -5,6 +5,7 @@ abstract final class SerialParity {
   static const int even = 2;
 }
 
+/// 串口打开所需的持久化参数，不包含连接句柄和临时状态。
 class SerialConfig {
   String? port;
   int baudRate;

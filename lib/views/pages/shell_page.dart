@@ -24,6 +24,10 @@ import '../widgets/common_widgets.dart';
 ///
 /// 高频串口回调只进入 [_receiveQueue]，终端更新限制为每帧一次且每帧最多
 /// 消费 64 KiB，避免小包风暴反复触发布局、绘制和滚动。
+/// 独立 Shell 终端页面。
+///
+/// 终端渲染、接收队列和命令输入焦点分离：高频串口输入不能直接在每个数据包中
+/// 改动 xterm 或滚动位置，必须按帧合并排空。
 class ShellPage extends StatefulWidget {
   const ShellPage({
     super.key,
@@ -131,6 +135,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _enqueueReceivedData(Uint8List data) {
+    // 接收队列负责上限和旧块丢弃；页面仅在下一帧消费受限字节数。
     if (data.isEmpty) return;
     final dropped = _receiveQueue.add(data);
     _syncReceiveQueueUsage();
@@ -158,6 +163,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _scheduleReceiveDrain() {
+    // 一个帧内最多安排一次排空，避免小包高频到达造成回调堆积。
     if (_receiveDrainScheduled || !mounted) return;
     _receiveDrainScheduled = true;
     SchedulerBinding.instance.scheduleFrameCallback((_) {
@@ -169,6 +175,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _drainReceivedData() {
+    // 每帧消费上限由 ViewModel/队列约束；剩余数据留给下一帧而不是丢弃。
     var remaining = _maxReceiveBytesPerFrame;
     var consumed = 0;
     final output = StringBuffer();
@@ -228,6 +235,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _scheduleScrollToBottom() {
+    // 用户查看历史时不强制跳回底部，只在原本位于末尾时自动跟随新输出。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_terminalScrollController.hasClients) return;
       _terminalScrollController.jumpTo(
@@ -254,6 +262,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   Future<void> _sendLine(ShellViewModel vm) async {
+    // 命令行发送完成后重新聚焦输入栏，连续敲命令不应被终端抢走焦点。
     final text = _lineController.text;
     if (text.isEmpty || !vm.isRunning || vm.isYmodemActive) {
       _refocusLineInput(vm);
@@ -296,6 +305,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   Future<void> _sendBytesSafely(ShellViewModel vm, Uint8List data) async {
+    // 所有 Shell 输入统一走串口写队列，并在异常时转换为页面内提示。
     try {
       await vm.sendBytes(data);
     } catch (error) {

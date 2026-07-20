@@ -9,6 +9,9 @@ import 'data_parser.dart';
 /// FireWater 解析器
 /// 格式：以 ',' 分割数据，所有数据均默认 double，以 '\n' 结尾
 /// 示例："1.23,4.56,7.89\n"
+/// FireWater ASCII 数值文本接收解析器。
+///
+/// 逐行增量扫描并限制单行残留长度，避免缺少换行的异常输入无限增长。
 class FireWaterParser extends IDataParser {
   /// FireWater 正常数据行通常只有数百字节；64 KiB 足以容纳极端数值文本，
   /// 同时确保错误协议或长期缺少换行时残留内存保持有界。

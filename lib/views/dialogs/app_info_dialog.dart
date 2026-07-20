@@ -21,6 +21,7 @@ import '../../services/ymodem_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
+/// 打开应用信息、更新和版本说明窗口。
 Future<void> showAppInfoDialog(BuildContext context) {
   return showDialog(
     context: context,
@@ -28,6 +29,7 @@ Future<void> showAppInfoDialog(BuildContext context) {
   );
 }
 
+/// 直接打开全局高级设置页，跳过版本说明内容。
 Future<void> showAppAdvancedSettingsDialog(BuildContext context) {
   return showDialog(
     context: context,
@@ -35,6 +37,7 @@ Future<void> showAppAdvancedSettingsDialog(BuildContext context) {
   );
 }
 
+/// 发现新版本后展示不可点击遮罩关闭的下载与安装流程。
 Future<void> showUpdateAvailableDialog(
   BuildContext context,
   ReleaseInfo release, {
@@ -76,6 +79,9 @@ Widget _scrollWithoutScrollbar(BuildContext context, {required Widget child}) {
   );
 }
 
+/// 单次更新下载/安装流程的状态容器。
+///
+/// 取消下载由 [UpdateService] 的 generation 处理，界面只反映当前这一次操作状态。
 class _UpdateAvailableDialog extends StatefulWidget {
   final ReleaseInfo release;
   final String currentVersion;
@@ -332,6 +338,9 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   }
 }
 
+/// 应用信息和全局高级设置的统一窗口。
+///
+/// 两个入口复用同一状态加载逻辑，`showAdvancedSettingsOnly` 仅改变初始可见内容。
 class AppInfoDialog extends StatefulWidget {
   const AppInfoDialog({super.key, this.showAdvancedSettingsOnly = false});
 

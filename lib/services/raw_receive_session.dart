@@ -141,6 +141,7 @@ class RawReceiveSession {
     DateTime timestamp, {
     int? monotonicUs,
   }) {
+    // 自动换行关闭时保留每个原生数据包的边界；开启时由单调时间窗口合并。
     if (!autoLineBreak) {
       _addRawDataLine(timestamp, data);
       return;
@@ -185,11 +186,13 @@ class RawReceiveSession {
   }
 
   void flushAutoLineBreak() {
+    // 超时换行只处理当前未完成窗口，设备明确发送的 \n 仍会即时分行。
     _aggregator?.flush();
     _aggregator = null;
   }
 
   void flushTextDecoder() {
+    // 停止接收时冲刷跨包多字节字符，避免最后一个字符永久滞留在解码器中。
     if (receiveHex) {
       _textDecoder.reset(encoding: textEncoding);
       return;
@@ -209,6 +212,7 @@ class RawReceiveSession {
     if (receiveHex == value) return false;
     flushAutoLineBreak();
     receiveHex = value;
+    // 显示格式切换不能把旧编码残留拼接到新模式。
     _textDecoder.reset(encoding: textEncoding);
     _resetTextLineBuffers();
     return true;
@@ -259,6 +263,7 @@ class RawReceiveSession {
   }
 
   void clear() {
+    // 清屏同时重置显示、导出字节和解码残留，避免新会话继承半个字符或半行。
     _aggregator?.reset();
     _aggregator = null;
     _rawBytes.clear();
@@ -618,6 +623,7 @@ class RawReceiveSession {
 }
 
 /// 支持 O(1) 头部淘汰的字符串列表。
+/// 为高频显示缓存提供 O(1) 头部淘汰的环形字符串列表。
 class _CircularStringList extends ListBase<String> {
   List<String?> _items = List<String?>.filled(16, null);
   int _head = 0;

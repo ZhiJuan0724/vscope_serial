@@ -73,12 +73,13 @@ void main() async {
 
   Widget app = const MyApp();
   if (Platform.isWindows) {
-    // Work around Flutter's Windows Tooltip AXTree update error flood.
+    // 临时规避 Flutter Windows Tooltip 触发的 AXTree 更新错误日志洪泛。
     app = ExcludeSemantics(child: app);
   }
   runApp(app);
 }
 
+/// 应用根节点，统一注入全局服务、主题和 Windows 语义兼容配置。
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -107,6 +108,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// 三个主页面的标签容器，负责恢复上次页面并遵守串口活动锁。
 class MainFrame extends StatefulWidget {
   const MainFrame({super.key});
 

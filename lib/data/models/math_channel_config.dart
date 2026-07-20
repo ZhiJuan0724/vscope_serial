@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../../core/constants/plot_configuration.dart';
 import 'channel_config.dart';
 
+/// 数学通道的持久化表达式与显示配置。
+///
+/// 偏置和缩放是运行时视图状态，不随此模型写入配置文件。
 class MathChannelConfig {
   static const int maxCount = PlotConfiguration.mathChannelCount;
 

@@ -12,7 +12,7 @@ import 'settings_repository.dart';
 /// 应用设置 - 全局单例，负责配置的持久化
 ///
 /// 配置文件存储在软件目录下：
-/// - Windows: `<exe_dir>\vscope_serial\settings.json`
+/// - Windows：`<exe_dir>\vscope_serial\settings.json`
 ///
 /// 使用单例模式确保全局唯一实例，通过 [AppSettings()] 访问。
 /// 首次使用前需调用 [init] 加载配置，修改后调用 [save] 持久化。

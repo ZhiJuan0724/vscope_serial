@@ -8,7 +8,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import '../core/utils/app_logger.dart';
 
-// 加载 DLL
+// 仅本项目的原生串口 DLL。开发目录与发布目录的布局不同，统一在这里回退查找。
 final DynamicLibrary _dll = _loadDll();
 
 DynamicLibrary _loadDll() {
@@ -32,11 +32,11 @@ DynamicLibrary _loadDll() {
   return DynamicLibrary.open('native_serial_reader.dll');
 }
 
-// Dart API DL 初始化
+// Dart API DL 初始化：原生读取线程需要通过该初始化数据向 Dart port 投递字节。
 typedef NsrInitDartApiC = Int32 Function(Pointer<Void> data);
 typedef NsrInitDartApiDart = int Function(Pointer<Void> data);
 
-// FFI 函数签名
+// 原生导出函数签名。Dart 声明必须与 C ABI 保持完全一致。
 typedef NsrOpenPortC = Int32 Function(Pointer<Utf8> portName, Int32 baudRate);
 typedef NsrOpenPortDart = int Function(Pointer<Utf8> portName, int baudRate);
 
@@ -97,7 +97,7 @@ typedef NsrStartPortMonitorDart = int Function(int dartPort);
 typedef NsrStopPortMonitorC = Void Function();
 typedef NsrStopPortMonitorDart = void Function();
 
-// 获取函数指针
+// 进程启动时解析所有 FFI 符号，后续调用只使用已绑定函数指针。
 final _nsrInitDartApi = _dll
     .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
 final _nsrOpenPort = _dll.lookupFunction<NsrOpenPortC, NsrOpenPortDart>(
@@ -148,6 +148,7 @@ final _nsrStopPortMonitor = _dll
     );
 
 List<String> _listNativePorts() {
+  // 原生接口先返回所需缓冲区长度；设备插拔导致长度变化时重新完整读取一次。
   final required = _nsrListPorts(nullptr, 0);
   if (required < 0) {
     throw StateError('Windows 串口枚举失败: $required');
@@ -479,7 +480,7 @@ class NativeSerialReader {
 
   /// 打开串口
   ///
-  /// [initData] should be [NativeApi.initializeApiDLData] from dart:ffi.
+  /// [initData] 必须来自 `dart:ffi` 的 [NativeApi.initializeApiDLData]。
   /// 如果没有提供，调用方必须在 [startReading] 前先调用 [initDartApi]。
   bool open(String portName, int baudRate, {Pointer<Void>? initData}) {
     // 如果提供了 initData，则确保 Dart API 已初始化。

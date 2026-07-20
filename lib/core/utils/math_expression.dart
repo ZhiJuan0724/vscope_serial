@@ -1,5 +1,9 @@
 import 'dart:math' as math;
 
+/// 绘图数学通道表达式的已编译语法树。
+///
+/// 除计算结果外还暴露前后依赖范围，使历史/LOD 构建可判断何时补齐带偏移表达式
+/// 的尾部点；非有限结果统一归一为 NaN，避免 Infinity 进入绘制和导出路径。
 class MathExpression {
   final _ExprNode _root;
   final int futureLookahead;
@@ -32,12 +36,14 @@ class MathExpression {
     return value.isFinite ? value : double.nan;
   }
 
+  /// 使用完整历史上下文求值；越界引用和溢出均返回 NaN。
   double evaluateWithContext(MathEvalContext context) {
     final value = _root.evaluate(context);
     return value.isFinite ? value : double.nan;
   }
 }
 
+/// 数学表达式一次求值所需的当前点与历史取值接口。
 class MathEvalContext {
   final int currentIndex;
   final int pointCount;
@@ -65,6 +71,7 @@ class MathEvalContext {
   }
 }
 
+/// 内部节点同时传播值依赖范围，不能只传播数值结果。
 abstract class _ExprNode {
   const _ExprNode();
 
@@ -185,6 +192,7 @@ class _BinaryNode extends _ExprNode {
   }
 }
 
+/// 递归下降解析器，按运算优先级构造不可变表达式节点。
 class _MathExpressionParser {
   final String source;
   int _offset = 0;

@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+/// 版本说明中一行文本的展示语义。
 enum ChangelogLineType { heading, listItem, text }
 
 class ChangelogLine {
@@ -9,6 +10,7 @@ class ChangelogLine {
   const ChangelogLine({required this.type, required this.text});
 }
 
+/// 一个版本段落的标题和已解析内容行。
 class ChangelogEntry {
   final String version;
   final String date;
@@ -23,6 +25,7 @@ class ChangelogEntry {
   String get title => date.isEmpty ? version : '$version - $date';
 }
 
+/// 从随应用发布的 CHANGELOG 中读取有限的最新版本说明。
 class ChangelogService {
   static List<ChangelogEntry>? _cachedEntries;
 

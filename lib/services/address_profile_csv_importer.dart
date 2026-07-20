@@ -1,5 +1,8 @@
 import '../data/models/address_config_profile.dart';
 
+/// 地址配置 CSV 的导入导出转换器。
+///
+/// 文件格式只描述配置数据，不负责写入配置目录或处理同名策略。
 class AddressProfileCsvImporter {
   AddressProfileCsvImporter._();
 

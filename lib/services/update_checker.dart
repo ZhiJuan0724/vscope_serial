@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'app_info.dart';
 
+/// 发布版本通道，同时决定本地回退槽的归属。
 enum UpdateChannel {
   stable('stable', '稳定版'),
   beta('beta', 'Beta');
@@ -23,6 +24,7 @@ enum UpdateChannel {
   }
 }
 
+/// 可直接请求的 Release 托管源。
 enum UpdateReleaseSource {
   github('GitHub'),
   gitee('Gitee');
@@ -40,6 +42,7 @@ enum UpdateReleaseSource {
   }
 }
 
+/// 用户选择的更新源策略；自动模式按 GitHub 后 Gitee 的顺序回退。
 enum UpdateSourcePreference {
   auto('auto', '自动'),
   github('github', 'GitHub'),
@@ -67,6 +70,7 @@ enum UpdateSourcePreference {
   }
 }
 
+/// Release 附件的下载元数据。
 class ReleaseAsset {
   final String name;
   final int size;
@@ -81,6 +85,7 @@ class ReleaseAsset {
   });
 }
 
+/// 统一 GitHub/Gitee 差异字段后的 Release 信息。
 class ReleaseInfo {
   final String tagName;
   final String htmlUrl;
@@ -104,6 +109,7 @@ class ReleaseInfo {
           : UpdateChannel.stable;
 }
 
+/// 更新检查的三态结果：可更新、已最新或请求失败。
 class UpdateCheckResult {
   final ReleaseInfo? latestRelease;
   final bool hasUpdate;
@@ -140,6 +146,9 @@ class UpdateCheckResult {
   }
 }
 
+/// 从 GitHub 或 Gitee 获取指定发布通道的最新 Release。
+///
+/// 稳定版使用 latest 接口；Beta 必须遍历 prerelease 列表，不能依赖 latest。
 class UpdateChecker {
   static const _githubLatestReleaseUrl =
       'https://api.github.com/repos/ZhiJuan0724/vscope_serial/releases/latest';
@@ -185,6 +194,7 @@ class UpdateChecker {
   }
 
   Future<ReleaseInfo?> _tryFetchLatestRelease(UpdateChannel channel) async {
+    // 自动模式优先 GitHub，网络或响应失败时才尝试 Gitee。
     try {
       final release = await _fetchLatestFrom(
         channel: channel,
@@ -243,6 +253,7 @@ class UpdateChecker {
     required String releasesUrl,
     required String fallbackPage,
   }) async {
+    // 两个平台的 latest 都只代表稳定版；Beta 从发布列表筛选并按版本排序。
     if (channel == UpdateChannel.stable) {
       final json = await _fetchJson(Uri.parse(latestUrl));
       if (json is! Map<String, dynamic>) {

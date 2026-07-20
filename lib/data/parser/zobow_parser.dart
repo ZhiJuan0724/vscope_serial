@@ -11,7 +11,7 @@ import 'data_parser.dart';
 /// 众邦电控解析器
 ///
 /// 协议格式：10字节固定帧
-/// [Ch0_Low][Ch0_High][Ch1_Low][Ch1_High][Ch2_Low][Ch2_High][Ch3_Low][Ch3_High][CRC_Low][CRC_High]
+/// 帧格式为 `[Ch0低][Ch0高]...[Ch3低][Ch3高][CRC低][CRC高]`。
 ///
 /// 特点：
 /// - 无帧头，通过滑动窗口尝试解析
@@ -127,7 +127,6 @@ class ZobowParser extends IDataParser {
         scanOffset += _frameLength;
 
         // 高频场景下禁用逐帧trace日志，避免性能瓶颈
-        // AppLogger().trace(...)
       } else {
         // CRC失败，尝试下一个位置（滑动窗口）
         scanOffset++;

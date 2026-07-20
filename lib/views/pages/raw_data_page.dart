@@ -23,6 +23,9 @@ import '../widgets/multi_send_panel.dart';
 
 enum _RawDataExportFormat { text, rawBytes }
 
+/// 扩展面板与原生窗口尺寸同步的过渡状态。
+///
+/// Flutter 内容只能在窗口宽度已同步后显示，避免用户看到窄窗口中先闪现扩展面板。
 enum _MultiSendPanelState { closed, opening, open, closing }
 
 typedef _ReceiveAreaState =
@@ -57,6 +60,7 @@ typedef _SendAreaState =
     });
 
 /// 数据收发页面
+/// 原始数据收发页面，包含显示区、发送区和可选多条发送扩展区。
 class RawDataPage extends StatefulWidget {
   const RawDataPage({super.key});
 
@@ -120,6 +124,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   Future<void> _openMultiSendPanel(MultiSendViewModel multiSendVm) async {
+    // 先扩大原生窗口，再把 Flutter 面板切为可见，防止窄布局瞬间溢出。
     if (_multiSendPanelState != _MultiSendPanelState.closed) return;
     _multiSendVm = multiSendVm;
     _multiSendTransitionContentWidth = _rawPageLayoutWidth;
@@ -188,6 +193,7 @@ class _RawDataPageState extends State<RawDataPage> {
   }
 
   Future<void> _closeMultiSendPanel({bool updateUi = true}) async {
+    // 关闭时只恢复打开前的宽度；用户在面板打开后修改的高度必须保留。
     if (_multiSendPanelState != _MultiSendPanelState.open &&
         _multiSendOriginalBounds == null) {
       return;

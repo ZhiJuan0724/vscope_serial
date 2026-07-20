@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import '../core/utils/atomic_file.dart';
 
+/// YMODEM 会话的本地角色。
 enum YmodemDirection { send, receive }
 
 enum YmodemPacketSizeMode {
@@ -32,6 +33,7 @@ enum YmodemPhase {
   cancelled,
 }
 
+/// 传输过程的不可变状态快照，供 Shell 页面单独订阅而不重建终端。
 class YmodemTransferStatus {
   final YmodemDirection? direction;
   final YmodemPhase phase;
@@ -102,6 +104,10 @@ class YmodemException implements Exception {
   String toString() => message;
 }
 
+/// 基于统一串口写入链路的 YMODEM 单文件传输服务。
+///
+/// 接收输入按块缓冲而非逐字节 Future；超过高水位时发送 CAN 并失败，确保
+/// 文件协议不会因静默丢包而生成看似成功的损坏文件。
 class YmodemService {
   YmodemService({
     required FutureOr<void> Function(Uint8List data) sendBytes,
@@ -158,6 +164,7 @@ class YmodemService {
     // 空闲时忽略 Shell 文本流，避免命令提示符被后续误读为文件头。
     if (data.isEmpty || (!isActive && _incomingSignal == null)) return;
     if (_inputOverloaded) return;
+    // YMODEM 不能像终端输出一样丢弃旧字节，积压即表示协议已无法可靠恢复。
     if (_incomingBytes + data.length > _inputHighWaterBytes) {
       _inputOverloaded = true;
       _incoming.clear();
@@ -181,6 +188,7 @@ class YmodemService {
     _cancelRequested = false;
     RandomAccessFile? input;
     try {
+      // 发送前固定文件长度；协议头和进度都依赖这个不可变值。
       final fileSize = await file.length();
       final fileName = file.uri.pathSegments.last;
       _setStatus(
@@ -258,6 +266,7 @@ class YmodemService {
     await directory.create(recursive: true);
     _resetIncomingBuffer();
     _cancelRequested = false;
+    // 接收成功前只写 .part，完整 EOT 和结束头握手后才提升为用户文件。
     RandomAccessFile? output;
     File? target;
     File? partFile;
@@ -409,6 +418,7 @@ class YmodemService {
   }
 
   Future<void> cancel() async {
+    // 取消必须主动通知对端；仅清除本地状态会让对端继续等待 ACK。
     if (!isActive) return;
     _cancelRequested = true;
     _notifyIncomingWaiter();
@@ -512,6 +522,7 @@ class YmodemService {
   }
 
   Future<_YmodemPacket> _readPacket({int? firstByte}) async {
+    // 一次等待并读取完整包，避免每字节创建 Future 导致高波特率下调度放大。
     final start = firstByte ?? await _readRequiredByte();
     final size = switch (start) {
       soh => 128,

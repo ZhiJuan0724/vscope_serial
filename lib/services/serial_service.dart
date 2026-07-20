@@ -20,6 +20,7 @@ import 'serial_transport.dart';
 import 'ymodem_service.dart';
 import 'windows_code_page_codec.dart';
 
+/// 发送记录应显示在原始收发区时的来源标签。
 enum SendDisplaySource { user, plot }
 
 /// 当前独占串口接收链路的页面。
@@ -115,7 +116,10 @@ enum RawShellCursorMode {
   }
 }
 
-/// 串口服务 - 全局单例
+/// 串口服务的全局 UI 门面。
+///
+/// 连接生命周期、原始接收缓存和后台写队列分别由专属组件管理；此类负责把它们
+/// 组合为页面可用状态，并确保数据收发、Shell、绘图只会有一个接收活动所有者。
 class SerialService extends ChangeNotifier {
   static final SerialService _instance = SerialService._internal();
   factory SerialService() => _instance;
@@ -134,6 +138,7 @@ class SerialService extends ChangeNotifier {
         });
       },
       onRetentionLimitReached: () {
+        // 原始字节到达上限只停止原始接收，不会主动断开串口。
         if (isRawReceiving) stopRawReceiving();
       },
     );
@@ -167,6 +172,7 @@ class SerialService extends ChangeNotifier {
 
   /// 将状态通知推迟到当前同步操作之后，并在服务销毁后静默取消。
   void _notifyListenersSoon() {
+    // 避免在同步连接/断开路径中重入 ChangeNotifier，并屏蔽 dispose 后的微任务。
     unawaited(
       Future<void>.microtask(() {
         if (!_disposed) notifyListeners();

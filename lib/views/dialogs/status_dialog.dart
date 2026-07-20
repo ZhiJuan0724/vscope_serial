@@ -9,6 +9,9 @@ import '../../services/serial_service.dart';
 import '../widgets/common_widgets.dart';
 
 /// 状态栏点击弹出的连接修改对话框
+/// 串口连接配置和端口刷新窗口。
+///
+/// 默认只显示 COM 号；用户主动勾选详细信息后才在后台查询设备友好名称。
 class StatusDialog extends StatefulWidget {
   const StatusDialog({super.key});
 
