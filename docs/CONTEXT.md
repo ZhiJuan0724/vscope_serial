@@ -22,6 +22,11 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - Shell 使用独立的编码、命令行行尾、本地回显、滚动历史和外观设置；支持 ANSI 终端、命令历史、终端文本导出和 YMODEM 文件发送/接收，接收文件默认保存到 `<exe_dir>/exports/ymodem/`。
 - UTF-8、GBK、BIG5、Shift_JIS、EUC-KR 等 Shell 文本编码使用有状态流式解码器，必须正确处理多字节字符跨串口数据块的情况。
 - 数据收发、Shell 和绘图通过 `SerialActivityOwner` 互斥占用串口接收活动；任一页面开始实际接收后锁定当前页面，停止、启动失败或串口断开后释放页面切换。
+- RTT Viewer 为默认隐藏的独立页面，首版只读显示 RTT Up 0。`ConnectionOwnerService` 互斥管理串口和 RTT：串口连接时禁止 RTT，RTT 连接时锁定 RTT 页并禁止串口，手动断开或探针脱离后解锁。
+- RTT 后端分为 J-Link 官方工具、pyOCD 和内置 probe-rs helper；所有 RTT 后端必须附着到正在运行的目标，不得因只读查看而停核。自动模式只在外部工具不可用时回退内置后端，探针占用、目标错误或连接失败不得静默切换后端。
+- RTT 控制块定位统一支持 Auto、指定地址和指定范围；后端不支持或 Auto 扫描失败时必须明确提示用户改用可用模式，不得静默忽略定位参数。
+- 内置 `probe_helper` 是随应用发布的通用 Rust 探针进程，基于 probe-rs 核心库和完整内置目标库，支持 J-Link、CMSIS-DAP v1/v2，并与 Flutter 使用版本化二进制帧及能力协商。helper 使用独立语义化版本和独立 Changelog，主应用版本不要求与 helper 同步。RTT、后续烧录及其他探针功能复用此进程，不额外捆绑重复的 probe-rs CLI。RTT 待处理队列上限为 `64 MiB`，每帧最多消费 `64 KiB`；过载只丢弃最旧完整块并重置流式解码状态。
+- RTT 自定义 probe-rs 目标放在 `<exe_dir>/config/rtt/targets/`，逐文件校验并隔离损坏配置；`_example.yaml` 始终排除且不记录忽略警告。用户目标可覆盖内置同名目标，同一目录内重名时忽略后加载文件。
 - 普通发送、Shell 命令、逐键输入、粘贴和 YMODEM 共用单一有序串口写入队列；同步 FFI 写入在后台 isolate 中执行，不允许不同入口并发打乱字节顺序。
 - 实时绘图、历史窗口回看、CSV/BIN 导入导出，以及旧版虚拟示波器 DAT 导入；绘图运行期间禁止导入和导出。
 - 接收协议支持 FireWater、固定帧、Zobow、JustFloat。
@@ -47,6 +52,7 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
 - `lib/data/`：数据模型、接收解析器、发送协议、数据源和 LOD 索引。接收解析器统一实现 `IDataParser`，兼容 `feed()`/`outputStream`；绘图高频接收链优先使用 `feedBatch()` 批量返回结果，避免逐包 Stream 调度。
 - `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。`SerialService` 是 UI 门面，连接生命周期由 `SerialConnectionCoordinator` 独占，原始接收缓存由 `RawReceiveSession` 独占；`SettingsRepository` 独占设置 JSON、备份恢复和串行原子写入。
+- `lib/services/rtt_*`：RTT 后端抽象、外部工具进程、helper 协议、有界队列与连接生命周期；`native/probe_helper/` 实现可扩展的 probe-rs 后端。
 - `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；绘图历史、精确窗口和数据源会话分别由 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController` 独占，通道、显示、视口和交互控制拆分在 `plot_viewmodel/` 的独立 `part` 模块中，数学/触发/统计/观察值计算保持无 UI 依赖；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
 - 发送协议统一实现 `SendProtocol<TConfig>`，并且每个具体协议使用独立文件；`ZobowDeviceProtocolCodec` 和 `RProtocolCodec` 分别编码 ZobowDevice 初始化帧和 r 命令。`PlotProtocolInitializer` 负责绘图启动前的协议发送和错误归一化；`PlotViewModel` 只提供配置快照并处理启动结果，`SerialService` 不得依赖具体发送协议。接收侧始终由 `IDataParser` 实现负责，不能与发送协议合并。
 - `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；页面只构造一个 `PlotRenderSnapshot`，`PlotLayerStack` 按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。

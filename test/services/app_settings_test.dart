@@ -71,6 +71,28 @@ void main() {
             ..shellScrollbackLines = 50000
             ..ymodemSaveDirectoryPolicy = 'custom'
             ..rawMultiSendProfileId = 'multi-send'
+            ..rttPageEnabled = true
+            ..rttBackendMode = 'builtin'
+            ..rttJlinkExecutablePath = 'jlink.exe'
+            ..rttPyocdExecutablePath = 'pyocd.exe'
+            ..rttBuiltinHelperPath = 'helper.exe'
+            ..rttProbeKind = 'cmsisDap'
+            ..rttLastProbeId = 'probe'
+            ..rttTarget = 'target'
+            ..rttAutoDetectTarget = true
+            ..rttWireProtocol = 'jtag'
+            ..rttClockKhz = 8000
+            ..rttControlBlockMode = 'range'
+            ..rttControlBlockAddress = 0x20001000
+            ..rttControlBlockRangeStart = 0x20000000
+            ..rttControlBlockRangeEnd = 0x20010000
+            ..rttEncoding = 'GBK'
+            ..rttDisplayMode = 'hex'
+            ..rttTimestampEnabled = true
+            ..rttAutoScroll = false
+            ..rttFontFamily = 'Courier New'
+            ..rttFontSize = 18
+            ..rttHistoryLineLimit = 200000
             ..xMin = 10
             ..xMax = 20
             ..yMin = 30
@@ -139,6 +161,28 @@ void main() {
       expect(settings.shellScrollbackLines, 10000);
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
       expect(settings.rawMultiSendProfileId, isEmpty);
+      expect(settings.rttPageEnabled, isFalse);
+      expect(settings.rttBackendMode, 'automatic');
+      expect(settings.rttJlinkExecutablePath, isEmpty);
+      expect(settings.rttPyocdExecutablePath, isEmpty);
+      expect(settings.rttBuiltinHelperPath, isEmpty);
+      expect(settings.rttProbeKind, 'jlink');
+      expect(settings.rttLastProbeId, isEmpty);
+      expect(settings.rttTarget, isEmpty);
+      expect(settings.rttAutoDetectTarget, isFalse);
+      expect(settings.rttWireProtocol, 'swd');
+      expect(settings.rttClockKhz, 4000);
+      expect(settings.rttControlBlockMode, 'automatic');
+      expect(settings.rttControlBlockAddress, isNull);
+      expect(settings.rttControlBlockRangeStart, isNull);
+      expect(settings.rttControlBlockRangeEnd, isNull);
+      expect(settings.rttEncoding, 'UTF-8');
+      expect(settings.rttDisplayMode, 'text');
+      expect(settings.rttTimestampEnabled, isFalse);
+      expect(settings.rttAutoScroll, isTrue);
+      expect(settings.rttFontFamily, 'Consolas');
+      expect(settings.rttFontSize, 13);
+      expect(settings.rttHistoryLineLimit, 100000);
       expect(settings.xMin, 0);
       expect(settings.xMax, 1000);
       expect(settings.yMin, 0);
@@ -214,6 +258,48 @@ void main() {
 
       expect(settings.baudRate, 19200);
       expect(settings.lastMainPage, 'shell');
+    });
+
+    test('RTT 设置可保存并从严格校验的快照恢复', () async {
+      settings
+        ..rttPageEnabled = true
+        ..rttBackendMode = 'builtin'
+        ..rttProbeKind = 'cmsisDap'
+        ..rttAutoDetectTarget = true
+        ..rttClockKhz = 8000
+        ..rttControlBlockMode = 'range'
+        ..rttControlBlockRangeStart = 0x20000000
+        ..rttControlBlockRangeEnd = 0x20010000
+        ..rttTimestampEnabled = true
+        ..rttAutoScroll = false
+        ..rttFontSize = 15
+        ..rttHistoryLineLimit = 200000;
+      await settings.save();
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.rttPageEnabled, isTrue);
+      expect(settings.rttBackendMode, 'builtin');
+      expect(settings.rttProbeKind, 'cmsisDap');
+      expect(settings.rttAutoDetectTarget, isTrue);
+      expect(settings.rttClockKhz, 8000);
+      expect(settings.rttControlBlockMode, 'range');
+      expect(settings.rttControlBlockRangeStart, 0x20000000);
+      expect(settings.rttControlBlockRangeEnd, 0x20010000);
+      expect(settings.rttTimestampEnabled, isTrue);
+      expect(settings.rttAutoScroll, isFalse);
+      expect(settings.rttFontSize, 15);
+      expect(settings.rttHistoryLineLimit, 200000);
+    });
+
+    test('旧版 RTT 控制块地址迁移为指定地址模式', () async {
+      await File(
+        settingsPath,
+      ).writeAsString(jsonEncode({'rttControlBlockAddress': 0x20001000}));
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.rttControlBlockMode, 'address');
+      expect(settings.rttControlBlockAddress, 0x20001000);
     });
   });
 }

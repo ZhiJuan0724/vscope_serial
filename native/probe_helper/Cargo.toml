@@ -1,0 +1,23 @@
+[package]
+name = "probe_helper"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+# CMSIS-DAP v2 Bulk 由 probe-rs 核心的 nusb 后端提供；cmsisdap_v1 额外保留 HID v1 回退。
+probe-rs = { version = "0.31.0", default-features = false, features = ["builtin-targets", "cmsisdap_v1"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# probe-rs 的 CMSIS-DAP v1 回退会引入 hidapi。Windows 改用其原生 Rust
+# 后端，避免静态 C 后端把 hid_* 符号导出到 helper 可执行文件并生成导入库。
+[target.'cfg(windows)'.dependencies]
+hidapi = { version = "2.6.4", default-features = false, features = ["windows-native"] }
+
+[profile.release]
+lto = "thin"
+strip = true

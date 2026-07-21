@@ -32,6 +32,9 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/native/probe_helper/target/
+# 兼容本次目录重命名前已生成的本地构建缓存。
+/native/rtt_helper/target/
 
 # Symbolication related
 app.*.symbols

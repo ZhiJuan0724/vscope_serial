@@ -4,11 +4,52 @@ import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
+import 'package:vscope_serial/services/rtt_service.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/widgets/status_bar.dart';
 
 void main() {
+  testWidgets('状态栏按页面标识串口或探针连接状态', (tester) async {
+    final serialService = SerialService();
+    final plotViewModel = PlotViewModel(serialService);
+    final rttService = RttService();
+
+    Widget app(String pageId) => MultiProvider(
+      providers: [
+        ChangeNotifierProvider<SerialService>.value(value: serialService),
+        ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
+        ChangeNotifierProvider<RttService>.value(value: rttService),
+      ],
+      child: MaterialApp(
+        home: Scaffold(body: StatusBar(currentPageId: pageId)),
+      ),
+    );
+
+    await tester.pumpWidget(app('rawData'));
+    expect(find.text('串口未连接'), findsOneWidget);
+
+    await tester.pumpWidget(app('rtt'));
+    expect(find.text('探针未连接'), findsOneWidget);
+    expect(
+      connectionStatusLabel(isProbe: false, connected: true, connecting: false),
+      '串口已连接',
+    );
+    expect(
+      connectionStatusLabel(isProbe: true, connected: false, connecting: true),
+      '探针连接中...',
+    );
+    expect(
+      connectionStatusLabel(isProbe: true, connected: true, connecting: false),
+      '探针已连接',
+    );
+
+    // 定时刷新器必须在 Widget 测试结束前释放，避免残留 FakeTimer。
+    await tester.pumpWidget(const SizedBox.shrink());
+    rttService.dispose();
+    plotViewModel.dispose();
+  });
+
   testWidgets('随机源状态仅在 FireWater 协议下显示', (tester) async {
     final service = SerialService();
     final plotViewModel = PlotViewModel(service);

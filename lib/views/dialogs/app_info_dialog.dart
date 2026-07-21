@@ -7,10 +7,13 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/constants/plot_configuration.dart';
+import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
+import '../../services/connection_owner_service.dart';
+import '../../services/rtt_service.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
 import '../../services/serial_service.dart';
@@ -19,6 +22,7 @@ import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../../viewmodels/rtt_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
 /// 打开应用信息、更新和版本说明窗口。
@@ -727,6 +731,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     required int rawTextCacheUsedBytes,
     required int shellQueueUsedBytes,
     required int ymodemQueueUsedBytes,
+    required int rttQueueUsedBytes,
+    required int rttRawHistoryUsedBytes,
     required VoidCallback onApplyPlotHistoryLimit,
   }) {
     final emergencyRssLimitBytes = math.max(
@@ -796,6 +802,18 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           subtitle: AppStrings.appInfo.ymodemQueueMemoryLimitSummary,
           usedBytes: ymodemQueueUsedBytes,
           limitBytes: YmodemService.defaultInputHighWaterBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rttQueueMemoryLimit,
+          subtitle: AppStrings.appInfo.rttQueueMemoryLimitSummary,
+          usedBytes: rttQueueUsedBytes,
+          limitBytes: RttConfiguration.receiveQueueLimitBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rttRawHistoryMemoryLimit,
+          subtitle: AppStrings.appInfo.rttRawHistoryMemoryLimitSummary,
+          usedBytes: rttRawHistoryUsedBytes,
+          limitBytes: RttConfiguration.rawHistoryLimitBytes,
           showDivider: false,
         ),
       ],
@@ -840,6 +858,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var shellEnabled = AppSettings().rawDataShellEnabled;
+    var rttEnabled = AppSettings().rttPageEnabled;
     var plotReceiveAggregationEnabled =
         AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
@@ -915,6 +934,30 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     title: Text(
+                      AppStrings.rtt.showPage,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.rtt.showPageHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: rttEnabled,
+                    onChanged:
+                        ConnectionOwnerService().owner == ConnectionOwner.rtt
+                            ? null
+                            : (value) {
+                              setDialogState(() => rttEnabled = value);
+                              context.read<RttService>().setPageEnabled(value);
+                            },
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
                       AppStrings.raw.enableShellEntry,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
@@ -974,6 +1017,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       builder: (context, _) {
                         final plotViewModel = context.read<PlotViewModel>();
                         final serialService = context.read<SerialService>();
+                        final rttService = context.read<RttService?>();
+                        final rttViewModel = context.read<RttViewModel?>();
                         final plotUsage = plotViewModel.plotRetentionUsage;
                         return _buildMemoryLimitsSection(
                           context,
@@ -989,6 +1034,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               serialService.shellPendingReceiveBytes,
                           ymodemQueueUsedBytes:
                               serialService.ymodemService.incomingBytes,
+                          rttQueueUsedBytes: rttService?.queuedBytes ?? 0,
+                          rttRawHistoryUsedBytes:
+                              rttViewModel?.rawHistoryBytes ?? 0,
                           onApplyPlotHistoryLimit: () {
                             final value = int.tryParse(
                               _plotHistoryLimitController.text,
@@ -1026,6 +1074,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             disableNotifications =
                                 AppSettings().disableNotifications;
                             shellEnabled = AppSettings().rawDataShellEnabled;
+                            rttEnabled = AppSettings().rttPageEnabled;
                             plotReceiveAggregationEnabled =
                                 AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =

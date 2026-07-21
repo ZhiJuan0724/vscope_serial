@@ -12,6 +12,7 @@ import '../data/models/retention_usage.dart';
 import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
+import 'connection_owner_service.dart';
 import 'native_serial_reader.dart';
 import 'raw_receive_session.dart';
 import 'serial_connection_coordinator.dart';
@@ -161,6 +162,7 @@ class SerialService extends ChangeNotifier {
   SerialConfig config = SerialConfig();
   bool isConnected = false;
   bool isConnecting = false;
+  final ConnectionOwnerService _connectionOwners = ConnectionOwnerService();
   final SerialConnectionCoordinator _connectionCoordinator =
       SerialConnectionCoordinator();
   late final SerialPortCatalog _portCatalog;
@@ -222,6 +224,7 @@ class SerialService extends ChangeNotifier {
     final port = config.port;
     return port != null &&
         port.isNotEmpty &&
+        _connectionOwners.owner != ConnectionOwner.rtt &&
         !isRefreshingPorts &&
         !isPortUnavailable(port);
   }
@@ -623,6 +626,12 @@ class SerialService extends ChangeNotifier {
       AppLogger().trace('connect() 被忽略，串口已连接', category: 'SERIAL');
       return;
     }
+    if (!_connectionOwners.tryAcquire(ConnectionOwner.serial)) {
+      isConnecting = false;
+      AppNotifications.show('RTT 已连接，请先手动断开 RTT');
+      _notifyListenersSoon();
+      return;
+    }
 
     isConnecting = true;
     _notifyListenersSoon();
@@ -743,6 +752,7 @@ class SerialService extends ChangeNotifier {
     _setPlotReceiveAggregation(transport, enabled: false);
     _transport = null;
     isConnected = false;
+    _connectionOwners.release(ConnectionOwner.serial);
     _releaseAllActivities();
     _notifyListenersSoon();
     await subscription?.cancel();

@@ -17,6 +17,7 @@ abstract final class AppStrings {
   static const update = _UpdateStrings();
   static const appInfo = _AppInfoStrings();
   static const profile = _ProfileStrings();
+  static const rtt = _RttStrings();
 }
 
 final class _NavStrings {
@@ -25,6 +26,7 @@ final class _NavStrings {
   String get rawData => '数据收发';
   String get shell => 'Shell';
   String get plot => '绘图';
+  String get rtt => 'RTT';
   String get protocol => '协议';
 }
 
@@ -402,7 +404,7 @@ final class _RawDataStrings {
   String get displayLineLimit => '接收区最大显示行数:';
   String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
   String get enableShellEntry => '显示 Shell 页面';
-  String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签；默认关闭。';
+  String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签。';
   String get autoLineBreakTimeInvalid => '自动换行时间请输入 1 ~ 10000 ms';
   String get displayLineLimitInvalid => '显示行数请输入 100 ~ 100000 之间的数值';
   String advancedSettingsSaved(int lines) => '高级设置已保存，接收区最多显示 $lines 行';
@@ -456,7 +458,7 @@ final class _AppInfoStrings {
   String get unknown => '未知';
   String get releaseNotes => '版本说明';
   String get autoCheckUpdates => '启动时自动检查更新';
-  String get autoCheckUpdatesHelp => '默认关闭；开启后每次打开应用会按更新来源设置检查更新';
+  String get autoCheckUpdatesHelp => '开启后每次打开应用会按更新来源设置检查更新';
   String get updateChannelTitle => '更新通道';
   String get updateChannelAndSourceTitle => '更新通道和来源';
   String get betaChannelHelp => '只检查预发布版本';
@@ -497,6 +499,10 @@ final class _AppInfoStrings {
   String get shellQueueMemoryLimitSummary => '超出后丢弃最早的完整数据块';
   String get ymodemQueueMemoryLimit => 'YMODEM 输入队列';
   String get ymodemQueueMemoryLimitSummary => '超出后取消当前文件传输';
+  String get rttQueueMemoryLimit => 'RTT 待处理接收队列';
+  String get rttQueueMemoryLimitSummary => '超出后丢弃最早的完整 RTT 数据块并重新同步解码';
+  String get rttRawHistoryMemoryLimit => 'RTT 原始重建历史';
+  String get rttRawHistoryMemoryLimitSummary => '用于切换编码、文本或 HEX 显示以及导出当前保留范围';
   String memoryUsage(String used, String limit, String percent) =>
       '当前占用: $used / $limit ($percent)';
   String get confirmResetSettingsTitle => '确认恢复默认设置';
@@ -518,6 +524,18 @@ final class _AppInfoStrings {
   }) {
     return '未发现更新（当前版本: $currentVersion；$channel最新发布版本: $tagName，$source）';
   }
+}
+
+final class _RttStrings {
+  const _RttStrings();
+
+  String get probe => '探针';
+  String get settings => 'RTT设置';
+  String get showPage => '显示 RTT 页面';
+  String get showPageHelp => '显示独立 RTT Viewer 标签';
+  String get connect => 'RTT 连接';
+  String get waitingData => '等待 RTT Up 0 数据';
+  String get connectHint => '点击左下角连接 J-Link 或 CMSIS-DAP';
 }
 
 final class _ProfileStrings {

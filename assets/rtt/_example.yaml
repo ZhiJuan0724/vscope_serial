@@ -1,0 +1,65 @@
+# SerialTools 内置 RTT 目标配置示例
+#
+# 本文件只用于说明配置格式。程序会始终排除文件名 `_example.yaml`，
+# 不会把它注册为目标，也不会因为忽略本文件而产生警告。
+#
+# 使用方法：
+# 1. 将本文件复制为新的 `.yaml` 或 `.yml` 文件，例如 `my_mcu.yaml`。
+# 2. 按芯片手册修改芯片名称、核心类型和内存区域。
+# 3. 重新打开 RTT 连接窗口或点击“刷新探针和目标”。
+# 4. 在目标芯片输入框中搜索 variants 下的芯片名称。
+#
+# 这是 probe-rs target family YAML。字段必须符合当前随应用发布的
+# probe-rs 版本；地址使用十六进制，range 的结束地址不包含在区域内。
+
+---
+# 目标系列名称，可用于日志和配置来源识别。
+name: Example Cortex-M Family
+
+# 芯片厂商名称。
+manufacturer:
+  id: 0
+  cc: 0
+
+# 一个文件可以包含同系列的多个具体型号。
+variants:
+  - name: EXAMPLE-MCU-128K
+
+    # ARM Cortex-M 常见目标只有一个主核心。
+    cores:
+      - name: main
+        # 常用类型：armv6m、armv7m、armv7em、armv8m。
+        type: armv7em
+        core_access_options: !Arm
+          # Access Port 地址版本和编号；多数 Cortex-M 使用 ADIv5 AP 0。
+          ap: !v1 0
+
+    # RTT 默认扫描可写 RAM；这里的 RAM 范围必须与芯片真实地址一致。
+    memory_map:
+      - !Ram
+        name: SRAM
+        range:
+          start: 0x20000000
+          end: 0x20008000
+        cores:
+          - main
+      - !Nvm
+        name: FLASH
+        range:
+          start: 0x08000000
+          end: 0x08020000
+        cores:
+          - main
+        access:
+          boot: true
+
+    # RTT Viewer 只需要调试访问和 RAM 信息，不要求提供烧录算法。
+    flash_algorithms: []
+
+    # 可选：限制 RTT 控制块扫描区域；省略时 probe-rs 扫描可写 RAM。
+    # rtt_scan_ranges:
+    #   - 0x20000000..0x20008000
+
+# 完整配置还可以包含厂商调试序列、多个 RAM 区域、多核心映射和烧录算法。
+# 这些字段与具体芯片强相关，不要直接照抄；优先参考 probe-rs 官方目标库中
+# 同系列芯片的 YAML，再用芯片参考手册核对所有地址。

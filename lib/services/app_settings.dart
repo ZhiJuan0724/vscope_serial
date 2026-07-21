@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../core/constants/plot_configuration.dart';
+import '../core/constants/rtt_configuration.dart';
 import '../core/utils/app_logger.dart';
 import '../data/models/address_config_profile.dart';
 import '../data/models/channel_config.dart';
@@ -252,6 +253,33 @@ class AppSettings {
   /// 当前选择的多条发送配置文件。
   String rawMultiSendProfileId = '';
 
+  // ========== RTT 设置 ==========
+  /// 是否显示独立 RTT Viewer 页面；默认隐藏。
+  bool rttPageEnabled = false;
+
+  /// RTT 后端选择：automatic / external / builtin。
+  String rttBackendMode = 'automatic';
+  String rttJlinkExecutablePath = '';
+  String rttPyocdExecutablePath = '';
+  String rttBuiltinHelperPath = '';
+  String rttProbeKind = 'jlink';
+  String rttLastProbeId = '';
+  String rttTarget = '';
+  bool rttAutoDetectTarget = false;
+  String rttWireProtocol = 'swd';
+  int rttClockKhz = 4000;
+  String rttControlBlockMode = 'automatic';
+  int? rttControlBlockAddress;
+  int? rttControlBlockRangeStart;
+  int? rttControlBlockRangeEnd;
+  String rttEncoding = 'UTF-8';
+  String rttDisplayMode = 'text';
+  bool rttTimestampEnabled = false;
+  bool rttAutoScroll = true;
+  String rttFontFamily = 'Consolas';
+  double rttFontSize = 13.0;
+  int rttHistoryLineLimit = RttConfiguration.defaultHistoryLines;
+
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
   double xMin = PlotConfiguration.viewportDefaultXMin;
@@ -376,6 +404,28 @@ class AppSettings {
     ymodemSaveDirectoryPolicy = 'exports';
     rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
+    rttPageEnabled = false;
+    rttBackendMode = 'automatic';
+    rttJlinkExecutablePath = '';
+    rttPyocdExecutablePath = '';
+    rttBuiltinHelperPath = '';
+    rttProbeKind = 'jlink';
+    rttLastProbeId = '';
+    rttTarget = '';
+    rttAutoDetectTarget = false;
+    rttWireProtocol = 'swd';
+    rttClockKhz = 4000;
+    rttControlBlockMode = 'automatic';
+    rttControlBlockAddress = null;
+    rttControlBlockRangeStart = null;
+    rttControlBlockRangeEnd = null;
+    rttEncoding = 'UTF-8';
+    rttDisplayMode = 'text';
+    rttTimestampEnabled = false;
+    rttAutoScroll = true;
+    rttFontFamily = 'Consolas';
+    rttFontSize = 13.0;
+    rttHistoryLineLimit = RttConfiguration.defaultHistoryLines;
 
     xMin = PlotConfiguration.viewportDefaultXMin;
     xMax = PlotConfiguration.viewportDefaultXMax;
@@ -430,6 +480,7 @@ class AppSettings {
       lastMainPage = switch (savedMainPage) {
         'plot' => 'plot',
         'shell' => 'shell',
+        'rtt' => 'rtt',
         _ => 'rawData',
       };
       final storedMaxVisiblePoints =
@@ -600,6 +651,54 @@ class AppSettings {
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
+      rttPageEnabled = json['rttPageEnabled'] as bool? ?? false;
+      rttBackendMode = switch (json['rttBackendMode'] as String?) {
+        'external' => 'external',
+        'builtin' => 'builtin',
+        _ => 'automatic',
+      };
+      rttJlinkExecutablePath = json['rttJlinkExecutablePath'] as String? ?? '';
+      rttPyocdExecutablePath = json['rttPyocdExecutablePath'] as String? ?? '';
+      rttBuiltinHelperPath = json['rttBuiltinHelperPath'] as String? ?? '';
+      rttProbeKind = json['rttProbeKind'] == 'cmsisDap' ? 'cmsisDap' : 'jlink';
+      rttLastProbeId = json['rttLastProbeId'] as String? ?? '';
+      rttTarget = json['rttTarget'] as String? ?? '';
+      rttAutoDetectTarget = json['rttAutoDetectTarget'] as bool? ?? false;
+      rttWireProtocol = json['rttWireProtocol'] == 'jtag' ? 'jtag' : 'swd';
+      rttClockKhz =
+          ((json['rttClockKhz'] as num?)?.toInt() ?? 4000)
+              .clamp(100, 50000)
+              .toInt();
+      rttControlBlockAddress =
+          (json['rttControlBlockAddress'] as num?)?.toInt();
+      rttControlBlockMode = switch (json['rttControlBlockMode'] as String?) {
+        'address' => 'address',
+        'range' => 'range',
+        // 旧配置只有地址字段时，继续按精确地址定位。
+        null when rttControlBlockAddress != null => 'address',
+        _ => 'automatic',
+      };
+      rttControlBlockRangeStart =
+          (json['rttControlBlockRangeStart'] as num?)?.toInt();
+      rttControlBlockRangeEnd =
+          (json['rttControlBlockRangeEnd'] as num?)?.toInt();
+      rttEncoding = json['rttEncoding'] as String? ?? 'UTF-8';
+      rttDisplayMode = json['rttDisplayMode'] == 'hex' ? 'hex' : 'text';
+      rttTimestampEnabled = json['rttTimestampEnabled'] as bool? ?? false;
+      rttAutoScroll = json['rttAutoScroll'] as bool? ?? true;
+      rttFontFamily = _normalizeTerminalFontFamily(json['rttFontFamily']);
+      rttFontSize = ((json['rttFontSize'] as num?)?.toDouble() ?? 13.0).clamp(
+        10.0,
+        24.0,
+      );
+      rttHistoryLineLimit =
+          ((json['rttHistoryLineLimit'] as num?)?.toInt() ??
+                  RttConfiguration.defaultHistoryLines)
+              .clamp(
+                RttConfiguration.minHistoryLines,
+                RttConfiguration.maxHistoryLines,
+              )
+              .toInt();
 
       // 视口设置
       xMin =
@@ -655,6 +754,18 @@ class AppSettings {
       'ymodemSaveDirectoryPolicy',
       'rawDataEncoding',
       'rawMultiSendProfileId',
+      'rttBackendMode',
+      'rttJlinkExecutablePath',
+      'rttPyocdExecutablePath',
+      'rttBuiltinHelperPath',
+      'rttProbeKind',
+      'rttLastProbeId',
+      'rttTarget',
+      'rttWireProtocol',
+      'rttControlBlockMode',
+      'rttEncoding',
+      'rttDisplayMode',
+      'rttFontFamily',
     };
     const boolKeys = <String>{
       'rts',
@@ -677,6 +788,10 @@ class AppSettings {
       'rawDataShellEnabled',
       'shellEnabled',
       'shellLocalEcho',
+      'rttPageEnabled',
+      'rttAutoDetectTarget',
+      'rttTimestampEnabled',
+      'rttAutoScroll',
     };
     const integerKeys = <String>{
       'baudRate',
@@ -704,6 +819,12 @@ class AppSettings {
       'rawDataAutoLineBreakIntervalMs',
       'rawDataTerminalFontSize',
       'shellScrollbackLines',
+      'rttClockKhz',
+      'rttControlBlockAddress',
+      'rttControlBlockRangeStart',
+      'rttControlBlockRangeEnd',
+      'rttFontSize',
+      'rttHistoryLineLimit',
       'xMin',
       'xMax',
       'yMin',
@@ -863,6 +984,28 @@ class AppSettings {
     'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
     'rawDataEncoding': rawDataEncoding,
     'rawMultiSendProfileId': rawMultiSendProfileId,
+    'rttPageEnabled': rttPageEnabled,
+    'rttBackendMode': rttBackendMode,
+    'rttJlinkExecutablePath': rttJlinkExecutablePath,
+    'rttPyocdExecutablePath': rttPyocdExecutablePath,
+    'rttBuiltinHelperPath': rttBuiltinHelperPath,
+    'rttProbeKind': rttProbeKind,
+    'rttLastProbeId': rttLastProbeId,
+    'rttTarget': rttTarget,
+    'rttAutoDetectTarget': rttAutoDetectTarget,
+    'rttWireProtocol': rttWireProtocol,
+    'rttClockKhz': rttClockKhz,
+    'rttControlBlockMode': rttControlBlockMode,
+    'rttControlBlockAddress': rttControlBlockAddress,
+    'rttControlBlockRangeStart': rttControlBlockRangeStart,
+    'rttControlBlockRangeEnd': rttControlBlockRangeEnd,
+    'rttEncoding': rttEncoding,
+    'rttDisplayMode': rttDisplayMode,
+    'rttTimestampEnabled': rttTimestampEnabled,
+    'rttAutoScroll': rttAutoScroll,
+    'rttFontFamily': rttFontFamily,
+    'rttFontSize': rttFontSize,
+    'rttHistoryLineLimit': rttHistoryLineLimit,
 
     // 视口设置
     'xMin': xMin,

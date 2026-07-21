@@ -13,14 +13,18 @@ import 'core/utils/app_logger.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
+import 'services/connection_owner_service.dart';
+import 'services/rtt_service.dart';
 import 'services/serial_service.dart';
 import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
+import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/raw_data_page.dart';
+import 'views/pages/rtt_page.dart';
 import 'views/pages/shell_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/status_bar.dart';
@@ -90,12 +94,23 @@ class MyApp extends StatelessWidget {
     final serialService = SerialService();
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: serialService),
+        ChangeNotifierProvider(
+          create: (_) {
+            final service = RttService();
+            unawaited(service.initialize());
+            return service;
+          },
+        ),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(serialService),
         ),
         ChangeNotifierProvider(
           create: (context) => ShellViewModel(serialService),
+        ),
+        ChangeNotifierProvider(
+          create: (context) => RttViewModel(context.read<RttService>()),
         ),
       ],
       child: MaterialApp(
@@ -108,7 +123,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// 三个主页面的标签容器，负责恢复上次页面并遵守串口活动锁。
+/// 主页面标签容器，负责恢复上次页面并遵守串口与 RTT 活动锁。
 class MainFrame extends StatefulWidget {
   const MainFrame({super.key});
 
@@ -124,10 +139,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     final savedPage = AppSettings().lastMainPage;
-    _currentTabId =
-        savedPage == 'shell' && !AppSettings().rawDataShellEnabled
-            ? 'rawData'
-            : savedPage;
+    final settings = AppSettings();
+    _currentTabId = switch (savedPage) {
+      'shell' when !settings.rawDataShellEnabled => 'rawData',
+      'rtt' when !settings.rttPageEnabled => 'rawData',
+      _ => savedPage,
+    };
     WidgetsBinding.instance.addObserver(this);
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
@@ -226,6 +243,13 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       icon: Icons.show_chart,
       page: const PlotPage(),
     ),
+    if (AppSettings().rttPageEnabled)
+      (
+        id: 'rtt',
+        label: AppStrings.nav.rtt,
+        icon: Icons.developer_board,
+        page: const RttPage(),
+      ),
   ];
 
   void _selectTab(String id) {
@@ -241,6 +265,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final serialService = Provider.of<SerialService>(context);
+    final connectionOwner = Provider.of<ConnectionOwnerService>(context);
+    // RTT 页面显隐由 RttService 通知，监听它以即时刷新标签列表。
+    Provider.of<RttService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
       _currentTabId = 'rawData';
@@ -273,7 +300,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                           SerialActivityOwner.none => null,
                         };
                         final canSwitch =
-                            ownerTab == null || tab.id == ownerTab;
+                            connectionOwner.owner == ConnectionOwner.rtt
+                                ? tab.id == 'rtt'
+                                : ownerTab == null || tab.id == ownerTab;
                         final colorScheme = Theme.of(context).colorScheme;
                         final foreground =
                             isSelected
@@ -334,7 +363,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             ),
           ),
           // 底部共享状态栏
-          const StatusBar(),
+          StatusBar(currentPageId: _currentTabId),
         ],
       ),
     );
@@ -353,7 +382,9 @@ class _WindowCloseListener extends WindowListener {
     if (_isClosing) return;
     _isClosing = true;
     final serialService = Provider.of<SerialService>(context, listen: false);
+    final rttService = Provider.of<RttService>(context, listen: false);
     await AppSettings().flushPendingSave();
+    await rttService.disconnect();
     await serialService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();

@@ -1,6 +1,6 @@
 # SerialTools
 
-SerialTools 是一款面向 Windows 的串口数据收发与波形分析工具，支持多种串口协议、实时绘图、测量统计、Shell 终端和文件传输。
+SerialTools 是一款面向 Windows 的串口数据收发与波形分析工具，支持多种串口协议、实时绘图、Shell 终端、YMODEM 文件传输和 RTT 查看。
 
 ![Platform](https://img.shields.io/badge/platform-Windows-42A5F5)
 ![Flutter](https://img.shields.io/badge/Flutter-3.x-blue)
@@ -18,6 +18,7 @@ SerialTools 是一款面向 Windows 的串口数据收发与波形分析工具�
 - 波形缩放、平移、框选、跟随、观察、X/Y 测量和区间统计。
 - CSV、BIN 和旧版 `.dat` 数据导入，文本、BIN 和绘图数据导出。
 - 可选的独立 Shell 页面，支持 ANSI 终端、命令行/逐键输入和 YMODEM 文件发送/接收。
+- 可选的独立 RTT Viewer，支持 J-Link、CMSIS-DAP 和 RTT Up 0 文本/HEX 查看。
 - 稳定版/Beta 更新通道、自动更新校验和本地版本回退。
 
 ## 下载与启动
@@ -62,7 +63,7 @@ SerialTools 是一款面向 Windows 的串口数据收发与波形分析工具�
 4. 点击“开始绘图”。
 5. 使用工具栏或鼠标完成缩放、平移、测量、观察和数据导入导出。
 
-绘图过程中会锁定协议、配置和数据导入导出，停止绘图后即可修改。数据收发、Shell 或绘图任一页面开始实际接收后，也会锁定当前页面；停止或断开串口后才能切换页面。
+绘图过程中会锁定协议、配置和数据导入导出，停止绘图后即可修改。数据收发、Shell 或绘图任一页面开始实际接收后，也会锁定当前页面；停止或断开串口后才能切换页面。串口和 RTT 互斥：RTT 已连接时不能使用串口页面，串口已连接时不能连接 RTT。
 
 开启“保持绘图”后，停止再开始可在同一接收协议且通道数一致的旧数据流后继续追加；切换接收协议、自动识别通道数变化或导入数据后会清空旧历史，不支持跨协议或导入历史续接。
 
@@ -108,12 +109,25 @@ Shell 是独立页面，入口默认隐藏，可在应用高级设置中开启�
 
 接收到的 YMODEM 文件默认保存到 `<程序目录>/exports/ymodem/`。
 
+## RTT Viewer
+
+RTT 页面默认隐藏，可在应用高级设置的“页面”分类中开启。首版只读显示 RTT Up 0，支持暂停显示、时间戳、文本/HEX、自动滚动、清空和导出。
+
+RTT 控制块可选择 `Auto`、指定地址或指定范围。Auto 会扫描目标定义的 RAM；若当前后端版本无法自动定位，可改为输入精确地址，或限定一段 RAM 搜索范围。
+
+- `自动`：优先使用已安装的 J-Link 官方工具或 pyOCD，外部工具不存在时回退到内置 probe-rs 探针辅助进程。
+- `外部`：J-Link 使用 `JLinkGDBServerCL.exe`，CMSIS-DAP 使用支持 RTT server 的 pyOCD。
+- `内置`：使用随应用发布的 `probe_helper.exe`，支持 J-Link、CMSIS-DAP v1 和 CMSIS-DAP v2。该进程基于 probe-rs 核心库和完整内置目标库，后续烧录功能继续复用同一进程协议，不额外捆绑重复的 CLI 工具。
+
+目标默认手动选择，也可启用自动识别。自定义 probe-rs 目标配置放在 `<程序目录>/config/rtt/targets/`；请复制并重命名 `_example.yaml` 后修改，程序始终排除示例文件。修改后需刷新目标列表或重新打开连接窗口。
+
 ## 数据与配置
 
 | 目录 | 内容 |
 | --- | --- |
 | `settings/` | 应用设置 |
 | `config/` | 协议和通道配置 |
+| `config/rtt/targets/` | RTT 自定义 probe-rs 目标 YAML 和排除加载的示例 |
 | `logs/` | 运行日志 |
 | `exports/` | 数据与 YMODEM 文件 |
 | `updates/` | 更新缓存和回退版本 |
