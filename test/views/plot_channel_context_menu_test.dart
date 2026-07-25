@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/theme/app_theme.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
@@ -126,6 +127,40 @@ void main() {
     await tester.pump();
     expect(vm.plotRetentionLimitGiB, 8);
     expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
+  testWidgets('图例按最长通道名称扩展以优先显示完整名称', (tester) async {
+    final vm = PlotViewModel(serialService);
+    const longName = '主电机控制器输出电流反馈滤波后的完整通道名称';
+    vm.setChannelAlias(0, longName);
+    vm.ingestParsedResultForTest(ParseResult.ok(const [1.0], bytesConsumed: 4));
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byTooltip(AppStrings.plot.legend).hitTestable().first,
+    );
+    await tester.pump();
+
+    final legend = find.byKey(const ValueKey('plot-legend-box'));
+    expect(legend, findsOneWidget);
+    expect(
+      find.descendant(of: legend, matching: find.text(longName)),
+      findsOneWidget,
+    );
+    // 旧实现的图例总宽度约为 244px；长名称应推动浮窗明显扩宽。
+    expect(tester.getSize(legend).width, greaterThan(280));
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
@@ -328,6 +363,42 @@ void main() {
     );
 
     expect(find.byTooltip(longName), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('通道列表名称编辑支持统一的64字符上限', (tester) async {
+    final vm = PlotViewModel(serialService);
+    const longName = '主电机控制器输出电流反馈滤波后的完整通道名称与工程标识';
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    final channelName = find.text('Ch0').first;
+    await tester.tap(channelName);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(channelName);
+    await tester.pump();
+    final nameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.maxLength == PlotConfiguration.channelAliasMaxLength,
+    );
+    expect(nameField, findsOneWidget);
+    await tester.enterText(nameField, longName);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+
+    expect(vm.channels[0].alias, longName);
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();

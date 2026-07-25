@@ -2264,6 +2264,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             .where((channel) => channel.visible)
             .toList();
     if (visibleChannels.isEmpty) return const SizedBox.shrink();
+    final fontSize = _plotFontSize(vm, 12);
+    final fontWeight = vm.plotFontBold ? FontWeight.bold : FontWeight.normal;
+    // 图例按最长名称扩展，优先显示完整名称；极长名称仍限制宽度，避免遮住
+    // 大部分绘图区。外层 Positioned 的可用宽度还会继续约束窄窗口。
+    final longestNameWidth = visibleChannels.fold<double>(
+      0,
+      (width, channel) => math.max(
+        width,
+        _measureFloatingTextWidth(
+          channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}',
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ),
+    );
+    final contentWidth = (16 + longestNameWidth).clamp(96.0, 480.0);
 
     return _DraggableInfoBox(
       key: const ValueKey('plot-legend-box'),
@@ -2273,60 +2289,61 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       borderColor: Colors.teal.withValues(alpha: 0.55),
       onPositionChanged:
           (right, top) => vm.setLegendPanelPosition(right: right, top: top),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '图例',
-                style: TextStyle(
-                  color: _floatingTextColor(vm),
-                  fontSize: _plotFontSize(vm, 12),
-                  fontWeight: FontWeight.bold,
+      child: SizedBox(
+        width: contentWidth,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '图例',
+                  style: TextStyle(
+                    color: _floatingTextColor(vm),
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              ...visibleChannels.map((channel) {
-                final name =
-                    channel.alias.isNotEmpty
-                        ? channel.alias
-                        : 'Ch${channel.index}';
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: channel.color,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _floatingTextColor(vm),
-                            fontSize: _plotFontSize(vm, 12),
-                            fontWeight:
-                                vm.plotFontBold
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
+                const SizedBox(height: 6),
+                ...visibleChannels.map((channel) {
+                  final name =
+                      channel.alias.isNotEmpty
+                          ? channel.alias
+                          : 'Ch${channel.index}';
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: channel.color,
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            name,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _floatingTextColor(vm),
+                              fontSize: fontSize,
+                              fontFamily: 'SarasaUiSC',
+                              fontWeight: fontWeight,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
           ),
         ),
       ),

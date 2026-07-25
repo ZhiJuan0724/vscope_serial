@@ -96,6 +96,9 @@ abstract final class PlotConfiguration {
   /// 用户可创建的观察点数量上限。
   static const int maxObservationCount = 100;
 
+  /// 用户自定义通道名称允许输入的最大字符数。
+  static const int channelAliasMaxLength = 64;
+
   /// 用户可导航范围允许配置的最小点数。
   static const int minVisiblePointCount = 1000000;
 

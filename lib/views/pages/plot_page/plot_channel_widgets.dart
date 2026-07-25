@@ -294,7 +294,8 @@ class _ChannelItemState extends State<_ChannelItem> {
                               controller: _nameController,
                               focusNode: _nameFocusNode,
                               autofocus: true,
-                              maxLength: 8,
+                              maxLength:
+                                  PlotConfiguration.channelAliasMaxLength,
                               style: const TextStyle(fontSize: 14),
                               decoration: const InputDecoration(
                                 isDense: true,
@@ -1066,7 +1067,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 const SizedBox(height: 8),
                 TextField(
                   controller: _aliasController,
-                  maxLength: 16,
+                  maxLength: PlotConfiguration.channelAliasMaxLength,
                   decoration: secondaryDialogFieldDecoration(
                     hintText: AppStrings.plot.aliasHint,
                     counterText: '',
