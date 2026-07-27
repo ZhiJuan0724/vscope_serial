@@ -301,7 +301,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   });
 
-  testWidgets('普通通道右键菜单可打开通道高级设置', (tester) async {
+  testWidgets('普通通道设置可输入显示参数并与列表共用偏置开关', (tester) async {
     final vm = PlotViewModel(serialService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -329,6 +329,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AppStrings.plot.editChannelTitle(0)), findsOneWidget);
+    final lineWidthField = find.byKey(
+      const ValueKey('channel-line-width-field'),
+    );
+    final pointRadiusField = find.byKey(
+      const ValueKey('channel-point-radius-field'),
+    );
+    expect(lineWidthField, findsOneWidget);
+    expect(pointRadiusField, findsOneWidget);
+    expect(tester.getSize(lineWidthField).width, kSecondaryDialogFieldWidth);
+    await tester.enterText(lineWidthField, '2.5');
+    await tester.enterText(pointRadiusField, '4.5');
+
+    final offsetToggle = find.byKey(const ValueKey('channel-offset-toggle'));
+    expect(tester.widget<Switch>(offsetToggle).value, isFalse);
+    await tester.tap(offsetToggle);
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('channel-offset-field')),
+      '-12.5',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('channel-scale-field')),
+      '2',
+    );
+    await tester.tap(find.text(AppStrings.common.confirm));
+    await tester.pumpAndSettle();
+
+    expect(vm.channels[0].lineWidth, 2.5);
+    expect(vm.channels[0].pointSize, 4.5);
+    expect(vm.channels[0].offsetEnabled, isTrue);
+    expect(vm.channels[0].yOffset, -12.5);
+    expect(vm.channels[0].yScale, 2);
+    expect(find.byTooltip(AppStrings.plot.closeOffset), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();

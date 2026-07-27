@@ -194,6 +194,10 @@ extension PlotViewModelChannelControls on PlotViewModel {
     channel.expression = expression.trim();
     channel.display = display.copyWith(alias: channel.name);
     channel.display.visible = true;
+    if (!channel.display.offsetEnabled) {
+      channel.display.offsetBindingGroupId = null;
+      _cleanupOffsetBindingGroups();
+    }
     _compileMathChannel(channel);
     _invalidateDisplayCaches();
     _rebuildObservedRawValueMetadata();
@@ -337,6 +341,21 @@ extension PlotViewModelChannelControls on PlotViewModel {
 
   /// 设置通道 Y 轴缩放
   void setChannelYScale(int index, double scale) {
+    if (index >= PlotConfiguration.rawChannelCount &&
+        index < PlotConfiguration.rawChannelCount + mathChannels.length) {
+      final display =
+          mathChannels[index - PlotConfiguration.rawChannelCount].display;
+      final groupId = display.offsetBindingGroupId;
+      if (groupId != null) {
+        _setOffsetBindingGroupScale(groupId, scale);
+      } else {
+        display.yScale = scale;
+      }
+      _invalidateDisplayChannelCaches();
+      _markChannelConfigChanged();
+      Future.microtask(() => notifyListeners());
+      return;
+    }
     if (index < 0 || index >= channels.length) return;
     final groupId = channels[index].offsetBindingGroupId;
     if (groupId != null) {

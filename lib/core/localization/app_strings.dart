@@ -154,6 +154,7 @@ final class _PlotStrings {
   String get channel => '通道';
   String get offsetToggle => '偏置功能开关';
   String get offset => '偏置';
+  String get scale => '缩放';
   String get plotVisible => '绘图';
   String get hideAllChannels => '点击隐藏全部';
   String get showAllChannels => '点击显示全部';

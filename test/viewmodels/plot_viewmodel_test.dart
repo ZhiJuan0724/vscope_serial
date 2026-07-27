@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
@@ -2009,6 +2010,23 @@ void main() {
         vm.channels[0].offsetBindingGroupId,
         isNot(vm.channels[2].offsetBindingGroupId),
       );
+    });
+
+    test('数学通道通过统一缩放入口同步绑定偏置组', () {
+      vm.setChannelOffsetEnabled(0, true);
+      final mathDisplay = vm.mathChannels[0].display.copyWith(
+        offsetEnabled: true,
+      );
+      expect(vm.configureMathChannel(0, 'CH0 + 1', mathDisplay), isTrue);
+      vm.setOffsetBindingGroup(0, {PlotConfiguration.rawChannelCount});
+
+      vm.setChannelYScale(PlotConfiguration.rawChannelCount, 2.5);
+      vm.setChannelYOffset(PlotConfiguration.rawChannelCount, 18);
+
+      expect(vm.channels[0].yScale, 2.5);
+      expect(vm.mathChannels[0].display.yScale, 2.5);
+      expect(vm.channels[0].yOffset, 18);
+      expect(vm.mathChannels[0].display.yOffset, 18);
     });
 
     test('绑定偏置Y自适应按组内所有通道合并计算', () {

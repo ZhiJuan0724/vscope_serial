@@ -643,11 +643,22 @@ class _MathChannelEditDialog extends StatefulWidget {
 
 class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   late final TextEditingController _expressionController;
+  late final TextEditingController _lineWidthController;
+  late final TextEditingController _pointSizeController;
+  late final TextEditingController _offsetController;
+  late final TextEditingController _scaleController;
   late Color _selectedColor;
   late bool _showLine;
   late double _pointSize;
   late double _lineWidth;
+  late bool _offsetEnabled;
+  late double _yOffset;
+  late double _yScale;
   String? _errorText;
+  String? _lineWidthError;
+  String? _pointSizeError;
+  String? _offsetError;
+  String? _scaleError;
 
   @override
   void initState() {
@@ -664,11 +675,30 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
     _showLine = display.showLine;
     _pointSize = display.pointSize;
     _lineWidth = display.lineWidth;
+    _offsetEnabled = display.offsetEnabled;
+    _yOffset = display.yOffset;
+    _yScale = display.yScale;
+    _lineWidthController = TextEditingController(
+      text: _formatChannelNumber(_lineWidth),
+    );
+    _pointSizeController = TextEditingController(
+      text: _formatChannelNumber(_pointSize),
+    );
+    _offsetController = TextEditingController(
+      text: _formatChannelNumber(_yOffset),
+    );
+    _scaleController = TextEditingController(
+      text: _formatChannelNumber(_yScale),
+    );
   }
 
   @override
   void dispose() {
     _expressionController.dispose();
+    _lineWidthController.dispose();
+    _pointSizeController.dispose();
+    _offsetController.dispose();
+    _scaleController.dispose();
     super.dispose();
   }
 
@@ -752,61 +782,31 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
                   ],
                 ),
                 if (_showLine)
-                  Row(
-                    children: [
-                      Text(
-                        AppStrings.plot.lineWidth,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Slider(
-                          value: _lineWidth,
-                          min: 0.5,
-                          max: 8,
-                          divisions: 15,
-                          label: _lineWidth.toStringAsFixed(1),
-                          onChanged:
-                              (value) => setState(() => _lineWidth = value),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 34,
-                        child: Text(
-                          _lineWidth.toStringAsFixed(1),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
+                  _buildChannelNumberField(
+                    key: const ValueKey('math-channel-line-width-field'),
+                    label: AppStrings.plot.lineWidth,
+                    controller: _lineWidthController,
+                    errorText: _lineWidthError,
+                    hintText: '0.5 ~ 8',
                   ),
-                Row(
-                  children: [
-                    Text(
-                      AppStrings.plot.pointRadius,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Slider(
-                        value: _pointSize,
-                        min: 0.5,
-                        max: 12,
-                        divisions: 23,
-                        label: _pointSize.toStringAsFixed(1),
-                        onChanged:
-                            (value) => setState(() => _pointSize = value),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 34,
-                      child: Text(
-                        _pointSize.toStringAsFixed(1),
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 8),
+                _buildChannelNumberField(
+                  key: const ValueKey('math-channel-point-radius-field'),
+                  label: AppStrings.plot.pointRadius,
+                  controller: _pointSizeController,
+                  errorText: _pointSizeError,
+                  hintText: '0.5 ~ 12',
+                ),
+                const SizedBox(height: 8),
+                _buildOffsetEditor(
+                  offsetEnabled: _offsetEnabled,
+                  onOffsetEnabledChanged:
+                      (value) => setState(() => _offsetEnabled = value),
+                  offsetController: _offsetController,
+                  scaleController: _scaleController,
+                  offsetError: _offsetError,
+                  scaleError: _scaleError,
+                  keyPrefix: 'math-channel',
                 ),
               ],
             ),
@@ -921,23 +921,150 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   void _save() {
     final expression = _expressionController.text.trim();
     final error = widget.vm.validateMathExpression(expression);
-    if (error != null) {
-      setState(() => _errorText = error);
+    final lineWidth = double.tryParse(_lineWidthController.text);
+    final pointSize = double.tryParse(_pointSizeController.text);
+    final yOffset = double.tryParse(_offsetController.text);
+    final yScale = double.tryParse(_scaleController.text);
+    final lineWidthValid =
+        !_showLine ||
+        (lineWidth != null &&
+            lineWidth.isFinite &&
+            lineWidth >= 0.5 &&
+            lineWidth <= 8);
+    final pointSizeValid =
+        pointSize != null &&
+        pointSize.isFinite &&
+        pointSize >= 0.5 &&
+        pointSize <= 12;
+    final offsetValid =
+        !_offsetEnabled || (yOffset != null && yOffset.isFinite);
+    final scaleValid =
+        !_offsetEnabled ||
+        (yScale != null &&
+            yScale.isFinite &&
+            yScale >= 0.001 &&
+            yScale <= 1000);
+    if (error != null ||
+        !lineWidthValid ||
+        !pointSizeValid ||
+        !offsetValid ||
+        !scaleValid) {
+      setState(() {
+        _errorText = error;
+        _lineWidthError = lineWidthValid ? null : '范围 0.5 ~ 8';
+        _pointSizeError = pointSizeValid ? null : '范围 0.5 ~ 12';
+        _offsetError = offsetValid ? null : '请输入有效数值';
+        _scaleError = scaleValid ? null : '范围 0.001 ~ 1000';
+      });
       return;
     }
 
+    _lineWidth = lineWidth ?? _lineWidth;
+    _pointSize = pointSize;
+    _yOffset = _offsetEnabled ? yOffset! : 0;
+    _yScale = _offsetEnabled ? (yScale ?? _yScale) : 1;
     final display = widget.channel.display.copyWith(
       color: _selectedColor,
       showLine: _showLine,
       pointSize: _pointSize,
       lineWidth: _lineWidth,
-      offsetEnabled: widget.channel.display.offsetEnabled,
-      yOffset: widget.channel.display.yOffset,
-      yScale: widget.channel.display.yScale,
+      offsetEnabled: _offsetEnabled,
+      yOffset: _yOffset,
+      yScale: _yScale,
     );
     widget.vm.configureMathChannel(widget.channel.index, expression, display);
+    if (_offsetEnabled) {
+      final displayIndex =
+          PlotConfiguration.rawChannelCount + widget.channel.index;
+      widget.vm.setChannelYOffset(displayIndex, _yOffset);
+      widget.vm.setChannelYScale(displayIndex, _yScale);
+    }
     Navigator.of(context).pop();
   }
+}
+
+String _formatChannelNumber(double value) {
+  if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+  return value.toString();
+}
+
+Widget _buildChannelNumberField({
+  required Key key,
+  required String label,
+  required TextEditingController controller,
+  required String? errorText,
+  String? hintText,
+}) {
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 9),
+        child: Text(label, style: const TextStyle(fontSize: 13)),
+      ),
+      const Spacer(),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: TextField(
+          key: key,
+          controller: controller,
+          keyboardType: const TextInputType.numberWithOptions(
+            decimal: true,
+            signed: true,
+          ),
+          decoration: secondaryDialogFieldDecoration(
+            hintText: hintText,
+          ).copyWith(errorText: errorText),
+        ),
+      ),
+    ],
+  );
+}
+
+Widget _buildOffsetEditor({
+  required bool offsetEnabled,
+  required ValueChanged<bool> onOffsetEnabledChanged,
+  required TextEditingController offsetController,
+  required TextEditingController scaleController,
+  required String? offsetError,
+  required String? scaleError,
+  required String keyPrefix,
+}) {
+  return Column(
+    children: [
+      Row(
+        children: [
+          Text(
+            AppStrings.plot.offsetToggle,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const Spacer(),
+          Switch(
+            key: ValueKey('$keyPrefix-offset-toggle'),
+            value: offsetEnabled,
+            onChanged: onOffsetEnabledChanged,
+          ),
+        ],
+      ),
+      if (offsetEnabled) ...[
+        const SizedBox(height: 4),
+        _buildChannelNumberField(
+          key: ValueKey('$keyPrefix-offset-field'),
+          label: AppStrings.plot.offset,
+          controller: offsetController,
+          errorText: offsetError,
+        ),
+        const SizedBox(height: 8),
+        _buildChannelNumberField(
+          key: ValueKey('$keyPrefix-scale-field'),
+          label: AppStrings.plot.scale,
+          controller: scaleController,
+          errorText: scaleError,
+          hintText: '0.001 ~ 1000',
+        ),
+      ],
+    ],
+  );
 }
 
 List<Color> _channelPresetColors(String background) =>
@@ -990,8 +1117,19 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   late bool _showLine;
   late double _pointSize;
   late double _lineWidth;
+  late bool _offsetEnabled;
+  late double _yOffset;
+  late double _yScale;
   late DataType _zobowDataType;
   late final TextEditingController _aliasController;
+  late final TextEditingController _lineWidthController;
+  late final TextEditingController _pointSizeController;
+  late final TextEditingController _offsetController;
+  late final TextEditingController _scaleController;
+  String? _lineWidthError;
+  String? _pointSizeError;
+  String? _offsetError;
+  String? _scaleError;
   bool _isClosing = false;
 
   @override
@@ -1005,6 +1143,9 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     _showLine = widget.ch.showLine;
     _pointSize = widget.ch.pointSize;
     _lineWidth = widget.ch.lineWidth;
+    _offsetEnabled = widget.ch.offsetEnabled;
+    _yOffset = widget.ch.yOffset;
+    _yScale = widget.ch.yScale;
     final parserConfig = widget.vm.parserConfig;
     if (widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < parserConfig.zobowChannelCount) {
@@ -1018,11 +1159,27 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       _zobowDataType = widget.ch.dataType;
     }
     _aliasController = TextEditingController(text: _alias);
+    _lineWidthController = TextEditingController(
+      text: _formatChannelNumber(_lineWidth),
+    );
+    _pointSizeController = TextEditingController(
+      text: _formatChannelNumber(_pointSize),
+    );
+    _offsetController = TextEditingController(
+      text: _formatChannelNumber(_yOffset),
+    );
+    _scaleController = TextEditingController(
+      text: _formatChannelNumber(_yScale),
+    );
   }
 
   @override
   void dispose() {
     _aliasController.dispose();
+    _lineWidthController.dispose();
+    _pointSizeController.dispose();
+    _offsetController.dispose();
+    _scaleController.dispose();
     super.dispose();
   }
 
@@ -1094,63 +1251,32 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                 ),
                 if (_showLine) ...[
                   const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Text(
-                        AppStrings.plot.lineWidth,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Slider(
-                          value: _lineWidth,
-                          min: 0.5,
-                          max: 8.0,
-                          divisions: 15,
-                          label: _lineWidth.toStringAsFixed(1),
-                          onChanged:
-                              (value) => setState(() => _lineWidth = value),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 34,
-                        child: Text(
-                          _lineWidth.toStringAsFixed(1),
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
+                  _buildChannelNumberField(
+                    key: const ValueKey('channel-line-width-field'),
+                    label: AppStrings.plot.lineWidth,
+                    controller: _lineWidthController,
+                    errorText: _lineWidthError,
+                    hintText: '0.5 ~ 8',
                   ),
                 ],
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Text(
-                      AppStrings.plot.pointRadius,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Slider(
-                        value: _pointSize,
-                        min: 0.5,
-                        max: 12.0,
-                        divisions: 23,
-                        label: _pointSize.toStringAsFixed(1),
-                        onChanged:
-                            (value) => setState(() => _pointSize = value),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 34,
-                      child: Text(
-                        _pointSize.toStringAsFixed(1),
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 8),
+                _buildChannelNumberField(
+                  key: const ValueKey('channel-point-radius-field'),
+                  label: AppStrings.plot.pointRadius,
+                  controller: _pointSizeController,
+                  errorText: _pointSizeError,
+                  hintText: '0.5 ~ 12',
+                ),
+                const SizedBox(height: 8),
+                _buildOffsetEditor(
+                  offsetEnabled: _offsetEnabled,
+                  onOffsetEnabledChanged:
+                      (value) => setState(() => _offsetEnabled = value),
+                  offsetController: _offsetController,
+                  scaleController: _scaleController,
+                  offsetError: _offsetError,
+                  scaleError: _scaleError,
+                  keyPrefix: 'channel',
                 ),
                 // 众邦电控模式下显示数据类型选择
                 if (widget.vm.parserType == ParserType.zobow &&
@@ -1287,18 +1413,71 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
       _showLine = true;
       _pointSize = 3.0;
       _lineWidth = 1.5;
+      _offsetEnabled = false;
+      _yOffset = 0;
+      _yScale = 1;
+      _lineWidthController.text = _formatChannelNumber(_lineWidth);
+      _pointSizeController.text = _formatChannelNumber(_pointSize);
+      _offsetController.text = _formatChannelNumber(_yOffset);
+      _scaleController.text = _formatChannelNumber(_yScale);
+      _lineWidthError = null;
+      _pointSizeError = null;
+      _offsetError = null;
+      _scaleError = null;
       _zobowDataType = DataType.uint16;
     });
   }
 
   Future<void> _saveChannel() async {
     if (_isClosing) return;
+    final lineWidth = double.tryParse(_lineWidthController.text);
+    final pointSize = double.tryParse(_pointSizeController.text);
+    final yOffset = double.tryParse(_offsetController.text);
+    final yScale = double.tryParse(_scaleController.text);
+    final lineWidthValid =
+        !_showLine ||
+        (lineWidth != null &&
+            lineWidth.isFinite &&
+            lineWidth >= 0.5 &&
+            lineWidth <= 8);
+    final pointSizeValid =
+        pointSize != null &&
+        pointSize.isFinite &&
+        pointSize >= 0.5 &&
+        pointSize <= 12;
+    final offsetValid =
+        !_offsetEnabled || (yOffset != null && yOffset.isFinite);
+    final scaleValid =
+        !_offsetEnabled ||
+        (yScale != null &&
+            yScale.isFinite &&
+            yScale >= 0.001 &&
+            yScale <= 1000);
+    if (!lineWidthValid || !pointSizeValid || !offsetValid || !scaleValid) {
+      setState(() {
+        _lineWidthError = lineWidthValid ? null : '范围 0.5 ~ 8';
+        _pointSizeError = pointSizeValid ? null : '范围 0.5 ~ 12';
+        _offsetError = offsetValid ? null : '请输入有效数值';
+        _scaleError = scaleValid ? null : '范围 0.001 ~ 1000';
+      });
+      return;
+    }
+
+    _lineWidth = lineWidth ?? _lineWidth;
+    _pointSize = pointSize;
+    _yOffset = _offsetEnabled ? yOffset! : 0;
+    _yScale = _offsetEnabled ? (yScale ?? _yScale) : 1;
     _isClosing = true;
     widget.vm.setChannelColor(widget.ch.index, _selectedColor);
     widget.vm.setChannelAlias(widget.ch.index, _aliasController.text.trim());
     widget.vm.setChannelShowLine(widget.ch.index, _showLine);
     widget.vm.setChannelLineWidth(widget.ch.index, _lineWidth);
     widget.vm.setChannelPointSize(widget.ch.index, _pointSize);
+    widget.vm.setChannelOffsetEnabled(widget.ch.index, _offsetEnabled);
+    if (_offsetEnabled) {
+      widget.vm.setChannelYOffset(widget.ch.index, _yOffset);
+      widget.vm.setChannelYScale(widget.ch.index, _yScale);
+    }
 
     if (widget.vm.parserType == ParserType.zobow &&
         widget.ch.index < widget.vm.parserConfig.zobowChannelCount &&
