@@ -150,6 +150,34 @@ void main() {
       }
     });
 
+    test('测量线颜色和不透明度变化只要求覆盖层重绘', () {
+      final channels = [ChannelConfig(index: 0, color: Colors.red)];
+
+      for (final layer in PlotPaintLayer.values) {
+        final oldPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          xMeasurementLine1Color: Colors.cyan,
+          xMeasurementLine1Opacity: 1,
+        );
+        final newPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          xMeasurementLine1Color: Colors.purple,
+          xMeasurementLine1Opacity: 0.4,
+        );
+
+        expect(
+          newPainter.shouldRepaint(oldPainter),
+          layer == PlotPaintLayer.overlay,
+        );
+      }
+    });
+
     test('动态偏置轴宽度变化会触发重绘', () {
       final oldViewport = PlotViewport()..setOffsetAxisColumnWidths([42]);
       final newViewport = PlotViewport()..setOffsetAxisColumnWidths([96]);

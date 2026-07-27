@@ -114,6 +114,12 @@ final class _PlotStrings {
   String get measureXxTooltip => 'Delta X 测量';
   String get measureYy => 'Y测量';
   String get measureYyTooltip => 'Delta Y 测量';
+  String get measureXSettings => 'Delta X 设置';
+  String get measureYSettings => 'Delta Y 设置';
+  String get measurementLineColor => '线条颜色';
+  String get measurementLineOpacity => '不透明度';
+  String get measurementSnap => '吸附到波形';
+  String get measurementSnapHelp => '拖动 Y1/Y2 时吸附到当前窗口内最近的可见波形点';
   String get stats => '统计';
   String get statsTooltip => '统计测量（Max/Min/Avg）';
   String get statsRange => '范围';

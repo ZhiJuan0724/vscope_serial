@@ -361,6 +361,15 @@ class PlotViewModel extends BaseViewModel {
   bool _snapHighlightEnabled = true;
   double _snapHighlightDiameter = 8.0;
   String _snapHighlightColorMode = 'cursor';
+  Color? _xMeasurementLine1Color;
+  Color? _xMeasurementLine2Color;
+  Color? _yMeasurementLine1Color;
+  Color? _yMeasurementLine2Color;
+  double _xMeasurementLine1Opacity = 1.0;
+  double _xMeasurementLine2Opacity = 1.0;
+  double _yMeasurementLine1Opacity = 1.0;
+  double _yMeasurementLine2Opacity = 1.0;
+  bool _yMeasurementSnapEnabled = true;
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
@@ -643,6 +652,23 @@ class PlotViewModel extends BaseViewModel {
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
+    _xMeasurementLine1Color = _colorFromSetting(
+      settings.xMeasurementLine1Color,
+    );
+    _xMeasurementLine2Color = _colorFromSetting(
+      settings.xMeasurementLine2Color,
+    );
+    _yMeasurementLine1Color = _colorFromSetting(
+      settings.yMeasurementLine1Color,
+    );
+    _yMeasurementLine2Color = _colorFromSetting(
+      settings.yMeasurementLine2Color,
+    );
+    _xMeasurementLine1Opacity = settings.xMeasurementLine1Opacity;
+    _xMeasurementLine2Opacity = settings.xMeasurementLine2Opacity;
+    _yMeasurementLine1Opacity = settings.yMeasurementLine1Opacity;
+    _yMeasurementLine2Opacity = settings.yMeasurementLine2Opacity;
+    _yMeasurementSnapEnabled = settings.yMeasurementSnapEnabled;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
     _triggerToolbarEnabled = settings.triggerToolbarEnabled;
     _previewToolbarEnabled = settings.previewToolbarEnabled;
@@ -740,6 +766,15 @@ class PlotViewModel extends BaseViewModel {
     settings.snapHighlightEnabled = _snapHighlightEnabled;
     settings.snapHighlightDiameter = _snapHighlightDiameter;
     settings.snapHighlightColorMode = _snapHighlightColorMode;
+    settings.xMeasurementLine1Color = _xMeasurementLine1Color?.toARGB32();
+    settings.xMeasurementLine2Color = _xMeasurementLine2Color?.toARGB32();
+    settings.yMeasurementLine1Color = _yMeasurementLine1Color?.toARGB32();
+    settings.yMeasurementLine2Color = _yMeasurementLine2Color?.toARGB32();
+    settings.xMeasurementLine1Opacity = _xMeasurementLine1Opacity;
+    settings.xMeasurementLine2Opacity = _xMeasurementLine2Opacity;
+    settings.yMeasurementLine1Opacity = _yMeasurementLine1Opacity;
+    settings.yMeasurementLine2Opacity = _yMeasurementLine2Opacity;
+    settings.yMeasurementSnapEnabled = _yMeasurementSnapEnabled;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.triggerToolbarEnabled = _triggerToolbarEnabled;
     settings.previewToolbarEnabled = _previewToolbarEnabled;
@@ -995,6 +1030,28 @@ class PlotViewModel extends BaseViewModel {
   bool get vCursorEnabled => _vCursorEnabled;
   bool get xMeasurementEnabled => _xMeasurementEnabled;
   bool get yMeasurementEnabled => _yMeasurementEnabled;
+  Color? _colorFromSetting(int? value) {
+    if (value == null || value < 0 || value > 0xFFFFFFFF) return null;
+    return Color(value);
+  }
+
+  Color get _defaultMeasurementPrimary =>
+      _plotBackground == 'light' ? const Color(0xFF0369A1) : Colors.cyan;
+  Color get _defaultMeasurementSecondary =>
+      _plotBackground == 'light' ? const Color(0xFFB45309) : Colors.yellow;
+  Color get xMeasurementLine1Color =>
+      _xMeasurementLine1Color ?? _defaultMeasurementPrimary;
+  Color get xMeasurementLine2Color =>
+      _xMeasurementLine2Color ?? _defaultMeasurementSecondary;
+  Color get yMeasurementLine1Color =>
+      _yMeasurementLine1Color ?? _defaultMeasurementPrimary;
+  Color get yMeasurementLine2Color =>
+      _yMeasurementLine2Color ?? _defaultMeasurementSecondary;
+  double get xMeasurementLine1Opacity => _xMeasurementLine1Opacity;
+  double get xMeasurementLine2Opacity => _xMeasurementLine2Opacity;
+  double get yMeasurementLine1Opacity => _yMeasurementLine1Opacity;
+  double get yMeasurementLine2Opacity => _yMeasurementLine2Opacity;
+  bool get yMeasurementSnapEnabled => _yMeasurementSnapEnabled;
   bool get statsEnabled => _statsEnabled;
   bool get statsRangeEnabled => _statsRangeEnabled;
   bool get statsToolbarEnabled => _statsToolbarEnabled;
@@ -2941,16 +2998,28 @@ class PlotViewModel extends BaseViewModel {
 
   void _refreshSnapHighlightColors() {
     if (_xCursor1 != null) {
-      _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+      _xCursor1SnapHighlights = _snapHighlightsForX(
+        _xCursor1!,
+        xMeasurementLine1Color,
+      );
     }
     if (_xCursor2 != null) {
-      _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+      _xCursor2SnapHighlights = _snapHighlightsForX(
+        _xCursor2!,
+        xMeasurementLine2Color,
+      );
     }
-    if (_yCursor1 != null) {
-      _yCursor1SnapHighlights = _snapHighlightForY(_yCursor1!, Colors.cyan);
+    if (_yMeasurementSnapEnabled && _yCursor1 != null) {
+      _yCursor1SnapHighlights = _snapHighlightForY(
+        _yCursor1!,
+        yMeasurementLine1Color,
+      );
     }
-    if (_yCursor2 != null) {
-      _yCursor2SnapHighlights = _snapHighlightForY(_yCursor2!, Colors.yellow);
+    if (_yMeasurementSnapEnabled && _yCursor2 != null) {
+      _yCursor2SnapHighlights = _snapHighlightForY(
+        _yCursor2!,
+        yMeasurementLine2Color,
+      );
     }
   }
 
@@ -2979,7 +3048,10 @@ class PlotViewModel extends BaseViewModel {
 
   void setXCursor1(double x) {
     _xCursor1 = _snapXToNearestVisiblePoint(x);
-    _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+    _xCursor1SnapHighlights = _snapHighlightsForX(
+      _xCursor1!,
+      xMeasurementLine1Color,
+    );
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -2987,7 +3059,10 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 X2 光标位置（拖动时使用）
   void setXCursor2(double x) {
     _xCursor2 = _snapXToNearestVisiblePoint(x);
-    _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+    _xCursor2SnapHighlights = _snapHighlightsForX(
+      _xCursor2!,
+      xMeasurementLine2Color,
+    );
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -2995,7 +3070,10 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 Y1 光标位置（拖动时使用）
   void setYCursor1(double y) {
     _yCursor1 = y;
-    _yCursor1SnapHighlights = _snapHighlightForY(y, Colors.cyan);
+    _yCursor1SnapHighlights =
+        _yMeasurementSnapEnabled
+            ? _snapHighlightForY(y, yMeasurementLine1Color)
+            : const [];
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -3003,7 +3081,10 @@ class PlotViewModel extends BaseViewModel {
   /// 设置 Y2 光标位置（拖动时使用）
   void setYCursor2(double y) {
     _yCursor2 = y;
-    _yCursor2SnapHighlights = _snapHighlightForY(y, Colors.yellow);
+    _yCursor2SnapHighlights =
+        _yMeasurementSnapEnabled
+            ? _snapHighlightForY(y, yMeasurementLine2Color)
+            : const [];
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }

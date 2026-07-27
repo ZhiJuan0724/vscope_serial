@@ -86,6 +86,18 @@ class AppSettings {
   bool snapHighlightEnabled = true;
   double snapHighlightDiameter = 8.0;
   String snapHighlightColorMode = 'cursor';
+
+  /// Delta X/Y 测量线样式。颜色为空时跟随当前绘图背景默认配色。
+  int? xMeasurementLine1Color;
+  int? xMeasurementLine2Color;
+  int? yMeasurementLine1Color;
+  int? yMeasurementLine2Color;
+  double xMeasurementLine1Opacity = 1.0;
+  double xMeasurementLine2Opacity = 1.0;
+  double yMeasurementLine1Opacity = 1.0;
+  double yMeasurementLine2Opacity = 1.0;
+  bool yMeasurementSnapEnabled = true;
+
   bool statsToolbarEnabled = false;
   bool triggerToolbarEnabled = false;
   bool previewToolbarEnabled = false;
@@ -314,6 +326,15 @@ class AppSettings {
     snapHighlightEnabled = true;
     snapHighlightDiameter = 8.0;
     snapHighlightColorMode = 'cursor';
+    xMeasurementLine1Color = null;
+    xMeasurementLine2Color = null;
+    yMeasurementLine1Color = null;
+    yMeasurementLine2Color = null;
+    xMeasurementLine1Opacity = 1.0;
+    xMeasurementLine2Opacity = 1.0;
+    yMeasurementLine1Opacity = 1.0;
+    yMeasurementLine2Opacity = 1.0;
+    yMeasurementSnapEnabled = true;
     statsToolbarEnabled = false;
     triggerToolbarEnabled = false;
     previewToolbarEnabled = false;
@@ -468,6 +489,36 @@ class AppSettings {
       final snapColorMode = json['snapHighlightColorMode'] as String?;
       snapHighlightColorMode =
           snapColorMode == 'channel' ? 'channel' : 'cursor';
+      xMeasurementLine1Color =
+          (json['xMeasurementLine1Color'] as num?)?.toInt();
+      xMeasurementLine2Color =
+          (json['xMeasurementLine2Color'] as num?)?.toInt();
+      yMeasurementLine1Color =
+          (json['yMeasurementLine1Color'] as num?)?.toInt();
+      yMeasurementLine2Color =
+          (json['yMeasurementLine2Color'] as num?)?.toInt();
+      xMeasurementLine1Opacity =
+          ((json['xMeasurementLine1Opacity'] as num?)?.toDouble() ?? 1.0).clamp(
+            0.0,
+            1.0,
+          );
+      xMeasurementLine2Opacity =
+          ((json['xMeasurementLine2Opacity'] as num?)?.toDouble() ?? 1.0).clamp(
+            0.0,
+            1.0,
+          );
+      yMeasurementLine1Opacity =
+          ((json['yMeasurementLine1Opacity'] as num?)?.toDouble() ?? 1.0).clamp(
+            0.0,
+            1.0,
+          );
+      yMeasurementLine2Opacity =
+          ((json['yMeasurementLine2Opacity'] as num?)?.toDouble() ?? 1.0).clamp(
+            0.0,
+            1.0,
+          );
+      yMeasurementSnapEnabled =
+          json['yMeasurementSnapEnabled'] as bool? ?? true;
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       triggerToolbarEnabled = json['triggerToolbarEnabled'] as bool? ?? false;
       previewToolbarEnabled = json['previewToolbarEnabled'] as bool? ?? false;
@@ -668,6 +719,7 @@ class AppSettings {
       'plotFontBold',
       'keepPlotOnRestart',
       'snapHighlightEnabled',
+      'yMeasurementSnapEnabled',
       'statsToolbarEnabled',
       'triggerToolbarEnabled',
       'previewToolbarEnabled',
@@ -698,6 +750,14 @@ class AppSettings {
       'plotHistoryMemoryLimitGiB',
       'discardInitialPacketCount',
       'snapHighlightDiameter',
+      'xMeasurementLine1Color',
+      'xMeasurementLine2Color',
+      'yMeasurementLine1Color',
+      'yMeasurementLine2Color',
+      'xMeasurementLine1Opacity',
+      'xMeasurementLine2Opacity',
+      'yMeasurementLine1Opacity',
+      'yMeasurementLine2Opacity',
       'floatingPanelOpacity',
       'plotLegendPanelRight',
       'plotLegendPanelTop',
@@ -813,6 +873,15 @@ class AppSettings {
     'snapHighlightEnabled': snapHighlightEnabled,
     'snapHighlightDiameter': snapHighlightDiameter,
     'snapHighlightColorMode': snapHighlightColorMode,
+    'xMeasurementLine1Color': xMeasurementLine1Color,
+    'xMeasurementLine2Color': xMeasurementLine2Color,
+    'yMeasurementLine1Color': yMeasurementLine1Color,
+    'yMeasurementLine2Color': yMeasurementLine2Color,
+    'xMeasurementLine1Opacity': xMeasurementLine1Opacity,
+    'xMeasurementLine2Opacity': xMeasurementLine2Opacity,
+    'yMeasurementLine1Opacity': yMeasurementLine1Opacity,
+    'yMeasurementLine2Opacity': yMeasurementLine2Opacity,
+    'yMeasurementSnapEnabled': yMeasurementSnapEnabled,
     'statsToolbarEnabled': statsToolbarEnabled,
     'triggerToolbarEnabled': triggerToolbarEnabled,
     'previewToolbarEnabled': previewToolbarEnabled,

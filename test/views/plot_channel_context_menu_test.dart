@@ -31,6 +31,15 @@ void main() {
     settings.rProtocolLooseChannelSettings = false;
     settings.plotLodQuality = 'performance';
     settings.plotHistoryMemoryLimitGiB = 2;
+    settings.xMeasurementLine1Color = null;
+    settings.xMeasurementLine2Color = null;
+    settings.yMeasurementLine1Color = null;
+    settings.yMeasurementLine2Color = null;
+    settings.xMeasurementLine1Opacity = 1;
+    settings.xMeasurementLine2Opacity = 1;
+    settings.yMeasurementLine1Opacity = 1;
+    settings.yMeasurementLine2Opacity = 1;
+    settings.yMeasurementSnapEnabled = true;
     settings.mathChannels = MathChannelConfig.createDefaults();
     settings.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
@@ -127,6 +136,57 @@ void main() {
     await tester.pump();
     expect(vm.plotRetentionLimitGiB, 8);
     expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
+  testWidgets('Delta X/Y 按钮右键可配置线条且 Y 提供吸附开关', (tester) async {
+    final vm = PlotViewModel(serialService);
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('plot-measure-x-button')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.measureXSettings), findsOneWidget);
+    expect(find.byKey(const ValueKey('x-measure-line1-color')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('x-measure-line2-opacity')),
+      findsOneWidget,
+    );
+    final x1Opacity = find.byKey(const ValueKey('x-measure-line1-opacity'));
+    expect(tester.getSize(x1Opacity).width, kSecondaryDialogFieldWidth);
+    final opacityDecorator = tester.widget<InputDecorator>(
+      find.descendant(of: x1Opacity, matching: find.byType(InputDecorator)),
+    );
+    expect(opacityDecorator.decoration.border, isA<OutlineInputBorder>());
+    await tester.enterText(x1Opacity, '35');
+    await tester.tap(find.byKey(const ValueKey('x-measure-settings-save')));
+    await tester.pumpAndSettle();
+    expect(vm.xMeasurementLine1Opacity, 0.35);
+
+    await tester.tap(
+      find.byKey(const ValueKey('plot-measure-y-button')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.measureYSettings), findsOneWidget);
+    final snapToggle = find.byKey(const ValueKey('y-measure-snap-toggle'));
+    expect(snapToggle, findsOneWidget);
+    expect(vm.yMeasurementSnapEnabled, isTrue);
+    await tester.tap(snapToggle);
+    await tester.tap(find.byKey(const ValueKey('y-measure-settings-save')));
+    await tester.pumpAndSettle();
+    expect(vm.yMeasurementSnapEnabled, isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();

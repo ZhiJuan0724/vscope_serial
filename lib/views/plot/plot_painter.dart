@@ -74,6 +74,14 @@ class PlotLayerPainter extends CustomPainter {
   double? get xCursor2 => snapshot.xCursor2;
   double? get yCursor1 => snapshot.yCursor1;
   double? get yCursor2 => snapshot.yCursor2;
+  Color? get xMeasurementLine1Color => snapshot.xMeasurementLine1Color;
+  Color? get xMeasurementLine2Color => snapshot.xMeasurementLine2Color;
+  Color? get yMeasurementLine1Color => snapshot.yMeasurementLine1Color;
+  Color? get yMeasurementLine2Color => snapshot.yMeasurementLine2Color;
+  double get xMeasurementLine1Opacity => snapshot.xMeasurementLine1Opacity;
+  double get xMeasurementLine2Opacity => snapshot.xMeasurementLine2Opacity;
+  double get yMeasurementLine1Opacity => snapshot.yMeasurementLine1Opacity;
+  double get yMeasurementLine2Opacity => snapshot.yMeasurementLine2Opacity;
   bool get statsEnabled => snapshot.statsEnabled;
   bool get statsRangeEnabled => snapshot.statsRangeEnabled;
   double? get statsX1 => snapshot.statsX1;
@@ -107,6 +115,14 @@ class PlotLayerPainter extends CustomPainter {
     double? xCursor2,
     double? yCursor1,
     double? yCursor2,
+    Color? xMeasurementLine1Color,
+    Color? xMeasurementLine2Color,
+    Color? yMeasurementLine1Color,
+    Color? yMeasurementLine2Color,
+    double xMeasurementLine1Opacity = 1,
+    double xMeasurementLine2Opacity = 1,
+    double yMeasurementLine1Opacity = 1,
+    double yMeasurementLine2Opacity = 1,
     bool statsEnabled = false,
     bool statsRangeEnabled = false,
     double? statsX1,
@@ -138,6 +154,14 @@ class PlotLayerPainter extends CustomPainter {
          xCursor2: xCursor2,
          yCursor1: yCursor1,
          yCursor2: yCursor2,
+         xMeasurementLine1Color: xMeasurementLine1Color,
+         xMeasurementLine2Color: xMeasurementLine2Color,
+         yMeasurementLine1Color: yMeasurementLine1Color,
+         yMeasurementLine2Color: yMeasurementLine2Color,
+         xMeasurementLine1Opacity: xMeasurementLine1Opacity,
+         xMeasurementLine2Opacity: xMeasurementLine2Opacity,
+         yMeasurementLine1Opacity: yMeasurementLine1Opacity,
+         yMeasurementLine2Opacity: yMeasurementLine2Opacity,
          statsEnabled: statsEnabled,
          statsRangeEnabled: statsRangeEnabled,
          statsX1: statsX1,
@@ -1916,14 +1940,18 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (x1 == null && x2 == null) return;
 
+    final color1 = (xMeasurementLine1Color ?? _palette.measurementPrimary)
+        .withValues(alpha: xMeasurementLine1Opacity.clamp(0.0, 1.0));
+    final color2 = (xMeasurementLine2Color ?? _palette.measurementSecondary)
+        .withValues(alpha: xMeasurementLine2Opacity.clamp(0.0, 1.0));
     final line1Paint =
         Paint()
-          ..color = _palette.measurementPrimary
+          ..color = color1
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = _palette.measurementSecondary
+          ..color = color2
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1942,7 +1970,7 @@ class PlotLayerPainter extends CustomPainter {
           'X1',
           sx1,
           PlotViewport().marginTop + 12,
-          _palette.measurementPrimary,
+          color1,
         );
       }
     }
@@ -1962,7 +1990,7 @@ class PlotLayerPainter extends CustomPainter {
           'X2',
           sx2,
           PlotViewport().marginTop + 12,
-          _palette.measurementSecondary,
+          color2,
         );
       }
     }
@@ -1978,14 +2006,18 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (y1 == null && y2 == null) return;
 
+    final color1 = (yMeasurementLine1Color ?? _palette.measurementPrimary)
+        .withValues(alpha: yMeasurementLine1Opacity.clamp(0.0, 1.0));
+    final color2 = (yMeasurementLine2Color ?? _palette.measurementSecondary)
+        .withValues(alpha: yMeasurementLine2Opacity.clamp(0.0, 1.0));
     final line1Paint =
         Paint()
-          ..color = _palette.measurementPrimary
+          ..color = color1
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = _palette.measurementSecondary
+          ..color = color2
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -2004,7 +2036,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y1',
           viewport.marginLeft - 18,
           sy1,
-          _palette.measurementPrimary,
+          color1,
         );
       }
     }
@@ -2024,7 +2056,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y2',
           viewport.marginLeft - 18,
           sy2,
-          _palette.measurementSecondary,
+          color2,
         );
       }
     }
@@ -2292,6 +2324,14 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.backgroundStyle != backgroundStyle ||
             oldDelegate.floatingPanelOpacity != floatingPanelOpacity ||
+            oldDelegate.xMeasurementLine1Color != xMeasurementLine1Color ||
+            oldDelegate.xMeasurementLine2Color != xMeasurementLine2Color ||
+            oldDelegate.yMeasurementLine1Color != yMeasurementLine1Color ||
+            oldDelegate.yMeasurementLine2Color != yMeasurementLine2Color ||
+            oldDelegate.xMeasurementLine1Opacity != xMeasurementLine1Opacity ||
+            oldDelegate.xMeasurementLine2Opacity != xMeasurementLine2Opacity ||
+            oldDelegate.yMeasurementLine1Opacity != yMeasurementLine1Opacity ||
+            oldDelegate.yMeasurementLine2Opacity != yMeasurementLine2Opacity ||
             oldDelegate.plotFontSizeDelta != plotFontSizeDelta ||
             oldDelegate.plotFontBold != plotFontBold,
     };
