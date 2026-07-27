@@ -30,7 +30,13 @@ def _channel_names(channel_count: int) -> List[str]:
     return [f"Ch{i}" for i in range(channel_count)]
 
 
-def _value_for(mode: str, point_index: int, channel_index: int, amplitude: float) -> float:
+def _value_for(
+    mode: str,
+    point_index: int,
+    point_count: int,
+    channel_index: int,
+    amplitude: float,
+) -> float:
     if mode == "sine":
         phase = channel_index * math.pi / max(1, channel_index + 2)
         baseline = (channel_index + 1) * amplitude * 1.8
@@ -43,6 +49,27 @@ def _value_for(mode: str, point_index: int, channel_index: int, amplitude: float
         return float((point_index * (channel_index + 1)) % period)
     if mode == "constant":
         return float((channel_index + 1) * amplitude)
+    if mode == "impulse":
+        return amplitude if point_index == point_count // 2 else 0.0
+    if mode == "burst":
+        burst_length = 8
+        for burst_number in range(1, 6):
+            burst_start = point_count * burst_number // 6
+            if burst_start <= point_index < burst_start + burst_length:
+                return amplitude
+        return 0.0
+    if mode == "burst-shoulders":
+        burst_length = 8
+        for burst_number in range(1, 6):
+            burst_start = point_count * burst_number // 6
+            relative_index = point_index - burst_start
+            if relative_index in (-2, burst_length + 1):
+                return 100.0
+            if relative_index in (-1, burst_length):
+                return 500.0
+            if 0 <= relative_index < burst_length:
+                return amplitude
+        return 0.0
     raise ValueError(f"unsupported mode: {mode}")
 
 
@@ -65,6 +92,7 @@ def _write_payload(
             row_values[channel_index + 1] = _value_for(
                 mode,
                 point_index,
+                point_count,
                 channel_index,
                 amplitude,
             )
@@ -153,7 +181,15 @@ def main() -> int:
     parser.add_argument(
         "--mode",
         "-m",
-        choices=["sine", "step", "ramp", "constant"],
+        choices=[
+            "sine",
+            "step",
+            "ramp",
+            "constant",
+            "impulse",
+            "burst",
+            "burst-shoulders",
+        ],
         default="sine",
         help="数据模式，默认 sine",
     )

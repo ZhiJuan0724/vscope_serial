@@ -159,6 +159,9 @@ python text_sender.py --port COM14 --mode echo
 ```bash
 python generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 1800000 --channels 8
 python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
+python generate_plot_bin.py -o E:\temp\impulse_100w.bin -n 1000000 -c 1 --mode impulse -a 10000
+python generate_plot_bin.py -o E:\temp\burst_100w.bin -n 1000000 -c 1 --mode burst -a 10000
+python generate_plot_bin.py -o E:\temp\burst_shoulders_100w.bin -n 1000000 -c 1 --mode burst-shoulders -a 10000
 ```
 
 参数：
@@ -166,7 +169,7 @@ python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode 
 - `--output/-o`：输出文件路径。
 - `--packets/-n`：生成包数。
 - `--channels/-c`：通道数，范围 1~16。
-- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`，默认 `sine`。
+- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`、`impulse`、`burst`、`burst-shoulders`，默认 `sine`。`impulse` 仅在数据中点生成一个指定幅度的突变点；`burst` 均匀生成 5 段、每段连续 8 个指定幅度的点；`burst-shoulders` 在每段突变两侧额外生成 `100`、`500` 的过渡点；其余点均为 `0`。
 - `--amplitude/-a`：生成数据的幅度，默认 `1000`。
 - `--progress`：每生成多少包打印一次进度，默认 `100000`；设置为 `0` 时不打印进度。
 - `--help/-h`：显示脚本参数帮助。

@@ -836,7 +836,17 @@ class PlotLayerPainter extends CustomPainter {
 
       final lodSeries = canUseLod ? _queryLodSeries(channel.index, size) : null;
       if (lodSeries != null && lodSeries.isNotEmpty) {
-        _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
+        if (lodQuality == PlotLodQuality.quality) {
+          _drawChannelQualityLodSeries(
+            canvas,
+            size,
+            channel,
+            lodSeries,
+            linePaint,
+          );
+        } else {
+          _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
+        }
       } else if (useMinMaxBuckets) {
         _drawChannelMinMaxBuckets(
           canvas,
@@ -939,6 +949,133 @@ class PlotLayerPainter extends CustomPainter {
     }
 
     canvas.drawRawPoints(ui.PointMode.polygon, rawPoints, paint);
+  }
+
+  /// 质量优先使用“趋势线 + 极值包络”绘制 LOD。
+  ///
+  /// 各桶的 first/last 只参与连续趋势；min/max 在各自实际 X 位置绘制
+  /// 到桶内线性趋势的竖直线。这样单点脉冲不会再由
+  /// first -> max -> last 展开成覆盖整个桶宽的三角形。
+  void _drawChannelQualityLodSeries(
+    Canvas canvas,
+    Size size,
+    ChannelConfig channel,
+    PlotLodSeries series,
+    Paint paint,
+  ) {
+    if (series.isEmpty || series.bucketCount <= 0) return;
+
+    final trendPoints = Float32List(series.length * 2);
+    final extremaLines = Float32List(series.bucketCount * 8);
+    var trendOut = 0;
+    var extremaOut = 0;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+
+    double displayValueAt(int index) =>
+        series.values[index] * channel.yScale + channel.yOffset;
+
+    double screenY(double value) =>
+        viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom)
+            .toDouble();
+
+    for (var bucket = 0; bucket < series.bucketCount; bucket++) {
+      final start = series.bucketOffsets[bucket];
+      final end = series.bucketOffsets[bucket + 1];
+      if (start >= end) continue;
+
+      final first = start;
+      final last = end - 1;
+      final firstIndex = series.indices[first];
+      final lastIndex = series.indices[last];
+      final firstValue = displayValueAt(first);
+      final lastValue = displayValueAt(last);
+      if (!firstValue.isFinite || !lastValue.isFinite) continue;
+
+      void appendTrendPoint(int pointIndex, double value) {
+        trendPoints[trendOut++] = viewport.dataToScreenX(
+          pointIndex.toDouble(),
+          size.width,
+        );
+        trendPoints[trendOut++] = screenY(value);
+      }
+
+      var minSample = first;
+      var maxSample = first;
+      var minValue = firstValue;
+      var maxValue = firstValue;
+      for (var sample = start + 1; sample < end; sample++) {
+        final value = displayValueAt(sample);
+        if (!value.isFinite) continue;
+        if (value < minValue) {
+          minValue = value;
+          minSample = sample;
+        }
+        if (value > maxValue) {
+          maxValue = value;
+          maxSample = sample;
+        }
+      }
+
+      final valueRange = maxValue - minValue;
+      final endpointDelta = (lastValue - firstValue).abs();
+      final endpointsShareTrend =
+          valueRange > 0 && endpointDelta <= valueRange * 0.25;
+      if (endpointsShareTrend) {
+        appendTrendPoint(firstIndex, firstValue);
+        if (lastIndex != firstIndex) {
+          appendTrendPoint(lastIndex, lastValue);
+        }
+      } else {
+        for (var sample = start; sample < end; sample++) {
+          final value = displayValueAt(sample);
+          if (!value.isFinite) continue;
+          appendTrendPoint(series.indices[sample], value);
+        }
+      }
+
+      double trendValueAt(int pointIndex) {
+        if (lastIndex <= firstIndex) return firstValue;
+        final ratio =
+            (pointIndex - firstIndex) / (lastIndex - firstIndex).toDouble();
+        return firstValue + (lastValue - firstValue) * ratio.clamp(0.0, 1.0);
+      }
+
+      void appendExtremum(int sample, double value) {
+        final pointIndex = series.indices[sample];
+        final baseline = trendValueAt(pointIndex);
+        final baselineY = screenY(baseline);
+        final valueY = screenY(value);
+        if ((baselineY - valueY).abs() < 0.5) return;
+        final x = viewport.dataToScreenX(pointIndex.toDouble(), size.width);
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = baselineY;
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = valueY;
+      }
+
+      appendExtremum(minSample, minValue);
+      if (maxSample != minSample) {
+        appendExtremum(maxSample, maxValue);
+      }
+    }
+
+    if (trendOut >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.polygon,
+        Float32List.sublistView(trendPoints, 0, trendOut),
+        paint,
+      );
+    }
+    if (extremaOut >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.lines,
+        Float32List.sublistView(extremaLines, 0, extremaOut),
+        paint,
+      );
+    }
   }
 
   void _drawChannelLodPoints(

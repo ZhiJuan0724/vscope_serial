@@ -243,13 +243,19 @@ class PlotLodIndex implements PlotLodSource {
 class PlotLodSeries {
   final Int32List indices;
   final Float64List values;
+  final Int32List bucketOffsets;
 
-  const PlotLodSeries({required this.indices, required this.values})
-    : assert(indices.length == values.length);
+  const PlotLodSeries({
+    required this.indices,
+    required this.values,
+    required this.bucketOffsets,
+  }) : assert(indices.length == values.length),
+       assert(bucketOffsets.length >= 2);
 
   int get length => indices.length;
   bool get isEmpty => indices.isEmpty;
   bool get isNotEmpty => indices.isNotEmpty;
+  int get bucketCount => bucketOffsets.length - 1;
 }
 
 class _LodLevel {
@@ -328,12 +334,14 @@ class _LodLevel {
     final maxPoints = populatedBucketCount * 4;
     final indices = Int32List(maxPoints);
     final values = Float64List(maxPoints);
+    final bucketOffsets = Int32List(populatedBucketCount + 1);
     var out = 0;
+    var bucketOut = 0;
 
     for (int i = firstBucket; i <= lastBucket; i++) {
       final bucket = _buckets[i];
       if (bucket == null) continue;
-      out = bucket.appendChannelSamples(
+      final nextOut = bucket.appendChannelSamples(
         channelIndex,
         xMin,
         xMax,
@@ -342,12 +350,17 @@ class _LodLevel {
         out,
         clipSamplesToRange: clipSamplesToRange,
       );
+      if (nextOut == out) continue;
+      bucketOffsets[bucketOut++] = out;
+      out = nextOut;
     }
 
     if (out == 0) return null;
+    bucketOffsets[bucketOut] = out;
     return PlotLodSeries(
       indices: Int32List.sublistView(indices, 0, out),
       values: Float64List.sublistView(values, 0, out),
+      bucketOffsets: Int32List.sublistView(bucketOffsets, 0, bucketOut + 1),
     );
   }
 }
