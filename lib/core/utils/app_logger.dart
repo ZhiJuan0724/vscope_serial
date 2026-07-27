@@ -13,6 +13,7 @@ class FileLogOutput extends LogOutput {
   static const int _flushThresholdBytes = 4096;
   int _pendingBytes = 0;
   DateTime? _lastFlushTime;
+  bool flushImmediately = false;
 
   @visibleForTesting
   String? get filePathForTest => _file?.path;
@@ -27,7 +28,7 @@ class FileLogOutput extends LogOutput {
     await _cleanupOldLogs(logDir);
 
     _file = File('${logDir.path}/${_newLogFileName()}');
-    _raf = await _file!.open(mode: FileMode.write);
+    _raf = await _file!.open(mode: FileMode.append);
   }
 
   String _newLogFileName() {
@@ -91,7 +92,7 @@ class FileLogOutput extends LogOutput {
         _pendingBytes >= _flushThresholdBytes ||
         (_lastFlushTime != null &&
             now.difference(_lastFlushTime!).inMilliseconds > 100);
-    if (shouldFlush) {
+    if (flushImmediately || shouldFlush) {
       _raf!.flushSync();
       _pendingBytes = 0;
       _lastFlushTime = now;
@@ -166,6 +167,24 @@ class AppLogger {
   late final Logger _logger;
   final _fileOutput = FileLogOutput();
   bool _initialized = false;
+  bool _diagnosticEnabled = false;
+
+  bool get diagnosticEnabled => _diagnosticEnabled;
+  String? get logFilePath => _fileOutput.filePathForTest;
+
+  /// 控制高密度 TRACE/DEBUG 诊断日志是否写入历史文件。
+  ///
+  /// 开启后每条日志立即刷盘，尽量保留原生崩溃前的最后一个检查点。
+  void setDiagnosticEnabled(bool enabled) {
+    if (_diagnosticEnabled == enabled) return;
+    _diagnosticEnabled = enabled;
+    _fileOutput.flushImmediately = enabled;
+    info(
+      '调试模式已${enabled ? '开启' : '关闭'}'
+      '${enabled ? '；TRACE/DEBUG 日志将立即写入磁盘' : ''}',
+      category: 'APP',
+    );
+  }
 
   Future<void> init() async {
     if (_initialized) return;
@@ -215,10 +234,14 @@ class AppLogger {
     }
   }
 
-  void trace(String msg, {String? category}) =>
-      _log('T', msg, category: category);
-  void debug(String msg, {String? category}) =>
-      _log('D', msg, category: category);
+  void trace(String msg, {String? category}) {
+    if (_diagnosticEnabled) _log('T', msg, category: category);
+  }
+
+  void debug(String msg, {String? category}) {
+    if (_diagnosticEnabled) _log('D', msg, category: category);
+  }
+
   void info(String msg, {String? category}) =>
       _log('I', msg, category: category);
   void warning(String msg, {String? category}) =>

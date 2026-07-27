@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/constants/plot_configuration.dart';
 import '../../core/localization/app_strings.dart';
+import '../../core/utils/app_logger.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
@@ -839,10 +840,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
 
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
+    var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
     var shellEnabled = AppSettings().rawDataShellEnabled;
     var plotReceiveAggregationEnabled =
         AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
+    final diagnosticsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
@@ -861,6 +864,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 SettingsNavigationItem(
                   label: '通知',
                   anchorKey: notificationSectionKey,
+                ),
+                SettingsNavigationItem(
+                  label: '诊断',
+                  anchorKey: diagnosticsSectionKey,
                 ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
                 SettingsNavigationItem(
@@ -906,6 +913,32 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       setState(() => _disableNotifications = value);
                       final settings =
                           AppSettings()..disableNotifications = value;
+                      settings.save();
+                    },
+                  ),
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    key: diagnosticsSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.appInfo.diagnosticLogging,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.appInfo.diagnosticLoggingHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: diagnosticLoggingEnabled,
+                    onChanged: (value) {
+                      setDialogState(() => diagnosticLoggingEnabled = value);
+                      final settings =
+                          AppSettings()..diagnosticLoggingEnabled = value;
+                      AppLogger().setDiagnosticEnabled(value);
                       settings.save();
                     },
                   ),

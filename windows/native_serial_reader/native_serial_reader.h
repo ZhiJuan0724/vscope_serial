@@ -23,6 +23,17 @@ NSR_API int nsr_init_dart_api(void* data);
 // 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_open_port(const char* portName, int baudRate);
 
+// 返回最近一次打开串口的原生诊断信息。
+// stage：0=未开始，1=参数检查，2=关闭旧句柄，3=CreateFile，
+// 4=GetCommState，5=SetCommState，6=SetupComm，7=SetCommTimeouts，
+// 8=PurgeComm，9=发布句柄，10=完成。
+NSR_API int nsr_get_last_open_stage();
+NSR_API uint32_t nsr_get_last_open_error();
+
+// 配置原生打开流程的同步诊断日志。启用时每个 Win32 调用前后都会直接
+// 追加到当前应用日志文件，以保留进程崩溃前的最后检查点。
+NSR_API void nsr_configure_diagnostic_log(const char* logPath, int enabled);
+
 // 关闭串口并释放当前读取周期的原生资源。
 NSR_API void nsr_close_port();
 

@@ -40,6 +40,17 @@ typedef NsrInitDartApiDart = int Function(Pointer<Void> data);
 typedef NsrOpenPortC = Int32 Function(Pointer<Utf8> portName, Int32 baudRate);
 typedef NsrOpenPortDart = int Function(Pointer<Utf8> portName, int baudRate);
 
+typedef NsrGetLastOpenStageC = Int32 Function();
+typedef NsrGetLastOpenStageDart = int Function();
+
+typedef NsrGetLastOpenErrorC = Uint32 Function();
+typedef NsrGetLastOpenErrorDart = int Function();
+
+typedef NsrConfigureDiagnosticLogC =
+    Void Function(Pointer<Utf8> logPath, Int32 enabled);
+typedef NsrConfigureDiagnosticLogDart =
+    void Function(Pointer<Utf8> logPath, int enabled);
+
 typedef NsrClosePortC = Void Function();
 typedef NsrClosePortDart = void Function();
 
@@ -106,6 +117,18 @@ final _nsrInitDartApi = _dll
 final _nsrOpenPort = _dll.lookupFunction<NsrOpenPortC, NsrOpenPortDart>(
   'nsr_open_port',
 );
+final _nsrGetLastOpenStage = _dll
+    .lookupFunction<NsrGetLastOpenStageC, NsrGetLastOpenStageDart>(
+      'nsr_get_last_open_stage',
+    );
+final _nsrGetLastOpenError = _dll
+    .lookupFunction<NsrGetLastOpenErrorC, NsrGetLastOpenErrorDart>(
+      'nsr_get_last_open_error',
+    );
+final _nsrConfigureDiagnosticLog = _dll
+    .lookupFunction<NsrConfigureDiagnosticLogC, NsrConfigureDiagnosticLogDart>(
+      'nsr_configure_diagnostic_log',
+    );
 final _nsrClosePort = _dll.lookupFunction<NsrClosePortC, NsrClosePortDart>(
   'nsr_close_port',
 );
@@ -462,6 +485,32 @@ class NativeSerialPortDetail {
   const NativeSerialPortDetail({required this.port, required this.name});
 }
 
+class NativeSerialOpenResult {
+  final bool opened;
+  final int stage;
+  final int errorCode;
+
+  const NativeSerialOpenResult({
+    required this.opened,
+    required this.stage,
+    required this.errorCode,
+  });
+
+  String get stageName => switch (stage) {
+    1 => '参数检查',
+    2 => '关闭旧句柄',
+    3 => 'CreateFile',
+    4 => 'GetCommState',
+    5 => 'SetCommState',
+    6 => 'SetupComm',
+    7 => 'SetCommTimeouts',
+    8 => 'PurgeComm',
+    9 => '发布句柄',
+    10 => '完成',
+    _ => '未开始',
+  };
+}
+
 /// Windows 原生串口读取器
 class NativeSerialReader {
   final _dataController = StreamController<NativeSerialData>.broadcast();
@@ -471,6 +520,15 @@ class NativeSerialReader {
   bool _isOpen = false;
   bool _dartApiInitialized = false;
   NativeSerialWriteQueue? _writeQueue;
+
+  static void configureDiagnosticLogging(bool enabled, String? logPath) {
+    final pathPtr = (logPath ?? '').toNativeUtf8();
+    try {
+      _nsrConfigureDiagnosticLog(pathPtr, enabled ? 1 : 0);
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
 
   /// 初始化 Dart API（必须在其它操作前调用）。
   ///
@@ -511,7 +569,24 @@ class NativeSerialReader {
   /// Windows CreateFile 在端口不可用时可能阻塞。
   /// 原生 DLL 状态是进程级的，后台操作完成后 UI isolate 可以挂接该句柄。
   static Future<bool> openInBackground(String portName, int baudRate) {
-    return Isolate.run(() => _openNativePort(portName, baudRate));
+    return openInBackgroundDetailed(
+      portName,
+      baudRate,
+    ).then((result) => result.opened);
+  }
+
+  static Future<NativeSerialOpenResult> openInBackgroundDetailed(
+    String portName,
+    int baudRate,
+  ) async {
+    final values = await Isolate.run(
+      () => _openNativePortDetailed(portName, baudRate),
+    );
+    return NativeSerialOpenResult(
+      opened: values[0] == 1,
+      stage: values[1],
+      errorCode: values[2],
+    );
   }
 
   /// 将当前读取器实例挂接到 [openInBackground] 打开的句柄。
@@ -685,10 +760,15 @@ class NativeSerialPortMonitor {
   }
 }
 
-bool _openNativePort(String portName, int baudRate) {
+List<int> _openNativePortDetailed(String portName, int baudRate) {
   final namePtr = portName.toNativeUtf8();
   try {
-    return _nsrOpenPort(namePtr, baudRate) == 0;
+    final opened = _nsrOpenPort(namePtr, baudRate) == 0;
+    return <int>[
+      opened ? 1 : 0,
+      _nsrGetLastOpenStage(),
+      _nsrGetLastOpenError(),
+    ];
   } finally {
     calloc.free(namePtr);
   }

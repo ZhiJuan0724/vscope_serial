@@ -203,6 +203,9 @@ class AppSettings {
   /// 强制关闭应用内临时提示信息。
   bool disableNotifications = false;
 
+  /// 是否把高密度 TRACE/DEBUG 诊断信息写入日志历史。
+  bool diagnosticLoggingEnabled = false;
+
   // ========== 原始数据设置 ==========
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 100000;
@@ -359,6 +362,7 @@ class AppSettings {
     updateChannel = 'stable';
     updateSource = 'auto';
     disableNotifications = false;
+    diagnosticLoggingEnabled = false;
 
     rawDataDisplayLineLimit = 100000;
     rawDataAutoLineBreakIntervalMs = 100;
@@ -552,6 +556,8 @@ class AppSettings {
         _ => 'auto',
       };
       disableNotifications = json['disableNotifications'] as bool? ?? false;
+      diagnosticLoggingEnabled =
+          json['diagnosticLoggingEnabled'] as bool? ?? false;
       rawDataDisplayLineLimit =
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 100000)
               .clamp(100, 100000)
@@ -673,6 +679,7 @@ class AppSettings {
       'rProtocolLooseChannelSettings',
       'autoUpdateCheckEnabled',
       'disableNotifications',
+      'diagnosticLoggingEnabled',
       'rawDataShellMode',
       'rawDataShellEnabled',
       'shellEnabled',
@@ -846,6 +853,7 @@ class AppSettings {
     'updateChannel': updateChannel,
     'updateSource': updateSource,
     'disableNotifications': disableNotifications,
+    'diagnosticLoggingEnabled': diagnosticLoggingEnabled,
     'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
     'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
     'rawDataShellMode': rawDataShellMode,

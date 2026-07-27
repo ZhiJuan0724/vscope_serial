@@ -479,6 +479,8 @@ final class _AppInfoStrings {
       '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。';
   String get disableNotifications => '关闭提示信息';
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
+  String get diagnosticLogging => '调试模式';
+  String get diagnosticLoggingHelp => '记录串口连接等详细诊断信息并立即写入日志；仅排查问题时开启，日志量会明显增加。';
   String get receivePerformance => '接收性能';
   String get plotReceiveAggregation => '绘图高频接收合并';
   String get plotReceiveAggregationHelp =>

@@ -56,6 +56,7 @@ void main() {
             ..updateChannel = 'beta'
             ..updateSource = 'gitee'
             ..disableNotifications = true
+            ..diagnosticLoggingEnabled = true
             ..rawDataDisplayLineLimit = 500
             ..rawDataAutoLineBreakIntervalMs = 250
             ..rawDataShellMode = true
@@ -124,6 +125,7 @@ void main() {
       expect(settings.updateChannel, 'stable');
       expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
+      expect(settings.diagnosticLoggingEnabled, isFalse);
       expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataAutoLineBreakIntervalMs, 100);
       expect(settings.rawDataShellMode, isFalse);
@@ -172,6 +174,7 @@ void main() {
       settings.dataBits = 7;
       final second = settings.save();
       settings.lastMainPage = 'plot';
+      settings.diagnosticLoggingEnabled = true;
       final third = settings.save();
 
       await Future.wait([first, second, third]);
@@ -181,6 +184,7 @@ void main() {
       expect(decoded['baudRate'], 9600);
       expect(decoded['dataBits'], 7);
       expect(decoded['lastMainPage'], 'plot');
+      expect(decoded['diagnosticLoggingEnabled'], isTrue);
     });
 
     test('截断主文件后自动恢复上一代备份', () async {
