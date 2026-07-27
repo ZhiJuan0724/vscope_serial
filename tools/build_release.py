@@ -3,10 +3,11 @@
 VScope Serial Windows Release 打包工具
 
 自动执行以下流程：
-1. flutter analyze - 静态分析
-2. flutter test - 运行单元测试
-3. flutter build windows --release - Release 构建
-4. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
+1. 清理旧发布目录
+2. flutter analyze - 静态分析
+3. flutter test - 运行单元测试
+4. 清理旧 Windows 构建目录并执行全新 Release 构建
+5. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
 
 C++ DLL 说明：
 - native_serial_reader.dll 由 CMake 自动编译，输出到 build/windows/x64/runner/Release/
@@ -43,6 +44,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 BUILD_DIR = PROJECT_ROOT / "build"
 RELEASE_DIR = BUILD_DIR / "releases"
 FLUTTER_BUILD_DIR = BUILD_DIR / "windows" / "x64" / "runner" / "Release"
+WINDOWS_BUILD_DIR = BUILD_DIR / "windows"
 
 # VC++ 运行时 DLL（x64）
 # native_serial_reader.dll 是 MSVC 编译的 C++ DLL，需要这些运行时
@@ -58,6 +60,13 @@ EXCLUDE_FILES = {
     ".flutter-plugins",
     ".flutter-plugins-dependencies",
     "native_assets.json",
+}
+
+# MSVC/CMake 生成的链接与调试中间产物，不属于可运行发布包。
+EXCLUDE_SUFFIXES = {
+    ".exp",
+    ".lib",
+    ".pdb",
 }
 
 
@@ -148,6 +157,13 @@ def clean_release_dir():
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def clean_windows_build_dir():
+    """清理 Windows 构建目录，防止其他分支的旧产物混入发布包"""
+    if WINDOWS_BUILD_DIR.exists():
+        shutil.rmtree(WINDOWS_BUILD_DIR)
+        info("已清理旧的 Windows 构建目录")
+
+
 def find_vc_runtime_dlls() -> list[Path]:
     """查找系统中的 VC++ 运行时 DLL"""
     found = []
@@ -172,7 +188,7 @@ def copy_build_output(dst_dir: Path):
     
     # 复制所有文件和目录
     for item in FLUTTER_BUILD_DIR.iterdir():
-        if item.name in EXCLUDE_FILES:
+        if item.name in EXCLUDE_FILES or item.suffix.lower() in EXCLUDE_SUFFIXES:
             continue
         
         dst_path = dst_dir / item.name
@@ -223,7 +239,6 @@ def main():
     )
     parser.add_argument("--skip-analyze", action="store_true", help="跳过 flutter analyze")
     parser.add_argument("--skip-test", action="store_true", help="跳过 flutter test")
-    parser.add_argument("--skip-build", action="store_true", help="跳过 flutter build")
     parser.add_argument("--no-zip", action="store_true", help="不生成 zip 压缩包")
     parser.add_argument("--version", "-v", help="指定版本号（默认从 pubspec.yaml 读取）")
     
@@ -234,6 +249,10 @@ def main():
     info(f"项目版本: {version}")
     info(f"构建时间: {build_time}")
     info(f"项目目录: {PROJECT_ROOT}")
+
+    # 一旦开始新的打包流程，就先移除上一次发布输出，避免构建或测试失败后
+    # 仍误把旧压缩包当作本次产物。
+    clean_release_dir()
     
     # 检查 Flutter
     flutter_cmd = shutil.which("flutter")
@@ -267,31 +286,27 @@ def main():
         warn("跳过单元测试")
     
     # ========== 步骤 3: Release 构建 ==========
-    if not args.skip_build:
-        step("步骤 3/3: Release 构建 (flutter build windows --release)")
-        try:
-            run_cmd([
-                flutter_cmd,
-                "build",
-                "windows",
-                "--release",
-                f"--dart-define=BUILD_TIME={build_time}",
-            ])
-            success("Release 构建完成")
-        except subprocess.CalledProcessError:
-            error("Release 构建失败")
-            sys.exit(1)
-    else:
-        warn("跳过构建，使用已有的构建产物")
-        if not FLUTTER_BUILD_DIR.exists():
-            error(f"构建目录不存在: {FLUTTER_BUILD_DIR}")
-            sys.exit(1)
+    step("步骤 3/3: 全新 Release 构建 (flutter build windows --release)")
+    try:
+        # Flutter/CMake 默认执行增量构建。必须先删除整个 Windows 构建树，
+        # 否则切换分支后遗留的 exe、DLL 或辅助工具可能继续留在 Release
+        # bundle 中，并被后续步骤原样打包。
+        clean_windows_build_dir()
+        run_cmd([
+            flutter_cmd,
+            "build",
+            "windows",
+            "--release",
+            f"--dart-define=BUILD_TIME={build_time}",
+        ])
+        success("Release 构建完成")
+    except subprocess.CalledProcessError:
+        error("Release 构建失败")
+        sys.exit(1)
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")
-    
-    clean_release_dir()
-    
+
     # 便携版（含 VC++ 运行时）
     portable_name = f"vscope_serial-{version}-portable"
     portable_dir = RELEASE_DIR / portable_name
