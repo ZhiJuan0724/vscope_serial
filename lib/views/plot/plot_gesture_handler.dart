@@ -68,6 +68,9 @@ class PlotGestureHandler extends StatefulWidget {
   /// Y-Y 测量第二条线位置
   final double? yCursor2;
 
+  /// Y1/Y2 拖动时是否吸附到最近可见波形点。
+  final bool yMeasurementSnapEnabled;
+
   /// 统计范围左边界
   final double? statsX1;
 
@@ -130,6 +133,7 @@ class PlotGestureHandler extends StatefulWidget {
     this.xCursor2,
     this.yCursor1,
     this.yCursor2,
+    this.yMeasurementSnapEnabled = true,
     this.statsX1,
     this.statsX2,
     this.onXCursor1Drag,
@@ -1036,12 +1040,36 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         break;
       case _DragTarget.yCursor1:
         if (widget.onYCursor1Drag != null && widget.yCursor1 != null) {
-          widget.onYCursor1Drag!(_snapYToNearestVisiblePoint(pos, size));
+          widget.onYCursor1Drag!(
+            widget.yMeasurementSnapEnabled
+                ? _snapYToNearestVisiblePoint(pos, size)
+                : widget.viewport.screenToDataY(
+                  pos.dy
+                      .clamp(
+                        widget.viewport.marginTop,
+                        size.height - widget.viewport.marginBottom,
+                      )
+                      .toDouble(),
+                  size.height,
+                ),
+          );
         }
         break;
       case _DragTarget.yCursor2:
         if (widget.onYCursor2Drag != null && widget.yCursor2 != null) {
-          widget.onYCursor2Drag!(_snapYToNearestVisiblePoint(pos, size));
+          widget.onYCursor2Drag!(
+            widget.yMeasurementSnapEnabled
+                ? _snapYToNearestVisiblePoint(pos, size)
+                : widget.viewport.screenToDataY(
+                  pos.dy
+                      .clamp(
+                        widget.viewport.marginTop,
+                        size.height - widget.viewport.marginBottom,
+                      )
+                      .toDouble(),
+                  size.height,
+                ),
+          );
         }
         break;
       case _DragTarget.statsX1:

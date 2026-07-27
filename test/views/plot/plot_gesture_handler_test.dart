@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
+import 'package:vscope_serial/data/models/plot_data.dart';
 import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/plot/plot_viewport.dart';
@@ -66,6 +67,56 @@ void main() {
     expect(viewport.xRange, lessThan(initialViewport.xRange));
     expect(viewport.yMin, initialViewport.yMin);
     expect(viewport.yMax, initialViewport.yMax);
+  });
+
+  testWidgets('Y 测量关闭吸附后按指针数据位置拖动', (tester) async {
+    double? draggedY;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              channels: const [],
+              data: [
+                PlotDataPoint(index: 0, timestamp: 0, values: [80]),
+              ],
+              yCursor1: 0,
+              yMeasurementSnapEnabled: false,
+              onYCursor1Drag: (value) => draggedY = value,
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final handler = find.byType(PlotGestureHandler);
+    final topLeft = tester.getTopLeft(handler);
+    final start =
+        topLeft +
+        Offset(
+          initialViewport.marginLeft - 18,
+          initialViewport.dataToScreenY(0, 600),
+        );
+    final target =
+        topLeft +
+        Offset(
+          initialViewport.marginLeft - 18,
+          initialViewport.dataToScreenY(30, 600),
+        );
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: start);
+    await gesture.down(start);
+    await gesture.moveTo(target);
+    await gesture.up();
+    await tester.pump();
+
+    expect(draggedY, closeTo(30, 0.001));
   });
 
   testWidgets('Shift + left drag zooms out on the X axis', (tester) async {

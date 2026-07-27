@@ -52,6 +52,7 @@ void main() async {
     return false;
   };
   await AppSettings().init();
+  AppLogger().setDiagnosticEnabled(AppSettings().diagnosticLoggingEnabled);
   SerialService().loadSettings();
   SerialService().initializePortDiscovery();
   await AppIcon.precacheAll();

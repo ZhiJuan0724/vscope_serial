@@ -74,6 +74,14 @@ class PlotLayerPainter extends CustomPainter {
   double? get xCursor2 => snapshot.xCursor2;
   double? get yCursor1 => snapshot.yCursor1;
   double? get yCursor2 => snapshot.yCursor2;
+  Color? get xMeasurementLine1Color => snapshot.xMeasurementLine1Color;
+  Color? get xMeasurementLine2Color => snapshot.xMeasurementLine2Color;
+  Color? get yMeasurementLine1Color => snapshot.yMeasurementLine1Color;
+  Color? get yMeasurementLine2Color => snapshot.yMeasurementLine2Color;
+  double get xMeasurementLine1Opacity => snapshot.xMeasurementLine1Opacity;
+  double get xMeasurementLine2Opacity => snapshot.xMeasurementLine2Opacity;
+  double get yMeasurementLine1Opacity => snapshot.yMeasurementLine1Opacity;
+  double get yMeasurementLine2Opacity => snapshot.yMeasurementLine2Opacity;
   bool get statsEnabled => snapshot.statsEnabled;
   bool get statsRangeEnabled => snapshot.statsRangeEnabled;
   double? get statsX1 => snapshot.statsX1;
@@ -107,6 +115,14 @@ class PlotLayerPainter extends CustomPainter {
     double? xCursor2,
     double? yCursor1,
     double? yCursor2,
+    Color? xMeasurementLine1Color,
+    Color? xMeasurementLine2Color,
+    Color? yMeasurementLine1Color,
+    Color? yMeasurementLine2Color,
+    double xMeasurementLine1Opacity = 1,
+    double xMeasurementLine2Opacity = 1,
+    double yMeasurementLine1Opacity = 1,
+    double yMeasurementLine2Opacity = 1,
     bool statsEnabled = false,
     bool statsRangeEnabled = false,
     double? statsX1,
@@ -138,6 +154,14 @@ class PlotLayerPainter extends CustomPainter {
          xCursor2: xCursor2,
          yCursor1: yCursor1,
          yCursor2: yCursor2,
+         xMeasurementLine1Color: xMeasurementLine1Color,
+         xMeasurementLine2Color: xMeasurementLine2Color,
+         yMeasurementLine1Color: yMeasurementLine1Color,
+         yMeasurementLine2Color: yMeasurementLine2Color,
+         xMeasurementLine1Opacity: xMeasurementLine1Opacity,
+         xMeasurementLine2Opacity: xMeasurementLine2Opacity,
+         yMeasurementLine1Opacity: yMeasurementLine1Opacity,
+         yMeasurementLine2Opacity: yMeasurementLine2Opacity,
          statsEnabled: statsEnabled,
          statsRangeEnabled: statsRangeEnabled,
          statsX1: statsX1,
@@ -812,7 +836,17 @@ class PlotLayerPainter extends CustomPainter {
 
       final lodSeries = canUseLod ? _queryLodSeries(channel.index, size) : null;
       if (lodSeries != null && lodSeries.isNotEmpty) {
-        _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
+        if (lodQuality == PlotLodQuality.quality) {
+          _drawChannelQualityLodSeries(
+            canvas,
+            size,
+            channel,
+            lodSeries,
+            linePaint,
+          );
+        } else {
+          _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
+        }
       } else if (useMinMaxBuckets) {
         _drawChannelMinMaxBuckets(
           canvas,
@@ -915,6 +949,133 @@ class PlotLayerPainter extends CustomPainter {
     }
 
     canvas.drawRawPoints(ui.PointMode.polygon, rawPoints, paint);
+  }
+
+  /// 质量优先使用“趋势线 + 极值包络”绘制 LOD。
+  ///
+  /// 各桶的 first/last 只参与连续趋势；min/max 在各自实际 X 位置绘制
+  /// 到桶内线性趋势的竖直线。这样单点脉冲不会再由
+  /// first -> max -> last 展开成覆盖整个桶宽的三角形。
+  void _drawChannelQualityLodSeries(
+    Canvas canvas,
+    Size size,
+    ChannelConfig channel,
+    PlotLodSeries series,
+    Paint paint,
+  ) {
+    if (series.isEmpty || series.bucketCount <= 0) return;
+
+    final trendPoints = Float32List(series.length * 2);
+    final extremaLines = Float32List(series.bucketCount * 8);
+    var trendOut = 0;
+    var extremaOut = 0;
+    final marginTop = viewport.marginTop;
+    final marginBottom = size.height - viewport.marginBottom;
+
+    double displayValueAt(int index) =>
+        series.values[index] * channel.yScale + channel.yOffset;
+
+    double screenY(double value) =>
+        viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom)
+            .toDouble();
+
+    for (var bucket = 0; bucket < series.bucketCount; bucket++) {
+      final start = series.bucketOffsets[bucket];
+      final end = series.bucketOffsets[bucket + 1];
+      if (start >= end) continue;
+
+      final first = start;
+      final last = end - 1;
+      final firstIndex = series.indices[first];
+      final lastIndex = series.indices[last];
+      final firstValue = displayValueAt(first);
+      final lastValue = displayValueAt(last);
+      if (!firstValue.isFinite || !lastValue.isFinite) continue;
+
+      void appendTrendPoint(int pointIndex, double value) {
+        trendPoints[trendOut++] = viewport.dataToScreenX(
+          pointIndex.toDouble(),
+          size.width,
+        );
+        trendPoints[trendOut++] = screenY(value);
+      }
+
+      var minSample = first;
+      var maxSample = first;
+      var minValue = firstValue;
+      var maxValue = firstValue;
+      for (var sample = start + 1; sample < end; sample++) {
+        final value = displayValueAt(sample);
+        if (!value.isFinite) continue;
+        if (value < minValue) {
+          minValue = value;
+          minSample = sample;
+        }
+        if (value > maxValue) {
+          maxValue = value;
+          maxSample = sample;
+        }
+      }
+
+      final valueRange = maxValue - minValue;
+      final endpointDelta = (lastValue - firstValue).abs();
+      final endpointsShareTrend =
+          valueRange > 0 && endpointDelta <= valueRange * 0.25;
+      if (endpointsShareTrend) {
+        appendTrendPoint(firstIndex, firstValue);
+        if (lastIndex != firstIndex) {
+          appendTrendPoint(lastIndex, lastValue);
+        }
+      } else {
+        for (var sample = start; sample < end; sample++) {
+          final value = displayValueAt(sample);
+          if (!value.isFinite) continue;
+          appendTrendPoint(series.indices[sample], value);
+        }
+      }
+
+      double trendValueAt(int pointIndex) {
+        if (lastIndex <= firstIndex) return firstValue;
+        final ratio =
+            (pointIndex - firstIndex) / (lastIndex - firstIndex).toDouble();
+        return firstValue + (lastValue - firstValue) * ratio.clamp(0.0, 1.0);
+      }
+
+      void appendExtremum(int sample, double value) {
+        final pointIndex = series.indices[sample];
+        final baseline = trendValueAt(pointIndex);
+        final baselineY = screenY(baseline);
+        final valueY = screenY(value);
+        if ((baselineY - valueY).abs() < 0.5) return;
+        final x = viewport.dataToScreenX(pointIndex.toDouble(), size.width);
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = baselineY;
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = valueY;
+      }
+
+      appendExtremum(minSample, minValue);
+      if (maxSample != minSample) {
+        appendExtremum(maxSample, maxValue);
+      }
+    }
+
+    if (trendOut >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.polygon,
+        Float32List.sublistView(trendPoints, 0, trendOut),
+        paint,
+      );
+    }
+    if (extremaOut >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.lines,
+        Float32List.sublistView(extremaLines, 0, extremaOut),
+        paint,
+      );
+    }
   }
 
   void _drawChannelLodPoints(
@@ -1916,14 +2077,18 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (x1 == null && x2 == null) return;
 
+    final color1 = (xMeasurementLine1Color ?? _palette.measurementPrimary)
+        .withValues(alpha: xMeasurementLine1Opacity.clamp(0.0, 1.0));
+    final color2 = (xMeasurementLine2Color ?? _palette.measurementSecondary)
+        .withValues(alpha: xMeasurementLine2Opacity.clamp(0.0, 1.0));
     final line1Paint =
         Paint()
-          ..color = _palette.measurementPrimary
+          ..color = color1
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = _palette.measurementSecondary
+          ..color = color2
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -1942,7 +2107,7 @@ class PlotLayerPainter extends CustomPainter {
           'X1',
           sx1,
           PlotViewport().marginTop + 12,
-          _palette.measurementPrimary,
+          color1,
         );
       }
     }
@@ -1962,7 +2127,7 @@ class PlotLayerPainter extends CustomPainter {
           'X2',
           sx2,
           PlotViewport().marginTop + 12,
-          _palette.measurementSecondary,
+          color2,
         );
       }
     }
@@ -1978,14 +2143,18 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (y1 == null && y2 == null) return;
 
+    final color1 = (yMeasurementLine1Color ?? _palette.measurementPrimary)
+        .withValues(alpha: yMeasurementLine1Opacity.clamp(0.0, 1.0));
+    final color2 = (yMeasurementLine2Color ?? _palette.measurementSecondary)
+        .withValues(alpha: yMeasurementLine2Opacity.clamp(0.0, 1.0));
     final line1Paint =
         Paint()
-          ..color = _palette.measurementPrimary
+          ..color = color1
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
     final line2Paint =
         Paint()
-          ..color = _palette.measurementSecondary
+          ..color = color2
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
 
@@ -2004,7 +2173,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y1',
           viewport.marginLeft - 18,
           sy1,
-          _palette.measurementPrimary,
+          color1,
         );
       }
     }
@@ -2024,7 +2193,7 @@ class PlotLayerPainter extends CustomPainter {
           'Y2',
           viewport.marginLeft - 18,
           sy2,
-          _palette.measurementSecondary,
+          color2,
         );
       }
     }
@@ -2292,6 +2461,14 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.backgroundStyle != backgroundStyle ||
             oldDelegate.floatingPanelOpacity != floatingPanelOpacity ||
+            oldDelegate.xMeasurementLine1Color != xMeasurementLine1Color ||
+            oldDelegate.xMeasurementLine2Color != xMeasurementLine2Color ||
+            oldDelegate.yMeasurementLine1Color != yMeasurementLine1Color ||
+            oldDelegate.yMeasurementLine2Color != yMeasurementLine2Color ||
+            oldDelegate.xMeasurementLine1Opacity != xMeasurementLine1Opacity ||
+            oldDelegate.xMeasurementLine2Opacity != xMeasurementLine2Opacity ||
+            oldDelegate.yMeasurementLine1Opacity != yMeasurementLine1Opacity ||
+            oldDelegate.yMeasurementLine2Opacity != yMeasurementLine2Opacity ||
             oldDelegate.plotFontSizeDelta != plotFontSizeDelta ||
             oldDelegate.plotFontBold != plotFontBold,
     };

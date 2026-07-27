@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/theme/app_theme.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
@@ -30,6 +31,15 @@ void main() {
     settings.rProtocolLooseChannelSettings = false;
     settings.plotLodQuality = 'performance';
     settings.plotHistoryMemoryLimitGiB = 2;
+    settings.xMeasurementLine1Color = null;
+    settings.xMeasurementLine2Color = null;
+    settings.yMeasurementLine1Color = null;
+    settings.yMeasurementLine2Color = null;
+    settings.xMeasurementLine1Opacity = 1;
+    settings.xMeasurementLine2Opacity = 1;
+    settings.yMeasurementLine1Opacity = 1;
+    settings.yMeasurementLine2Opacity = 1;
+    settings.yMeasurementSnapEnabled = true;
     settings.mathChannels = MathChannelConfig.createDefaults();
     settings.zobowChannelIds = List.generate(
       ParserConfig.maxZobowChannelCount,
@@ -131,6 +141,91 @@ void main() {
     vm.dispose();
   });
 
+  testWidgets('Delta X/Y 按钮右键可配置线条且 Y 提供吸附开关', (tester) async {
+    final vm = PlotViewModel(serialService);
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('plot-measure-x-button')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.measureXSettings), findsOneWidget);
+    expect(find.byKey(const ValueKey('x-measure-line1-color')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('x-measure-line2-opacity')),
+      findsOneWidget,
+    );
+    final x1Opacity = find.byKey(const ValueKey('x-measure-line1-opacity'));
+    expect(tester.getSize(x1Opacity).width, kSecondaryDialogFieldWidth);
+    final opacityDecorator = tester.widget<InputDecorator>(
+      find.descendant(of: x1Opacity, matching: find.byType(InputDecorator)),
+    );
+    expect(opacityDecorator.decoration.border, isA<OutlineInputBorder>());
+    await tester.enterText(x1Opacity, '35');
+    await tester.tap(find.byKey(const ValueKey('x-measure-settings-save')));
+    await tester.pumpAndSettle();
+    expect(vm.xMeasurementLine1Opacity, 0.35);
+
+    await tester.tap(
+      find.byKey(const ValueKey('plot-measure-y-button')),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.measureYSettings), findsOneWidget);
+    final snapToggle = find.byKey(const ValueKey('y-measure-snap-toggle'));
+    expect(snapToggle, findsOneWidget);
+    expect(vm.yMeasurementSnapEnabled, isTrue);
+    await tester.tap(snapToggle);
+    await tester.tap(find.byKey(const ValueKey('y-measure-settings-save')));
+    await tester.pumpAndSettle();
+    expect(vm.yMeasurementSnapEnabled, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
+  testWidgets('图例按最长通道名称扩展以优先显示完整名称', (tester) async {
+    final vm = PlotViewModel(serialService);
+    const longName = '主电机控制器输出电流反馈滤波后的完整通道名称';
+    vm.setChannelAlias(0, longName);
+    vm.ingestParsedResultForTest(ParseResult.ok(const [1.0], bytesConsumed: 4));
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byTooltip(AppStrings.plot.legend).hitTestable().first,
+    );
+    await tester.pump();
+
+    final legend = find.byKey(const ValueKey('plot-legend-box'));
+    expect(legend, findsOneWidget);
+    expect(
+      find.descendant(of: legend, matching: find.text(longName)),
+      findsOneWidget,
+    );
+    // 旧实现的图例总宽度约为 244px；长名称应推动浮窗明显扩宽。
+    expect(tester.getSize(legend).width, greaterThan(280));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
   testWidgets('800px 绘图工具栏将右侧工具折叠到更多菜单且不溢出', (tester) async {
     final vm = PlotViewModel(serialService);
     await tester.binding.setSurfaceSize(const Size(800, 700));
@@ -206,7 +301,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   });
 
-  testWidgets('普通通道右键菜单可打开通道高级设置', (tester) async {
+  testWidgets('普通通道设置可输入显示参数并与列表共用偏置开关', (tester) async {
     final vm = PlotViewModel(serialService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -234,6 +329,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(AppStrings.plot.editChannelTitle(0)), findsOneWidget);
+    final lineWidthField = find.byKey(
+      const ValueKey('channel-line-width-field'),
+    );
+    final pointRadiusField = find.byKey(
+      const ValueKey('channel-point-radius-field'),
+    );
+    expect(lineWidthField, findsOneWidget);
+    expect(pointRadiusField, findsOneWidget);
+    expect(tester.getSize(lineWidthField).width, kSecondaryDialogFieldWidth);
+    await tester.enterText(lineWidthField, '2.5');
+    await tester.enterText(pointRadiusField, '4.5');
+
+    final offsetToggle = find.byKey(const ValueKey('channel-offset-toggle'));
+    expect(tester.widget<Switch>(offsetToggle).value, isFalse);
+    await tester.tap(offsetToggle);
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('channel-offset-field')),
+      '-12.5',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('channel-scale-field')),
+      '2',
+    );
+    await tester.tap(find.text(AppStrings.common.confirm));
+    await tester.pumpAndSettle();
+
+    expect(vm.channels[0].lineWidth, 2.5);
+    expect(vm.channels[0].pointSize, 4.5);
+    expect(vm.channels[0].offsetEnabled, isTrue);
+    expect(vm.channels[0].yOffset, -12.5);
+    expect(vm.channels[0].yScale, 2);
+    expect(find.byTooltip(AppStrings.plot.closeOffset), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
@@ -328,6 +456,42 @@ void main() {
     );
 
     expect(find.byTooltip(longName), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('通道列表名称编辑支持统一的64字符上限', (tester) async {
+    final vm = PlotViewModel(serialService);
+    const longName = '主电机控制器输出电流反馈滤波后的完整通道名称与工程标识';
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+
+    final channelName = find.text('Ch0').first;
+    await tester.tap(channelName);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(channelName);
+    await tester.pump();
+    final nameField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField &&
+          widget.maxLength == PlotConfiguration.channelAliasMaxLength,
+    );
+    expect(nameField, findsOneWidget);
+    await tester.enterText(nameField, longName);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+
+    expect(vm.channels[0].alias, longName);
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();

@@ -1071,21 +1071,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             },
           ),
         ),
-        ToolbarToggleTextButton(
-          icon: const AppIcon(AppIcons.plotMeasureXx),
-          label: AppStrings.plot.measureXx,
-          tooltip: AppStrings.plot.measureXxTooltip,
-          selected: vm.xMeasurementEnabled,
-          activeColor: Colors.blue,
-          onPressed: vm.toggleXMeasurement,
+        Listener(
+          key: const ValueKey('plot-measure-x-button'),
+          onPointerDown: (event) {
+            if (event.buttons == kSecondaryMouseButton) {
+              _showMeasurementSettingsDialog(context, vm, isX: true);
+            }
+          },
+          child: ToolbarToggleTextButton(
+            icon: const AppIcon(AppIcons.plotMeasureXx),
+            label: AppStrings.plot.measureXx,
+            tooltip: AppStrings.plot.measureXxTooltip,
+            selected: vm.xMeasurementEnabled,
+            activeColor: Colors.blue,
+            onPressed: vm.toggleXMeasurement,
+          ),
         ),
-        ToolbarToggleTextButton(
-          icon: const AppIcon(AppIcons.plotMeasureYy),
-          label: AppStrings.plot.measureYy,
-          tooltip: AppStrings.plot.measureYyTooltip,
-          selected: vm.yMeasurementEnabled,
-          activeColor: Colors.blue,
-          onPressed: vm.toggleYMeasurement,
+        Listener(
+          key: const ValueKey('plot-measure-y-button'),
+          onPointerDown: (event) {
+            if (event.buttons == kSecondaryMouseButton) {
+              _showMeasurementSettingsDialog(context, vm, isX: false);
+            }
+          },
+          child: ToolbarToggleTextButton(
+            icon: const AppIcon(AppIcons.plotMeasureYy),
+            label: AppStrings.plot.measureYy,
+            tooltip: AppStrings.plot.measureYyTooltip,
+            selected: vm.yMeasurementEnabled,
+            activeColor: Colors.blue,
+            onPressed: vm.toggleYMeasurement,
+          ),
         ),
         if (vm.previewToolbarEnabled)
           ToolbarToggleTextButton(
@@ -1735,6 +1751,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           xCursor2: vm.xCursor2,
           yCursor1: vm.yCursor1,
           yCursor2: vm.yCursor2,
+          xMeasurementLine1Color: vm.xMeasurementLine1Color,
+          xMeasurementLine2Color: vm.xMeasurementLine2Color,
+          yMeasurementLine1Color: vm.yMeasurementLine1Color,
+          yMeasurementLine2Color: vm.yMeasurementLine2Color,
+          xMeasurementLine1Opacity: vm.xMeasurementLine1Opacity,
+          xMeasurementLine2Opacity: vm.xMeasurementLine2Opacity,
+          yMeasurementLine1Opacity: vm.yMeasurementLine1Opacity,
+          yMeasurementLine2Opacity: vm.yMeasurementLine2Opacity,
           statsEnabled: vm.statsEnabled,
           statsRangeEnabled: vm.statsRangeEnabled,
           statsX1: vm.statsX1,
@@ -1794,6 +1818,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     xCursor2: vm.xCursor2,
                     yCursor1: vm.yCursor1,
                     yCursor2: vm.yCursor2,
+                    yMeasurementSnapEnabled: vm.yMeasurementSnapEnabled,
                     // 测量线拖动回调
                     onXCursor1Drag:
                         vm.xMeasurementEnabled
@@ -2264,6 +2289,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             .where((channel) => channel.visible)
             .toList();
     if (visibleChannels.isEmpty) return const SizedBox.shrink();
+    final fontSize = _plotFontSize(vm, 12);
+    final fontWeight = vm.plotFontBold ? FontWeight.bold : FontWeight.normal;
+    // 图例按最长名称扩展，优先显示完整名称；极长名称仍限制宽度，避免遮住
+    // 大部分绘图区。外层 Positioned 的可用宽度还会继续约束窄窗口。
+    final longestNameWidth = visibleChannels.fold<double>(
+      0,
+      (width, channel) => math.max(
+        width,
+        _measureFloatingTextWidth(
+          channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}',
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ),
+    );
+    final contentWidth = (16 + longestNameWidth).clamp(96.0, 480.0);
 
     return _DraggableInfoBox(
       key: const ValueKey('plot-legend-box'),
@@ -2273,60 +2314,61 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       borderColor: Colors.teal.withValues(alpha: 0.55),
       onPositionChanged:
           (right, top) => vm.setLegendPanelPosition(right: right, top: top),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '图例',
-                style: TextStyle(
-                  color: _floatingTextColor(vm),
-                  fontSize: _plotFontSize(vm, 12),
-                  fontWeight: FontWeight.bold,
+      child: SizedBox(
+        width: contentWidth,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '图例',
+                  style: TextStyle(
+                    color: _floatingTextColor(vm),
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              ...visibleChannels.map((channel) {
-                final name =
-                    channel.alias.isNotEmpty
-                        ? channel.alias
-                        : 'Ch${channel.index}';
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: channel.color,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _floatingTextColor(vm),
-                            fontSize: _plotFontSize(vm, 12),
-                            fontWeight:
-                                vm.plotFontBold
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
+                const SizedBox(height: 6),
+                ...visibleChannels.map((channel) {
+                  final name =
+                      channel.alias.isNotEmpty
+                          ? channel.alias
+                          : 'Ch${channel.index}';
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: channel.color,
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            name,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _floatingTextColor(vm),
+                              fontSize: fontSize,
+                              fontFamily: 'SarasaUiSC',
+                              fontWeight: fontWeight,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
           ),
         ),
       ),
@@ -3842,6 +3884,208 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: columns,
+    );
+  }
+
+  Future<void> _showMeasurementSettingsDialog(
+    BuildContext context,
+    PlotViewModel vm, {
+    required bool isX,
+  }) async {
+    var line1Color =
+        isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color;
+    var line2Color =
+        isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color;
+    var line1Opacity =
+        isX ? vm.xMeasurementLine1Opacity : vm.yMeasurementLine1Opacity;
+    var line2Opacity =
+        isX ? vm.xMeasurementLine2Opacity : vm.yMeasurementLine2Opacity;
+    var snapEnabled = vm.yMeasurementSnapEnabled;
+    final opacityInputFormatter = TextInputFormatter.withFunction((
+      oldValue,
+      newValue,
+    ) {
+      if (newValue.text.isEmpty) return newValue;
+      final value = int.tryParse(newValue.text);
+      return value != null && value <= 100 ? newValue : oldValue;
+    });
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              Widget buildLineEditor({
+                required String label,
+                required Color color,
+                required double opacity,
+                required ValueKey<String> colorKey,
+                required ValueKey<String> opacityKey,
+                required VoidCallback onChooseColor,
+                required ValueChanged<double> onOpacityChanged,
+              }) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(AppStrings.plot.measurementLineColor),
+                        const SizedBox(width: 12),
+                        InkWell(
+                          key: colorKey,
+                          onTap: onChooseColor,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            width: 42,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          AppStrings.plot.measurementLineOpacity,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: kSecondaryDialogFieldWidth,
+                          child: TextFormField(
+                            key: opacityKey,
+                            initialValue: (opacity * 100).round().toString(),
+                            decoration: secondaryDialogFieldDecoration(
+                              suffixText: '%',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              opacityInputFormatter,
+                            ],
+                            onChanged: (text) {
+                              final value = int.tryParse(text);
+                              if (value != null) {
+                                onOpacityChanged(value / 100);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+
+              Future<void> chooseColor(bool first) async {
+                final selected = await _showChannelCustomColorPicker(
+                  dialogContext,
+                  first ? line1Color : line2Color,
+                );
+                if (selected == null) return;
+                setDialogState(() {
+                  if (first) {
+                    line1Color = selected;
+                  } else {
+                    line2Color = selected;
+                  }
+                });
+              }
+
+              final prefix = isX ? 'x' : 'y';
+              return AlertDialog(
+                shape: kAdvancedSettingsDialogShape,
+                title: Text(
+                  isX
+                      ? AppStrings.plot.measureXSettings
+                      : AppStrings.plot.measureYSettings,
+                ),
+                content: SizedBox(
+                  width: 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      buildLineEditor(
+                        label: isX ? 'X1' : 'Y1',
+                        color: line1Color,
+                        opacity: line1Opacity,
+                        colorKey: ValueKey('$prefix-measure-line1-color'),
+                        opacityKey: ValueKey('$prefix-measure-line1-opacity'),
+                        onChooseColor: () => chooseColor(true),
+                        onOpacityChanged: (value) => line1Opacity = value,
+                      ),
+                      const Divider(height: 20),
+                      buildLineEditor(
+                        label: isX ? 'X2' : 'Y2',
+                        color: line2Color,
+                        opacity: line2Opacity,
+                        colorKey: ValueKey('$prefix-measure-line2-color'),
+                        opacityKey: ValueKey('$prefix-measure-line2-opacity'),
+                        onChooseColor: () => chooseColor(false),
+                        onOpacityChanged: (value) => line2Opacity = value,
+                      ),
+                      if (!isX) ...[
+                        const Divider(height: 20),
+                        SwitchListTile(
+                          key: const ValueKey('y-measure-snap-toggle'),
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: Text(AppStrings.plot.measurementSnap),
+                          subtitle: Text(
+                            AppStrings.plot.measurementSnapHelp,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          value: snapEnabled,
+                          onChanged:
+                              (value) =>
+                                  setDialogState(() => snapEnabled = value),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(AppStrings.common.cancel),
+                  ),
+                  FilledButton(
+                    key: ValueKey('$prefix-measure-settings-save'),
+                    onPressed: () {
+                      if (isX) {
+                        vm.setXMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                      } else {
+                        vm.setYMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                        vm.setYMeasurementSnapEnabled(snapEnabled);
+                      }
+                      Navigator.pop(dialogContext);
+                    },
+                    child: Text(AppStrings.common.save),
+                  ),
+                ],
+              );
+            },
+          ),
     );
   }
 

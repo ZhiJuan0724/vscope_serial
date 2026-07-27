@@ -53,6 +53,34 @@ void main() {
       }
     });
 
+    test(
+      'query exposes contiguous sample ranges for each populated bucket',
+      () {
+        final index = PlotLodIndex();
+        for (int i = 0; i < 512; i++) {
+          index.add(i, [i == 130 ? 1000.0 : 0.0]);
+        }
+
+        final series = index.query(
+          channelIndex: 0,
+          xMin: 0,
+          xMax: 511,
+          plotWidth: 4,
+          quality: PlotLodQuality.quality,
+        );
+
+        expect(series, isNotNull);
+        expect(series!.bucketOffsets.first, 0);
+        expect(series.bucketOffsets.last, series.length);
+        for (var i = 1; i < series.bucketOffsets.length; i++) {
+          expect(
+            series.bucketOffsets[i],
+            greaterThan(series.bucketOffsets[i - 1]),
+          );
+        }
+      },
+    );
+
     test('tracks max channel count for variable JustFloat frames', () {
       final index = PlotLodIndex();
       index.add(0, [1.0, 2.0, 3.0]);

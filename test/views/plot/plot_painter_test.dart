@@ -150,6 +150,34 @@ void main() {
       }
     });
 
+    test('测量线颜色和不透明度变化只要求覆盖层重绘', () {
+      final channels = [ChannelConfig(index: 0, color: Colors.red)];
+
+      for (final layer in PlotPaintLayer.values) {
+        final oldPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          xMeasurementLine1Color: Colors.cyan,
+          xMeasurementLine1Opacity: 1,
+        );
+        final newPainter = PlotLayerPainter(
+          layer: layer,
+          viewport: PlotViewport(),
+          data: const [],
+          channels: channels,
+          xMeasurementLine1Color: Colors.purple,
+          xMeasurementLine1Opacity: 0.4,
+        );
+
+        expect(
+          newPainter.shouldRepaint(oldPainter),
+          layer == PlotPaintLayer.overlay,
+        );
+      }
+    });
+
     test('动态偏置轴宽度变化会触发重绘', () {
       final oldViewport = PlotViewport()..setOffsetAxisColumnWidths([42]);
       final newViewport = PlotViewport()..setOffsetAxisColumnWidths([96]);
@@ -455,6 +483,110 @@ void main() {
       });
 
       expect(paintedPixels, greaterThan(0));
+    });
+
+    testWidgets('质量优先将单点脉冲绘制为极值线而均衡保持原折线', (tester) async {
+      final lod = PlotLodIndex();
+      for (var i = 0; i < 2048; i++) {
+        lod.add(i, [i == 1030 ? 10000.0 : 0.0]);
+      }
+
+      Future<int> elevatedColumnCount(PlotLodQuality quality) async {
+        const width = 900;
+        const height = 180;
+        const size = Size(900, 180);
+        final viewport = PlotViewport(
+          xMin: 0,
+          xMax: 2047,
+          yMin: 0,
+          yMax: 10000,
+        );
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.data,
+          viewport: viewport,
+          data: const [],
+          lodIndex: lod,
+          lodQuality: quality,
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(width, height);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        final columns = <int>{};
+        final maxY = (height - viewport.marginBottom - 3).floor();
+        for (var y = viewport.marginTop.ceil(); y < maxY; y++) {
+          for (var x = viewport.marginLeft.ceil(); x < width; x++) {
+            if (bytes!.getUint8((y * width + x) * 4 + 3) != 0) {
+              columns.add(x);
+            }
+          }
+        }
+        image.dispose();
+        return columns.length;
+      }
+
+      final counts = await tester.runAsync(() async {
+        return (
+          quality: await elevatedColumnCount(PlotLodQuality.quality),
+          balanced: await elevatedColumnCount(PlotLodQuality.balanced),
+        );
+      });
+
+      expect(counts!.quality, lessThanOrEqualTo(6));
+      expect(counts.balanced, greaterThan(counts.quality * 2));
+    });
+
+    testWidgets('质量优先保留阶跃的窄过渡而不扩展到整个LOD桶', (tester) async {
+      final lod = PlotLodIndex();
+      for (var i = 0; i < 2048; i++) {
+        lod.add(i, [i < 1030 ? 0.0 : 10000.0]);
+      }
+
+      final transitionColumns = await tester.runAsync(() async {
+        const width = 900;
+        const height = 180;
+        const size = Size(900, 180);
+        final viewport = PlotViewport(
+          xMin: 0,
+          xMax: 2047,
+          yMin: 0,
+          yMax: 10000,
+        );
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        PlotLayerPainter(
+          layer: PlotPaintLayer.data,
+          viewport: viewport,
+          data: const [],
+          lodIndex: lod,
+          lodQuality: PlotLodQuality.quality,
+          channels: [ChannelConfig(index: 0, color: Colors.red)],
+          activeChannelCount: 1,
+        ).paint(canvas, size);
+
+        final image = await recorder.endRecording().toImage(width, height);
+        final bytes = await image.toByteData(
+          format: ui.ImageByteFormat.rawRgba,
+        );
+        final columns = <int>{};
+        for (var y = 65; y <= 105; y++) {
+          for (var x = viewport.marginLeft.ceil(); x < width; x++) {
+            if (bytes!.getUint8((y * width + x) * 4 + 3) != 0) {
+              columns.add(x);
+            }
+          }
+        }
+        image.dispose();
+        return columns.length;
+      });
+
+      expect(transitionColumns, greaterThan(0));
+      expect(transitionColumns, lessThanOrEqualTo(6));
     });
 
     testWidgets('小范围视口换载期间使用粗略LOD避免空白', (tester) async {

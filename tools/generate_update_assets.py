@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 EXCLUDED_TOP_LEVEL = {"settings", "config", "logs", "exports"}
+EXCLUDED_SUFFIXES = {".lib", ".exp", ".pdb"}
 
 
 def is_managed_path(relative: Path) -> bool:
@@ -20,6 +21,7 @@ def is_managed_path(relative: Path) -> bool:
         bool(relative.parts)
         and relative.parts[0].lower() not in EXCLUDED_TOP_LEVEL
         and relative.as_posix() != "app-files.json"
+        and relative.suffix.lower() not in EXCLUDED_SUFFIXES
     )
 
 

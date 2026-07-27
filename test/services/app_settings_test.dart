@@ -23,6 +23,15 @@ void main() {
             ..snapHighlightEnabled = false
             ..snapHighlightDiameter = 12
             ..snapHighlightColorMode = 'channel'
+            ..xMeasurementLine1Color = 0xFF112233
+            ..xMeasurementLine2Color = 0xFF445566
+            ..yMeasurementLine1Color = 0xFF778899
+            ..yMeasurementLine2Color = 0xFFAABBCC
+            ..xMeasurementLine1Opacity = 0.2
+            ..xMeasurementLine2Opacity = 0.3
+            ..yMeasurementLine1Opacity = 0.4
+            ..yMeasurementLine2Opacity = 0.5
+            ..yMeasurementSnapEnabled = false
             ..statsToolbarEnabled = true
             ..triggerToolbarEnabled = true
             ..previewToolbarEnabled = true
@@ -56,6 +65,7 @@ void main() {
             ..updateChannel = 'beta'
             ..updateSource = 'gitee'
             ..disableNotifications = true
+            ..diagnosticLoggingEnabled = true
             ..rawDataDisplayLineLimit = 500
             ..rawDataAutoLineBreakIntervalMs = 250
             ..rawDataShellMode = true
@@ -113,6 +123,15 @@ void main() {
       expect(settings.snapHighlightEnabled, isTrue);
       expect(settings.snapHighlightDiameter, 8);
       expect(settings.snapHighlightColorMode, 'cursor');
+      expect(settings.xMeasurementLine1Color, isNull);
+      expect(settings.xMeasurementLine2Color, isNull);
+      expect(settings.yMeasurementLine1Color, isNull);
+      expect(settings.yMeasurementLine2Color, isNull);
+      expect(settings.xMeasurementLine1Opacity, 1);
+      expect(settings.xMeasurementLine2Opacity, 1);
+      expect(settings.yMeasurementLine1Opacity, 1);
+      expect(settings.yMeasurementLine2Opacity, 1);
+      expect(settings.yMeasurementSnapEnabled, isTrue);
       expect(settings.statsToolbarEnabled, isFalse);
       expect(settings.triggerToolbarEnabled, isFalse);
       expect(settings.previewToolbarEnabled, isFalse);
@@ -146,6 +165,7 @@ void main() {
       expect(settings.updateChannel, 'stable');
       expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
+      expect(settings.diagnosticLoggingEnabled, isFalse);
       expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataAutoLineBreakIntervalMs, 100);
       expect(settings.rawDataShellMode, isFalse);
@@ -216,6 +236,10 @@ void main() {
       settings.dataBits = 7;
       final second = settings.save();
       settings.lastMainPage = 'plot';
+      settings.diagnosticLoggingEnabled = true;
+      settings.xMeasurementLine1Color = 0xFF123456;
+      settings.yMeasurementLine2Opacity = 0.45;
+      settings.yMeasurementSnapEnabled = false;
       final third = settings.save();
 
       await Future.wait([first, second, third]);
@@ -225,6 +249,10 @@ void main() {
       expect(decoded['baudRate'], 9600);
       expect(decoded['dataBits'], 7);
       expect(decoded['lastMainPage'], 'plot');
+      expect(decoded['diagnosticLoggingEnabled'], isTrue);
+      expect(decoded['xMeasurementLine1Color'], 0xFF123456);
+      expect(decoded['yMeasurementLine2Opacity'], 0.45);
+      expect(decoded['yMeasurementSnapEnabled'], isFalse);
     });
 
     test('截断主文件后自动恢复上一代备份', () async {

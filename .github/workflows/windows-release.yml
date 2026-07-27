@@ -86,6 +86,9 @@ jobs:
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
 
+      - name: Clean previous build outputs
+        run: flutter clean
+
       - name: Install dependencies
         run: flutter pub get
 
@@ -150,7 +153,10 @@ jobs:
           if ("${{ github.ref_type }}" -ne "tag") {
             $version = "v0.0.0-${{ github.sha }}"
           }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (Test-Path -LiteralPath "dist") {
+            Remove-Item -LiteralPath "dist" -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path "dist" | Out-Null
           python tools/generate_update_assets.py `
             --bundle "build/windows/x64/runner/Release" `
             --tag $version `

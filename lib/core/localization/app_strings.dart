@@ -116,6 +116,12 @@ final class _PlotStrings {
   String get measureXxTooltip => 'Delta X 测量';
   String get measureYy => 'Y测量';
   String get measureYyTooltip => 'Delta Y 测量';
+  String get measureXSettings => 'Delta X 设置';
+  String get measureYSettings => 'Delta Y 设置';
+  String get measurementLineColor => '线条颜色';
+  String get measurementLineOpacity => '不透明度';
+  String get measurementSnap => '吸附到波形';
+  String get measurementSnapHelp => '拖动 Y1/Y2 时吸附到当前窗口内最近的可见波形点';
   String get stats => '统计';
   String get statsTooltip => '统计测量（Max/Min/Avg）';
   String get statsRange => '范围';
@@ -150,6 +156,7 @@ final class _PlotStrings {
   String get channel => '通道';
   String get offsetToggle => '偏置功能开关';
   String get offset => '偏置';
+  String get scale => '缩放';
   String get plotVisible => '绘图';
   String get hideAllChannels => '点击隐藏全部';
   String get showAllChannels => '点击显示全部';
@@ -481,6 +488,8 @@ final class _AppInfoStrings {
       '重置串口、绘图、数据收发、Shell、更新等应用设置；不会删除绘图配置功能保存的 JSON 配置文件。';
   String get disableNotifications => '关闭提示信息';
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
+  String get diagnosticLogging => '调试模式';
+  String get diagnosticLoggingHelp => '记录串口连接等详细诊断信息并立即写入日志；仅排查问题时开启，日志量会明显增加。';
   String get receivePerformance => '接收性能';
   String get plotReceiveAggregation => '绘图高频接收合并';
   String get plotReceiveAggregationHelp =>

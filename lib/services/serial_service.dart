@@ -635,6 +635,14 @@ class SerialService extends ChangeNotifier {
 
     isConnecting = true;
     _notifyListenersSoon();
+    AppLogger().debug(
+      '连接参数快照: generation=$generation, port=${config.port}, '
+      'baudRate=${config.baudRate}, dataBits=${config.dataBits}, '
+      'stopBits=${config.stopBits}, parity=${config.parity}, '
+      'rts=${config.rts}, dtr=${config.dtr}, '
+      'availablePorts=${availablePorts.join(',')}',
+      category: 'SERIAL',
+    );
     AppLogger().trace('isConnecting=true, 开始异步打开串口', category: 'SERIAL');
     // 先让 Flutter 绘制连接中状态，再开始原生耗时操作。
     await Future<void>.delayed(Duration.zero);
@@ -663,8 +671,13 @@ class SerialService extends ChangeNotifier {
     } on _ConnectionCancelled {
       AppLogger().info('串口打开结果已过期，正在清理', category: 'SERIAL');
       await _cleanupPortLocked();
-    } catch (e) {
-      AppLogger().error('连接失败: $e', category: 'SERIAL');
+    } catch (error, stackTrace) {
+      AppLogger().error(
+        '连接失败: $error',
+        category: 'SERIAL',
+        error: error,
+        stackTrace: stackTrace,
+      );
       await _cleanupPortLocked();
       AppNotifications.show('串口打开失败，请检查端口占用或设备状态');
     } finally {
@@ -677,6 +690,11 @@ class SerialService extends ChangeNotifier {
   /// 在后台 isolate 打开原生句柄，然后挂接 UI 侧 IO。
   Future<void> _openPort(int generation) async {
     final port = config.port!;
+    final stopwatch = Stopwatch()..start();
+    AppLogger().debug(
+      '创建串口 transport: generation=$generation, port=$port',
+      category: 'SERIAL',
+    );
     if (debugPortOpener != null) {
       final opened = await debugPortOpener!(port, config.baudRate);
       if (!opened) {
@@ -685,7 +703,16 @@ class SerialService extends ChangeNotifier {
     }
 
     final transport = _transportFactory();
+    AppLogger().debug(
+      '调用 transport.open: type=${transport.runtimeType}',
+      category: 'SERIAL',
+    );
     final opened = await transport.open(port, config.baudRate);
+    AppLogger().debug(
+      'transport.open 完成: opened=$opened, '
+      'elapsed=${stopwatch.elapsedMilliseconds}ms',
+      category: 'SERIAL',
+    );
     if (!opened) {
       await transport.close();
       throw Exception('无法打开串口');
@@ -696,7 +723,10 @@ class SerialService extends ChangeNotifier {
     }
 
     // 设置串口参数
-    transport.setConfig(config.dataBits, config.stopBits, config.parity);
+    if (!transport.setConfig(config.dataBits, config.stopBits, config.parity)) {
+      await transport.close();
+      throw Exception('串口已打开，但应用数据位/停止位/校验位失败');
+    }
     transport.setRts(config.rts);
     transport.setDtr(config.dtr);
 
@@ -715,6 +745,7 @@ class SerialService extends ChangeNotifier {
       onError:
           (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
     );
+    AppLogger().debug('原生数据流订阅已建立', category: 'SERIAL');
 
     // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
     if (!transport.startReading(timeoutMs: 10)) {
@@ -731,6 +762,11 @@ class SerialService extends ChangeNotifier {
     }
 
     AppLogger().trace('NativeSerialReader 读取线程已启动', category: 'SERIAL');
+    AppLogger().debug(
+      '串口打开流程全部完成: generation=$generation, '
+      'elapsed=${stopwatch.elapsedMilliseconds}ms',
+      category: 'SERIAL',
+    );
   }
 
   Future<void> disconnect() {
@@ -744,6 +780,12 @@ class SerialService extends ChangeNotifier {
   }
 
   Future<void> _cleanupPortLocked() async {
+    AppLogger().debug(
+      '串口清理开始: connected=$isConnected, '
+      'hasTransport=${_transport != null}, '
+      'hasSubscription=${_nativeSubscription != null}',
+      category: 'SERIAL',
+    );
     _flushReceiveLog();
     _flushSendLog();
     final subscription = _nativeSubscription;
@@ -757,6 +799,7 @@ class SerialService extends ChangeNotifier {
     _notifyListenersSoon();
     await subscription?.cancel();
     await transport?.close();
+    AppLogger().debug('串口清理完成', category: 'SERIAL');
   }
 
   /// 应用退出专用：立即取消当前连接意图，再等待所有串口操作有序收敛。

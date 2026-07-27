@@ -91,6 +91,14 @@ class PlotRenderSnapshot {
     this.xCursor2,
     this.yCursor1,
     this.yCursor2,
+    this.xMeasurementLine1Color,
+    this.xMeasurementLine2Color,
+    this.yMeasurementLine1Color,
+    this.yMeasurementLine2Color,
+    this.xMeasurementLine1Opacity = 1,
+    this.xMeasurementLine2Opacity = 1,
+    this.yMeasurementLine1Opacity = 1,
+    this.yMeasurementLine2Opacity = 1,
     this.statsEnabled = false,
     this.statsRangeEnabled = false,
     this.statsX1,
@@ -126,6 +134,14 @@ class PlotRenderSnapshot {
   final double? xCursor2;
   final double? yCursor1;
   final double? yCursor2;
+  final Color? xMeasurementLine1Color;
+  final Color? xMeasurementLine2Color;
+  final Color? yMeasurementLine1Color;
+  final Color? yMeasurementLine2Color;
+  final double xMeasurementLine1Opacity;
+  final double xMeasurementLine2Opacity;
+  final double yMeasurementLine1Opacity;
+  final double yMeasurementLine2Opacity;
   final bool statsEnabled;
   final bool statsRangeEnabled;
   final double? statsX1;

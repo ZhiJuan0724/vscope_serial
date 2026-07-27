@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/rtt_service.dart';
@@ -85,10 +86,15 @@ void main() {
     final service = SerialService();
     final plotViewModel = PlotViewModel(service);
     final previousAggregation = AppSettings().plotReceiveAggregationEnabled;
+    final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;
     AppSettings().plotReceiveAggregationEnabled = false;
-    addTearDown(
-      () => AppSettings().plotReceiveAggregationEnabled = previousAggregation,
-    );
+    AppSettings().diagnosticLoggingEnabled = false;
+    AppLogger().setDiagnosticEnabled(false);
+    addTearDown(() {
+      AppSettings().plotReceiveAggregationEnabled = previousAggregation;
+      AppSettings().diagnosticLoggingEnabled = previousDiagnostic;
+      AppLogger().setDiagnosticEnabled(previousDiagnostic);
+    });
 
     await tester.pumpWidget(
       MultiProvider(
@@ -148,12 +154,23 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('通知'), findsOneWidget);
+    expect(find.text('诊断'), findsOneWidget);
     expect(find.text('页面'), findsOneWidget);
     expect(find.text(AppStrings.appInfo.receivePerformance), findsOneWidget);
     expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
     expect(find.text('版本回退'), findsWidgets);
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    final diagnosticToggle = find.ancestor(
+      of: find.text(AppStrings.appInfo.diagnosticLogging),
+      matching: find.byType(SwitchListTile),
+    );
+    expect(diagnosticToggle, findsOneWidget);
+    expect(AppSettings().diagnosticLoggingEnabled, isFalse);
+    await tester.tap(diagnosticToggle);
+    await tester.pump();
+    expect(AppSettings().diagnosticLoggingEnabled, isTrue);
+    expect(AppLogger().diagnosticEnabled, isTrue);
     final aggregationToggle = find.ancestor(
       of: find.text(AppStrings.appInfo.plotReceiveAggregation),
       matching: find.byType(SwitchListTile),

@@ -44,6 +44,55 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setXMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    _xMeasurementLine1Color = _opaqueMeasurementColor(line1Color);
+    _xMeasurementLine2Color = _opaqueMeasurementColor(line2Color);
+    _xMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0).toDouble();
+    _xMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0).toDouble();
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setYMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    _yMeasurementLine1Color = _opaqueMeasurementColor(line1Color);
+    _yMeasurementLine2Color = _opaqueMeasurementColor(line2Color);
+    _yMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0).toDouble();
+    _yMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0).toDouble();
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setYMeasurementSnapEnabled(bool value) {
+    if (_yMeasurementSnapEnabled == value) return;
+    _yMeasurementSnapEnabled = value;
+    if (value) {
+      _refreshSnapHighlightColors();
+    } else {
+      _yCursor1SnapHighlights = const [];
+      _yCursor2SnapHighlights = const [];
+    }
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
+  Color _opaqueMeasurementColor(Color color) =>
+      Color(0xFF000000 | (color.toARGB32() & 0x00FFFFFF));
+
   void setStatsToolbarEnabled(bool value) {
     if (_statsToolbarEnabled == value) return;
     _statsToolbarEnabled = value;

@@ -26,6 +26,78 @@ static HANDLE g_hSerial = INVALID_HANDLE_VALUE;
 static std::thread g_readThread;
 static std::atomic<bool> g_running(false);
 static std::mutex g_stateMutex;
+static std::atomic<int> g_lastOpenStage{0};
+static std::atomic<DWORD> g_lastOpenError{ERROR_SUCCESS};
+static std::mutex g_diagnosticLogMutex;
+static std::wstring g_diagnosticLogPath;
+static std::atomic<bool> g_diagnosticLogEnabled{false};
+
+static std::wstring utf8_to_wide(const char* value) {
+    if (value == NULL || value[0] == '\0') return std::wstring();
+    const int required = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value, -1, NULL, 0);
+    if (required <= 1) return std::wstring();
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value, -1, result.data(), required);
+    result.resize(static_cast<size_t>(required - 1));
+    return result;
+}
+
+static void append_open_diagnostic(
+    int stage,
+    const char* action,
+    DWORD error = ERROR_SUCCESS) {
+    g_lastOpenStage = stage;
+    g_lastOpenError = error;
+    if (!g_diagnosticLogEnabled.load()) return;
+
+    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    if (g_diagnosticLogPath.empty()) return;
+    HANDLE file = CreateFileW(
+        g_diagnosticLogPath.c_str(),
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+    char line[512] = {};
+    const int length = snprintf(
+        line,
+        sizeof(line),
+        "[DEBUG]   TIME: %04u-%02u-%02uT%02u:%02u:%02u.%03u "
+        "[SERIAL_NATIVE] open stage=%d action=%s win32Error=%lu\r\n",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        now.wMilliseconds,
+        stage,
+        action,
+        static_cast<unsigned long>(error));
+    if (length > 0) {
+        DWORD written = 0;
+        const int boundedLength =
+            length < static_cast<int>(sizeof(line))
+                ? length
+                : static_cast<int>(sizeof(line) - 1);
+        WriteFile(
+            file,
+            line,
+            static_cast<DWORD>(boundedLength),
+            &written,
+            NULL);
+        FlushFileBuffers(file);
+    }
+    CloseHandle(file);
+}
 static int64_t g_dartPort = 0;
 static int g_timeoutMs = 0;
 static LARGE_INTEGER g_qpcFrequency = {};
@@ -557,11 +629,26 @@ int nsr_init_dart_api(void* data) {
 }
 
 int nsr_open_port(const char* portName, int baudRate) {
+    append_open_diagnostic(1, "validate_input");
+    if (portName == NULL || portName[0] == '\0' || baudRate <= 0) {
+        append_open_diagnostic(1, "invalid_input", ERROR_INVALID_PARAMETER);
+        return -1;
+    }
+
+    append_open_diagnostic(2, "close_previous_begin");
     nsr_close_port();
+    append_open_diagnostic(2, "close_previous_complete");
     
     char fullName[256];
-    snprintf(fullName, sizeof(fullName), "\\\\.\\%s", portName);
+    const int nameLength =
+        snprintf(fullName, sizeof(fullName), "\\\\.\\%s", portName);
+    if (nameLength < 0 || nameLength >= static_cast<int>(sizeof(fullName))) {
+        append_open_diagnostic(
+            1, "port_name_too_long", ERROR_BUFFER_OVERFLOW);
+        return -1;
+    }
     
+    append_open_diagnostic(3, "CreateFile_begin");
     HANDLE hSerial = CreateFileA(
         fullName,
         GENERIC_READ | GENERIC_WRITE,
@@ -573,16 +660,21 @@ int nsr_open_port(const char* portName, int baudRate) {
     );
     
     if (hSerial == INVALID_HANDLE_VALUE) {
+        append_open_diagnostic(3, "CreateFile_failed", GetLastError());
         return -1;
     }
+    append_open_diagnostic(3, "CreateFile_complete");
     
+    append_open_diagnostic(4, "GetCommState_begin");
     DCB dcb = {0};
     dcb.DCBlength = sizeof(DCB);
     
     if (!GetCommState(hSerial, &dcb)) {
+        append_open_diagnostic(4, "GetCommState_failed", GetLastError());
         CloseHandle(hSerial);
         return -1;
     }
+    append_open_diagnostic(4, "GetCommState_complete");
     
     dcb.BaudRate = baudRate;
     dcb.ByteSize = 8;
@@ -592,33 +684,69 @@ int nsr_open_port(const char* portName, int baudRate) {
     dcb.fDtrControl = DTR_CONTROL_DISABLE;
     dcb.fRtsControl = RTS_CONTROL_DISABLE;
     
+    append_open_diagnostic(5, "SetCommState_begin");
     if (!SetCommState(hSerial, &dcb)) {
+        append_open_diagnostic(5, "SetCommState_failed", GetLastError());
         CloseHandle(hSerial);
         return -1;
     }
+    append_open_diagnostic(5, "SetCommState_complete");
     
+    append_open_diagnostic(6, "SetupComm_begin");
     constexpr DWORD kDriverBufferBytes = 64 * 1024;
     if (!SetupComm(hSerial, kDriverBufferBytes, kDriverBufferBytes)) {
+        append_open_diagnostic(6, "SetupComm_failed", GetLastError());
         CloseHandle(hSerial);
         return -1;
     }
+    append_open_diagnostic(6, "SetupComm_complete");
     
+    append_open_diagnostic(7, "SetCommTimeouts_begin");
     COMMTIMEOUTS timeouts = {0};
     timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = 0;
-    SetCommTimeouts(hSerial, &timeouts);
+    if (!SetCommTimeouts(hSerial, &timeouts)) {
+        append_open_diagnostic(7, "SetCommTimeouts_failed", GetLastError());
+        CloseHandle(hSerial);
+        return -1;
+    }
+    append_open_diagnostic(7, "SetCommTimeouts_complete");
     
-    PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    append_open_diagnostic(8, "PurgeComm_begin");
+    if (!PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR)) {
+        append_open_diagnostic(8, "PurgeComm_failed", GetLastError());
+        CloseHandle(hSerial);
+        return -1;
+    }
+    append_open_diagnostic(8, "PurgeComm_complete");
 
+    append_open_diagnostic(9, "publish_handle_begin");
     {
         std::lock_guard<std::mutex> lock(g_stateMutex);
         g_hSerial = hSerial;
     }
+    append_open_diagnostic(9, "publish_handle_complete");
     
+    append_open_diagnostic(10, "open_complete");
     return 0;
+}
+
+int nsr_get_last_open_stage() {
+    return g_lastOpenStage.load();
+}
+
+uint32_t nsr_get_last_open_error() {
+    return static_cast<uint32_t>(g_lastOpenError.load());
+}
+
+void nsr_configure_diagnostic_log(const char* logPath, int enabled) {
+    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    g_diagnosticLogPath = utf8_to_wide(logPath);
+    g_diagnosticLogEnabled =
+        enabled != 0 && !g_diagnosticLogPath.empty();
 }
 
 void nsr_close_port() {
