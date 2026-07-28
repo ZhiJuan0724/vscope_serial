@@ -111,15 +111,19 @@ Shell 是独立页面，入口默认隐藏，可在应用高级设置中开启�
 
 ## RTT Viewer
 
-RTT 页面默认隐藏，可在应用高级设置的“页面”分类中开启。首版只读显示 RTT Up 0，支持暂停显示、时间戳、文本/HEX、自动滚动、清空和导出。
+RTT Viewer 默认隐藏，可在应用高级设置的“页面”分类中开启。页面支持 SEGGER 虚拟终端 0～15、All Terminals 汇总、RTT Down 0 双向发送、暂停显示、时间戳、文本/HEX、自动滚动、清空和导出。
+
+开启 RTT Viewer 后还会显示最右侧“探针绘图”页面。OpenOCD 后端支持运行态只读内存采样 HSS，以及从 `_SEGGER_RTT` 控制块枚举 Up 通道；名称符合 `JScope_<FORMAT>`（例如 `JScope_i4u4`）的通道会自动识别数据格式，普通名称可手动填写格式。程序文件支持 ELF 格式的 `.elf`、`.axf` 和 `.out`，由应用本地解析 ELF 文件头和数据符号，不依赖探针后端。
 
 RTT 控制块可选择 `Auto`、指定地址或指定范围。Auto 会扫描目标定义的 RAM；若当前后端版本无法自动定位，可改为输入精确地址，或限定一段 RAM 搜索范围。
 
-- `自动`：优先使用已安装的 J-Link 官方工具或 pyOCD，外部工具不存在时回退到内置 probe-rs 探针辅助进程。
-- `外部`：J-Link 使用 `JLinkGDBServerCL.exe`，CMSIS-DAP 使用支持 RTT server 的 pyOCD。
-- `内置`：使用随应用发布的 `probe_helper.exe`，支持 J-Link、CMSIS-DAP v1 和 CMSIS-DAP v2。该进程基于 probe-rs 核心库和完整内置目标库，后续烧录功能继续复用同一进程协议，不额外捆绑重复的 CLI 工具。
+- 探针连接窗口可选择 `自动`、外部 J-Link、外置 OpenOCD 或内置 OpenOCD。CMSIS-DAP 自动模式优先外置 OpenOCD，未找到时才回退内置版本；显式选择时不会在两者之间切换。
+- Windows 发布包内置固定版本的轻量 OpenOCD 运行时、完整 scripts 和许可证；高级设置分别显示内置、外置 OpenOCD 的检测版本，外置路径可手动覆盖。OpenOCD 需要填写接口和目标 Tcl 配置，并使用指定地址或指定范围定位 RTT 控制块。
+- 探针功能严格禁止 halt、reset 或 resume 目标，即使随后恢复也不允许；OpenOCD HSS 只发送运行态 `read_memory`，不会改变目标执行状态。
 
-目标默认手动选择，也可启用自动识别。自定义 probe-rs 目标配置放在 `<程序目录>/config/rtt/targets/`；请复制并重命名 `_example.yaml` 后修改，程序始终排除示例文件。修改后需刷新目标列表或重新打开连接窗口。
+探针枚举、后端检测、外部进程启动与退出、连接诊断均写入 `<程序目录>/logs/`；高频 RTT 实际数据不会写入应用日志。
+
+目标默认手动选择，也可启用自动识别。OpenOCD 的接口和目标支持由所选 Tcl 配置决定，J-Link 使用官方工具提供的目标数据库。
 
 ## 数据与配置
 
@@ -127,7 +131,6 @@ RTT 控制块可选择 `Auto`、指定地址或指定范围。Auto 会扫描目�
 | --- | --- |
 | `settings/` | 应用设置 |
 | `config/` | 协议和通道配置 |
-| `config/rtt/targets/` | RTT 自定义 probe-rs 目标 YAML 和排除加载的示例 |
 | `logs/` | 运行日志 |
 | `exports/` | 数据与 YMODEM 文件 |
 | `updates/` | 更新缓存和回退版本 |

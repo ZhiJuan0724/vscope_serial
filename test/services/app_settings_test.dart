@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/constants/rtt_configuration.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 
 void main() {
@@ -16,6 +17,13 @@ void main() {
             ..plotFontSizeDelta = 4
             ..plotFontBold = true
             ..lastMainPage = 'plot'
+            ..mainTabOrder = const [
+              'plot',
+              'rawData',
+              'shell',
+              'rtt',
+              'probePlot',
+            ]
             ..maxVisiblePoints = 40000000
             ..plotHistoryMemoryLimitGiB = 8
             ..discardInitialPacketCount = 8
@@ -82,10 +90,12 @@ void main() {
             ..ymodemSaveDirectoryPolicy = 'custom'
             ..rawMultiSendProfileId = 'multi-send'
             ..rttPageEnabled = true
-            ..rttBackendMode = 'builtin'
+            ..rttBackendSelection = 'external-openocd'
             ..rttJlinkExecutablePath = 'jlink.exe'
-            ..rttPyocdExecutablePath = 'pyocd.exe'
+            ..rttOpenocdExecutablePath = 'openocd.exe'
             ..rttBuiltinHelperPath = 'helper.exe'
+            ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
+            ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
             ..rttProbeKind = 'cmsisDap'
             ..rttLastProbeId = 'probe'
             ..rttTarget = 'target'
@@ -96,6 +106,8 @@ void main() {
             ..rttControlBlockAddress = 0x20001000
             ..rttControlBlockRangeStart = 0x20000000
             ..rttControlBlockRangeEnd = 0x20010000
+            ..rttViewerPollingIntervalMs = 250
+            ..probeRttPollingIntervalMs = 500
             ..rttEncoding = 'GBK'
             ..rttDisplayMode = 'hex'
             ..rttTimestampEnabled = true
@@ -103,6 +115,8 @@ void main() {
             ..rttFontFamily = 'Courier New'
             ..rttFontSize = 18
             ..rttHistoryLineLimit = 200000
+            ..rttTerminalColors = [0xFF123456]
+            ..rttTerminalLabels = ['旧标注']
             ..xMin = 10
             ..xMax = 20
             ..yMin = 30
@@ -116,6 +130,13 @@ void main() {
       expect(settings.plotFontSizeDelta, 0);
       expect(settings.plotFontBold, isFalse);
       expect(settings.lastMainPage, 'rawData');
+      expect(settings.mainTabOrder, [
+        'rawData',
+        'shell',
+        'plot',
+        'rtt',
+        'probePlot',
+      ]);
       expect(settings.maxVisiblePoints, 1000000);
       expect(settings.plotHistoryMemoryLimitGiB, 2);
       expect(settings.discardInitialPacketCount, 0);
@@ -182,10 +203,12 @@ void main() {
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
       expect(settings.rawMultiSendProfileId, isEmpty);
       expect(settings.rttPageEnabled, isFalse);
-      expect(settings.rttBackendMode, 'automatic');
+      expect(settings.rttBackendSelection, 'automatic');
       expect(settings.rttJlinkExecutablePath, isEmpty);
-      expect(settings.rttPyocdExecutablePath, isEmpty);
+      expect(settings.rttOpenocdExecutablePath, isEmpty);
       expect(settings.rttBuiltinHelperPath, isEmpty);
+      expect(settings.rttOpenocdInterfaceConfig, 'interface/cmsis-dap.cfg');
+      expect(settings.rttOpenocdTargetConfig, isEmpty);
       expect(settings.rttProbeKind, 'jlink');
       expect(settings.rttLastProbeId, isEmpty);
       expect(settings.rttTarget, isEmpty);
@@ -196,6 +219,8 @@ void main() {
       expect(settings.rttControlBlockAddress, isNull);
       expect(settings.rttControlBlockRangeStart, isNull);
       expect(settings.rttControlBlockRangeEnd, isNull);
+      expect(settings.rttViewerPollingIntervalMs, 10);
+      expect(settings.probeRttPollingIntervalMs, 10);
       expect(settings.rttEncoding, 'UTF-8');
       expect(settings.rttDisplayMode, 'text');
       expect(settings.rttTimestampEnabled, isFalse);
@@ -203,6 +228,14 @@ void main() {
       expect(settings.rttFontFamily, 'Consolas');
       expect(settings.rttFontSize, 13);
       expect(settings.rttHistoryLineLimit, 100000);
+      expect(
+        settings.rttTerminalColors,
+        RttConfiguration.defaultTerminalColors,
+      );
+      expect(
+        settings.rttTerminalLabels,
+        RttConfiguration.defaultTerminalLabels,
+      );
       expect(settings.xMin, 0);
       expect(settings.xMax, 1000);
       expect(settings.yMin, 0);
@@ -240,6 +273,13 @@ void main() {
       settings.xMeasurementLine1Color = 0xFF123456;
       settings.yMeasurementLine2Opacity = 0.45;
       settings.yMeasurementSnapEnabled = false;
+      settings.mainTabOrder = const [
+        'plot',
+        'rawData',
+        'shell',
+        'rtt',
+        'probePlot',
+      ];
       final third = settings.save();
 
       await Future.wait([first, second, third]);
@@ -253,6 +293,13 @@ void main() {
       expect(decoded['xMeasurementLine1Color'], 0xFF123456);
       expect(decoded['yMeasurementLine2Opacity'], 0.45);
       expect(decoded['yMeasurementSnapEnabled'], isFalse);
+      expect(decoded['mainTabOrder'], [
+        'plot',
+        'rawData',
+        'shell',
+        'rtt',
+        'probePlot',
+      ]);
     });
 
     test('截断主文件后自动恢复上一代备份', () async {
@@ -291,32 +338,52 @@ void main() {
     test('RTT 设置可保存并从严格校验的快照恢复', () async {
       settings
         ..rttPageEnabled = true
-        ..rttBackendMode = 'builtin'
+        ..rttBackendSelection = 'bundled-openocd'
+        ..rttOpenocdExecutablePath = 'openocd.exe'
+        ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
+        ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
         ..rttProbeKind = 'cmsisDap'
         ..rttAutoDetectTarget = true
         ..rttClockKhz = 8000
         ..rttControlBlockMode = 'range'
         ..rttControlBlockRangeStart = 0x20000000
         ..rttControlBlockRangeEnd = 0x20010000
+        ..rttViewerPollingIntervalMs = 25
+        ..probeRttPollingIntervalMs = 40
         ..rttTimestampEnabled = true
         ..rttAutoScroll = false
         ..rttFontSize = 15
-        ..rttHistoryLineLimit = 200000;
+        ..rttHistoryLineLimit = 200000
+        ..rttTerminalColors = List.generate(16, (index) => 0xFF000000 | index)
+        ..rttTerminalLabels = List.generate(16, (index) => '通道 $index');
       await settings.save();
       await settings.debugInitializeAt(settingsPath);
 
       expect(settings.rttPageEnabled, isTrue);
-      expect(settings.rttBackendMode, 'builtin');
+      expect(settings.rttBackendSelection, 'bundled-openocd');
+      expect(settings.rttOpenocdExecutablePath, 'openocd.exe');
+      expect(settings.rttOpenocdInterfaceConfig, 'interface/cmsis-dap.cfg');
+      expect(settings.rttOpenocdTargetConfig, 'target/stm32f4x.cfg');
       expect(settings.rttProbeKind, 'cmsisDap');
       expect(settings.rttAutoDetectTarget, isTrue);
       expect(settings.rttClockKhz, 8000);
       expect(settings.rttControlBlockMode, 'range');
       expect(settings.rttControlBlockRangeStart, 0x20000000);
       expect(settings.rttControlBlockRangeEnd, 0x20010000);
+      expect(settings.rttViewerPollingIntervalMs, 25);
+      expect(settings.probeRttPollingIntervalMs, 40);
       expect(settings.rttTimestampEnabled, isTrue);
       expect(settings.rttAutoScroll, isFalse);
       expect(settings.rttFontSize, 15);
       expect(settings.rttHistoryLineLimit, 200000);
+      expect(
+        settings.rttTerminalColors,
+        List.generate(16, (index) => 0xFF000000 | index),
+      );
+      expect(
+        settings.rttTerminalLabels,
+        List.generate(16, (index) => '通道 $index'),
+      );
     });
 
     test('旧版 RTT 控制块地址迁移为指定地址模式', () async {

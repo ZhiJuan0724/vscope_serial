@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -15,6 +16,7 @@ import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/connection_owner_service.dart';
 import '../../services/rtt_service.dart';
+import '../../services/rtt_backend.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
 import '../../services/serial_service.dart';
@@ -361,6 +363,13 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   final _plotHistoryLimitController = TextEditingController(
     text: AppSettings().plotHistoryMemoryLimitGiB.toString(),
   );
+  final _rttJlinkPathController = TextEditingController(
+    text: AppSettings().rttJlinkExecutablePath,
+  );
+  final _rttOpenocdPathController = TextEditingController(
+    text: AppSettings().rttOpenocdExecutablePath,
+  );
+  Future<Map<String, RttBackendAvailability>>? _rttBackendAvailability;
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
   UpdateChannel _updateChannel = UpdateChannel.fromString(
@@ -400,6 +409,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   void dispose() {
     _advancedSettingsScrollController.dispose();
     _plotHistoryLimitController.dispose();
+    _rttJlinkPathController.dispose();
+    _rttOpenocdPathController.dispose();
     super.dispose();
   }
 
@@ -856,6 +867,83 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
+  Widget _buildProbeBackendSection(
+    BuildContext context,
+    StateSetter setDialogState,
+  ) {
+    final settings = AppSettings();
+    _rttBackendAvailability ??=
+        context.read<RttService>().checkBackendAvailability();
+
+    void refreshAvailability() {
+      setDialogState(() {
+        _rttBackendAvailability =
+            context.read<RttService>().checkBackendAvailability();
+      });
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _rttJlinkPathController,
+          decoration: const InputDecoration(
+            labelText: 'JLinkGDBServerCL.exe 路径',
+            helperText: '留空时从 SEGGER 安装目录和 PATH 自动查找',
+          ),
+          onChanged: (value) {
+            settings.rttJlinkExecutablePath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _rttOpenocdPathController,
+          decoration: const InputDecoration(
+            labelText: '外置 openocd.exe 路径',
+            helperText: '留空时从 PATH 查找；仅影响外置 OpenOCD',
+          ),
+          onChanged: (value) {
+            settings.rttOpenocdExecutablePath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<Map<String, RttBackendAvailability>>(
+          future: _rttBackendAvailability,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const Text('正在检测探针后端...');
+
+            String state(String id) {
+              final status = snapshot.data![id];
+              if (status == null || !status.available) return '未检测到';
+              final version = status.version?.trim();
+              return version == null || version.isEmpty
+                  ? '已检测到（版本未知）'
+                  : version;
+            }
+
+            return Text(
+              'J-Link: ${state('external-jlink')}    '
+              '内置 OpenOCD: ${state('bundled-openocd')}    '
+              '外置 OpenOCD: ${state('external-openocd')}',
+            );
+          },
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: refreshAvailability,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新检测'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
@@ -866,6 +954,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final notificationSectionKey = GlobalKey();
     final diagnosticsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
+    final probeBackendSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
     final rollbackSectionKey = GlobalKey();
@@ -889,6 +978,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   anchorKey: diagnosticsSectionKey,
                 ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                if (rttEnabled)
+                  SettingsNavigationItem(
+                    label: '探针后端',
+                    anchorKey: probeBackendSectionKey,
+                  ),
                 SettingsNavigationItem(
                   label: AppStrings.appInfo.receivePerformance,
                   anchorKey: receivePerformanceSectionKey,
@@ -1013,6 +1107,13 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             },
                   ),
                   const Divider(height: 16),
+                  if (rttEnabled) ...[
+                    KeyedSubtree(
+                      key: probeBackendSectionKey,
+                      child: _buildProbeBackendSection(context, setDialogState),
+                    ),
+                    const Divider(height: 16),
+                  ],
                   SwitchListTile(
                     key: receivePerformanceSectionKey,
                     contentPadding: EdgeInsets.zero,

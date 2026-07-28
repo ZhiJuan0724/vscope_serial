@@ -15,7 +15,6 @@
 | Visual Studio 2022 | 安装“使用 C++ 的桌面开发”工作负载 | Flutter Windows、CMake 和 MSVC 构建 |
 | PowerShell | PowerShell 7，命令为 `pwsh` | 代码、文档和构建脚本操作 |
 | Python | 3.7 或更高版本 | 发布打包和串口测试工具 |
-| Rust | Stable | 内置 probe-rs 探针辅助进程构建与测试 |
 | Git | 当前稳定版 | 版本控制 |
 
 可选依赖：
@@ -88,8 +87,6 @@ lib/
 └── main.dart
 
 windows/                  # Windows Runner、更新器和原生串口 DLL
-native/probe_helper/      # 独立 probe-rs 探针辅助进程
-assets/rtt/               # RTT 自定义目标配置示例
 test/                     # 单元测试与 Widget 测试
 integration_test/         # Windows Profile 性能测试
 test_tools/               # 模拟设备、数据生成和性能基准
@@ -108,8 +105,6 @@ docs/                     # 长期上下文、历史和设计文档
 - `lib/views/` 只处理页面、弹窗、Painter 和交互。
 - `SerialService` 通过 `SerialActivityOwner` 原子管理数据收发、Shell 和绘图的接收活动；页面只能在所有者为 `none` 时切换。
 - `ConnectionOwnerService` 在应用层互斥串口与 RTT 连接；`RttService` 独立管理后端选择、探针生命周期和有界接收队列，不得把 RTT 状态放入 `SerialService`。
-- `probe_helper` 是独立通用探针进程，与 Flutter 使用版本化二进制帧和能力协商，不暴露 Rust ABI。RTT、后续烧录及其他探针功能均扩展此协议，禁止重复捆绑 probe-rs CLI；原始大块数据禁止转换为 JSON/Base64。
-- helper 使用独立于主应用的语义化版本号，版本唯一维护在 `native/probe_helper/Cargo.toml`，变更记录维护在 `native/probe_helper/CHANGELOG.md`。主应用发布可以沿用原 helper，也可以捆绑更新后的 helper；不得为同步主应用版本而无功能变更地提升 helper 版本。
 - 所有串口写入入口共用有序后台写队列，页面和 ViewModel 不得绕过队列直接并发调用同步 FFI 写入。
 - 绘图页使用 `Selector` 隔离工具栏、通道面板、绘图区和状态栏重建。
 - 绘图区由单一不可变 `PlotRenderSnapshot` 驱动，并通过 `PlotLayerStack` 分为背景网格、数据、坐标轴和交互覆盖四层 Painter。
@@ -123,9 +118,6 @@ docs/                     # 长期上下文、历史和设计文档
 dart format lib test integration_test
 flutter analyze
 flutter test
-cargo fmt --manifest-path native/probe_helper/Cargo.toml -- --check
-cargo test --locked --manifest-path native/probe_helper/Cargo.toml
-cargo clippy --locked --manifest-path native/probe_helper/Cargo.toml -- -D warnings
 ```
 
 绘图重建隔离测试需要显式启用开发计数器：

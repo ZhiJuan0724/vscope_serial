@@ -186,6 +186,14 @@ enum _ShiftZoomAxis { none, pending, x, y, channelY }
 class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   static const int _maxSnapScanPoints = 4096;
 
+  /// 当前帧内最后一次垂直光标位置。
+  ///
+  /// 鼠标的 hover 事件频率可能明显高于绘图帧率；逐个注册
+  /// post-frame callback 会在绘图繁忙时形成积压，最终表现为光标短暂
+  /// 跟随后停住。这里只保留下一帧真正需要显示的最后一个位置。
+  CursorState? _pendingHoverCursor;
+  bool _hoverCallbackScheduled = false;
+
   /// 是否正在拖拽平移
   bool _isDragging = false;
 
@@ -502,13 +510,27 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 单垂直光标优先（通过开关控制）
     if (widget.vCursorEnabled) {
-      // 使用 WidgetsBinding 避免在指针事件回调中直接触发 setState
+      _pendingHoverCursor = CursorState(
+        x: x,
+        y: y,
+        screenPosition: event.localPosition,
+      );
+      if (_hoverCallbackScheduled) return;
+
+      _hoverCallbackScheduled = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        widget.onCursorChanged(
-          CursorState(x: x, y: y, screenPosition: event.localPosition),
-        );
+        _hoverCallbackScheduled = false;
+        if (!mounted || !widget.vCursorEnabled) {
+          _pendingHoverCursor = null;
+          return;
+        }
+        final cursor = _pendingHoverCursor;
+        _pendingHoverCursor = null;
+        if (cursor != null) widget.onCursorChanged(cursor);
       });
+      // addPostFrameCallback 本身不会主动请求新帧；采样暂停或低频时若没有
+      // 其他重绘来源，光标会一直等待，看起来像停止跟随。
+      WidgetsBinding.instance.scheduleFrame();
       return;
     }
   }

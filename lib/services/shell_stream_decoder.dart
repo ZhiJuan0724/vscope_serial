@@ -14,6 +14,21 @@ const shellTextEncodings = <String>[
   'ASCII',
 ];
 
+/// 使用 Shell/RTT 共同支持的编码把文本转换为发送字节。
+Uint8List encodeShellText(String text, String encoding) {
+  final bytes = switch (encoding) {
+    'UTF-8' => utf8.encode(text),
+    'GBK' => encodeWindowsCodePage(text, 936),
+    'BIG5' => encodeWindowsCodePage(text, 950),
+    'Shift_JIS' => encodeWindowsCodePage(text, 932),
+    'EUC-KR' => encodeWindowsCodePage(text, 949),
+    'Latin-1' => latin1.encode(text),
+    'ASCII' => ascii.encode(text),
+    _ => utf8.encode(text),
+  };
+  return Uint8List.fromList(bytes);
+}
+
 /// 保留跨串口数据块的不完整字符，并以流式方式输出完整文本。
 ///
 /// 串口回调边界与字符边界无关。中文、日文和韩文双字节字符以及 UTF-8

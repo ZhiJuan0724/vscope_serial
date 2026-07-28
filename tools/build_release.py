@@ -6,8 +6,8 @@ VScope Serial Windows Release 打包工具
 1. 清理旧发布目录
 2. flutter analyze - 静态分析
 3. flutter test - 运行单元测试
-4. cargo build --release - 构建内置 probe-rs 探针辅助进程
-5. 清理旧 Windows 构建目录并执行全新 Release 构建
+4. 清理旧 Windows 构建目录并执行全新 Release 构建
+5. 内置固定版本的轻量 OpenOCD 运行时
 6. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
 
 C++ DLL 说明：
@@ -36,7 +36,6 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from generate_update_assets import generate as generate_update_assets
 
@@ -47,9 +46,6 @@ BUILD_DIR = PROJECT_ROOT / "build"
 RELEASE_DIR = BUILD_DIR / "releases"
 FLUTTER_BUILD_DIR = BUILD_DIR / "windows" / "x64" / "runner" / "Release"
 WINDOWS_BUILD_DIR = BUILD_DIR / "windows"
-PROBE_HELPER_DIR = PROJECT_ROOT / "native" / "probe_helper"
-PROBE_HELPER_EXE = PROBE_HELPER_DIR / "target" / "release" / "probe_helper.exe"
-PROBE_HELPER_CHANGELOG = PROBE_HELPER_DIR / "CHANGELOG.md"
 
 # VC++ 运行时 DLL（x64）
 # native_serial_reader.dll 是 MSVC 编译的 C++ DLL，需要这些运行时
@@ -154,32 +150,19 @@ def get_build_time() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def find_cargo() -> Optional[str]:
-    """查找 PATH 或 rustup 默认目录中的 Cargo。"""
-    cargo = shutil.which("cargo")
-    if cargo:
-        return cargo
-    candidate = Path.home() / ".cargo" / "bin" / "cargo.exe"
-    return str(candidate) if candidate.exists() else None
-
-
-def copy_rtt_runtime_assets(bundle_dir: Path):
-    """把探针辅助进程、独立变更记录、RTT 配置示例和许可说明放入发布目录。"""
-    if not PROBE_HELPER_EXE.exists():
-        raise FileNotFoundError(f"探针辅助进程不存在: {PROBE_HELPER_EXE}")
-    # 清理通用 helper 更名前的旧产物，避免增量构建把两份 probe-rs 带入发布包。
-    legacy_helper = bundle_dir / "rtt_helper.exe"
-    if legacy_helper.exists():
-        legacy_helper.unlink()
-    shutil.copy2(PROBE_HELPER_EXE, bundle_dir / "probe_helper.exe")
-    shutil.copy2(
-        PROBE_HELPER_CHANGELOG,
-        bundle_dir / "probe_helper_CHANGELOG.md",
-    )
-    target_dir = bundle_dir / "config" / "rtt" / "targets"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(PROJECT_ROOT / "assets" / "rtt" / "_example.yaml", target_dir)
+def copy_runtime_notices(bundle_dir: Path):
+    """把随内置 OpenOCD 发布的第三方许可说明放入发布目录。"""
     shutil.copy2(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md", bundle_dir)
+
+
+def install_openocd_runtime(bundle_dir: Path):
+    """下载、校验并安装发布包内置的轻量 OpenOCD 运行时。"""
+    run_cmd([
+        sys.executable,
+        str(PROJECT_ROOT / "tools" / "prepare_openocd_runtime.py"),
+        "--bundle",
+        str(bundle_dir),
+    ])
 
 
 def clean_release_dir():
@@ -293,15 +276,9 @@ def main():
         error("未找到 Flutter SDK，请确保 flutter 命令在 PATH 中")
         sys.exit(1)
     info(f"Flutter 路径: {flutter_cmd}")
-    cargo_cmd = find_cargo()
-    if not cargo_cmd:
-        error("未找到 Cargo；发布包必须构建内置探针辅助进程")
-        sys.exit(1)
-    info(f"Cargo 路径: {cargo_cmd}")
-    
     # ========== 步骤 1: 静态分析 ==========
     if not args.skip_analyze:
-        step("步骤 1/4: 静态分析 (flutter analyze)")
+        step("步骤 1/3: 静态分析 (flutter analyze)")
         try:
             run_cmd([flutter_cmd, "analyze"])
             success("静态分析通过")
@@ -313,34 +290,9 @@ def main():
     
     # ========== 步骤 2: 单元测试 ==========
     if not args.skip_test:
-        step("步骤 2/4: 单元测试 (flutter test)")
+        step("步骤 2/3: 单元测试 (flutter test)")
         try:
             run_cmd([flutter_cmd, "test"])
-            run_cmd([
-                cargo_cmd,
-                "fmt",
-                "--manifest-path",
-                str(PROBE_HELPER_DIR / "Cargo.toml"),
-                "--",
-                "--check",
-            ])
-            run_cmd([
-                cargo_cmd,
-                "test",
-                "--locked",
-                "--manifest-path",
-                str(PROBE_HELPER_DIR / "Cargo.toml"),
-            ])
-            run_cmd([
-                cargo_cmd,
-                "clippy",
-                "--locked",
-                "--manifest-path",
-                str(PROBE_HELPER_DIR / "Cargo.toml"),
-                "--",
-                "-D",
-                "warnings",
-            ])
             success("单元测试通过")
         except subprocess.CalledProcessError:
             error("单元测试失败，请修复上述问题")
@@ -348,24 +300,8 @@ def main():
     else:
         warn("跳过单元测试")
     
-    # ========== 步骤 3: probe-rs 探针辅助进程 Release 构建 ==========
-    step("步骤 3/4: 构建内置探针辅助进程")
-    try:
-        run_cmd([
-            cargo_cmd,
-            "build",
-            "--release",
-            "--locked",
-            "--manifest-path",
-            str(PROBE_HELPER_DIR / "Cargo.toml"),
-        ])
-        success("探针辅助进程构建完成")
-    except subprocess.CalledProcessError:
-        error("探针辅助进程构建失败")
-        sys.exit(1)
-
-    # ========== 步骤 4: Flutter Release 构建 ==========
-    step("步骤 4/4: 全新 Release 构建 (flutter build windows --release)")
+    # ========== 步骤 3: Flutter Release 构建 ==========
+    step("步骤 3/3: 全新 Release 构建 (flutter build windows --release)")
     try:
         # Flutter/CMake 默认执行增量构建。必须先删除整个 Windows 构建树，
         # 否则切换分支后遗留的 exe、DLL 或辅助工具可能继续留在 Release
@@ -383,7 +319,8 @@ def main():
         error("Release 构建失败")
         sys.exit(1)
 
-    copy_rtt_runtime_assets(FLUTTER_BUILD_DIR)
+    copy_runtime_notices(FLUTTER_BUILD_DIR)
+    install_openocd_runtime(FLUTTER_BUILD_DIR)
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")

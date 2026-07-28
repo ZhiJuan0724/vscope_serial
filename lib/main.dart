@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -10,6 +11,7 @@ import 'core/constants/window_configuration.dart';
 import 'core/localization/app_strings.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_logger.dart';
+import 'data/models/rtt_config.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
@@ -20,9 +22,11 @@ import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
+import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
+import 'views/pages/probe_plot_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/pages/rtt_page.dart';
 import 'views/pages/shell_page.dart';
@@ -97,13 +101,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: serialService),
-        ChangeNotifierProvider(
-          create: (_) {
-            final service = RttService();
-            unawaited(service.initialize());
-            return service;
-          },
-        ),
+        ChangeNotifierProvider(create: (_) => RttService()),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(serialService),
         ),
@@ -112,6 +110,9 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (context) => RttViewModel(context.read<RttService>()),
+        ),
+        ChangeNotifierProvider(
+          create: (context) => ProbePlotViewModel(context.read<RttService>()),
         ),
       ],
       child: MaterialApp(
@@ -134,6 +135,7 @@ class MainFrame extends StatefulWidget {
 
 class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   String _currentTabId = 'rawData';
+  final ScrollController _tabScrollController = ScrollController();
   _WindowCloseListener? _windowCloseListener;
 
   @override
@@ -144,6 +146,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     _currentTabId = switch (savedPage) {
       'shell' when !settings.rawDataShellEnabled => 'rawData',
       'rtt' when !settings.rttPageEnabled => 'rawData',
+      'probePlot' when !settings.rttPageEnabled => 'rawData',
       _ => savedPage,
     };
     WidgetsBinding.instance.addObserver(this);
@@ -213,6 +216,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   void dispose() {
     final listener = _windowCloseListener;
     if (listener != null) windowManager.removeListener(listener);
+    _tabScrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -224,34 +228,91 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     }
   }
 
-  List<({String id, String label, IconData icon, Widget page})> get _tabs => [
-    (
-      id: 'rawData',
-      label: AppStrings.nav.rawData,
-      icon: Icons.data_object,
-      page: const RawDataPage(),
-    ),
-    if (AppSettings().rawDataShellEnabled)
-      (
-        id: 'shell',
-        label: AppStrings.nav.shell,
-        icon: Icons.terminal,
-        page: const ShellPage(),
-      ),
-    (
-      id: 'plot',
-      label: AppStrings.nav.plot,
-      icon: Icons.show_chart,
-      page: const PlotPage(),
-    ),
-    if (AppSettings().rttPageEnabled)
-      (
-        id: 'rtt',
-        label: AppStrings.nav.rtt,
-        icon: Icons.developer_board,
-        page: const RttPage(),
-      ),
-  ];
+  List<({String id, String label, IconData icon, Widget page})> get _tabs {
+    final available =
+        <String, ({String id, String label, IconData icon, Widget page})>{
+          'rawData': (
+            id: 'rawData',
+            label: AppStrings.nav.rawData,
+            icon: Icons.data_object,
+            page: const RawDataPage(),
+          ),
+          if (AppSettings().rawDataShellEnabled)
+            'shell': (
+              id: 'shell',
+              label: AppStrings.nav.shell,
+              icon: Icons.terminal,
+              page: const ShellPage(),
+            ),
+          'plot': (
+            id: 'plot',
+            label: AppStrings.nav.plot,
+            icon: Icons.show_chart,
+            page: const PlotPage(),
+          ),
+          if (AppSettings().rttPageEnabled)
+            'rtt': (
+              id: 'rtt',
+              label: AppStrings.nav.rtt,
+              icon: Icons.developer_board,
+              page: const RttPage(),
+            ),
+          if (AppSettings().rttPageEnabled)
+            'probePlot': (
+              id: 'probePlot',
+              label: '探针绘图',
+              icon: Icons.monitor_heart_outlined,
+              page: const ProbePlotPage(),
+            ),
+        };
+    return [
+      for (final id in AppSettings().mainTabOrder)
+        if (available[id] case final tab?) tab,
+    ];
+  }
+
+  void _reorderTabs(int oldIndex, int newIndex) {
+    final visibleTabs = _tabs;
+    if (oldIndex == newIndex) return;
+    final reorderedVisibleIds = visibleTabs.map((tab) => tab.id).toList();
+    final movedId = reorderedVisibleIds.removeAt(oldIndex);
+    reorderedVisibleIds.insert(newIndex, movedId);
+    var visibleIndex = 0;
+    final visibleSet = reorderedVisibleIds.toSet();
+    final order = [
+      for (final id in AppSettings().mainTabOrder)
+        if (visibleSet.contains(id))
+          reorderedVisibleIds[visibleIndex++]
+        else
+          id,
+    ];
+    setState(() => AppSettings().mainTabOrder = order);
+    unawaited(AppSettings().save());
+  }
+
+  void _ensureSelectedTabVisible(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_tabScrollController.hasClients) return;
+      const tabWidth = 180.0;
+      final position = _tabScrollController.position;
+      final left = index * tabWidth;
+      final right = left + tabWidth;
+      var target = position.pixels;
+      if (left < target) {
+        target = left;
+      } else if (right > target + position.viewportDimension) {
+        target = right - position.viewportDimension;
+      }
+      target = target.clamp(0.0, position.maxScrollExtent);
+      if ((target - position.pixels).abs() > 0.5) {
+        _tabScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
 
   void _selectTab(String id) {
     if (id == _currentTabId) return;
@@ -263,60 +324,88 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     unawaited(settings.save());
   }
 
+  void _handleTabPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_tabScrollController.hasClients) {
+      return;
+    }
+    final position = _tabScrollController.position;
+    // 普通鼠标滚轮通常只提供垂直增量；在标签栏中将其转换为横向滚动。
+    final delta =
+        event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+            ? event.scrollDelta.dx
+            : event.scrollDelta.dy;
+    final target = (position.pixels + delta).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    if ((target - position.pixels).abs() > 0.5) {
+      _tabScrollController.jumpTo(target);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final serialService = Provider.of<SerialService>(context);
     final connectionOwner = Provider.of<ConnectionOwnerService>(context);
-    // RTT 页面显隐由 RttService 通知，监听它以即时刷新标签列表。
-    Provider.of<RttService>(context);
+    // 探针连接和活动变化会直接影响两个探针页面的切换权限。
+    final rttService = Provider.of<RttService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
       _currentTabId = 'rawData';
     }
     final currentIndex = tabs.indexWhere((tab) => tab.id == _currentTabId);
+    _ensureSelectedTabVisible(currentIndex);
 
     return Scaffold(
       body: Column(
         children: [
           // 顶部 Tab 切换栏
-          Container(
-            height: 40,
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Align(
-              alignment: Alignment.bottomLeft,
+          ClipRect(
+            child: Container(
+              height: 40,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               child: Padding(
                 padding: const EdgeInsets.only(top: 5),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children:
-                      tabs.asMap().entries.map((entry) {
-                        final index = entry.key;
-                        final tab = entry.value;
-                        final isSelected = index == currentIndex;
-                        final ownerTab = switch (serialService.activityOwner) {
-                          SerialActivityOwner.rawData => 'rawData',
-                          SerialActivityOwner.shell => 'shell',
-                          SerialActivityOwner.plot => 'plot',
-                          SerialActivityOwner.none => null,
-                        };
-                        final canSwitch =
-                            connectionOwner.owner == ConnectionOwner.rtt
-                                ? tab.id == 'rtt'
-                                : ownerTab == null || tab.id == ownerTab;
-                        final colorScheme = Theme.of(context).colorScheme;
-                        final foreground =
-                            isSelected
-                                ? colorScheme.primary
-                                : canSwitch
-                                ? colorScheme.onSurfaceVariant
-                                : colorScheme.onSurfaceVariant.withValues(
-                                  alpha: 0.3,
-                                );
-                        const tabRadius = BorderRadius.vertical(
-                          top: Radius.circular(7),
-                        );
-                        return SizedBox(
+                child: Listener(
+                  onPointerSignal: _handleTabPointerSignal,
+                  child: ReorderableListView.builder(
+                    scrollController: _tabScrollController,
+                    scrollDirection: Axis.horizontal,
+                    buildDefaultDragHandles: false,
+                    onReorderItem: _reorderTabs,
+                    itemCount: tabs.length,
+                    itemBuilder: (context, index) {
+                      final tab = tabs[index];
+                      final isSelected = index == currentIndex;
+                      final ownerTab = switch (serialService.activityOwner) {
+                        SerialActivityOwner.rawData => 'rawData',
+                        SerialActivityOwner.shell => 'shell',
+                        SerialActivityOwner.plot => 'plot',
+                        SerialActivityOwner.none => null,
+                      };
+                      final canSwitch = switch (connectionOwner.owner) {
+                        ConnectionOwner.rtt => switch (rttService
+                            .activityOwner) {
+                          ProbeActivityOwner.rttViewer => tab.id == 'rtt',
+                          ProbeActivityOwner.probePlot => tab.id == 'probePlot',
+                          ProbeActivityOwner.none =>
+                            tab.id == 'rtt' || tab.id == 'probePlot',
+                        },
+                        _ => ownerTab == null || tab.id == ownerTab,
+                      };
+                      final colorScheme = Theme.of(context).colorScheme;
+                      final foreground =
+                          isSelected
+                              ? colorScheme.primary
+                              : canSwitch
+                              ? colorScheme.onSurfaceVariant
+                              : colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.3,
+                              );
+                      return ReorderableDelayedDragStartListener(
+                        key: ValueKey(tab.id),
+                        index: index,
+                        child: SizedBox(
                           width: 180,
                           height: 35,
                           child: Material(
@@ -325,9 +414,17 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                     ? Theme.of(context).scaffoldBackgroundColor
                                     : Colors.transparent,
                             surfaceTintColor: Colors.transparent,
-                            borderRadius: tabRadius,
+                            shape:
+                                isSelected
+                                    ? const _SelectedTabShape()
+                                    : const RoundedRectangleBorder(),
+                            clipBehavior:
+                                isSelected ? Clip.antiAlias : Clip.none,
                             child: InkWell(
-                              borderRadius: tabRadius,
+                              customBorder:
+                                  isSelected
+                                      ? const _SelectedTabShape()
+                                      : const RoundedRectangleBorder(),
                               onTap:
                                   canSwitch ? () => _selectTab(tab.id) : null,
                               child: Row(
@@ -350,8 +447,10 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
-                        );
-                      }).toList(),
+                        ),
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -369,6 +468,66 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       ),
     );
   }
+}
+
+/// Chrome 风格选中标签：顶部圆角，底部两侧向外展开并衔接内容区。
+class _SelectedTabShape extends ShapeBorder {
+  const _SelectedTabShape();
+
+  @override
+  EdgeInsetsGeometry get dimensions => EdgeInsets.zero;
+
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) {
+    return getOuterPath(rect, textDirection: textDirection);
+  }
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
+    const topRadius = 7.0;
+    const bodyInset = 10.0;
+    const shoulderHeight = 8.0;
+    return Path()
+      ..moveTo(rect.left, rect.bottom)
+      ..cubicTo(
+        rect.left + bodyInset * 0.55,
+        rect.bottom,
+        rect.left + bodyInset,
+        rect.bottom - shoulderHeight * 0.45,
+        rect.left + bodyInset,
+        rect.bottom - shoulderHeight,
+      )
+      ..lineTo(rect.left + bodyInset, rect.top + topRadius)
+      ..quadraticBezierTo(
+        rect.left + bodyInset,
+        rect.top,
+        rect.left + bodyInset + topRadius,
+        rect.top,
+      )
+      ..lineTo(rect.right - bodyInset - topRadius, rect.top)
+      ..quadraticBezierTo(
+        rect.right - bodyInset,
+        rect.top,
+        rect.right - bodyInset,
+        rect.top + topRadius,
+      )
+      ..lineTo(rect.right - bodyInset, rect.bottom - shoulderHeight)
+      ..cubicTo(
+        rect.right - bodyInset,
+        rect.bottom - shoulderHeight * 0.45,
+        rect.right - bodyInset * 0.55,
+        rect.bottom,
+        rect.right,
+        rect.bottom,
+      )
+      ..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {}
+
+  @override
+  ShapeBorder scale(double t) => this;
 }
 
 /// 窗口关闭监听器：允许窗口关闭前先断开串口。

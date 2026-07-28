@@ -28,11 +28,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
       - name: Show Flutter version
         run: flutter --version
 
@@ -44,15 +39,6 @@ jobs:
 
       - name: Run tests
         run: flutter test
-
-      - name: Check probe helper formatting
-        run: cargo fmt --manifest-path native/probe_helper/Cargo.toml -- --check
-
-      - name: Test probe helper
-        run: cargo test --locked --manifest-path native/probe_helper/Cargo.toml
-
-      - name: Lint probe helper
-        run: cargo clippy --locked --manifest-path native/probe_helper/Cargo.toml -- -D warnings
 
       - name: Run native serial time tests
         shell: pwsh
@@ -79,9 +65,6 @@ jobs:
         with:
           channel: stable
           cache: true
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
@@ -112,16 +95,17 @@ jobs:
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           flutter build windows --release "--dart-define=BUILD_TIME=$buildTime"
 
-      - name: Build and install probe helper
+      - name: Install third-party notices
         shell: pwsh
         run: |
-          cargo build --release --locked --manifest-path native/probe_helper/Cargo.toml
           $bundle = "build/windows/x64/runner/Release"
-          Remove-Item "$bundle/rtt_helper.exe" -Force -ErrorAction SilentlyContinue
-          Copy-Item "native/probe_helper/target/release/probe_helper.exe" "$bundle/probe_helper.exe"
-          New-Item -ItemType Directory -Force -Path "$bundle/config/rtt/targets" | Out-Null
-          Copy-Item "assets/rtt/_example.yaml" "$bundle/config/rtt/targets/_example.yaml"
           Copy-Item "THIRD_PARTY_NOTICES.md" "$bundle/THIRD_PARTY_NOTICES.md"
+
+      - name: Install pinned OpenOCD runtime
+        shell: pwsh
+        run: |
+          python tools/prepare_openocd_runtime.py `
+            --bundle "build/windows/x64/runner/Release"
 
       - name: Verify native serial reader DLL
         shell: pwsh
@@ -134,16 +118,13 @@ jobs:
           if (-not (Test-Path $updater)) {
             throw "Missing vscope_updater.exe in release bundle"
           }
-          $probeHelper = "build/windows/x64/runner/Release/probe_helper.exe"
-          if (-not (Test-Path $probeHelper)) {
-            throw "Missing probe_helper.exe in release bundle"
+          $openOcd = "build/windows/x64/runner/Release/runtime/openocd/bin/openocd.exe"
+          if (-not (Test-Path $openOcd)) {
+            throw "Missing bundled OpenOCD runtime"
           }
-          if (Test-Path "build/windows/x64/runner/Release/rtt_helper.exe") {
-            throw "Legacy rtt_helper.exe must not be included in release bundle"
-          }
-          $rttExample = "build/windows/x64/runner/Release/config/rtt/targets/_example.yaml"
-          if (-not (Test-Path $rttExample)) {
-            throw "Missing RTT target example in release bundle"
+          $openOcdScripts = "build/windows/x64/runner/Release/runtime/openocd/openocd/scripts"
+          if (-not (Test-Path $openOcdScripts)) {
+            throw "Missing bundled OpenOCD scripts"
           }
 
       - name: Package Windows bundle

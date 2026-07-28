@@ -18,28 +18,29 @@ void main() {
   late RttViewModel viewModel;
   late String previousEncoding;
   late String previousMode;
+  late List<int> previousTerminalColors;
+  late List<String> previousTerminalLabels;
 
   setUp(() async {
     ConnectionOwnerService().reset();
     previousEncoding = AppSettings().rttEncoding;
     previousMode = AppSettings().rttDisplayMode;
+    previousTerminalColors = List.of(AppSettings().rttTerminalColors);
+    previousTerminalLabels = List.of(AppSettings().rttTerminalLabels);
     AppSettings()
-      ..rttBackendMode = RttBackendMode.builtin.value
+      ..rttBackendSelection = RttBackendSelection.externalJlink.value
       ..rttEncoding = 'UTF-8'
       ..rttDisplayMode = RttDisplayMode.text.value;
     backend = _DataBackend();
     service = RttService(
       receiveQueue: RttReceiveQueue(maxBytes: 1024),
-      backends: [
-        _UnavailableBackend('external-jlink'),
-        _UnavailableBackend('external-pyocd'),
-        backend,
-      ],
+      backends: [backend],
     );
     viewModel = RttViewModel(service);
     await service.connect(
       const RttConnectionConfig(probeKind: RttProbeKind.jlink, target: 'TEST'),
     );
+    await service.startRttViewer();
   });
 
   tearDown(() async {
@@ -48,7 +49,9 @@ void main() {
     service.dispose();
     AppSettings()
       ..rttEncoding = previousEncoding
-      ..rttDisplayMode = previousMode;
+      ..rttDisplayMode = previousMode
+      ..rttTerminalColors = previousTerminalColors
+      ..rttTerminalLabels = previousTerminalLabels;
     ConnectionOwnerService().reset();
   });
 
@@ -60,6 +63,41 @@ void main() {
 
     expect(viewModel.lines, isEmpty);
     expect(viewModel.partialLine, '中文');
+  });
+
+  test('RTT 文本按终端规则过滤跨块 ANSI 颜色序列', () async {
+    backend.add(utf8.encode('\x1b[3'));
+    backend.add(utf8.encode('2m<inf>\x1b[0'));
+    backend.add(utf8.encode('m message\n'));
+    await _settleTimers();
+
+    expect(viewModel.lines, ['<inf> message']);
+    expect(viewModel.lines.single, isNot(contains('\x1b')));
+  });
+
+  test('RTT 文本按回车和退格更新当前终端行', () async {
+    backend.add(utf8.encode('progress 10%\rprogress 20%\n'));
+    backend.add(utf8.encode('abc\bD\n'));
+    await _settleTimers();
+
+    expect(viewModel.lines, ['progress 20%', 'abD']);
+  });
+
+  test('All Terminals 按完整终端行分包而不是按底层读取块合并', () async {
+    backend.add(utf8.encode('line 1\nline 2\npartial'));
+    await _settleTimers();
+
+    viewModel.selectTerminal(-1);
+    expect(viewModel.lines, ['[Terminal 0] line 1', '[Terminal 0] line 2']);
+
+    backend.add(utf8.encode(' line 3\n'));
+    await _settleTimers();
+
+    expect(viewModel.lines, [
+      '[Terminal 0] line 1',
+      '[Terminal 0] line 2',
+      '[Terminal 0] partial line 3',
+    ]);
   });
 
   test('暂停只冻结显示，恢复后展示暂停期间收到的数据', () async {
@@ -108,6 +146,15 @@ void main() {
     expect(service.queuedBytes, 0);
     expect(service.droppedBytes, 1025);
   });
+
+  test('终端标注与颜色修改后同步到设置', () {
+    viewModel.setTerminalAppearance(3, '电机状态', 0xFF123456);
+
+    expect(viewModel.terminalColorValue(3), 0xFF123456);
+    expect(viewModel.terminalLabel(3), '电机状态');
+    expect(AppSettings().rttTerminalColors[3], 0xFF123456);
+    expect(AppSettings().rttTerminalLabels[3], '电机状态');
+  });
 }
 
 Future<void> _settleTimers() async {
@@ -124,9 +171,13 @@ class _DataBackend implements RttBackend {
   bool _connected = false;
 
   @override
-  String get id => 'builtin-probe-rs';
+  String get id => 'external-jlink';
   @override
   String get displayName => 'fake';
+  @override
+  bool get guaranteesNonIntrusiveTargetAccess => true;
+  @override
+  String? get nonIntrusiveSafetyBlockReason => null;
   @override
   Stream<RttDataChunk> get dataStream => _data.stream;
   @override
@@ -160,31 +211,4 @@ class _DataBackend implements RttBackend {
     await _data.close();
     await _diagnostics.close();
   }
-}
-
-class _UnavailableBackend implements RttBackend {
-  _UnavailableBackend(this.id);
-  @override
-  final String id;
-  @override
-  String get displayName => id;
-  @override
-  Stream<RttDataChunk> get dataStream => const Stream.empty();
-  @override
-  Stream<String> get diagnosticStream => const Stream.empty();
-  @override
-  bool get isConnected => false;
-  @override
-  Future<bool> isAvailable(RttProbeKind kind) async => false;
-  @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
-  @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
-  @override
-  Future<void> connect(RttConnectionConfig config) =>
-      throw UnimplementedError();
-  @override
-  Future<void> disconnect() async {}
-  @override
-  Future<void> dispose() async {}
 }

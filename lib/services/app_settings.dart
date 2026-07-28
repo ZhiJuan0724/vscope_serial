@@ -71,6 +71,15 @@ class AppSettings {
   /// 主窗口上次停留的页面。
   String lastMainPage = 'rawData';
 
+  /// 主窗口标签顺序；隐藏页面仍保留在顺序中，重新开启后恢复原位置。
+  List<String> mainTabOrder = const [
+    'rawData',
+    'shell',
+    'plot',
+    'rtt',
+    'probePlot',
+  ];
+
   /// 绘图可导航范围上限（持久化键保持兼容）。
   int maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
 
@@ -269,14 +278,16 @@ class AppSettings {
   String rawMultiSendProfileId = '';
 
   // ========== RTT 设置 ==========
-  /// 是否显示独立 RTT Viewer 页面；默认隐藏。
+  /// 是否显示 RTT Viewer 与探针绘图页面；默认隐藏。
   bool rttPageEnabled = false;
 
-  /// RTT 后端选择：automatic / external / builtin。
-  String rttBackendMode = 'automatic';
+  /// 上次在探针连接窗口选择的后端。
+  String rttBackendSelection = 'automatic';
   String rttJlinkExecutablePath = '';
-  String rttPyocdExecutablePath = '';
+  String rttOpenocdExecutablePath = '';
   String rttBuiltinHelperPath = '';
+  String rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg';
+  String rttOpenocdTargetConfig = '';
   String rttProbeKind = 'jlink';
   String rttLastProbeId = '';
   String rttTarget = '';
@@ -287,6 +298,8 @@ class AppSettings {
   int? rttControlBlockAddress;
   int? rttControlBlockRangeStart;
   int? rttControlBlockRangeEnd;
+  int rttViewerPollingIntervalMs = RttConfiguration.defaultPollingIntervalMs;
+  int probeRttPollingIntervalMs = RttConfiguration.defaultPollingIntervalMs;
   String rttEncoding = 'UTF-8';
   String rttDisplayMode = 'text';
   bool rttTimestampEnabled = false;
@@ -294,6 +307,10 @@ class AppSettings {
   String rttFontFamily = 'Consolas';
   double rttFontSize = 13.0;
   int rttHistoryLineLimit = RttConfiguration.defaultHistoryLines;
+  List<int> rttTerminalColors = List.of(RttConfiguration.defaultTerminalColors);
+  List<String> rttTerminalLabels = List.of(
+    RttConfiguration.defaultTerminalLabels,
+  );
 
   // ========== 视口设置 ==========
   /// 视口 X 轴最小值
@@ -347,6 +364,7 @@ class AppSettings {
     plotFontSizeDelta = 0;
     plotFontBold = false;
     lastMainPage = 'rawData';
+    mainTabOrder = const ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
     maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
     plotHistoryMemoryLimitGiB = PlotConfiguration.defaultHistoryMemoryLimitGiB;
     discardInitialPacketCount = 0;
@@ -430,10 +448,12 @@ class AppSettings {
     rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
     rttPageEnabled = false;
-    rttBackendMode = 'automatic';
+    rttBackendSelection = 'automatic';
     rttJlinkExecutablePath = '';
-    rttPyocdExecutablePath = '';
+    rttOpenocdExecutablePath = '';
     rttBuiltinHelperPath = '';
+    rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg';
+    rttOpenocdTargetConfig = '';
     rttProbeKind = 'jlink';
     rttLastProbeId = '';
     rttTarget = '';
@@ -444,6 +464,8 @@ class AppSettings {
     rttControlBlockAddress = null;
     rttControlBlockRangeStart = null;
     rttControlBlockRangeEnd = null;
+    rttViewerPollingIntervalMs = RttConfiguration.defaultPollingIntervalMs;
+    probeRttPollingIntervalMs = RttConfiguration.defaultPollingIntervalMs;
     rttEncoding = 'UTF-8';
     rttDisplayMode = 'text';
     rttTimestampEnabled = false;
@@ -451,6 +473,8 @@ class AppSettings {
     rttFontFamily = 'Consolas';
     rttFontSize = 13.0;
     rttHistoryLineLimit = RttConfiguration.defaultHistoryLines;
+    rttTerminalColors = List.of(RttConfiguration.defaultTerminalColors);
+    rttTerminalLabels = List.of(RttConfiguration.defaultTerminalLabels);
 
     xMin = PlotConfiguration.viewportDefaultXMin;
     xMax = PlotConfiguration.viewportDefaultXMax;
@@ -506,8 +530,21 @@ class AppSettings {
         'plot' => 'plot',
         'shell' => 'shell',
         'rtt' => 'rtt',
+        'probePlot' => 'probePlot',
         _ => 'rawData',
       };
+      const defaultTabOrder = ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
+      final storedTabOrder =
+          (json['mainTabOrder'] as List?)
+              ?.whereType<String>()
+              .where(defaultTabOrder.contains)
+              .toSet()
+              .toList() ??
+          const <String>[];
+      mainTabOrder = [
+        ...storedTabOrder,
+        ...defaultTabOrder.where((id) => !storedTabOrder.contains(id)),
+      ];
       final storedMaxVisiblePoints =
           (json['maxVisiblePoints'] as num?)?.toInt() ??
           PlotConfiguration.defaultVisiblePointCount;
@@ -709,14 +746,20 @@ class AppSettings {
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
       rttPageEnabled = json['rttPageEnabled'] as bool? ?? false;
-      rttBackendMode = switch (json['rttBackendMode'] as String?) {
-        'external' => 'external',
-        'builtin' => 'builtin',
+      rttBackendSelection = switch (json['rttBackendSelection'] as String?) {
+        'external-jlink' => 'external-jlink',
+        'bundled-openocd' => 'bundled-openocd',
+        'external-openocd' => 'external-openocd',
         _ => 'automatic',
       };
       rttJlinkExecutablePath = json['rttJlinkExecutablePath'] as String? ?? '';
-      rttPyocdExecutablePath = json['rttPyocdExecutablePath'] as String? ?? '';
+      rttOpenocdExecutablePath =
+          json['rttOpenocdExecutablePath'] as String? ?? '';
       rttBuiltinHelperPath = json['rttBuiltinHelperPath'] as String? ?? '';
+      rttOpenocdInterfaceConfig =
+          json['rttOpenocdInterfaceConfig'] as String? ??
+          'interface/cmsis-dap.cfg';
+      rttOpenocdTargetConfig = json['rttOpenocdTargetConfig'] as String? ?? '';
       rttProbeKind = json['rttProbeKind'] == 'cmsisDap' ? 'cmsisDap' : 'jlink';
       rttLastProbeId = json['rttLastProbeId'] as String? ?? '';
       rttTarget = json['rttTarget'] as String? ?? '';
@@ -739,6 +782,26 @@ class AppSettings {
           (json['rttControlBlockRangeStart'] as num?)?.toInt();
       rttControlBlockRangeEnd =
           (json['rttControlBlockRangeEnd'] as num?)?.toInt();
+      final legacyRttPollingIntervalMs =
+          (json['rttPollingIntervalMs'] as num?)?.toInt();
+      rttViewerPollingIntervalMs =
+          ((json['rttViewerPollingIntervalMs'] as num?)?.toInt() ??
+                  legacyRttPollingIntervalMs ??
+                  RttConfiguration.defaultPollingIntervalMs)
+              .clamp(
+                RttConfiguration.minPollingIntervalMs,
+                RttConfiguration.maxPollingIntervalMs,
+              )
+              .toInt();
+      probeRttPollingIntervalMs =
+          ((json['probeRttPollingIntervalMs'] as num?)?.toInt() ??
+                  legacyRttPollingIntervalMs ??
+                  RttConfiguration.defaultPollingIntervalMs)
+              .clamp(
+                RttConfiguration.minPollingIntervalMs,
+                RttConfiguration.maxPollingIntervalMs,
+              )
+              .toInt();
       rttEncoding = json['rttEncoding'] as String? ?? 'UTF-8';
       rttDisplayMode = json['rttDisplayMode'] == 'hex' ? 'hex' : 'text';
       rttTimestampEnabled = json['rttTimestampEnabled'] as bool? ?? false;
@@ -756,6 +819,12 @@ class AppSettings {
                 RttConfiguration.maxHistoryLines,
               )
               .toInt();
+      rttTerminalColors = _normalizeRttTerminalColors(
+        json['rttTerminalColors'],
+      );
+      rttTerminalLabels = _normalizeRttTerminalLabels(
+        json['rttTerminalLabels'],
+      );
 
       // 视口设置
       xMin =
@@ -811,10 +880,12 @@ class AppSettings {
       'ymodemSaveDirectoryPolicy',
       'rawDataEncoding',
       'rawMultiSendProfileId',
-      'rttBackendMode',
+      'rttBackendSelection',
       'rttJlinkExecutablePath',
-      'rttPyocdExecutablePath',
+      'rttOpenocdExecutablePath',
       'rttBuiltinHelperPath',
+      'rttOpenocdInterfaceConfig',
+      'rttOpenocdTargetConfig',
       'rttProbeKind',
       'rttLastProbeId',
       'rttTarget',
@@ -890,6 +961,8 @@ class AppSettings {
       'rttControlBlockAddress',
       'rttControlBlockRangeStart',
       'rttControlBlockRangeEnd',
+      'rttViewerPollingIntervalMs',
+      'probeRttPollingIntervalMs',
       'rttFontSize',
       'rttHistoryLineLimit',
       'xMin',
@@ -898,12 +971,15 @@ class AppSettings {
       'yMax',
     };
     const listKeys = <String>{
+      'mainTabOrder',
       'mathChannels',
       'rChannelAddresses',
       'zobowChannelIds',
       'zobowChannelTypes',
       'channelPresetBindings',
       'fixedFrameChannelTypes',
+      'rttTerminalColors',
+      'rttTerminalLabels',
     };
 
     for (final entry in json.entries) {
@@ -927,6 +1003,8 @@ class AppSettings {
     _normalizeStringList(json['rChannelAddresses']);
     _normalizeZobowChannelIds(json['zobowChannelIds']);
     _normalizeChannelPresetBindings(json['channelPresetBindings']);
+    _normalizeRttTerminalColors(json['rttTerminalColors']);
+    _normalizeRttTerminalLabels(json['rttTerminalLabels']);
     _normalizeDataTypeList(
       json['zobowChannelTypes'],
       length: ParserConfig.maxZobowChannelCount,
@@ -987,6 +1065,7 @@ class AppSettings {
     'plotFontSizeDelta': plotFontSizeDelta,
     'plotFontBold': plotFontBold,
     'lastMainPage': lastMainPage,
+    'mainTabOrder': mainTabOrder,
     'maxVisiblePoints': maxVisiblePoints,
     'plotHistoryMemoryLimitGiB': plotHistoryMemoryLimitGiB,
     'discardInitialPacketCount': discardInitialPacketCount,
@@ -1062,10 +1141,12 @@ class AppSettings {
     'rawDataEncoding': rawDataEncoding,
     'rawMultiSendProfileId': rawMultiSendProfileId,
     'rttPageEnabled': rttPageEnabled,
-    'rttBackendMode': rttBackendMode,
+    'rttBackendSelection': rttBackendSelection,
     'rttJlinkExecutablePath': rttJlinkExecutablePath,
-    'rttPyocdExecutablePath': rttPyocdExecutablePath,
+    'rttOpenocdExecutablePath': rttOpenocdExecutablePath,
     'rttBuiltinHelperPath': rttBuiltinHelperPath,
+    'rttOpenocdInterfaceConfig': rttOpenocdInterfaceConfig,
+    'rttOpenocdTargetConfig': rttOpenocdTargetConfig,
     'rttProbeKind': rttProbeKind,
     'rttLastProbeId': rttLastProbeId,
     'rttTarget': rttTarget,
@@ -1076,6 +1157,8 @@ class AppSettings {
     'rttControlBlockAddress': rttControlBlockAddress,
     'rttControlBlockRangeStart': rttControlBlockRangeStart,
     'rttControlBlockRangeEnd': rttControlBlockRangeEnd,
+    'rttViewerPollingIntervalMs': rttViewerPollingIntervalMs,
+    'probeRttPollingIntervalMs': probeRttPollingIntervalMs,
     'rttEncoding': rttEncoding,
     'rttDisplayMode': rttDisplayMode,
     'rttTimestampEnabled': rttTimestampEnabled,
@@ -1083,6 +1166,8 @@ class AppSettings {
     'rttFontFamily': rttFontFamily,
     'rttFontSize': rttFontSize,
     'rttHistoryLineLimit': rttHistoryLineLimit,
+    'rttTerminalColors': rttTerminalColors,
+    'rttTerminalLabels': rttTerminalLabels,
 
     // 视口设置
     'xMin': xMin,
@@ -1100,6 +1185,36 @@ class AppSettings {
       values.add('');
     }
     return values.take(PlotConfiguration.rawChannelCount).toList();
+  }
+
+  static List<int> _normalizeRttTerminalColors(Object? value) {
+    final defaults = RttConfiguration.defaultTerminalColors;
+    final colors = <int>[];
+    if (value is List) {
+      for (final item in value) {
+        if (item is! num) continue;
+        colors.add(0xFF000000 | (item.toInt() & 0x00FFFFFF));
+        if (colors.length == defaults.length) break;
+      }
+    }
+    while (colors.length < defaults.length) {
+      colors.add(defaults[colors.length]);
+    }
+    return colors;
+  }
+
+  static List<String> _normalizeRttTerminalLabels(Object? value) {
+    final defaults = RttConfiguration.defaultTerminalLabels;
+    if (value is! List) return List.of(defaults);
+    return List.generate(defaults.length, (index) {
+      final text =
+          index < value.length && value[index] is String
+              ? (value[index] as String).trim()
+              : '';
+      final innerText = text.replaceAll(RegExp(r'[\[\]]'), '').trim();
+      if (innerText.isEmpty) return defaults[index];
+      return innerText.length <= 32 ? innerText : innerText.substring(0, 32);
+    });
   }
 
   static double? _nullableNonNegativeDouble(Object? value) {

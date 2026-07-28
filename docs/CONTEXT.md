@@ -22,11 +22,11 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - Shell 使用独立的编码、命令行行尾、本地回显、滚动历史和外观设置；支持 ANSI 终端、命令历史、终端文本导出和 YMODEM 文件发送/接收，接收文件默认保存到 `<exe_dir>/exports/ymodem/`。
 - UTF-8、GBK、BIG5、Shift_JIS、EUC-KR 等 Shell 文本编码使用有状态流式解码器，必须正确处理多字节字符跨串口数据块的情况。
 - 数据收发、Shell 和绘图通过 `SerialActivityOwner` 互斥占用串口接收活动；任一页面开始实际接收后锁定当前页面，停止、启动失败或串口断开后释放页面切换。
-- RTT Viewer 为默认隐藏的独立页面，首版只读显示 RTT Up 0。`ConnectionOwnerService` 互斥管理串口和 RTT：串口连接时禁止 RTT，RTT 连接时锁定 RTT 页并禁止串口，手动断开或探针脱离后解锁。
-- RTT 后端分为 J-Link 官方工具、pyOCD 和内置 probe-rs helper；所有 RTT 后端必须附着到正在运行的目标，不得因只读查看而停核。自动模式只在外部工具不可用时回退内置后端，探针占用、目标错误或连接失败不得静默切换后端。
-- RTT 控制块定位统一支持 Auto、指定地址和指定范围；后端不支持或 Auto 扫描失败时必须明确提示用户改用可用模式，不得静默忽略定位参数。
-- 内置 `probe_helper` 是随应用发布的通用 Rust 探针进程，基于 probe-rs 核心库和完整内置目标库，支持 J-Link、CMSIS-DAP v1/v2，并与 Flutter 使用版本化二进制帧及能力协商。helper 使用独立语义化版本和独立 Changelog，主应用版本不要求与 helper 同步。RTT、后续烧录及其他探针功能复用此进程，不额外捆绑重复的 probe-rs CLI。RTT 待处理队列上限为 `64 MiB`，每帧最多消费 `64 KiB`；过载只丢弃最旧完整块并重置流式解码状态。
-- RTT 自定义 probe-rs 目标放在 `<exe_dir>/config/rtt/targets/`，逐文件校验并隔离损坏配置；`_example.yaml` 始终排除且不记录忽略警告。用户目标可覆盖内置同名目标，同一目录内重名时忽略后加载文件。
+- RTT Viewer 为默认隐藏的独立页面，支持 SEGGER 虚拟终端 0～15、All Terminals 和 RTT Down 0 双向收发。`ConnectionOwnerService` 互斥管理串口和探针；探针连接空闲时只允许在 RTT Viewer 与探针绘图间切换，功能开始后锁定当前探针页面。OpenOCD 停止功能后保留空闲探针连接；J-Link 为保证彻底停止 RTT，会终止当前后端并使用原参数自动重建不接收 RTT 的空闲连接，重连期间必须显示“停止中”和“探针重连中”。
+- 探针绘图与串口绘图使用独立 ViewModel 和数据链路，复用基础 Painter、LOD 与视口。HSS 由 OpenOCD Tcl RPC 使用运行态 `read_memory` 完成，并非 SEGGER HSS SDK；RTT 从控制块枚举 Up 通道，`JScope_<FORMAT>` 名称自动解析格式，普通名称允许手动填写。ELF、AXF 和 OUT 由主应用本地按 ELF 文件头和符号表解析，不依赖探针后端。
+- RTT 后端在探针连接窗口选择，只提供自动、J-Link 官方工具、外置 OpenOCD 和内置 OpenOCD。后端下拉不得按当前探针类型隐藏 J-Link/OpenOCD；显式选择 J-Link 后端时自动切换为 J-Link 探针类型，显式选择任一 OpenOCD 时自动切换为 CMSIS-DAP，自动后端下才允许自由切换探针类型。探针访问的最高安全约束是严格非侵入：枚举、连接、读取、写入、停止功能和断开均不得 halt、reset、resume 或以任何方式改变目标执行状态，即使随后恢复也不允许；无法证明满足该约束的后端必须在接触目标前拒绝操作。自动模式对 J-Link 使用官方工具；对 CMSIS-DAP 依次尝试外置、内置 OpenOCD，只有工具不可用时才进入下一候选，已选后端连接目标失败不得切换。高级设置分别检测并显示内置和外置 OpenOCD 版本，外置路径设置不得改变内置版本。探针占用、目标错误或连接失败不得静默切换后端。
+- RTT 控制块定位不属于探针连接参数，只能从 RTT Viewer 开始按钮旁或探针绘图 RTT 模式旁的数据配置入口设置，并在活动开始时交给后端；未连接探针时也允许提前编辑。定位统一支持 Auto、指定地址和指定范围；OpenOCD 不提供 Auto，其他后端 Auto 扫描失败时必须明确提示用户改用可用模式，不得静默忽略定位参数。RTT Viewer 接收配置与探针绘图 RTT 数据配置分别持久化独立的 `1～1000 ms` 轮询间隔，默认均为 `10 ms`；从哪一侧开始 RTT 活动便只向 OpenOCD 传递对应值，绘图通道枚举使用绘图侧设置，J-Link 和 HSS 不使用。探针绘图右侧的全局设置入口只承载绘图显示参数，不得重新混入 RTT/HSS 数据源配置。外部工具进程连接状态与按活动创建的 RTT 数据 Socket 必须独立维护，主动关闭数据 Socket 不得被判定为探针或目标断开。
+- 探针枚举、后端检测和连接管理日志写入应用日志，实际 RTT 数据不写日志。RTT 待处理队列上限为 `64 MiB`，每帧最多消费 `64 KiB`；过载只丢弃最旧完整块并重置流式解码状态。
 - 普通发送、Shell 命令、逐键输入、粘贴和 YMODEM 共用单一有序串口写入队列；同步 FFI 写入在后台 isolate 中执行，不允许不同入口并发打乱字节顺序。
 - 实时绘图、历史窗口回看、CSV/BIN 导入导出，以及旧版虚拟示波器 DAT 导入；绘图运行期间禁止导入和导出。
 - 接收协议支持 FireWater、固定帧、Zobow、JustFloat。
@@ -45,7 +45,7 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - 绘图底部状态栏显示实际渲染 FPS；可选“定位条”只映射完整 X 数据范围和当前视口，用于快速跳转，不绘制全量通道曲线。
 - 窗口右下角的应用信息和应用高级设置是两个独立入口；应用信息页显示版本、构建时间、版本说明、更新通道/来源和更新操作，应用高级设置负责页面入口、提示、内存占用与上限总览、默认设置和稳定版/Beta 本地回退等全局选项。内存总览中的绘图历史预算可修改，其余固定保护限制只读；未使用的缓存或队列显示为 `0 B`。
 - 应用高级设置提供默认关闭的调试模式；开启后日志历史记录 TRACE/DEBUG 诊断信息并逐条同步刷盘。串口连接会记录 Dart 生命周期、配置快照、耗时、原生 Win32 错误码，以及 `CreateFile`、`GetCommState`、`SetCommState`、`SetupComm`、超时和清缓存等原生打开阶段的崩溃前检查点。
-- 三个页面的工具栏、开始按钮、设置导航和底部操作按钮使用统一组件与视觉规则；设置弹窗采用左侧紧凑分类导航、右侧连续内容布局。
+- 三个页面的工具栏、开始按钮、设置导航和底部操作按钮使用统一组件与视觉规则；设置弹窗采用左侧紧凑分类导航、右侧连续内容布局。新增按钮必须显式约束尺寸、点击区域和悬停效果，紧凑工具栏或面板折叠按钮不得直接使用会产生大范围圆形阴影/高亮的默认按钮样式，应复用无海拔、范围受控的紧凑按钮样式。
 - 测试工具可模拟 Zobow、JustFloat、Shell/YMODEM 和多编码文本设备，也可生成绘图 BIN 数据并运行 Windows Profile 性能基准。
 
 ## 模块边界
@@ -54,7 +54,7 @@ SerialTools（仓库和可执行文件仍使用 `vscope_serial`）是一个 Flut
 - `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
 - `lib/data/`：数据模型、接收解析器、发送协议、数据源和 LOD 索引。接收解析器统一实现 `IDataParser`，兼容 `feed()`/`outputStream`；绘图高频接收链优先使用 `feedBatch()` 批量返回结果，避免逐包 Stream 调度。
 - `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。`SerialService` 是 UI 门面，连接生命周期由 `SerialConnectionCoordinator` 独占，原始接收缓存由 `RawReceiveSession` 独占；`SettingsRepository` 独占设置 JSON、备份恢复和串行原子写入。
-- `lib/services/rtt_*`：RTT 后端抽象、外部工具进程、helper 协议、有界队列与连接生命周期；`native/probe_helper/` 实现可扩展的 probe-rs 后端。
+- `lib/services/rtt_process_backend_base.dart` 提供外部工具共用的进程/TCP 生命周期；J-Link 和 OpenOCD 分别位于独立后端源文件，便于单独调试和测试。Windows 发布流程下载并校验固定 SHA-256 的 xPack OpenOCD，只把运行所需 exe、DLL、scripts 和许可证放入 `runtime/openocd/`。其余 `lib/services/rtt_*` 负责后端抽象、有界队列与连接生命周期。
 - `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态；绘图历史、精确窗口和数据源会话分别由 `PlotHistoryStore`、`PlotWindowProvider`、`PlotSessionController` 独占，通道、显示、视口和交互控制拆分在 `plot_viewmodel/` 的独立 `part` 模块中，数学/触发/统计/观察值计算保持无 UI 依赖；`ShellViewModel` 独立管理 Shell 会话、输入、接收调度和文件传输。
 - 发送协议统一实现 `SendProtocol<TConfig>`，并且每个具体协议使用独立文件；`ZobowDeviceProtocolCodec` 和 `RProtocolCodec` 分别编码 ZobowDevice 初始化帧和 r 命令。`PlotProtocolInitializer` 负责绘图启动前的协议发送和错误归一化；`PlotViewModel` 只提供配置快照并处理启动结果，`SerialService` 不得依赖具体发送协议。接收侧始终由 `IDataParser` 实现负责，不能与发送协议合并。
 - `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；页面只构造一个 `PlotRenderSnapshot`，`PlotLayerStack` 按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。

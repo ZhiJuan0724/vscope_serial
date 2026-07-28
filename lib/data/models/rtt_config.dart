@@ -1,17 +1,22 @@
 import 'dart:typed_data';
 
-enum RttBackendMode {
+/// 连接窗口中明确选择的探针后端。
+///
+/// `automatic` 只在工具缺失时回退，不会在目标连接失败后偷偷切换后端。
+enum RttBackendSelection {
   automatic('automatic', '自动'),
-  external('external', '外部'),
-  builtin('builtin', '内置');
+  externalJlink('external-jlink', '外部 J-Link'),
+  bundledOpenocd('bundled-openocd', '内置 OpenOCD'),
+  externalOpenocd('external-openocd', '外置 OpenOCD');
 
-  const RttBackendMode(this.value, this.label);
+  const RttBackendSelection(this.value, this.label);
   final String value;
   final String label;
 
-  static RttBackendMode fromString(String? value) => switch (value) {
-    'external' => external,
-    'builtin' => builtin,
+  static RttBackendSelection fromString(String? value) => switch (value) {
+    'external-jlink' => externalJlink,
+    'bundled-openocd' => bundledOpenocd,
+    'external-openocd' => externalOpenocd,
     _ => automatic,
   };
 }
@@ -74,7 +79,34 @@ enum RttDisplayMode {
       value == 'hex' ? hex : text;
 }
 
-enum RttConnectionState { disconnected, discovering, connecting, connected }
+enum RttConnectionState {
+  disconnected,
+  discovering,
+  connecting,
+  reconnecting,
+  connected,
+}
+
+/// 当前占用探针会话的数据功能。
+///
+/// 探针连接本身不代表功能已经开始。空闲连接允许在两个探针页面间切换，
+/// 功能开始后则由主框架锁定到对应页面。
+enum ProbeActivityOwner { none, rttViewer, probePlot }
+
+/// RTT 后端向上层声明的可选能力。
+enum RttBackendCapability {
+  /// 能够向 RTT Down 0 写入数据。
+  downChannel0,
+
+  /// 能够在保持探针连接的情况下启动和停止 RTT 数据流。
+  independentActivity,
+
+  /// 能够执行通用后台内存采样。
+  memorySampling,
+
+  /// 能够读取 RTT 通道名称和元数据。
+  channelMetadata,
+}
 
 class RttProbeInfo {
   const RttProbeInfo({
@@ -82,12 +114,16 @@ class RttProbeInfo {
     required this.name,
     required this.kind,
     this.available = true,
+    this.usbVendorId,
+    this.usbProductId,
   });
 
   final String id;
   final String name;
   final RttProbeKind kind;
   final bool available;
+  final int? usbVendorId;
+  final int? usbProductId;
 }
 
 class RttTargetInfo {
@@ -103,6 +139,7 @@ class RttConnectionConfig {
   const RttConnectionConfig({
     required this.probeKind,
     required this.target,
+    this.backend = RttBackendSelection.automatic,
     this.probeId = '',
     this.autoDetectTarget = false,
     this.wireProtocol = RttWireProtocol.swd,
@@ -111,8 +148,12 @@ class RttConnectionConfig {
     this.controlBlockAddress,
     this.controlBlockRangeStart,
     this.controlBlockRangeEnd,
+    this.pollingIntervalMs = 10,
+    this.openOcdInterfaceConfig = '',
+    this.openOcdTargetConfig = '',
   });
 
+  final RttBackendSelection backend;
   final RttProbeKind probeKind;
   final String probeId;
   final String target;
@@ -123,6 +164,45 @@ class RttConnectionConfig {
   final int? controlBlockAddress;
   final int? controlBlockRangeStart;
   final int? controlBlockRangeEnd;
+  final int pollingIntervalMs;
+  final String openOcdInterfaceConfig;
+  final String openOcdTargetConfig;
+
+  RttConnectionConfig copyWithControlBlock(RttControlBlockConfig value) {
+    return RttConnectionConfig(
+      backend: backend,
+      probeKind: probeKind,
+      probeId: probeId,
+      target: target,
+      autoDetectTarget: autoDetectTarget,
+      wireProtocol: wireProtocol,
+      clockKhz: clockKhz,
+      controlBlockMode: value.mode,
+      controlBlockAddress: value.address,
+      controlBlockRangeStart: value.rangeStart,
+      controlBlockRangeEnd: value.rangeEnd,
+      pollingIntervalMs: value.pollingIntervalMs,
+      openOcdInterfaceConfig: openOcdInterfaceConfig,
+      openOcdTargetConfig: openOcdTargetConfig,
+    );
+  }
+}
+
+/// 仅在 RTT Viewer 或 RTT 绘图开始时使用的 RTT 接收参数。
+class RttControlBlockConfig {
+  const RttControlBlockConfig({
+    required this.mode,
+    this.address,
+    this.rangeStart,
+    this.rangeEnd,
+    this.pollingIntervalMs = 10,
+  });
+
+  final RttControlBlockMode mode;
+  final int? address;
+  final int? rangeStart;
+  final int? rangeEnd;
+  final int pollingIntervalMs;
 }
 
 /// RTT 后端交付给页面的数据块；首版只消费 channel=0。

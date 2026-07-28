@@ -26,7 +26,7 @@ final class _NavStrings {
   String get rawData => '数据收发';
   String get shell => 'Shell';
   String get plot => '绘图';
-  String get rtt => 'RTT';
+  String get rtt => 'RTT Viewer';
   String get protocol => '协议';
 }
 
@@ -539,10 +539,10 @@ final class _RttStrings {
   const _RttStrings();
 
   String get probe => '探针';
-  String get settings => 'RTT设置';
-  String get showPage => '显示 RTT 页面';
-  String get showPageHelp => '显示独立 RTT Viewer 标签';
-  String get connect => 'RTT 连接';
+  String get settings => 'RTT Viewer 设置';
+  String get showPage => '显示探针功能';
+  String get showPageHelp => '显示 RTT Viewer 和探针绘图标签';
+  String get connect => '探针连接';
   String get waitingData => '等待 RTT Up 0 数据';
   String get connectHint => '点击左下角连接 J-Link 或 CMSIS-DAP';
 }

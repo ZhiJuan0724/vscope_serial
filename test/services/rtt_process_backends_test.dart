@@ -13,9 +13,11 @@ void main() {
       parseJlinkVersion('SEGGER J-Link GDB Server V8.24a Command Line Version'),
       'v8.24a',
     );
-    expect(parsePyOcdVersion('0.44.0'), 'v0.44.0');
+    expect(
+      parseOpenOcdVersion('Open On-Chip Debugger 0.12.0+dev-01234'),
+      'v0.12.0+dev-01234',
+    );
     expect(parseJlinkVersion('unknown'), isNull);
-    expect(parsePyOcdVersion('unknown'), isNull);
     expect(normalizeJlinkVersion('V7.52d'), 'v7.52d');
     expect(normalizeJlinkVersion('7.52.4.0'), 'v7.52.4.0');
     expect(
@@ -37,6 +39,38 @@ void main() {
     expect(await backend.detectVersion(RttProbeKind.jlink), 'v7.52d');
     expect(requestedPath, File(Platform.resolvedExecutable).absolute.path);
     await backend.dispose();
+  });
+
+  test('OpenOCD 配置选择器定位到 scripts 下对应类别目录', () async {
+    final root = await Directory.systemTemp.createTemp('vscope-openocd-');
+    addTearDown(() => root.delete(recursive: true));
+    final executable = File(
+      '${root.path}${Platform.pathSeparator}bin'
+      '${Platform.pathSeparator}openocd.exe',
+    );
+    await executable.parent.create(recursive: true);
+    await executable.create();
+    final interfaceDirectory = Directory(
+      '${root.path}${Platform.pathSeparator}openocd'
+      '${Platform.pathSeparator}scripts'
+      '${Platform.pathSeparator}interface',
+    );
+    final targetDirectory = Directory(
+      '${root.path}${Platform.pathSeparator}openocd'
+      '${Platform.pathSeparator}scripts'
+      '${Platform.pathSeparator}target',
+    );
+    await interfaceDirectory.create(recursive: true);
+    await targetDirectory.create(recursive: true);
+
+    expect(
+      await findOpenOcdConfigDirectory(executable.path, 'interface'),
+      interfaceDirectory.absolute.path,
+    );
+    expect(
+      await findOpenOcdConfigDirectory(executable.path, 'target'),
+      targetDirectory.absolute.path,
+    );
   });
 
   test('Windows 文件版本读取器可直接读取系统文件资源', () {
@@ -101,12 +135,16 @@ void main() {
       const RttConnectionConfig(
         probeKind: RttProbeKind.jlink,
         target: 'TEST_DEVICE',
+        pollingIntervalMs: 77,
       ),
       19021,
     );
 
     expect(arguments, contains('-nohalt'));
+    expect(arguments, contains('-noir'));
     expect(arguments, isNot(contains('-halt')));
+    expect(arguments.join(' '), isNot(contains('polling_interval')));
+    expect(backend.guaranteesNonIntrusiveTargetAccess, isTrue);
     await backend.dispose();
   });
 
@@ -141,93 +179,194 @@ void main() {
     );
   });
 
-  test('pyOCD JSON 探针枚举保留短 UID 和非十六进制 UID', () {
-    final probes = parsePyOcdProbeJson(
-      jsonEncode({
-        'status': 0,
-        'boards': [
-          {
-            'unique_id': 'DAP-42',
-            'info': 'Arm CMSIS-DAP v2',
-            'product_name': 'CMSIS-DAP',
-          },
-        ],
-      }),
-    );
-
-    expect(probes.single.id, 'DAP-42');
-    expect(probes.single.name, contains('Arm CMSIS-DAP v2'));
-  });
-
-  test('pyOCD JSON 目标列表读取名称、厂商和来源', () {
-    final targets = parsePyOcdTargetJson(
-      jsonEncode({
-        'status': 0,
-        'targets': [
-          {'name': 'stm32f407vg', 'vendor': 'ST', 'source': 'builtin'},
-        ],
-      }),
-    );
-
-    expect(targets.single.name, 'stm32f407vg');
-    expect(targets.single.vendor, 'ST');
-    expect(targets.single.source, 'builtin');
-  });
-
-  test('pyOCD 无探针输出转换为明确连接提示', () async {
-    final backend = ExternalPyOcdBackend(configuredPath: () => '');
-
-    expect(
-      backend.parseFailureDiagnostic('No connected debug probes'),
-      contains('未检测到 CMSIS-DAP 探针'),
-    );
-    expect(
-      backend.parseFailureDiagnostic('No target device available'),
-      contains('未检测到 CMSIS-DAP 探针'),
-    );
-    await backend.dispose();
-  });
-
-  test('pyOCD RTT 使用独立子命令、附着模式和指定搜索范围', () async {
-    final backend = ExternalPyOcdBackend(configuredPath: () => '');
+  test('OpenOCD 连接阶段只初始化目标，不配置或启动 RTT', () async {
+    final backend = ExternalOpenOcdBackend(configuredPath: () => '');
     final arguments = await backend.buildArguments(
       const RttConnectionConfig(
         probeKind: RttProbeKind.cmsisDap,
-        target: 'test_target',
-        probeId: 'DAP-42',
+        target: '',
+        wireProtocol: RttWireProtocol.swd,
+        clockKhz: 2000,
         controlBlockMode: RttControlBlockMode.range,
         controlBlockRangeStart: 0x20000000,
         controlBlockRangeEnd: 0x20010000,
+        openOcdInterfaceConfig: 'interface/cmsis-dap.cfg',
+        openOcdTargetConfig: 'target/stm32f4x.cfg',
       ),
       19021,
     );
 
-    expect(arguments.first, 'rtt');
-    expect(arguments, isNot(contains('gdbserver')));
-    expect(arguments, containsAllInOrder(['--connect', 'attach']));
-    expect(arguments, containsAllInOrder(['--uid', 'DAP-42']));
     expect(
       arguments,
-      containsAllInOrder(['--address', '0x20000000', '--size', '0x10000']),
+      containsAllInOrder([
+        '-f',
+        'interface/cmsis-dap.cfg',
+        '-c',
+        'transport select swd',
+        '-f',
+        'target/stm32f4x.cfg',
+        '-c',
+        'gdb port disabled',
+        '-c',
+        'telnet port disabled',
+        '-c',
+        startsWith('tcl port '),
+      ]),
     );
-    expect(arguments, contains('resume_on_disconnect=true'));
+    expect(arguments, isNot(contains('gdb_port disabled')));
+    expect(arguments, isNot(contains('telnet_port disabled')));
+    expect(arguments.where((item) => item.startsWith('tcl_port ')), isEmpty);
+    expect(arguments, contains('adapter speed 2000'));
+    expect(arguments, isNot(contains('halt')));
+    expect(arguments, isNot(contains('reset')));
+    expect(arguments, isNot(contains('resume')));
+    expect(arguments.where((item) => item.startsWith('rtt setup ')), isEmpty);
+    expect(arguments, isNot(contains('rtt polling_interval 10')));
+    expect(arguments, isNot(contains('rtt start')));
+    expect(
+      arguments.where((item) => item.startsWith('rtt server start ')),
+      isEmpty,
+    );
+    expect(backend.guaranteesNonIntrusiveTargetAccess, isTrue);
     await backend.dispose();
   });
 
-  test('pyOCD RTT 指定地址不要求同时填写搜索范围', () async {
-    final backend = ExternalPyOcdBackend(configuredPath: () => '');
-    final arguments = await backend.buildArguments(
-      const RttConnectionConfig(
-        probeKind: RttProbeKind.cmsisDap,
-        target: 'test_target',
-        controlBlockMode: RttControlBlockMode.address,
-        controlBlockAddress: 0x20001000,
+  test('外部进程报告未插探针时立即失败而不是等待启动超时', () async {
+    final backend = _ImmediateFailureBackend();
+    addTearDown(backend.dispose);
+    final stopwatch = Stopwatch()..start();
+
+    await expectLater(
+      backend.connect(
+        const RttConnectionConfig(probeKind: RttProbeKind.cmsisDap, target: ''),
       ),
-      0,
+      throwsA(
+        isA<StateError>().having(
+          (error) => '$error',
+          'message',
+          contains('未检测到调试探针'),
+        ),
+      ),
     );
 
-    expect(arguments, containsAllInOrder(['--address', '0x20001000']));
-    expect(arguments, isNot(contains('--size')));
+    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 2)));
+  });
+
+  test('OpenOCD RTT 不接受 Auto 控制块定位', () async {
+    final backend = ExternalOpenOcdBackend(configuredPath: () => '');
+
+    expect(
+      () => backend.configureRttControlBlock(
+        const RttControlBlockConfig(mode: RttControlBlockMode.automatic),
+      ),
+      throwsA(isA<FormatException>()),
+    );
     await backend.dispose();
   });
+
+  test('主动关闭延迟 RTT Socket 不会把目标进程连接标记为断开', () async {
+    final backend = _DeferredTransportBackend();
+    addTearDown(backend.dispose);
+    await backend.connect(
+      const RttConnectionConfig(probeKind: RttProbeKind.cmsisDap, target: ''),
+    );
+    final server = await ServerSocket.bind(
+      InternetAddress.loopbackIPv4,
+      backend.rttTransportPort,
+    );
+    addTearDown(server.close);
+    final accepted = server.first;
+
+    await backend.ensureRttTransportConnected();
+    final peer = await accepted;
+    addTearDown(peer.close);
+    expect(backend.isConnected, isTrue);
+
+    await backend.closeRttTransport();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(backend.isConnected, isTrue);
+  });
+}
+
+class _ImmediateFailureBackend extends TcpProcessRttBackend {
+  @override
+  String get id => 'immediate-failure';
+
+  @override
+  String get displayName => '测试后端';
+
+  @override
+  bool get guaranteesNonIntrusiveTargetAccess => true;
+
+  @override
+  String? get nonIntrusiveSafetyBlockReason => null;
+
+  @override
+  Duration get startupTimeout => const Duration(seconds: 5);
+
+  @override
+  Future<String?> executablePath(RttProbeKind kind) async =>
+      Platform.isWindows
+          ? (Platform.environment['ComSpec'] ?? r'C:\Windows\System32\cmd.exe')
+          : '/bin/sh';
+
+  @override
+  Future<List<String>> buildArguments(
+    RttConnectionConfig config,
+    int port,
+  ) async =>
+      Platform.isWindows
+          ? [
+            '/d',
+            '/s',
+            '/c',
+            'echo NO_PROBE_MARKER 1>&2 & ping -n 11 127.0.0.1 >nul',
+          ]
+          : ['-c', 'echo NO_PROBE_MARKER >&2; sleep 10'];
+
+  @override
+  String? parseFailureDiagnostic(String line) =>
+      line.contains('NO_PROBE_MARKER') ? '未检测到调试探针' : null;
+
+  @override
+  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+
+  @override
+  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+}
+
+class _DeferredTransportBackend extends TcpProcessRttBackend {
+  @override
+  String get id => 'deferred-transport';
+  @override
+  String get displayName => '延迟传输测试后端';
+  @override
+  bool get guaranteesNonIntrusiveTargetAccess => true;
+  @override
+  String? get nonIntrusiveSafetyBlockReason => null;
+  @override
+  bool get connectRttSocketOnConnect => false;
+  @override
+  Duration get startupStabilityDuration => const Duration(milliseconds: 50);
+
+  @override
+  Future<String?> executablePath(RttProbeKind kind) async =>
+      Platform.isWindows
+          ? (Platform.environment['ComSpec'] ?? r'C:\Windows\System32\cmd.exe')
+          : '/bin/sh';
+
+  @override
+  Future<List<String>> buildArguments(
+    RttConnectionConfig config,
+    int port,
+  ) async =>
+      Platform.isWindows
+          ? ['/d', '/s', '/c', 'ping -n 11 127.0.0.1 >nul']
+          : ['-c', 'sleep 10'];
+
+  @override
+  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  @override
+  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
 }

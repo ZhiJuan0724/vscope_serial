@@ -357,6 +357,42 @@ void main() {
     expect(viewportChanged, isFalse);
   });
 
+  testWidgets('连续光标 hover 每帧只回调最后一个位置', (tester) async {
+    final cursors = <CursorState>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (cursor) {
+                if (cursor != null) cursors.add(cursor);
+              },
+              vCursorEnabled: true,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: topLeft + const Offset(100, 200));
+    for (var x = 101.0; x <= 700; x++) {
+      await gesture.moveTo(topLeft + Offset(x, 200));
+    }
+
+    expect(cursors, isEmpty);
+    await tester.pump();
+    expect(cursors, hasLength(1));
+    expect(cursors.single.screenPosition!.dx, closeTo(700, 0.001));
+  });
+
   Future<void> pumpObservationGestureHarness(
     WidgetTester tester, {
     required bool locked,

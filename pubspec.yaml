@@ -85,7 +85,6 @@ flutter:
     - pubspec.yaml
     - CHANGELOG.md
     - assets/icons/
-    - assets/rtt/_example.yaml
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

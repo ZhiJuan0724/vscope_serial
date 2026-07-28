@@ -22,6 +22,7 @@ void main() {
     await repository.save({'value': 2});
     await repository.flush();
     expect((await repository.load()).snapshot?['value'], 2);
+    expect(await File(path).readAsString(), equals('{\n  "value": 2\n}'));
 
     await repository.save({'value': 3});
     await repository.flush();

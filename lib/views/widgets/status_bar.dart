@@ -16,11 +16,14 @@ String connectionStatusLabel({
   required bool isProbe,
   required bool connected,
   required bool connecting,
+  bool reconnecting = false,
 }) {
   final connectionName =
       isProbe ? AppStrings.rtt.probe : AppStrings.serial.port;
   final connectionState =
-      connected
+      reconnecting
+          ? '重连中...'
+          : connected
           ? AppStrings.status.connected
           : connecting
           ? AppStrings.status.connecting
@@ -38,7 +41,7 @@ class StatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer2<SerialService, PlotViewModel>(
       builder: (context, service, plotVm, _) {
-        if (currentPageId == 'rtt') {
+        if (currentPageId == 'rtt' || currentPageId == 'probePlot') {
           return Consumer<RttService>(
             builder:
                 (context, rttService, _) => _buildStatus(
@@ -102,6 +105,7 @@ class StatusBar extends StatelessWidget {
                     isProbe: isRttPage,
                     connected: connected,
                     connecting: connecting,
+                    reconnecting: rttService?.isReconnecting ?? false,
                   ),
                   style: const TextStyle(fontSize: 12),
                 ),

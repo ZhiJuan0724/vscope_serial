@@ -1,33 +1,45 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/rtt_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
+import '../../services/rtt_process_backends.dart';
 import '../../services/rtt_service.dart';
 import '../widgets/common_widgets.dart';
 
 class RttConnectionDialog extends StatefulWidget {
-  const RttConnectionDialog({super.key});
+  const RttConnectionDialog({
+    super.key,
+    this.openOcdConfigFilePicker,
+    this.openOcdConfigDirectoryResolver,
+  });
+
+  final Future<String?> Function(String dialogTitle, String? initialDirectory)?
+  openOcdConfigFilePicker;
+  final Future<String?> Function(String configuredPath, String category)?
+  openOcdConfigDirectoryResolver;
 
   @override
   State<RttConnectionDialog> createState() => _RttConnectionDialogState();
 }
 
 class _RttConnectionDialogState extends State<RttConnectionDialog> {
+  late RttBackendSelection _backend;
   late RttProbeKind _kind;
   late RttWireProtocol _wireProtocol;
-  late RttControlBlockMode _controlBlockMode;
   late bool _autoDetect;
   late String _probeId;
   late String _target;
   late final TextEditingController _targetController;
   late final TextEditingController _clockController;
-  late final TextEditingController _addressController;
-  late final TextEditingController _rangeStartController;
-  late final TextEditingController _rangeEndController;
+  late final TextEditingController _openOcdInterfaceController;
+  late final TextEditingController _openOcdTargetController;
   List<RttProbeInfo> _probes = const [];
   bool _refreshing = false;
   bool _connecting = false;
@@ -39,31 +51,54 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   bool _initializedBackendPreview = false;
   String? _error;
 
+  bool get _showsOpenOcdConfig =>
+      _backend == RttBackendSelection.bundledOpenocd ||
+      _backend == RttBackendSelection.externalOpenocd ||
+      (_backend == RttBackendSelection.automatic &&
+          _kind == RttProbeKind.cmsisDap);
+
+  RttConnectionConfig _draftConfig() => RttConnectionConfig(
+    backend: _backend,
+    probeKind: _kind,
+    probeId: _probeId,
+    target: _target.trim(),
+    autoDetectTarget: _autoDetect,
+    wireProtocol: _wireProtocol,
+    clockKhz: int.tryParse(_clockController.text.trim()) ?? 4000,
+    controlBlockMode: RttControlBlockMode.fromString(
+      AppSettings().rttControlBlockMode,
+    ),
+    controlBlockAddress: AppSettings().rttControlBlockAddress,
+    controlBlockRangeStart: AppSettings().rttControlBlockRangeStart,
+    controlBlockRangeEnd: AppSettings().rttControlBlockRangeEnd,
+    openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
+    openOcdTargetConfig: _openOcdTargetController.text.trim(),
+  );
+
   @override
   void initState() {
     super.initState();
     final settings = AppSettings();
+    _backend = RttBackendSelection.fromString(settings.rttBackendSelection);
     _kind = RttProbeKind.fromString(settings.rttProbeKind);
+    _kind = switch (_backend) {
+      RttBackendSelection.externalJlink => RttProbeKind.jlink,
+      RttBackendSelection.bundledOpenocd ||
+      RttBackendSelection.externalOpenocd => RttProbeKind.cmsisDap,
+      RttBackendSelection.automatic => _kind,
+    };
     _wireProtocol = RttWireProtocol.fromString(settings.rttWireProtocol);
-    _controlBlockMode = RttControlBlockMode.fromString(
-      settings.rttControlBlockMode,
-    );
     _autoDetect = settings.rttAutoDetectTarget;
-    _probeId = settings.rttLastProbeId;
+    // 探针尚未枚举时必须显式使用自动选择，不能暗中沿用一个未验证的旧 ID。
+    _probeId = '';
     _target = settings.rttTarget;
     _targetController = TextEditingController(text: _target);
     _clockController = TextEditingController(text: '${settings.rttClockKhz}');
-    _addressController = TextEditingController(
-      text:
-          settings.rttControlBlockAddress == null
-              ? ''
-              : '0x${settings.rttControlBlockAddress!.toRadixString(16)}',
+    _openOcdInterfaceController = TextEditingController(
+      text: settings.rttOpenocdInterfaceConfig,
     );
-    _rangeStartController = TextEditingController(
-      text: _formatAddress(settings.rttControlBlockRangeStart),
-    );
-    _rangeEndController = TextEditingController(
-      text: _formatAddress(settings.rttControlBlockRangeEnd),
+    _openOcdTargetController = TextEditingController(
+      text: settings.rttOpenocdTargetConfig,
     );
   }
 
@@ -81,32 +116,32 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
     _backendPreviewGeneration++;
     _targetController.dispose();
     _clockController.dispose();
-    _addressController.dispose();
-    _rangeStartController.dispose();
-    _rangeEndController.dispose();
+    _openOcdInterfaceController.dispose();
+    _openOcdTargetController.dispose();
     super.dispose();
   }
 
   Future<void> _updateExpectedBackend() async {
     final generation = ++_backendPreviewGeneration;
     final kind = _kind;
+    final backend = _backend;
     setState(() {
       _checkingExpectedBackend = true;
       _expectedBackendError = null;
     });
     try {
-      final name = await context.read<RttService>().expectedBackendName(kind);
+      final name = await context.read<RttService>().expectedBackendName(
+        kind,
+        backend: backend,
+        connectionConfig: _draftConfig(),
+      );
       if (!mounted ||
           generation != _backendPreviewGeneration ||
-          kind != _kind) {
+          kind != _kind ||
+          backend != _backend) {
         return;
       }
-      final mode = RttBackendMode.fromString(AppSettings().rttBackendMode);
-      final suffix = switch (mode) {
-        RttBackendMode.automatic when name == '内置 probe-rs' => '（自动回退）',
-        RttBackendMode.automatic => '（自动选择）',
-        _ => '',
-      };
+      final suffix = backend == RttBackendSelection.automatic ? '（自动选择）' : '';
       setState(() => _expectedBackend = '$name$suffix');
     } catch (error) {
       if (!mounted || generation != _backendPreviewGeneration) return;
@@ -124,14 +159,22 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   Future<void> _refresh() async {
     final generation = ++_refreshGeneration;
     final kind = _kind;
+    final backend = _backend;
     setState(() {
       _refreshing = true;
       _error = null;
     });
     try {
       final service = context.read<RttService>();
-      final probes = await service.listProbes(kind);
-      if (!mounted || generation != _refreshGeneration || kind != _kind) {
+      final probes = await service.listProbes(
+        kind,
+        backend: backend,
+        connectionConfig: _draftConfig(),
+      );
+      if (!mounted ||
+          generation != _refreshGeneration ||
+          kind != _kind ||
+          backend != _backend) {
         return;
       }
       setState(() {
@@ -162,28 +205,106 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
 
   Future<void> _selectTarget() async {
     final kind = _kind;
+    final backend = _backend;
     final selected = await showDialog<RttTargetInfo>(
       context: context,
       builder:
           (_) => _RttTargetSearchDialog(
-            loadTargets: () => context.read<RttService>().listTargets(kind),
+            loadTargets:
+                () => context.read<RttService>().listTargets(
+                  kind,
+                  backend: backend,
+                  connectionConfig: _draftConfig(),
+                ),
           ),
     );
-    if (!mounted || selected == null || kind != _kind) return;
+    if (!mounted || selected == null || kind != _kind || backend != _backend) {
+      return;
+    }
     setState(() {
       _target = selected.name;
       _targetController.text = selected.name;
     });
   }
 
-  int? _parseAddress(String input) {
-    final value = input.trim();
-    if (value.isEmpty) return null;
-    return int.tryParse(
-      value.startsWith('0x') || value.startsWith('0X')
-          ? value.substring(2)
-          : value,
-      radix: value.startsWith('0x') || value.startsWith('0X') ? 16 : 10,
+  Future<void> _selectOpenOcdConfigFile({
+    required String dialogTitle,
+    required String category,
+    required TextEditingController controller,
+  }) async {
+    final configuredPath = AppSettings().rttOpenocdExecutablePath;
+    final directoryResolver = widget.openOcdConfigDirectoryResolver;
+    var initialDirectory =
+        directoryResolver != null
+            ? await directoryResolver(configuredPath, category)
+            : _backend == RttBackendSelection.bundledOpenocd
+            ? await findBundledOpenOcdConfigDirectory(category)
+            : _backend == RttBackendSelection.automatic
+            ? await findOpenOcdConfigDirectory(configuredPath, category)
+            : await findExternalOpenOcdConfigDirectory(
+              configuredPath,
+              category,
+            );
+    if (initialDirectory == null) {
+      final currentFile = File(controller.text.trim());
+      if (currentFile.isAbsolute && await currentFile.parent.exists()) {
+        initialDirectory = currentFile.parent.absolute.path;
+      }
+    }
+    if (!mounted) return;
+    final picker = widget.openOcdConfigFilePicker;
+    final path =
+        picker != null
+            ? await picker(dialogTitle, initialDirectory)
+            : (await FilePicker.pickFiles(
+              dialogTitle: dialogTitle,
+              initialDirectory: initialDirectory,
+              type: FileType.custom,
+              allowedExtensions: const ['cfg'],
+              allowMultiple: false,
+              lockParentWindow: true,
+            ))?.files.single.path;
+    if (!mounted || path == null || path.trim().isEmpty) return;
+    setState(() {
+      controller.text = path;
+      _error = null;
+    });
+    unawaited(_updateExpectedBackend());
+  }
+
+  Widget _buildOpenOcdConfigField({
+    required String name,
+    required String keyPrefix,
+    required String hintText,
+    required String category,
+    required TextEditingController controller,
+    required bool enabled,
+  }) {
+    return TextField(
+      key: ValueKey('$keyPrefix-field'),
+      controller: controller,
+      enabled: enabled,
+      onChanged: (_) => unawaited(_updateExpectedBackend()),
+      decoration: _connectionFieldDecoration(name, hintText: hintText).copyWith(
+        suffixIcon: IconButton(
+          key: ValueKey('$keyPrefix-file-button'),
+          tooltip: '选择$name文件',
+          splashRadius: 18,
+          padding: const EdgeInsets.all(8),
+          constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+          onPressed:
+              enabled
+                  ? () => unawaited(
+                    _selectOpenOcdConfigFile(
+                      dialogTitle: '选择$name文件',
+                      category: category,
+                      controller: controller,
+                    ),
+                  )
+                  : null,
+          icon: const Icon(Icons.folder_open_outlined),
+        ),
+      ),
     );
   }
 
@@ -193,29 +314,22 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       setState(() => _error = '调试时钟范围为 100~50000 kHz');
       return;
     }
-    if (!_autoDetect && _target.trim().isEmpty) {
+    if (_backend != RttBackendSelection.externalOpenocd &&
+        _backend != RttBackendSelection.bundledOpenocd &&
+        !_autoDetect &&
+        _target.trim().isEmpty) {
       setState(() => _error = '请选择或输入目标芯片');
       return;
     }
-    final addressText = _addressController.text.trim();
-    final address = _parseAddress(addressText);
-    final rangeStartText = _rangeStartController.text.trim();
-    final rangeEndText = _rangeEndController.text.trim();
-    final rangeStart = _parseAddress(rangeStartText);
-    final rangeEnd = _parseAddress(rangeEndText);
-    if (_controlBlockMode == RttControlBlockMode.address &&
-        (address == null || address < 0)) {
-      setState(() => _error = '请输入有效的 RTT 控制块地址');
-      return;
+    if (_backend == RttBackendSelection.externalOpenocd ||
+        _backend == RttBackendSelection.bundledOpenocd) {
+      if (_openOcdInterfaceController.text.trim().isEmpty ||
+          _openOcdTargetController.text.trim().isEmpty) {
+        setState(() => _error = 'OpenOCD 需要接口配置和目标配置');
+        return;
+      }
     }
-    if (_controlBlockMode == RttControlBlockMode.range &&
-        (rangeStart == null ||
-            rangeStart < 0 ||
-            rangeEnd == null ||
-            rangeEnd <= rangeStart)) {
-      setState(() => _error = 'RTT 搜索范围无效，结束地址必须大于起始地址');
-      return;
-    }
+    final settings = AppSettings();
     setState(() {
       _connecting = true;
       _error = null;
@@ -223,17 +337,21 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
     try {
       await context.read<RttService>().connect(
         RttConnectionConfig(
+          backend: _backend,
           probeKind: _kind,
           probeId: _probeId,
           target: _target.trim(),
           autoDetectTarget: _autoDetect,
           wireProtocol: _wireProtocol,
           clockKhz: clock,
-          controlBlockMode: _controlBlockMode,
-          // 非当前模式的输入也一并保留，用户切回该模式时无需重新填写。
-          controlBlockAddress: address,
-          controlBlockRangeStart: rangeStart,
-          controlBlockRangeEnd: rangeEnd,
+          controlBlockMode: RttControlBlockMode.fromString(
+            settings.rttControlBlockMode,
+          ),
+          controlBlockAddress: settings.rttControlBlockAddress,
+          controlBlockRangeStart: settings.rttControlBlockRangeStart,
+          controlBlockRangeEnd: settings.rttControlBlockRangeEnd,
+          openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
+          openOcdTargetConfig: _openOcdTargetController.text.trim(),
         ),
       );
       if (mounted) Navigator.of(context).pop();
@@ -249,280 +367,311 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
     final service = context.watch<RttService>();
     return AlertDialog(
       shape: kAdvancedSettingsDialogShape,
-      title: const Text('RTT 连接'),
+      title: Text(AppStrings.rtt.connect),
       content: SizedBox(
         width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: NoAnimDropdown<RttProbeKind>(
-                    key: const ValueKey('rtt-probe-kind-field'),
-                    value: _kind,
-                    hint: '探针类型',
-                    decoration: _connectionFieldDecoration('探针类型'),
-                    items:
-                        RttProbeKind.values
-                            .map(
-                              (item) => DropdownMenuItem(
-                                value: item,
-                                child: Text(item.label),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        service.isConnected || _connecting
-                            ? null
-                            : (value) {
-                              if (value == null) return;
-                              setState(() {
-                                // 探针类型变化后等待用户主动刷新，避免启动耗时枚举。
-                                _refreshGeneration++;
-                                _refreshing = false;
-                                _kind = value;
-                                _probeId = '';
-                                _probes = const [];
-                              });
-                              unawaited(_updateExpectedBackend());
-                            },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: NoAnimDropdown<String>(
-                    value:
-                        _probes.any((item) => item.id == _probeId)
-                            ? _probeId
-                            : null,
-                    hint: '选择探针',
-                    decoration: _connectionFieldDecoration('调试探针'),
-                    items:
-                        _probes
-                            .map(
-                              (item) => DropdownMenuItem(
-                                value: item.id,
-                                enabled: item.available,
-                                child: Text(
-                                  item.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        service.isConnected
-                            ? null
-                            : (value) => setState(() => _probeId = value ?? ''),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: '刷新探针',
-                  onPressed:
-                      service.isConnected || _refreshing || _connecting
-                          ? null
-                          : () => unawaited(_refresh()),
-                  icon:
-                      _refreshing
-                          ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                          : const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Tooltip(
-                    message: '仅按当前设置和工具可用性预测；探针占用、目标错误或工具启动失败仍可能导致连接失败',
-                    child: Icon(Icons.account_tree_outlined, size: 16),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _checkingExpectedBackend
-                        ? '预计使用后端：检测中…'
-                        : _expectedBackendError != null
-                        ? '预计使用后端：不可用（$_expectedBackendError）'
-                        : '预计使用后端：${_expectedBackend ?? '未知'}',
-                    key: const ValueKey('rtt-expected-backend'),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color:
-                          _expectedBackendError == null
-                              ? Theme.of(context).colorScheme.onSurfaceVariant
-                              : Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    key: const ValueKey('rtt-target-field'),
-                    controller: _targetController,
-                    onChanged: (value) => _target = value,
-                    enabled: !_autoDetect && !service.isConnected,
-                    decoration: _connectionFieldDecoration(
-                      '目标芯片',
-                      hintText: '输入芯片型号',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  key: const ValueKey('rtt-target-search-button'),
-                  tooltip: '检索支持的芯片',
-                  onPressed:
-                      _autoDetect || service.isConnected || _connecting
-                          ? null
-                          : () => unawaited(_selectTarget()),
-                  icon: const Icon(Icons.manage_search),
-                ),
-                const SizedBox(width: 4),
-                Checkbox(
-                  value: _autoDetect,
-                  onChanged:
-                      service.isConnected
-                          ? null
-                          : (value) =>
-                              setState(() => _autoDetect = value ?? false),
-                ),
-                const Text('自动识别'),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: NoAnimDropdown<RttWireProtocol>(
-                    value: _wireProtocol,
-                    hint: '接口',
-                    decoration: _connectionFieldDecoration('调试接口'),
-                    items:
-                        RttWireProtocol.values
-                            .map(
-                              (item) => DropdownMenuItem(
-                                value: item,
-                                child: Text(item.label),
-                              ),
-                            )
-                            .toList(),
-                    onChanged:
-                        service.isConnected
-                            ? null
-                            : (value) => setState(
-                              () => _wireProtocol = value ?? _wireProtocol,
+                NoAnimDropdown<RttBackendSelection>(
+                  key: const ValueKey('rtt-backend-field'),
+                  value: _backend,
+                  hint: '选择后端',
+                  decoration: _connectionFieldDecoration('探针后端'),
+                  items:
+                      RttBackendSelection.values
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(item.label),
                             ),
-                  ),
+                          )
+                          .toList(),
+                  onChanged:
+                      service.isConnected || _connecting
+                          ? null
+                          : (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _refreshGeneration++;
+                              _refreshing = false;
+                              _backend = value;
+                              if (value == RttBackendSelection.externalJlink) {
+                                _kind = RttProbeKind.jlink;
+                              } else if (value ==
+                                      RttBackendSelection.bundledOpenocd ||
+                                  value ==
+                                      RttBackendSelection.externalOpenocd) {
+                                _kind = RttProbeKind.cmsisDap;
+                              }
+                              _probeId = '';
+                              _probes = const [];
+                              _error = null;
+                            });
+                            unawaited(_updateExpectedBackend());
+                          },
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('rtt-clock-field'),
-                    controller: _clockController,
-                    enabled: !service.isConnected,
-                    keyboardType: TextInputType.number,
-                    decoration: _connectionFieldDecoration(
-                      '调试时钟',
-                      suffixText: 'kHz',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            NoAnimDropdown<RttControlBlockMode>(
-              value: _controlBlockMode,
-              hint: '控制块定位',
-              decoration: _connectionFieldDecoration('RTT 控制块定位'),
-              items:
-                  RttControlBlockMode.values
-                      .map(
-                        (item) => DropdownMenuItem(
-                          value: item,
-                          child: Text(item.label),
-                        ),
-                      )
-                      .toList(),
-              onChanged:
-                  service.isConnected
-                      ? null
-                      : (value) {
-                        if (value == null) return;
-                        setState(() => _controlBlockMode = value);
-                      },
-            ),
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _controlBlockMode.description,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            if (_controlBlockMode == RttControlBlockMode.address) ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _addressController,
-                enabled: !service.isConnected,
-                decoration: _connectionFieldDecoration(
-                  'RTT 控制块地址',
-                  hintText: '例如 0x20000000',
-                ),
-              ),
-            ],
-            if (_controlBlockMode == RttControlBlockMode.range) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _rangeStartController,
-                      enabled: !service.isConnected,
-                      decoration: _connectionFieldDecoration(
-                        '搜索起始地址',
-                        hintText: '例如 0x20000000',
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: NoAnimDropdown<RttProbeKind>(
+                        key: const ValueKey('rtt-probe-kind-field'),
+                        value: _kind,
+                        hint: '探针类型',
+                        decoration: _connectionFieldDecoration('探针类型'),
+                        items:
+                            RttProbeKind.values
+                                .where(
+                                  (item) =>
+                                      _backendSupportsProbe(_backend, item),
+                                )
+                                .map(
+                                  (item) => DropdownMenuItem(
+                                    value: item,
+                                    child: Text(item.label),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            service.isConnected || _connecting
+                                ? null
+                                : (value) {
+                                  if (value == null) return;
+                                  setState(() {
+                                    // 探针类型变化后等待用户主动刷新，避免启动耗时枚举。
+                                    _refreshGeneration++;
+                                    _refreshing = false;
+                                    _kind = value;
+                                    if (!_backendSupportsProbe(
+                                      _backend,
+                                      value,
+                                    )) {
+                                      _backend = RttBackendSelection.automatic;
+                                    }
+                                    _probeId = '';
+                                    _probes = const [];
+                                  });
+                                  unawaited(_updateExpectedBackend());
+                                },
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: NoAnimDropdown<String>(
+                        key: const ValueKey('rtt-probe-field'),
+                        value:
+                            _probeId.isEmpty ||
+                                    _probes.any((item) => item.id == _probeId)
+                                ? _probeId
+                                : null,
+                        hint: '自动选择',
+                        decoration: _connectionFieldDecoration('调试探针'),
+                        items: [
+                          const DropdownMenuItem(
+                            value: '',
+                            child: Text('自动选择'),
+                          ),
+                          ..._probes.map(
+                            (item) => DropdownMenuItem(
+                              value: item.id,
+                              enabled: item.available,
+                              child: Text(
+                                item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) =>
+                                    setState(() => _probeId = value ?? ''),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: '刷新探针',
+                      onPressed:
+                          service.isConnected || _refreshing || _connecting
+                              ? null
+                              : () => unawaited(_refresh()),
+                      icon:
+                          _refreshing
+                              ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                              : const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Tooltip(
+                        message: '仅按当前设置和工具可用性预测；探针占用、目标错误或工具启动失败仍可能导致连接失败',
+                        child: Icon(Icons.account_tree_outlined, size: 16),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _checkingExpectedBackend
+                            ? '预计使用后端：检测中…'
+                            : _expectedBackendError != null
+                            ? '预计使用后端：不可用（$_expectedBackendError）'
+                            : '预计使用后端：${_expectedBackend ?? '未知'}',
+                        key: const ValueKey('rtt-expected-backend'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color:
+                              _expectedBackendError == null
+                                  ? Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant
+                                  : Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _rangeEndController,
-                      enabled: !service.isConnected,
-                      decoration: _connectionFieldDecoration(
-                        '搜索结束地址',
-                        hintText: '例如 0x20010000',
+                ),
+                if (_showsOpenOcdConfig) ...[
+                  const SizedBox(height: 12),
+                  _buildOpenOcdConfigField(
+                    name: 'OpenOCD 接口配置',
+                    keyPrefix: 'rtt-openocd-interface',
+                    hintText: '例如 interface/cmsis-dap.cfg',
+                    category: 'interface',
+                    controller: _openOcdInterfaceController,
+                    enabled: !service.isConnected && !_connecting,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildOpenOcdConfigField(
+                    name: 'OpenOCD 目标配置',
+                    keyPrefix: 'rtt-openocd-target',
+                    hintText: '例如 target/stm32f4x.cfg',
+                    category: 'target',
+                    controller: _openOcdTargetController,
+                    enabled: !service.isConnected && !_connecting,
+                  ),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '可直接输入 OpenOCD scripts 相对配置名，也可从右侧按钮选择 .cfg 文件。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   ),
                 ],
-              ),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                const SizedBox(height: 12),
+                if (_backend != RttBackendSelection.externalOpenocd &&
+                    _backend != RttBackendSelection.bundledOpenocd)
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: TextField(
+                          key: const ValueKey('rtt-target-field'),
+                          controller: _targetController,
+                          onChanged: (value) => _target = value,
+                          enabled: !_autoDetect && !service.isConnected,
+                          decoration: _connectionFieldDecoration(
+                            '目标芯片',
+                            hintText: '输入芯片型号',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        key: const ValueKey('rtt-target-search-button'),
+                        tooltip: '检索支持的芯片',
+                        onPressed:
+                            _autoDetect || service.isConnected || _connecting
+                                ? null
+                                : () => unawaited(_selectTarget()),
+                        icon: const Icon(Icons.manage_search),
+                      ),
+                      const SizedBox(width: 4),
+                      Checkbox(
+                        value: _autoDetect,
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) => setState(
+                                  () => _autoDetect = value ?? false,
+                                ),
+                      ),
+                      const Text('自动识别'),
+                    ],
+                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: NoAnimDropdown<RttWireProtocol>(
+                        value: _wireProtocol,
+                        hint: '接口',
+                        decoration: _connectionFieldDecoration('调试接口'),
+                        items:
+                            RttWireProtocol.values
+                                .map(
+                                  (item) => DropdownMenuItem(
+                                    value: item,
+                                    child: Text(item.label),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            service.isConnected
+                                ? null
+                                : (value) => setState(
+                                  () => _wireProtocol = value ?? _wireProtocol,
+                                ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('rtt-clock-field'),
+                        controller: _clockController,
+                        enabled: !service.isConnected,
+                        keyboardType: TextInputType.number,
+                        decoration: _connectionFieldDecoration(
+                          '调试时钟',
+                          suffixText: 'kHz',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ],
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
       actions: [
@@ -563,6 +712,14 @@ String _displayRttError(Object error) => '$error'.replaceFirst(
   RegExp(r'^(?:Bad state|TimeoutException|FormatException):\s*'),
   '',
 );
+
+bool _backendSupportsProbe(RttBackendSelection backend, RttProbeKind kind) =>
+    switch (backend) {
+      RttBackendSelection.externalJlink => kind == RttProbeKind.jlink,
+      RttBackendSelection.bundledOpenocd ||
+      RttBackendSelection.externalOpenocd => kind == RttProbeKind.cmsisDap,
+      RttBackendSelection.automatic => true,
+    };
 
 class _RttTargetSearchDialog extends StatefulWidget {
   const _RttTargetSearchDialog({required this.loadTargets});
@@ -722,9 +879,6 @@ bool _containsOrderedCharacters(String candidate, String query) {
   return false;
 }
 
-String _formatAddress(int? value) =>
-    value == null ? '' : '0x${value.toRadixString(16)}';
-
 /// RTT 连接下拉框与串口连接窗口保持相同的可见高度和内容留白。
 InputDecoration _connectionFieldDecoration(
   String labelText, {
@@ -748,6 +902,6 @@ Future<void> showRttConnectionDialog(BuildContext context) async {
       builder: (_) => const RttConnectionDialog(),
     );
   } catch (error) {
-    AppNotifications.show('打开 RTT 连接窗口失败: $error');
+    AppNotifications.show('打开探针连接窗口失败: $error');
   }
 }
