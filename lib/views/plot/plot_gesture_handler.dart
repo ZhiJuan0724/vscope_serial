@@ -16,6 +16,7 @@ import 'plot_viewport.dart';
 ///
 /// 负责处理绘图区域的所有用户交互：
 /// - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，Shift+滚轮根据鼠标位置缩放 X/Y 轴
+/// - **触控板导航**：双指移动平移视口，捏合手势以指针位置为中心缩放
 /// - **拖拽平移**：鼠标左键拖动平移视口
 /// - **框选放大**：开启框选模式后，鼠标左键拖拽框选区域并放大
 /// - **垂直光标悬停**：鼠标移动时更新垂直光标位置
@@ -245,6 +246,15 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 目标刷新帧率（fps），由外部传入，与高级设置同步
   int _targetFps = 30;
 
+  /// 触控板手势期间累积的视口。
+  ///
+  /// PointerPanZoomUpdateEvent 同时携带双指平移增量和累计缩放比例；
+  /// 使用本地副本可避免高频事件依赖父组件重建后的 widget.viewport。
+  PlotViewport? _trackpadViewport;
+  double _trackpadLastScale = 1;
+  bool _trackpadDidPan = false;
+  bool _trackpadDidChange = false;
+
   double _fontSize(double base) {
     return (base + 1 + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
@@ -399,6 +409,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       onHover: _handleHover,
       child: Listener(
         onPointerSignal: _handlePointerSignal,
+        onPointerPanZoomStart: _handlePointerPanZoomStart,
+        onPointerPanZoomUpdate: _handlePointerPanZoomUpdate,
+        onPointerPanZoomEnd: _handlePointerPanZoomEnd,
         onPointerDown: _handlePointerDown,
         onPointerMove: _handlePointerMove,
         onPointerUp: _handlePointerUp,
@@ -488,6 +501,112 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
       widget.onViewportChanged(newViewport, fromDrag: false);
     }
+  }
+
+  /// 开始 Windows/macOS 精密触控板的双指平移或捏合手势。
+  void _handlePointerPanZoomStart(PointerPanZoomStartEvent event) {
+    final size = context.size ?? Size.zero;
+    if (size.isEmpty) return;
+
+    _trackpadViewport = widget.viewport.copy();
+    _trackpadLastScale = 1;
+    _trackpadDidPan = false;
+    _trackpadDidChange = false;
+  }
+
+  /// 处理触控板双指移动和捏合。
+  ///
+  /// - 双指移动复用鼠标拖动的 X/Y 平移方向。
+  /// - 捏合在绘图区同时缩放 X/Y；指针位于坐标轴时只缩放对应轴。
+  /// - 纯捏合按普通缩放上报，不会关闭“跟随”；实际产生平移后才按拖动上报。
+  void _handlePointerPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    final size = context.size ?? Size.zero;
+    var viewport = _trackpadViewport;
+    if (size.isEmpty || viewport == null) return;
+
+    const panThresholdSquared = 0.25;
+    final panDelta = event.localPanDelta;
+    final hasPan = panDelta.distanceSquared > panThresholdSquared;
+    if (hasPan) {
+      viewport = viewport.panX(panDelta.dx, size.width);
+      viewport = viewport.panY(panDelta.dy, size.height);
+      _trackpadDidPan = true;
+      _trackpadDidChange = true;
+    }
+
+    final currentScale =
+        event.scale.isFinite && event.scale > 0
+            ? event.scale
+            : _trackpadLastScale;
+    final scaleRatio = currentScale / _trackpadLastScale;
+    final hasScale = (scaleRatio - 1).abs() > 0.0001;
+    if (hasScale) {
+      // PointerPanZoom 的 scale > 1 表示双指张开；PlotViewport 的 factor < 1
+      // 表示放大，因此这里取倒数，并限制单个事件的异常跳变。
+      final zoomFactor = (1 / scaleRatio).clamp(0.5, 2.0).toDouble();
+      final focalPosition = event.localPosition + event.localPan;
+      viewport = _zoomTrackpadViewport(
+        viewport,
+        zoomFactor,
+        focalPosition,
+        size,
+      );
+      _trackpadDidChange = true;
+    }
+
+    _trackpadLastScale = currentScale;
+    _trackpadViewport = viewport;
+    if (_trackpadDidChange) {
+      widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
+    }
+  }
+
+  PlotViewport _zoomTrackpadViewport(
+    PlotViewport viewport,
+    double zoomFactor,
+    Offset focalPosition,
+    Size size,
+  ) {
+    final centerX = viewport.screenToDataX(
+      focalPosition.dx.clamp(
+        viewport.marginLeft,
+        size.width - viewport.marginRight,
+      ),
+      size.width,
+    );
+    final centerY = viewport.screenToDataY(
+      focalPosition.dy.clamp(
+        viewport.marginTop,
+        size.height - viewport.marginBottom,
+      ),
+      size.height,
+    );
+    final inYAxisArea = focalPosition.dx < viewport.marginLeft;
+    final inXAxisArea = focalPosition.dy > size.height - viewport.marginBottom;
+
+    if (inYAxisArea && !inXAxisArea) {
+      return viewport.zoomY(zoomFactor, centerY);
+    }
+    if (inXAxisArea) {
+      return viewport.zoomX(zoomFactor, centerX);
+    }
+    return viewport.zoomX(zoomFactor, centerX).zoomY(zoomFactor, centerY);
+  }
+
+  /// 触控板平移结束时提交最终视口并持久化；纯捏合沿用滚轮缩放逻辑。
+  void _handlePointerPanZoomEnd(PointerPanZoomEndEvent event) {
+    final viewport = _trackpadViewport;
+    if (viewport != null && _trackpadDidChange) {
+      widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
+      if (_trackpadDidPan) {
+        widget.onDragEnd?.call();
+      }
+    }
+
+    _trackpadViewport = null;
+    _trackpadLastScale = 1;
+    _trackpadDidPan = false;
+    _trackpadDidChange = false;
   }
 
   /// 处理鼠标悬停（更新垂直光标）
