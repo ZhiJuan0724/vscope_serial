@@ -18,6 +18,42 @@ bool _hasUsableAutomaticOpenOcdConfig(RttConnectionConfig config) {
       config.openOcdTargetConfig.trim().isNotEmpty;
 }
 
+/// 从最近一次成功连接保存的设置创建快捷连接参数。
+///
+/// 显式后端会约束探针类型，防止旧设置中的类型与后端不匹配。
+RttConnectionConfig savedRttConnectionConfig([AppSettings? source]) {
+  final settings = source ?? AppSettings();
+  final backend = RttBackendSelection.fromString(settings.rttBackendSelection);
+  final savedKind = RttProbeKind.fromString(settings.rttProbeKind);
+  final kind = switch (backend) {
+    RttBackendSelection.externalJlink => RttProbeKind.jlink,
+    RttBackendSelection.bundledOpenocd ||
+    RttBackendSelection.externalOpenocd ||
+    RttBackendSelection.externalPyocd => RttProbeKind.cmsisDap,
+    RttBackendSelection.automatic => savedKind,
+  };
+  return RttConnectionConfig(
+    backend: backend,
+    probeKind: kind,
+    probeId: settings.rttLastProbeId,
+    target: settings.rttTarget,
+    autoDetectTarget: settings.rttAutoDetectTarget,
+    wireProtocol: RttWireProtocol.fromString(settings.rttWireProtocol),
+    clockKhz: settings.rttClockKhz,
+    controlBlockMode: RttControlBlockMode.fromString(
+      settings.rttControlBlockMode,
+    ),
+    controlBlockAddress: settings.rttControlBlockAddress,
+    controlBlockRangeStart: settings.rttControlBlockRangeStart,
+    controlBlockRangeEnd: settings.rttControlBlockRangeEnd,
+    openOcdInterfaceConfig: settings.rttOpenocdInterfaceConfig,
+    openOcdTargetConfig: settings.rttOpenocdTargetConfig,
+    pyOcdCmsisDapVersion: PyOcdCmsisDapVersion.fromString(
+      settings.rttPyocdCmsisDapVersion,
+    ),
+  );
+}
+
 /// RTT 连接、后端选择和接收队列的唯一所有者。
 class RttService extends ChangeNotifier {
   RttService({
@@ -39,6 +75,9 @@ class RttService extends ChangeNotifier {
           ExternalOpenOcdBackend(
             configuredPath: () => '',
             bundledRuntime: true,
+          ),
+          ExternalPyOcdBackend(
+            configuredPythonPath: () => settings.rttPyocdPythonPath,
           ),
         ];
   }
@@ -226,6 +265,7 @@ class RttService extends ChangeNotifier {
         'external-jlink' => RttProbeKind.jlink,
         'bundled-openocd' => RttProbeKind.cmsisDap,
         'external-openocd' => RttProbeKind.cmsisDap,
+        'external-pyocd' => RttProbeKind.cmsisDap,
         _ => RttProbeKind.jlink,
       };
       try {
@@ -347,12 +387,13 @@ class RttService extends ChangeNotifier {
       return backend;
     }
 
-    // CMSIS-DAP 优先 OpenOCD；连接阶段只要求接口和目标脚本完整，
+    // CMSIS-DAP 优先外置、再内置 OpenOCD，最后使用外置 pyOCD；
+    // 连接阶段只要求 OpenOCD 接口和目标脚本完整，
     // RTT 控制块由具体数据活动开始前单独配置。
     final candidateIds =
         kind == RttProbeKind.jlink
             ? const ['external-jlink']
-            : const ['external-openocd', 'bundled-openocd'];
+            : const ['external-openocd', 'bundled-openocd', 'external-pyocd'];
     for (final id in candidateIds) {
       final matches = _backends.where((item) => item.id == id);
       if (matches.isEmpty) continue;
@@ -476,7 +517,7 @@ class RttService extends ChangeNotifier {
       throw StateError('RTT Viewer 正在运行，请先停止');
     }
     if (!supportsProbePlot) {
-      throw StateError('当前探针后端不支持绘图；CMSIS-DAP 请使用 OpenOCD');
+      throw StateError('当前探针后端不支持绘图或运行态内存采样');
     }
     _activityOwner = ProbeActivityOwner.probePlot;
     _notify();
@@ -507,7 +548,7 @@ class RttService extends ChangeNotifier {
     if (backend is! ProbePlotBackend) {
       _activityOwner = ProbeActivityOwner.none;
       _notify();
-      throw StateError('HSS 需要使用支持运行态内存读取的 OpenOCD 后端');
+      throw StateError('HSS 需要使用支持运行态内存读取的探针后端');
     }
     try {
       await (backend as ProbePlotBackend).startHss(
@@ -692,7 +733,8 @@ class RttService extends ChangeNotifier {
           ..rttControlBlockRangeStart = config.controlBlockRangeStart
           ..rttControlBlockRangeEnd = config.controlBlockRangeEnd
           ..rttOpenocdInterfaceConfig = config.openOcdInterfaceConfig
-          ..rttOpenocdTargetConfig = config.openOcdTargetConfig;
+          ..rttOpenocdTargetConfig = config.openOcdTargetConfig
+          ..rttPyocdCmsisDapVersion = config.pyOcdCmsisDapVersion.value;
     unawaited(settings.save());
   }
 

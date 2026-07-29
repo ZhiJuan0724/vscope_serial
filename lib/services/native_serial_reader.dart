@@ -521,6 +521,15 @@ class NativeSerialReader {
   bool _dartApiInitialized = false;
   NativeSerialWriteQueue? _writeQueue;
 
+  /// 在应用启动阶段通过只读状态查询预热原生 DLL 与 FFI 绑定。
+  ///
+  /// 部分 Windows 环境在首次串口连接流程中才触发 FFI 延迟初始化时，
+  /// 可能在 Dart/原生边界直接退出。此调用不打开或枚举串口、不创建线程，
+  /// 也不修改任何串口状态；不能用连接阶段的诊断日志配置调用替代。
+  static void warmUpNativeBinding() {
+    _nsrIsOpen();
+  }
+
   static void configureDiagnosticLogging(bool enabled, String? logPath) {
     final pathPtr = (logPath ?? '').toNativeUtf8();
     try {

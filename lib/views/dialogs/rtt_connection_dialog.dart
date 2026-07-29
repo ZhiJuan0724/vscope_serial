@@ -33,6 +33,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   late RttBackendSelection _backend;
   late RttProbeKind _kind;
   late RttWireProtocol _wireProtocol;
+  late PyOcdCmsisDapVersion _pyOcdCmsisDapVersion;
   late bool _autoDetect;
   late String _probeId;
   late String _target;
@@ -57,23 +58,32 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       (_backend == RttBackendSelection.automatic &&
           _kind == RttProbeKind.cmsisDap);
 
-  RttConnectionConfig _draftConfig() => RttConnectionConfig(
-    backend: _backend,
-    probeKind: _kind,
-    probeId: _probeId,
-    target: _target.trim(),
-    autoDetectTarget: _autoDetect,
-    wireProtocol: _wireProtocol,
-    clockKhz: int.tryParse(_clockController.text.trim()) ?? 4000,
-    controlBlockMode: RttControlBlockMode.fromString(
-      AppSettings().rttControlBlockMode,
-    ),
-    controlBlockAddress: AppSettings().rttControlBlockAddress,
-    controlBlockRangeStart: AppSettings().rttControlBlockRangeStart,
-    controlBlockRangeEnd: AppSettings().rttControlBlockRangeEnd,
-    openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
-    openOcdTargetConfig: _openOcdTargetController.text.trim(),
-  );
+  RttConnectionConfig _draftConfig() {
+    // pyOCD 的刷新列表使用合成 ID 展示 USB 设备；正式连接必须把选中项
+    // 还原成 VID/PID，才能让 Worker 跳过全量 USB 探针发现。
+    final selectedProbe =
+        _probes.where((item) => item.id == _probeId).firstOrNull;
+    return RttConnectionConfig(
+      backend: _backend,
+      probeKind: _kind,
+      probeId: _probeId,
+      usbVendorId: selectedProbe?.usbVendorId,
+      usbProductId: selectedProbe?.usbProductId,
+      target: _target.trim(),
+      autoDetectTarget: _autoDetect,
+      wireProtocol: _wireProtocol,
+      clockKhz: int.tryParse(_clockController.text.trim()) ?? 4000,
+      controlBlockMode: RttControlBlockMode.fromString(
+        AppSettings().rttControlBlockMode,
+      ),
+      controlBlockAddress: AppSettings().rttControlBlockAddress,
+      controlBlockRangeStart: AppSettings().rttControlBlockRangeStart,
+      controlBlockRangeEnd: AppSettings().rttControlBlockRangeEnd,
+      openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
+      openOcdTargetConfig: _openOcdTargetController.text.trim(),
+      pyOcdCmsisDapVersion: _pyOcdCmsisDapVersion,
+    );
+  }
 
   @override
   void initState() {
@@ -84,10 +94,14 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
     _kind = switch (_backend) {
       RttBackendSelection.externalJlink => RttProbeKind.jlink,
       RttBackendSelection.bundledOpenocd ||
-      RttBackendSelection.externalOpenocd => RttProbeKind.cmsisDap,
+      RttBackendSelection.externalOpenocd ||
+      RttBackendSelection.externalPyocd => RttProbeKind.cmsisDap,
       RttBackendSelection.automatic => _kind,
     };
     _wireProtocol = RttWireProtocol.fromString(settings.rttWireProtocol);
+    _pyOcdCmsisDapVersion = PyOcdCmsisDapVersion.fromString(
+      settings.rttPyocdCmsisDapVersion,
+    );
     _autoDetect = settings.rttAutoDetectTarget;
     // 探针尚未枚举时必须显式使用自动选择，不能暗中沿用一个未验证的旧 ID。
     _probeId = '';
@@ -329,31 +343,12 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
         return;
       }
     }
-    final settings = AppSettings();
     setState(() {
       _connecting = true;
       _error = null;
     });
     try {
-      await context.read<RttService>().connect(
-        RttConnectionConfig(
-          backend: _backend,
-          probeKind: _kind,
-          probeId: _probeId,
-          target: _target.trim(),
-          autoDetectTarget: _autoDetect,
-          wireProtocol: _wireProtocol,
-          clockKhz: clock,
-          controlBlockMode: RttControlBlockMode.fromString(
-            settings.rttControlBlockMode,
-          ),
-          controlBlockAddress: settings.rttControlBlockAddress,
-          controlBlockRangeStart: settings.rttControlBlockRangeStart,
-          controlBlockRangeEnd: settings.rttControlBlockRangeEnd,
-          openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
-          openOcdTargetConfig: _openOcdTargetController.text.trim(),
-        ),
-      );
+      await context.read<RttService>().connect(_draftConfig());
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted) setState(() => _error = _displayRttError(error));
@@ -407,7 +402,8 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                               } else if (value ==
                                       RttBackendSelection.bundledOpenocd ||
                                   value ==
-                                      RttBackendSelection.externalOpenocd) {
+                                      RttBackendSelection.externalOpenocd ||
+                                  value == RttBackendSelection.externalPyocd) {
                                 _kind = RttProbeKind.cmsisDap;
                               }
                               _probeId = '';
@@ -498,21 +494,39 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: '刷新探针',
-                      onPressed:
-                          service.isConnected || _refreshing || _connecting
-                              ? null
-                              : () => unawaited(_refresh()),
-                      icon:
-                          _refreshing
-                              ? const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                              : const Icon(Icons.refresh),
+                    Tooltip(
+                      message:
+                          _backend == RttBackendSelection.externalPyocd
+                              ? '扫描 USB 设备'
+                              : '刷新探针',
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap:
+                            service.isConnected || _refreshing || _connecting
+                                ? null
+                                : () => unawaited(_refresh()),
+                        child: SizedBox.square(
+                          dimension: kToolbarControlExtent,
+                          child: Center(
+                            child:
+                                _refreshing
+                                    ? const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                    : Icon(
+                                      Icons.refresh,
+                                      size: kToolbarIconSize,
+                                      color:
+                                          service.isConnected || _connecting
+                                              ? Theme.of(context).disabledColor
+                                              : null,
+                                    ),
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -546,6 +560,41 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                     ],
                   ),
                 ),
+                if (_backend == RttBackendSelection.externalPyocd) ...[
+                  const SizedBox(height: 12),
+                  NoAnimDropdown<PyOcdCmsisDapVersion>(
+                    key: const ValueKey('rtt-pyocd-cmsis-dap-version'),
+                    value: _pyOcdCmsisDapVersion,
+                    hint: '选择 CMSIS-DAP 版本',
+                    decoration: _connectionFieldDecoration('CMSIS-DAP 版本'),
+                    items:
+                        PyOcdCmsisDapVersion.values
+                            .map(
+                              (item) => DropdownMenuItem(
+                                value: item,
+                                child: Text(item.label),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        service.isConnected || _connecting
+                            ? null
+                            : (value) {
+                              if (value == null) return;
+                              setState(() {
+                                _refreshGeneration++;
+                                _refreshing = false;
+                                _pyOcdCmsisDapVersion = value;
+                                _probeId = '';
+                                _probes = const [];
+                                _error = null;
+                              });
+                              AppSettings().rttPyocdCmsisDapVersion =
+                                  value.value;
+                              unawaited(AppSettings().save());
+                            },
+                  ),
+                ],
                 if (_showsOpenOcdConfig) ...[
                   const SizedBox(height: 12),
                   _buildOpenOcdConfigField(
@@ -717,7 +766,8 @@ bool _backendSupportsProbe(RttBackendSelection backend, RttProbeKind kind) =>
     switch (backend) {
       RttBackendSelection.externalJlink => kind == RttProbeKind.jlink,
       RttBackendSelection.bundledOpenocd ||
-      RttBackendSelection.externalOpenocd => kind == RttProbeKind.cmsisDap,
+      RttBackendSelection.externalOpenocd ||
+      RttBackendSelection.externalPyocd => kind == RttProbeKind.cmsisDap,
       RttBackendSelection.automatic => true,
     };
 

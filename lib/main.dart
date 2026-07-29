@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -16,11 +17,14 @@ import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
 import 'services/connection_owner_service.dart';
+import 'services/native_serial_reader.dart';
 import 'services/rtt_service.dart';
 import 'services/serial_service.dart';
 import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
+import 'views/dialogs/rtt_connection_dialog.dart';
+import 'views/dialogs/status_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
@@ -35,8 +39,26 @@ import 'views/widgets/status_bar.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  Object? serialFfiWarmUpError;
+  StackTrace? serialFfiWarmUpStackTrace;
+  try {
+    // 必须早于日志初始化和串口发现，避免首次连接承担 FFI 延迟初始化。
+    NativeSerialReader.warmUpNativeBinding();
+  } catch (error, stackTrace) {
+    // 预热失败不得阻止应用启动；日志系统就绪后再补记诊断信息。
+    serialFfiWarmUpError = error;
+    serialFfiWarmUpStackTrace = stackTrace;
+  }
   Provider.debugCheckInvalidValueType = null;
   await AppLogger().init();
+  if (serialFfiWarmUpError != null) {
+    AppLogger().error(
+      '串口 FFI 启动预热失败: $serialFfiWarmUpError',
+      category: 'SERIAL',
+      error: serialFfiWarmUpError,
+      stackTrace: serialFfiWarmUpStackTrace,
+    );
+  }
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
     AppLogger().error(
@@ -137,6 +159,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   String _currentTabId = 'rawData';
   final ScrollController _tabScrollController = ScrollController();
   _WindowCloseListener? _windowCloseListener;
+  bool _connectionShortcutBusy = false;
 
   @override
   void initState() {
@@ -343,6 +366,103 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     }
   }
 
+  bool get _usesProbeConnection =>
+      _currentTabId == 'rtt' || _currentTabId == 'probePlot';
+
+  void _handleConnectionShortcut(LogicalKeyboardKey key) {
+    if (!AppSettings().connectionShortcutsEnabled) return;
+    if (key == LogicalKeyboardKey.f1) {
+      unawaited(
+        _usesProbeConnection
+            ? showRttConnectionDialog(context)
+            : showSerialConnectionDialog(context),
+      );
+      return;
+    }
+    if (_connectionShortcutBusy) {
+      AppNotifications.show('连接快捷键操作正在进行');
+      return;
+    }
+    unawaited(_runConnectionShortcut(key));
+  }
+
+  Future<void> _runConnectionShortcut(LogicalKeyboardKey key) async {
+    _connectionShortcutBusy = true;
+    try {
+      if (_usesProbeConnection) {
+        await _runProbeConnectionShortcut(key);
+      } else {
+        await _runSerialConnectionShortcut(key);
+      }
+    } catch (error) {
+      final action = switch (key) {
+        LogicalKeyboardKey.f2 => '快捷连接',
+        LogicalKeyboardKey.f3 => '快捷断开',
+        _ => '快捷重连',
+      };
+      AppNotifications.show('$action失败：$error');
+    } finally {
+      _connectionShortcutBusy = false;
+    }
+  }
+
+  Future<void> _runSerialConnectionShortcut(LogicalKeyboardKey key) async {
+    final service = context.read<SerialService>();
+    if (key == LogicalKeyboardKey.f2) {
+      if (service.isConnected) {
+        AppNotifications.show('快捷连接：串口已连接');
+        return;
+      }
+      if (!service.canConnectSelectedPort) {
+        AppNotifications.show('快捷连接：请选择当前可用的串口');
+        return;
+      }
+      AppNotifications.show('快捷连接：正在连接串口');
+      await service.connect();
+      return;
+    }
+    if (key == LogicalKeyboardKey.f3) {
+      if (!service.isConnected && !service.isConnecting) {
+        AppNotifications.show('快捷断开：串口当前未连接');
+        return;
+      }
+      AppNotifications.show('快捷断开：正在断开串口');
+      await service.disconnect();
+      return;
+    }
+    AppNotifications.show('快捷重连：正在断开并重新连接串口');
+    await service.disconnect();
+    if (!service.canConnectSelectedPort) {
+      throw StateError('请选择当前可用的串口');
+    }
+    await service.connect();
+  }
+
+  Future<void> _runProbeConnectionShortcut(LogicalKeyboardKey key) async {
+    final service = context.read<RttService>();
+    if (key == LogicalKeyboardKey.f2) {
+      if (service.isConnected) {
+        AppNotifications.show('快捷连接：探针已连接');
+        return;
+      }
+      AppNotifications.show('快捷连接：正在连接探针');
+      await service.connect(savedRttConnectionConfig());
+      return;
+    }
+    if (key == LogicalKeyboardKey.f3) {
+      if (!service.isConnected && !service.isConnecting) {
+        AppNotifications.show('快捷断开：探针当前未连接');
+        return;
+      }
+      AppNotifications.show('快捷断开：正在断开探针');
+      await service.disconnect();
+      return;
+    }
+    AppNotifications.show('快捷重连：正在断开并重新连接探针');
+    await service.disconnect();
+    await service.connect(savedRttConnectionConfig());
+  }
+
   @override
   Widget build(BuildContext context) {
     final serialService = Provider.of<SerialService>(context);
@@ -356,115 +476,140 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final currentIndex = tabs.indexWhere((tab) => tab.id == _currentTabId);
     _ensureSelectedTabVisible(currentIndex);
 
-    return Scaffold(
-      body: Column(
-        children: [
-          // 顶部 Tab 切换栏
-          ClipRect(
-            child: Container(
-              height: 40,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: Listener(
-                  onPointerSignal: _handleTabPointerSignal,
-                  child: ReorderableListView.builder(
-                    scrollController: _tabScrollController,
-                    scrollDirection: Axis.horizontal,
-                    buildDefaultDragHandles: false,
-                    onReorderItem: _reorderTabs,
-                    itemCount: tabs.length,
-                    itemBuilder: (context, index) {
-                      final tab = tabs[index];
-                      final isSelected = index == currentIndex;
-                      final ownerTab = switch (serialService.activityOwner) {
-                        SerialActivityOwner.rawData => 'rawData',
-                        SerialActivityOwner.shell => 'shell',
-                        SerialActivityOwner.plot => 'plot',
-                        SerialActivityOwner.none => null,
-                      };
-                      final canSwitch = switch (connectionOwner.owner) {
-                        ConnectionOwner.rtt => switch (rttService
-                            .activityOwner) {
-                          ProbeActivityOwner.rttViewer => tab.id == 'rtt',
-                          ProbeActivityOwner.probePlot => tab.id == 'probePlot',
-                          ProbeActivityOwner.none =>
-                            tab.id == 'rtt' || tab.id == 'probePlot',
-                        },
-                        _ => ownerTab == null || tab.id == ownerTab,
-                      };
-                      final colorScheme = Theme.of(context).colorScheme;
-                      final foreground =
-                          isSelected
-                              ? colorScheme.primary
-                              : canSwitch
-                              ? colorScheme.onSurfaceVariant
-                              : colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.3,
-                              );
-                      return ReorderableDelayedDragStartListener(
-                        key: ValueKey(tab.id),
-                        index: index,
-                        child: SizedBox(
-                          width: 180,
-                          height: 35,
-                          child: Material(
-                            color:
-                                isSelected
-                                    ? Theme.of(context).scaffoldBackgroundColor
-                                    : Colors.transparent,
-                            surfaceTintColor: Colors.transparent,
-                            shape:
-                                isSelected
-                                    ? const _SelectedTabShape()
-                                    : const RoundedRectangleBorder(),
-                            clipBehavior:
-                                isSelected ? Clip.antiAlias : Clip.none,
-                            child: InkWell(
-                              customBorder:
-                                  isSelected
-                                      ? const _SelectedTabShape()
-                                      : const RoundedRectangleBorder(),
-                              onTap:
-                                  canSwitch ? () => _selectTab(tab.id) : null,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(tab.icon, size: 16, color: foreground),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    tab.label,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight:
-                                          isSelected
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                      color: foreground,
-                                    ),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f1):
+            () => _handleConnectionShortcut(LogicalKeyboardKey.f1),
+        const SingleActivator(LogicalKeyboardKey.f2):
+            () => _handleConnectionShortcut(LogicalKeyboardKey.f2),
+        const SingleActivator(LogicalKeyboardKey.f3):
+            () => _handleConnectionShortcut(LogicalKeyboardKey.f3),
+        const SingleActivator(LogicalKeyboardKey.f5):
+            () => _handleConnectionShortcut(LogicalKeyboardKey.f5),
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          body: Column(
+            children: [
+              // 顶部 Tab 切换栏
+              ClipRect(
+                child: Container(
+                  height: 40,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Listener(
+                      onPointerSignal: _handleTabPointerSignal,
+                      child: ReorderableListView.builder(
+                        scrollController: _tabScrollController,
+                        scrollDirection: Axis.horizontal,
+                        buildDefaultDragHandles: false,
+                        onReorderItem: _reorderTabs,
+                        itemCount: tabs.length,
+                        itemBuilder: (context, index) {
+                          final tab = tabs[index];
+                          final isSelected = index == currentIndex;
+                          final ownerTab = switch (serialService
+                              .activityOwner) {
+                            SerialActivityOwner.rawData => 'rawData',
+                            SerialActivityOwner.shell => 'shell',
+                            SerialActivityOwner.plot => 'plot',
+                            SerialActivityOwner.none => null,
+                          };
+                          final canSwitch = switch (connectionOwner.owner) {
+                            ConnectionOwner.rtt => switch (rttService
+                                .activityOwner) {
+                              ProbeActivityOwner.rttViewer => tab.id == 'rtt',
+                              ProbeActivityOwner.probePlot =>
+                                tab.id == 'probePlot',
+                              ProbeActivityOwner.none =>
+                                tab.id == 'rtt' || tab.id == 'probePlot',
+                            },
+                            _ => ownerTab == null || tab.id == ownerTab,
+                          };
+                          final colorScheme = Theme.of(context).colorScheme;
+                          final foreground =
+                              isSelected
+                                  ? colorScheme.primary
+                                  : canSwitch
+                                  ? colorScheme.onSurfaceVariant
+                                  : colorScheme.onSurfaceVariant.withValues(
+                                    alpha: 0.3,
+                                  );
+                          return ReorderableDelayedDragStartListener(
+                            key: ValueKey(tab.id),
+                            index: index,
+                            child: SizedBox(
+                              width: 180,
+                              height: 35,
+                              child: Material(
+                                color:
+                                    isSelected
+                                        ? Theme.of(
+                                          context,
+                                        ).scaffoldBackgroundColor
+                                        : Colors.transparent,
+                                surfaceTintColor: Colors.transparent,
+                                shape:
+                                    isSelected
+                                        ? const _SelectedTabShape()
+                                        : const RoundedRectangleBorder(),
+                                clipBehavior:
+                                    isSelected ? Clip.antiAlias : Clip.none,
+                                child: InkWell(
+                                  customBorder:
+                                      isSelected
+                                          ? const _SelectedTabShape()
+                                          : const RoundedRectangleBorder(),
+                                  onTap:
+                                      canSwitch
+                                          ? () => _selectTab(tab.id)
+                                          : null,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        tab.icon,
+                                        size: 16,
+                                        color: foreground,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        tab.label,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight:
+                                              isSelected
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                          color: foreground,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      );
-                    },
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              // 页面内容
+              Expanded(
+                child: IndexedStack(
+                  index: currentIndex,
+                  children: tabs.map((tab) => tab.page).toList(),
+                ),
+              ),
+              // 底部共享状态栏
+              StatusBar(currentPageId: _currentTabId),
+            ],
           ),
-          // 页面内容
-          Expanded(
-            child: IndexedStack(
-              index: currentIndex,
-              children: tabs.map((tab) => tab.page).toList(),
-            ),
-          ),
-          // 底部共享状态栏
-          StatusBar(currentPageId: _currentTabId),
-        ],
+        ),
       ),
     );
   }

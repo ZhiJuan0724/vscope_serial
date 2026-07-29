@@ -82,7 +82,7 @@ class StatusBar extends StatelessWidget {
                 () =>
                     isRttPage
                         ? showRttConnectionDialog(context)
-                        : _showStatusDialog(context),
+                        : showSerialConnectionDialog(context),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -184,9 +184,5 @@ class StatusBar extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  void _showStatusDialog(BuildContext context) {
-    showDialog(context: context, builder: (context) => const StatusDialog());
   }
 }

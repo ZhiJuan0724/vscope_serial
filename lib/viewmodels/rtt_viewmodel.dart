@@ -339,12 +339,20 @@ class RttViewModel extends ChangeNotifier {
 
   void _rebuildFromRawHistory() {
     _rebuildTimer?.cancel();
+    _rebuildTimer = null;
     _rebuildQueue
       ..clear()
       ..addAll(_rawHistory);
+    // 编码、显示模式或时间戳变化时，所有可见文本都必须从原始字节唯一重放。
+    // 过去这里只清空 All Terminals 汇总，单终端已完成行仍被保留，导致每次
+    // 切换时间戳都会把同一段历史再次追加到单终端中。
     _lines.clear();
     _partialLine = '';
-    _resetDecoders();
+    _decoder.reset(encoding: _encoding);
+    _terminalRouter.reset();
+    for (final terminal in _terminals) {
+      terminal.clear(_encoding);
+    }
     _rebuilding = true;
     _scheduleRebuildBatch();
     notifyListeners();

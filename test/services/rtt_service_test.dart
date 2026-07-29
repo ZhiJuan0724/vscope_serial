@@ -11,6 +11,33 @@ import 'package:vscope_serial/services/rtt_receive_queue.dart';
 import 'package:vscope_serial/services/rtt_service.dart';
 
 void main() {
+  test('快捷连接参数恢复最近配置并按显式后端约束探针类型', () {
+    final settings =
+        AppSettings()
+          ..rttBackendSelection = RttBackendSelection.externalOpenocd.value
+          ..rttProbeKind = RttProbeKind.jlink.value
+          ..rttLastProbeId = 'CMSIS-DAP-V2'
+          ..rttTarget = 'stm32f407zgtx'
+          ..rttAutoDetectTarget = true
+          ..rttWireProtocol = RttWireProtocol.jtag.value
+          ..rttClockKhz = 8000
+          ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
+          ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
+          ..rttPyocdCmsisDapVersion = PyOcdCmsisDapVersion.v2.value;
+
+    final config = savedRttConnectionConfig(settings);
+
+    expect(config.backend, RttBackendSelection.externalOpenocd);
+    expect(config.probeKind, RttProbeKind.cmsisDap);
+    expect(config.probeId, 'CMSIS-DAP-V2');
+    expect(config.target, 'stm32f407zgtx');
+    expect(config.autoDetectTarget, isTrue);
+    expect(config.wireProtocol, RttWireProtocol.jtag);
+    expect(config.clockKhz, 8000);
+    expect(config.openOcdTargetConfig, 'target/stm32f4x.cfg');
+    expect(config.pyOcdCmsisDapVersion, PyOcdCmsisDapVersion.v2);
+  });
+
   final owners = ConnectionOwnerService();
 
   setUp(() {
@@ -21,7 +48,7 @@ void main() {
     owners.reset();
   });
 
-  test('CMSIS-DAP 自动模式只使用 OpenOCD', () async {
+  test('CMSIS-DAP 自动模式优先使用外置 OpenOCD', () async {
     final openocd = _FakeBackend('external-openocd');
     final bundled = _FakeBackend('bundled-openocd');
     final service = RttService(
@@ -35,6 +62,63 @@ void main() {
     expect(owners.owner, ConnectionOwner.rtt);
     await service.disconnect();
     expect(owners.owner, ConnectionOwner.none);
+    service.dispose();
+  });
+
+  test('两个 OpenOCD 候选不可用时自动回退外置 pyOCD', () async {
+    final external = _FakeBackend('external-openocd', available: false);
+    final bundled = _FakeBackend('bundled-openocd', available: false);
+    final pyocd = _FakeBackend('external-pyocd');
+    final service = RttService(
+      connectionOwners: owners,
+      backends: [external, bundled, pyocd],
+    );
+
+    await service.connect(_config(kind: RttProbeKind.cmsisDap, openOcd: true));
+
+    expect(external.connectCount, 0);
+    expect(bundled.connectCount, 0);
+    expect(pyocd.connectCount, 1);
+    await service.disconnect();
+    service.dispose();
+  });
+
+  test('OpenOCD 配置不完整时自动模式可以直接选择外置 pyOCD', () async {
+    final external = _FakeBackend('external-openocd');
+    final bundled = _FakeBackend('bundled-openocd');
+    final pyocd = _FakeBackend('external-pyocd');
+    final service = RttService(
+      connectionOwners: owners,
+      backends: [external, bundled, pyocd],
+    );
+
+    await service.connect(_config(kind: RttProbeKind.cmsisDap));
+
+    expect(external.connectCount, 0);
+    expect(bundled.connectCount, 0);
+    expect(pyocd.connectCount, 1);
+    await service.disconnect();
+    service.dispose();
+  });
+
+  test('显式选择外置 pyOCD 时不会尝试 OpenOCD', () async {
+    final openocd = _FakeBackend('external-openocd');
+    final pyocd = _FakeBackend('external-pyocd');
+    final service = RttService(
+      connectionOwners: owners,
+      backends: [openocd, pyocd],
+    );
+
+    await service.connect(
+      _config(
+        backend: RttBackendSelection.externalPyocd,
+        kind: RttProbeKind.cmsisDap,
+      ),
+    );
+
+    expect(openocd.connectCount, 0);
+    expect(pyocd.connectCount, 1);
+    await service.disconnect();
     service.dispose();
   });
 

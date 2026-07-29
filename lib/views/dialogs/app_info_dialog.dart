@@ -369,6 +369,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   final _rttOpenocdPathController = TextEditingController(
     text: AppSettings().rttOpenocdExecutablePath,
   );
+  final _rttPyocdPythonPathController = TextEditingController(
+    text: AppSettings().rttPyocdPythonPath,
+  );
   Future<Map<String, RttBackendAvailability>>? _rttBackendAvailability;
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
@@ -411,6 +414,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     _plotHistoryLimitController.dispose();
     _rttJlinkPathController.dispose();
     _rttOpenocdPathController.dispose();
+    _rttPyocdPythonPathController.dispose();
     super.dispose();
   }
 
@@ -911,6 +915,19 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           onSubmitted: (_) => refreshAvailability(),
         ),
         const SizedBox(height: 12),
+        TextField(
+          controller: _rttPyocdPythonPathController,
+          decoration: const InputDecoration(
+            labelText: '外置 pyOCD Python 路径',
+            helperText: '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x',
+          ),
+          onChanged: (value) {
+            settings.rttPyocdPythonPath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
         FutureBuilder<Map<String, RttBackendAvailability>>(
           future: _rttBackendAvailability,
           builder: (context, snapshot) {
@@ -925,10 +942,14 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   : version;
             }
 
-            return Text(
-              'J-Link: ${state('external-jlink')}    '
-              '内置 OpenOCD: ${state('bundled-openocd')}    '
-              '外置 OpenOCD: ${state('external-openocd')}',
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('J-Link: ${state('external-jlink')}'),
+                Text('内置 OpenOCD: ${state('bundled-openocd')}'),
+                Text('外置 OpenOCD: ${state('external-openocd')}'),
+                Text('外置 pyOCD: ${state('external-pyocd')}'),
+              ],
             );
           },
         ),
@@ -947,12 +968,14 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
+    var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
     var shellEnabled = AppSettings().rawDataShellEnabled;
     var rttEnabled = AppSettings().rttPageEnabled;
     var plotReceiveAggregationEnabled =
         AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
     final diagnosticsSectionKey = GlobalKey();
+    final shortcutsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
     final probeBackendSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
@@ -976,6 +999,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 SettingsNavigationItem(
                   label: '诊断',
                   anchorKey: diagnosticsSectionKey,
+                ),
+                SettingsNavigationItem(
+                  label: '快捷键',
+                  anchorKey: shortcutsSectionKey,
                 ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
                 if (rttEnabled)
@@ -1053,6 +1080,32 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           AppSettings()..diagnosticLoggingEnabled = value;
                       AppLogger().setDiagnosticEnabled(value);
                       settings.save();
+                    },
+                  ),
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    key: shortcutsSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      '启用连接快捷键',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；'
+                      '关闭后全部不响应。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: connectionShortcutsEnabled,
+                    onChanged: (value) {
+                      setDialogState(() => connectionShortcutsEnabled = value);
+                      final settings =
+                          AppSettings()..connectionShortcutsEnabled = value;
+                      unawaited(settings.save());
                     },
                   ),
                   const Divider(height: 16),
@@ -1207,6 +1260,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           setDialogState(() {
                             disableNotifications =
                                 AppSettings().disableNotifications;
+                            diagnosticLoggingEnabled =
+                                AppSettings().diagnosticLoggingEnabled;
+                            connectionShortcutsEnabled =
+                                AppSettings().connectionShortcutsEnabled;
                             shellEnabled = AppSettings().rawDataShellEnabled;
                             rttEnabled = AppSettings().rttPageEnabled;
                             plotReceiveAggregationEnabled =

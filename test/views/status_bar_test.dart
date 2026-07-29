@@ -105,14 +105,17 @@ void main() {
     );
     final previousAggregation = AppSettings().plotReceiveAggregationEnabled;
     final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;
+    final previousShortcuts = AppSettings().connectionShortcutsEnabled;
     final previousRttEnabled = AppSettings().rttPageEnabled;
     AppSettings().plotReceiveAggregationEnabled = false;
     AppSettings().diagnosticLoggingEnabled = false;
+    AppSettings().connectionShortcutsEnabled = true;
     AppSettings().rttPageEnabled = true;
     AppLogger().setDiagnosticEnabled(false);
     addTearDown(() {
       AppSettings().plotReceiveAggregationEnabled = previousAggregation;
       AppSettings().diagnosticLoggingEnabled = previousDiagnostic;
+      AppSettings().connectionShortcutsEnabled = previousShortcuts;
       AppSettings().rttPageEnabled = previousRttEnabled;
       AppLogger().setDiagnosticEnabled(previousDiagnostic);
       rttService.dispose();
@@ -178,6 +181,7 @@ void main() {
     );
     expect(find.text('通知'), findsOneWidget);
     expect(find.text('诊断'), findsOneWidget);
+    expect(find.text('快捷键'), findsOneWidget);
     expect(find.text('页面'), findsOneWidget);
     expect(find.text('探针后端'), findsOneWidget);
     expect(find.text(AppStrings.appInfo.receivePerformance), findsOneWidget);
@@ -185,6 +189,14 @@ void main() {
     expect(find.text('版本回退'), findsWidgets);
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    final shortcutToggle = find.ancestor(
+      of: find.text('启用连接快捷键'),
+      matching: find.byType(SwitchListTile),
+    );
+    expect(shortcutToggle, findsOneWidget);
+    await tester.tap(shortcutToggle);
+    await tester.pump();
+    expect(AppSettings().connectionShortcutsEnabled, isFalse);
     final diagnosticToggle = find.ancestor(
       of: find.text(AppStrings.appInfo.diagnosticLogging),
       matching: find.byType(SwitchListTile),

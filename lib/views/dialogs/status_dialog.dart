@@ -8,6 +8,14 @@ import '../../data/models/serial_config.dart';
 import '../../services/serial_service.dart';
 import '../widgets/common_widgets.dart';
 
+/// 打开串口连接配置窗口，供状态栏和主窗口快捷键共用。
+Future<void> showSerialConnectionDialog(BuildContext context) {
+  return showDialog(
+    context: context,
+    builder: (context) => const StatusDialog(),
+  );
+}
+
 /// 状态栏点击弹出的连接修改对话框
 /// 串口连接配置和端口刷新窗口。
 ///

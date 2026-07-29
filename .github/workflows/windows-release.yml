@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: flutter test
 
+      - name: Test restricted pyOCD worker
+        run: python -m unittest test_tools/test_pyocd_worker.py -v
+
       - name: Run native serial time tests
         shell: pwsh
         run: |

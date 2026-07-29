@@ -228,6 +228,9 @@ class AppSettings {
   /// 是否把高密度 TRACE/DEBUG 诊断信息写入日志历史。
   bool diagnosticLoggingEnabled = false;
 
+  /// 是否响应主窗口连接快捷键 F1/F2/F3/F5。
+  bool connectionShortcutsEnabled = true;
+
   // ========== 原始数据设置 ==========
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 100000;
@@ -285,6 +288,8 @@ class AppSettings {
   String rttBackendSelection = 'automatic';
   String rttJlinkExecutablePath = '';
   String rttOpenocdExecutablePath = '';
+  String rttPyocdPythonPath = '';
+  String rttPyocdCmsisDapVersion = 'automatic';
   String rttBuiltinHelperPath = '';
   String rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg';
   String rttOpenocdTargetConfig = '';
@@ -430,6 +435,7 @@ class AppSettings {
     updateSource = 'auto';
     disableNotifications = false;
     diagnosticLoggingEnabled = false;
+    connectionShortcutsEnabled = true;
 
     rawDataDisplayLineLimit = 100000;
     rawDataAutoLineBreakIntervalMs = 100;
@@ -451,6 +457,8 @@ class AppSettings {
     rttBackendSelection = 'automatic';
     rttJlinkExecutablePath = '';
     rttOpenocdExecutablePath = '';
+    rttPyocdPythonPath = '';
+    rttPyocdCmsisDapVersion = 'automatic';
     rttBuiltinHelperPath = '';
     rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg';
     rttOpenocdTargetConfig = '';
@@ -697,6 +705,8 @@ class AppSettings {
       disableNotifications = json['disableNotifications'] as bool? ?? false;
       diagnosticLoggingEnabled =
           json['diagnosticLoggingEnabled'] as bool? ?? false;
+      connectionShortcutsEnabled =
+          json['connectionShortcutsEnabled'] as bool? ?? true;
       rawDataDisplayLineLimit =
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 100000)
               .clamp(100, 100000)
@@ -750,11 +760,19 @@ class AppSettings {
         'external-jlink' => 'external-jlink',
         'bundled-openocd' => 'bundled-openocd',
         'external-openocd' => 'external-openocd',
+        'external-pyocd' => 'external-pyocd',
         _ => 'automatic',
       };
       rttJlinkExecutablePath = json['rttJlinkExecutablePath'] as String? ?? '';
       rttOpenocdExecutablePath =
           json['rttOpenocdExecutablePath'] as String? ?? '';
+      rttPyocdPythonPath = json['rttPyocdPythonPath'] as String? ?? '';
+      rttPyocdCmsisDapVersion = switch (json['rttPyocdCmsisDapVersion']
+          as String?) {
+        'v1' => 'v1',
+        'v2' => 'v2',
+        _ => 'automatic',
+      };
       rttBuiltinHelperPath = json['rttBuiltinHelperPath'] as String? ?? '';
       rttOpenocdInterfaceConfig =
           json['rttOpenocdInterfaceConfig'] as String? ??
@@ -883,6 +901,8 @@ class AppSettings {
       'rttBackendSelection',
       'rttJlinkExecutablePath',
       'rttOpenocdExecutablePath',
+      'rttPyocdPythonPath',
+      'rttPyocdCmsisDapVersion',
       'rttBuiltinHelperPath',
       'rttOpenocdInterfaceConfig',
       'rttOpenocdTargetConfig',
@@ -914,6 +934,7 @@ class AppSettings {
       'autoUpdateCheckEnabled',
       'disableNotifications',
       'diagnosticLoggingEnabled',
+      'connectionShortcutsEnabled',
       'rawDataShellMode',
       'rawDataShellEnabled',
       'shellEnabled',
@@ -1123,6 +1144,7 @@ class AppSettings {
     'updateSource': updateSource,
     'disableNotifications': disableNotifications,
     'diagnosticLoggingEnabled': diagnosticLoggingEnabled,
+    'connectionShortcutsEnabled': connectionShortcutsEnabled,
     'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
     'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
     'rawDataShellMode': rawDataShellMode,
@@ -1144,6 +1166,8 @@ class AppSettings {
     'rttBackendSelection': rttBackendSelection,
     'rttJlinkExecutablePath': rttJlinkExecutablePath,
     'rttOpenocdExecutablePath': rttOpenocdExecutablePath,
+    'rttPyocdPythonPath': rttPyocdPythonPath,
+    'rttPyocdCmsisDapVersion': rttPyocdCmsisDapVersion,
     'rttBuiltinHelperPath': rttBuiltinHelperPath,
     'rttOpenocdInterfaceConfig': rttOpenocdInterfaceConfig,
     'rttOpenocdTargetConfig': rttOpenocdTargetConfig,

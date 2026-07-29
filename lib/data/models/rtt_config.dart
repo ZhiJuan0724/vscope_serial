@@ -7,7 +7,8 @@ enum RttBackendSelection {
   automatic('automatic', '自动'),
   externalJlink('external-jlink', '外部 J-Link'),
   bundledOpenocd('bundled-openocd', '内置 OpenOCD'),
-  externalOpenocd('external-openocd', '外置 OpenOCD');
+  externalOpenocd('external-openocd', '外置 OpenOCD'),
+  externalPyocd('external-pyocd', '外置 pyOCD');
 
   const RttBackendSelection(this.value, this.label);
   final String value;
@@ -17,6 +18,7 @@ enum RttBackendSelection {
     'external-jlink' => externalJlink,
     'bundled-openocd' => bundledOpenocd,
     'external-openocd' => externalOpenocd,
+    'external-pyocd' => externalPyocd,
     _ => automatic,
   };
 }
@@ -43,6 +45,25 @@ enum RttWireProtocol {
 
   static RttWireProtocol fromString(String? value) =>
       value == 'jtag' ? jtag : swd;
+}
+
+/// 外置 pyOCD 枚举 CMSIS-DAP 时允许使用的 USB 传输版本。
+///
+/// 显式选择 v1 或 v2 时不得触碰另一条枚举路径，避免慢设备拖累连接。
+enum PyOcdCmsisDapVersion {
+  automatic('automatic', '自动'),
+  v1('v1', '仅 v1'),
+  v2('v2', '仅 v2');
+
+  const PyOcdCmsisDapVersion(this.value, this.label);
+  final String value;
+  final String label;
+
+  static PyOcdCmsisDapVersion fromString(String? value) => switch (value) {
+    'v1' => v1,
+    'v2' => v2,
+    _ => automatic,
+  };
 }
 
 /// RTT 控制块的定位方式。
@@ -122,6 +143,8 @@ class RttProbeInfo {
   final String name;
   final RttProbeKind kind;
   final bool available;
+
+  /// 轻量 USB 刷新得到的设备标识；存在时连接后端应优先定向检查该设备。
   final int? usbVendorId;
   final int? usbProductId;
 }
@@ -141,6 +164,8 @@ class RttConnectionConfig {
     required this.target,
     this.backend = RttBackendSelection.automatic,
     this.probeId = '',
+    this.usbVendorId,
+    this.usbProductId,
     this.autoDetectTarget = false,
     this.wireProtocol = RttWireProtocol.swd,
     this.clockKhz = 4000,
@@ -151,11 +176,16 @@ class RttConnectionConfig {
     this.pollingIntervalMs = 10,
     this.openOcdInterfaceConfig = '',
     this.openOcdTargetConfig = '',
+    this.pyOcdCmsisDapVersion = PyOcdCmsisDapVersion.automatic,
   });
 
   final RttBackendSelection backend;
   final RttProbeKind probeKind;
   final String probeId;
+
+  /// 用户显式选择 USB 设备时保存；为空表示由后端自动发现探针。
+  final int? usbVendorId;
+  final int? usbProductId;
   final String target;
   final bool autoDetectTarget;
   final RttWireProtocol wireProtocol;
@@ -167,12 +197,15 @@ class RttConnectionConfig {
   final int pollingIntervalMs;
   final String openOcdInterfaceConfig;
   final String openOcdTargetConfig;
+  final PyOcdCmsisDapVersion pyOcdCmsisDapVersion;
 
   RttConnectionConfig copyWithControlBlock(RttControlBlockConfig value) {
     return RttConnectionConfig(
       backend: backend,
       probeKind: probeKind,
       probeId: probeId,
+      usbVendorId: usbVendorId,
+      usbProductId: usbProductId,
       target: target,
       autoDetectTarget: autoDetectTarget,
       wireProtocol: wireProtocol,
@@ -184,6 +217,7 @@ class RttConnectionConfig {
       pollingIntervalMs: value.pollingIntervalMs,
       openOcdInterfaceConfig: openOcdInterfaceConfig,
       openOcdTargetConfig: openOcdTargetConfig,
+      pyOcdCmsisDapVersion: pyOcdCmsisDapVersion,
     );
   }
 }

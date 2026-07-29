@@ -281,6 +281,7 @@ void main() {
     expect(find.text('外部 J-Link'), findsOneWidget);
     expect(find.text('内置 OpenOCD'), findsOneWidget);
     expect(find.text('外置 OpenOCD'), findsOneWidget);
+    expect(find.text('外置 pyOCD'), findsOneWidget);
     await tester.tap(find.text('外部 J-Link'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('rtt-probe-kind-field')));
@@ -295,6 +296,7 @@ void main() {
     expect(find.text('外部 J-Link'), findsNWidgets(2));
     expect(find.text('内置 OpenOCD'), findsOneWidget);
     expect(find.text('外置 OpenOCD'), findsOneWidget);
+    expect(find.text('外置 pyOCD'), findsOneWidget);
     await tester.tap(find.text('外置 OpenOCD').last);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('rtt-probe-kind-field')));
@@ -311,6 +313,56 @@ void main() {
     expect(find.text('Auto'), findsNothing);
     expect(find.text('指定地址'), findsNothing);
     expect(find.text('指定范围'), findsNothing);
+  });
+
+  testWidgets('外置 pyOCD 可显式选择仅 v1 或仅 v2', (tester) async {
+    final settings = AppSettings();
+    final previousBackend = settings.rttBackendSelection;
+    final previousVersion = settings.rttPyocdCmsisDapVersion;
+    settings
+      ..rttBackendSelection = RttBackendSelection.externalPyocd.value
+      ..rttPyocdCmsisDapVersion = PyOcdCmsisDapVersion.automatic.value;
+    addTearDown(() {
+      settings
+        ..rttBackendSelection = previousBackend
+        ..rttPyocdCmsisDapVersion = previousVersion;
+    });
+
+    final service = RttService(
+      backends: [_ImmediateProbeBackend('external-pyocd')],
+    );
+    addTearDown(service.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RttService>.value(
+        value: service,
+        child: MaterialApp(
+          home: Builder(
+            builder:
+                (context) => TextButton(
+                  onPressed:
+                      () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const RttConnectionDialog(),
+                      ),
+                  child: const Text('打开'),
+                ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('rtt-pyocd-cmsis-dap-version'));
+    expect(field, findsOneWidget);
+    await tester.ensureVisible(field);
+    await tester.tap(field);
+    await tester.pumpAndSettle();
+    expect(find.text('仅 v1'), findsOneWidget);
+    expect(find.text('仅 v2'), findsOneWidget);
+    await tester.tap(find.text('仅 v2'));
+    await tester.pumpAndSettle();
+    expect(find.text('仅 v2'), findsOneWidget);
   });
 
   testWidgets('OpenOCD 配置可直接输入或通过右侧按钮选择文件', (tester) async {

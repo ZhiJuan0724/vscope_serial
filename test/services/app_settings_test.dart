@@ -74,6 +74,7 @@ void main() {
             ..updateSource = 'gitee'
             ..disableNotifications = true
             ..diagnosticLoggingEnabled = true
+            ..connectionShortcutsEnabled = false
             ..rawDataDisplayLineLimit = 500
             ..rawDataAutoLineBreakIntervalMs = 250
             ..rawDataShellMode = true
@@ -93,6 +94,8 @@ void main() {
             ..rttBackendSelection = 'external-openocd'
             ..rttJlinkExecutablePath = 'jlink.exe'
             ..rttOpenocdExecutablePath = 'openocd.exe'
+            ..rttPyocdPythonPath = 'python.exe'
+            ..rttPyocdCmsisDapVersion = 'v2'
             ..rttBuiltinHelperPath = 'helper.exe'
             ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
             ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
@@ -187,6 +190,7 @@ void main() {
       expect(settings.updateSource, 'auto');
       expect(settings.disableNotifications, isFalse);
       expect(settings.diagnosticLoggingEnabled, isFalse);
+      expect(settings.connectionShortcutsEnabled, isTrue);
       expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataAutoLineBreakIntervalMs, 100);
       expect(settings.rawDataShellMode, isFalse);
@@ -206,6 +210,8 @@ void main() {
       expect(settings.rttBackendSelection, 'automatic');
       expect(settings.rttJlinkExecutablePath, isEmpty);
       expect(settings.rttOpenocdExecutablePath, isEmpty);
+      expect(settings.rttPyocdPythonPath, isEmpty);
+      expect(settings.rttPyocdCmsisDapVersion, 'automatic');
       expect(settings.rttBuiltinHelperPath, isEmpty);
       expect(settings.rttOpenocdInterfaceConfig, 'interface/cmsis-dap.cfg');
       expect(settings.rttOpenocdTargetConfig, isEmpty);
@@ -270,6 +276,7 @@ void main() {
       final second = settings.save();
       settings.lastMainPage = 'plot';
       settings.diagnosticLoggingEnabled = true;
+      settings.connectionShortcutsEnabled = false;
       settings.xMeasurementLine1Color = 0xFF123456;
       settings.yMeasurementLine2Opacity = 0.45;
       settings.yMeasurementSnapEnabled = false;
@@ -290,6 +297,7 @@ void main() {
       expect(decoded['dataBits'], 7);
       expect(decoded['lastMainPage'], 'plot');
       expect(decoded['diagnosticLoggingEnabled'], isTrue);
+      expect(decoded['connectionShortcutsEnabled'], isFalse);
       expect(decoded['xMeasurementLine1Color'], 0xFF123456);
       expect(decoded['yMeasurementLine2Opacity'], 0.45);
       expect(decoded['yMeasurementSnapEnabled'], isFalse);
@@ -340,6 +348,8 @@ void main() {
         ..rttPageEnabled = true
         ..rttBackendSelection = 'bundled-openocd'
         ..rttOpenocdExecutablePath = 'openocd.exe'
+        ..rttPyocdPythonPath = 'python.exe'
+        ..rttPyocdCmsisDapVersion = 'v2'
         ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
         ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
         ..rttProbeKind = 'cmsisDap'
@@ -362,6 +372,8 @@ void main() {
       expect(settings.rttPageEnabled, isTrue);
       expect(settings.rttBackendSelection, 'bundled-openocd');
       expect(settings.rttOpenocdExecutablePath, 'openocd.exe');
+      expect(settings.rttPyocdPythonPath, 'python.exe');
+      expect(settings.rttPyocdCmsisDapVersion, 'v2');
       expect(settings.rttOpenocdInterfaceConfig, 'interface/cmsis-dap.cfg');
       expect(settings.rttOpenocdTargetConfig, 'target/stm32f4x.cfg');
       expect(settings.rttProbeKind, 'cmsisDap');

@@ -18,6 +18,7 @@ void main() {
   late RttViewModel viewModel;
   late String previousEncoding;
   late String previousMode;
+  late bool previousTimestampEnabled;
   late List<int> previousTerminalColors;
   late List<String> previousTerminalLabels;
 
@@ -25,12 +26,14 @@ void main() {
     ConnectionOwnerService().reset();
     previousEncoding = AppSettings().rttEncoding;
     previousMode = AppSettings().rttDisplayMode;
+    previousTimestampEnabled = AppSettings().rttTimestampEnabled;
     previousTerminalColors = List.of(AppSettings().rttTerminalColors);
     previousTerminalLabels = List.of(AppSettings().rttTerminalLabels);
     AppSettings()
       ..rttBackendSelection = RttBackendSelection.externalJlink.value
       ..rttEncoding = 'UTF-8'
-      ..rttDisplayMode = RttDisplayMode.text.value;
+      ..rttDisplayMode = RttDisplayMode.text.value
+      ..rttTimestampEnabled = false;
     backend = _DataBackend();
     service = RttService(
       receiveQueue: RttReceiveQueue(maxBytes: 1024),
@@ -50,6 +53,7 @@ void main() {
     AppSettings()
       ..rttEncoding = previousEncoding
       ..rttDisplayMode = previousMode
+      ..rttTimestampEnabled = previousTimestampEnabled
       ..rttTerminalColors = previousTerminalColors
       ..rttTerminalLabels = previousTerminalLabels;
     ConnectionOwnerService().reset();
@@ -123,6 +127,34 @@ void main() {
 
     expect(viewModel.rebuilding, isFalse);
     expect(viewModel.lines, ['41 42']);
+  });
+
+  test('单终端反复切换时间戳不会重复追加历史日志', () async {
+    backend.add(utf8.encode('line 1\nline 2\n'));
+    await _settleTimers();
+    expect(viewModel.lines, ['line 1', 'line 2']);
+
+    for (var index = 0; index < 3; index++) {
+      viewModel.setTimestampEnabled(true);
+      await _settleTimers();
+      expect(viewModel.lines, hasLength(2));
+      expect(viewModel.lines.every((line) => line.startsWith('[')), isTrue);
+
+      viewModel.setTimestampEnabled(false);
+      await _settleTimers();
+      expect(viewModel.lines, ['line 1', 'line 2']);
+    }
+
+    // 连续点击时，前一轮分批重建可能尚未开始；最终结果仍只能重放一次。
+    for (var index = 0; index < 5; index++) {
+      viewModel.setTimestampEnabled(true);
+      viewModel.setTimestampEnabled(false);
+    }
+    await _settleTimers();
+    expect(viewModel.lines, ['line 1', 'line 2']);
+
+    viewModel.selectTerminal(-1);
+    expect(viewModel.lines, ['[Terminal 0] line 1', '[Terminal 0] line 2']);
   });
 
   test('清空会同时释放显示历史、原始历史和待处理队列', () async {

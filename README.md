@@ -113,13 +113,14 @@ Shell 是独立页面，入口默认隐藏，可在应用高级设置中开启�
 
 RTT Viewer 默认隐藏，可在应用高级设置的“页面”分类中开启。页面支持 SEGGER 虚拟终端 0～15、All Terminals 汇总、RTT Down 0 双向发送、暂停显示、时间戳、文本/HEX、自动滚动、清空和导出。
 
-开启 RTT Viewer 后还会显示最右侧“探针绘图”页面。OpenOCD 后端支持运行态只读内存采样 HSS，以及从 `_SEGGER_RTT` 控制块枚举 Up 通道；名称符合 `JScope_<FORMAT>`（例如 `JScope_i4u4`）的通道会自动识别数据格式，普通名称可手动填写格式。程序文件支持 ELF 格式的 `.elf`、`.axf` 和 `.out`，由应用本地解析 ELF 文件头和数据符号，不依赖探针后端。
+开启 RTT Viewer 后还会显示最右侧“探针绘图”页面。OpenOCD 和外置 pyOCD 后端支持运行态只读内存采样 HSS，以及从 `_SEGGER_RTT` 控制块枚举 Up 通道；名称符合 `JScope_<FORMAT>`（例如 `JScope_i4u4`）的通道会自动识别数据格式，普通名称可手动填写格式。程序文件支持 ELF 格式的 `.elf`、`.axf` 和 `.out`，由应用本地解析 ELF 文件头和数据符号，不依赖探针后端。
 
 RTT 控制块可选择 `Auto`、指定地址或指定范围。Auto 会扫描目标定义的 RAM；若当前后端版本无法自动定位，可改为输入精确地址，或限定一段 RAM 搜索范围。
 
-- 探针连接窗口可选择 `自动`、外部 J-Link、外置 OpenOCD 或内置 OpenOCD。CMSIS-DAP 自动模式优先外置 OpenOCD，未找到时才回退内置版本；显式选择时不会在两者之间切换。
+- 探针连接窗口可选择 `自动`、外部 J-Link、外置 OpenOCD、内置 OpenOCD 或外置 pyOCD。CMSIS-DAP 自动模式依次选择外置 OpenOCD、内置 OpenOCD、外置 pyOCD；选定后连接失败不会静默切换。
 - Windows 发布包内置固定版本的轻量 OpenOCD 运行时、完整 scripts 和许可证；高级设置分别显示内置、外置 OpenOCD 的检测版本，外置路径可手动覆盖。OpenOCD 需要填写接口和目标 Tcl 配置，并使用指定地址或指定范围定位 RTT 控制块。
-- 探针功能严格禁止 halt、reset 或 resume 目标，即使随后恢复也不允许；OpenOCD HSS 只发送运行态 `read_memory`，不会改变目标执行状态。
+- 外置 pyOCD 需要在高级设置中指定已安装 pyOCD `0.45.x` 的 `python.exe`，应用不随包附带 Python/pyOCD。当前仅支持 CMSIS-DAP；连接窗口可选择自动、仅 v1 或仅 v2 枚举，显式选择时不会触碰另一种 USB 后端。RTT、通道识别和 HSS 共用严格受限的 `nonIntrusiveMonitor` 会话。
+- 探针功能严格禁止 halt、reset 或 resume 目标，即使随后恢复也不允许；OpenOCD HSS 只发送运行态 `read_memory`，pyOCD Worker 只开放受限 DP/MEM-AP 访问，不会初始化 Cortex-M Core。pyOCD 本身虽然具备烧录和调试能力，本版本的 RTT/探针绘图不会开放或调用这些能力。
 
 探针枚举、后端检测、外部进程启动与退出、连接诊断均写入 `<程序目录>/logs/`；高频 RTT 实际数据不会写入应用日志。
 
