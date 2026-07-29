@@ -26,6 +26,7 @@ abstract class _AddressProfileBehavior {
   String get addressHint;
 
   String formatAddress(AddressChannelPreset preset);
+  String normalizeAddressText(String text);
   AddressChannelPreset? parsePreset(String name, String text);
   Future<AddressConfigProfile?> createProfile(PlotViewModel vm, String name);
   Future<void> updateProfile(PlotViewModel vm, AddressConfigProfile profile);
@@ -54,6 +55,12 @@ class _ZobowProfileBehavior extends _AddressProfileBehavior {
         .toUpperCase()
         .padLeft(8, '0');
     return '0x$digits';
+  }
+
+  @override
+  String normalizeAddressText(String text) {
+    final preset = parsePreset('', text);
+    return preset == null ? text : formatAddress(preset);
   }
 
   @override
@@ -94,6 +101,9 @@ class _RProtocolProfileBehavior extends _AddressProfileBehavior {
 
   @override
   String formatAddress(AddressChannelPreset preset) => preset.formatAddress();
+
+  @override
+  String normalizeAddressText(String text) => text;
 
   @override
   AddressChannelPreset? parsePreset(String name, String text) {
@@ -168,7 +178,7 @@ class _AddressProfileDialog extends StatefulWidget {
 }
 
 class _AddressProfileDialogState extends State<_AddressProfileDialog> {
-  static const double _presetRowExtent = 41.0;
+  static const double _presetRowExtent = 36.0;
 
   late final TextEditingController _nameController;
   late final TextEditingController _searchController;
@@ -252,6 +262,7 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
             ),
             const SizedBox(height: 12),
             TextField(
+              key: const ValueKey('address-profile-search'),
               controller: _searchController,
               style: const TextStyle(fontSize: 13),
               decoration: InputDecoration(
@@ -419,6 +430,9 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
   Widget _buildEditablePresetList() {
     return ReorderableListView.builder(
       scrollController: _presetListScrollController,
+      // 跳转逻辑依赖固定行高计算未构建条目的滚动偏移。显式约束行高后，
+      // 搜索结果有多项时也能准确跳到原列表中的真实索引。
+      itemExtent: _presetRowExtent,
       buildDefaultDragHandles: false,
       proxyDecorator: (child, index, animation) {
         return AnimatedBuilder(
@@ -475,6 +489,7 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                     message: row.nameController.text,
                     waitDuration: const Duration(milliseconds: 500),
                     child: TextField(
+                      key: ValueKey('address-profile-row-name-$index'),
                       controller: row.nameController,
                       style: const TextStyle(fontSize: 12),
                       decoration: const InputDecoration(
@@ -485,33 +500,37 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                         ),
                         border: InputBorder.none,
                       ),
-                      onChanged: (_) => setState(() {}),
                     ),
                   ),
                 ),
                 SizedBox(
                   width: 150,
-                  child: TextField(
-                    controller: row.addressController,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'SarasaUiSC',
-                    ),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 4,
+                  child: Focus(
+                    onFocusChange: (hasFocus) {
+                      if (!hasFocus) _normalizeAddressText(row);
+                    },
+                    child: TextField(
+                      key: ValueKey('address-profile-row-address-$index'),
+                      controller: row.addressController,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'SarasaUiSC',
                       ),
-                      border: InputBorder.none,
-                      hintText: widget.behavior.addressHint,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                        RegExp(r'[0-9a-fA-FxX]'),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 4,
+                        ),
+                        border: InputBorder.none,
+                        hintText: widget.behavior.addressHint,
                       ),
-                    ],
-                    onChanged: (_) => setState(() {}),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[0-9a-fA-FxX]'),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -662,6 +681,16 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
       duration: duration,
       curve: Curves.easeOutCubic,
       alignment: 0.2,
+    );
+  }
+
+  void _normalizeAddressText(_PresetRow row) {
+    final current = row.addressController.text.trim();
+    final normalized = widget.behavior.normalizeAddressText(current);
+    if (current == normalized) return;
+    row.addressController.value = TextEditingValue(
+      text: normalized,
+      selection: TextSelection.collapsed(offset: normalized.length),
     );
   }
 
