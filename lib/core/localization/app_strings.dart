@@ -490,6 +490,26 @@ final class _AppInfoStrings {
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
   String get diagnosticLogging => '调试模式';
   String get diagnosticLoggingHelp => '记录串口连接等详细诊断信息并立即写入日志；仅排查问题时开启，日志量会明显增加。';
+  String get crashDump => '原生崩溃转储';
+  String get crashDumpHelp =>
+      '发生无法由应用捕获的 Windows 原生崩溃时保存小型转储，最多保留 10 份；文件可能包含少量运行时内存，仅在用户主动提供时用于排查。';
+  String get crashDumpDetectedTitle => '检测到上次原生崩溃';
+  String crashDumpDetectedMessage(
+    int count,
+    String time,
+    String exceptionCode,
+  ) =>
+      '发现 $count 份尚未查看的崩溃记录。\n'
+      '最近一次：$time\n'
+      '异常代码：$exceptionCode\n\n'
+      '转储和对应日志保存在程序目录中，可在反馈问题时一并提供。';
+  String get openCrashDumpDirectory => '打开转储目录';
+  String get triggerTestCrash => '触发测试崩溃';
+  String get triggerTestCrashHelp => '仅 Debug 构建提供，用于验证原生崩溃转储链路。';
+  String get triggerTestCrashTitle => '确认触发原生崩溃';
+  String get triggerTestCrashMessage =>
+      '应用将立即发生真实的原生访问冲突并退出，不会执行正常断开和数据保存流程。'
+      '请先停止串口、探针及其他重要任务；重新启动后应看到崩溃转储提示。';
   String get receivePerformance => '接收性能';
   String get plotReceiveAggregation => '绘图高频接收合并';
   String get plotReceiveAggregationHelp =>

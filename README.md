@@ -133,10 +133,19 @@ RTT 控制块可选择 `Auto`、指定地址或指定范围。Auto 会扫描目�
 | `settings/` | 应用设置 |
 | `config/` | 协议和通道配置 |
 | `logs/` | 运行日志 |
+| `crash_dumps/` | Windows 原生崩溃转储和异常元数据 |
 | `exports/` | 数据与 YMODEM 文件 |
 | `updates/` | 更新缓存和回退版本 |
 
-“恢复默认设置”不会删除已保存的协议配置文件。排查连接、解析或性能问题时，可将 `logs/` 中对应时间的日志提供给开发者。
+“恢复默认设置”不会删除已保存的协议配置文件。排查连接、解析或性能问题时，可将 `logs/` 中对应时间的日志提供给开发者。Windows 原生崩溃转储默认开启，可在高级设置的“诊断”中关闭；转储可能包含少量运行时内存，请仅在确认后主动提供。
+
+分析 Windows 原生崩溃时，将 `tools/analyze_crash_dump.ps1` 复制到包含 `.dmp`、同名 `.json`、日志和对应版本 PDB 的目录，然后使用 Windows PowerShell 5.1 或 PowerShell 7 运行：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\analyze_crash_dump.ps1
+```
+
+脚本会选择目录中最新的转储，检查应用私有符号是否匹配，并生成中文 Markdown 报告和完整调试器输出。运行前需安装 Windows SDK 的 Debugging Tools for Windows；离线分析可增加 `-Offline`。
 
 ## 更新与回退
 

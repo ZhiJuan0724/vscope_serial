@@ -17,6 +17,7 @@ import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
 import 'services/connection_owner_service.dart';
+import 'services/crash_dump_service.dart';
 import 'services/native_serial_reader.dart';
 import 'services/rtt_service.dart';
 import 'services/serial_service.dart';
@@ -79,6 +80,11 @@ void main() async {
   };
   await AppSettings().init();
   AppLogger().setDiagnosticEnabled(AppSettings().diagnosticLoggingEnabled);
+  try {
+    await CrashDumpService().setEnabled(AppSettings().crashDumpEnabled);
+  } catch (error, stackTrace) {
+    AppLogger().warning('同步原生崩溃转储开关失败: $error\n$stackTrace', category: 'APP');
+  }
   SerialService().loadSettings();
   SerialService().initializePortDiscovery();
   await AppIcon.precacheAll();
@@ -176,10 +182,83 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final recoveryNotice = AppSettings().takeRecoveryNotice();
-      if (recoveryNotice != null) AppNotifications.show(recoveryNotice);
-      unawaited(_handleStartupUpdates());
+      unawaited(_handleStartupNotices());
     });
+  }
+
+  Future<void> _handleStartupNotices() async {
+    final recoveryNotice = AppSettings().takeRecoveryNotice();
+    if (recoveryNotice != null) AppNotifications.show(recoveryNotice);
+    await _showPendingCrashDumpNotice();
+    if (mounted) await _handleStartupUpdates();
+  }
+
+  Future<void> _showPendingCrashDumpNotice() async {
+    final service = CrashDumpService();
+    List<CrashDumpRecord> records;
+    try {
+      records = await service.pendingRecords();
+    } catch (error, stackTrace) {
+      AppLogger().warning('读取原生崩溃转储记录失败: $error\n$stackTrace', category: 'APP');
+      return;
+    }
+    if (!mounted || records.isEmpty) return;
+
+    final latest = records.first;
+    final localTime = latest.timestampUtc?.toLocal();
+    final timeText =
+        localTime == null ? AppStrings.appInfo.unknown : localTime.toString();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.appInfo.crashDumpDetectedTitle),
+            content: SelectableText(
+              AppStrings.appInfo.crashDumpDetectedMessage(
+                records.length,
+                timeText,
+                latest.exceptionCode ?? AppStrings.appInfo.unknown,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(
+                  MaterialLocalizations.of(dialogContext).closeButtonLabel,
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  try {
+                    await service.openCrashDumpDirectory();
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                  } catch (error, stackTrace) {
+                    AppLogger().error(
+                      '打开原生崩溃转储目录失败: $error',
+                      category: 'APP',
+                      error: error,
+                      stackTrace: stackTrace,
+                    );
+                    AppNotifications.show('无法打开崩溃转储目录，请检查程序目录权限');
+                  }
+                },
+                icon: const Icon(Icons.folder_open),
+                label: Text(AppStrings.appInfo.openCrashDumpDirectory),
+              ),
+            ],
+          ),
+    );
+    try {
+      await service.markReported(records);
+    } catch (error, stackTrace) {
+      AppLogger().warning('标记原生崩溃转储记录失败: $error\n$stackTrace', category: 'APP');
+    }
   }
 
   Future<void> _handleStartupUpdates() async {

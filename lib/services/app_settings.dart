@@ -231,6 +231,9 @@ class AppSettings {
   /// 是否响应主窗口连接快捷键 F1/F2/F3/F5。
   bool connectionShortcutsEnabled = true;
 
+  /// Windows 原生未处理异常是否生成小型崩溃转储。
+  bool crashDumpEnabled = true;
+
   // ========== 原始数据设置 ==========
   /// 数据收发页面保留的最大显示行数。
   int rawDataDisplayLineLimit = 100000;
@@ -436,6 +439,7 @@ class AppSettings {
     disableNotifications = false;
     diagnosticLoggingEnabled = false;
     connectionShortcutsEnabled = true;
+    crashDumpEnabled = true;
 
     rawDataDisplayLineLimit = 100000;
     rawDataAutoLineBreakIntervalMs = 100;
@@ -707,6 +711,7 @@ class AppSettings {
           json['diagnosticLoggingEnabled'] as bool? ?? false;
       connectionShortcutsEnabled =
           json['connectionShortcutsEnabled'] as bool? ?? true;
+      crashDumpEnabled = json['crashDumpEnabled'] as bool? ?? true;
       rawDataDisplayLineLimit =
           ((json['rawDataDisplayLineLimit'] as num?)?.toInt() ?? 100000)
               .clamp(100, 100000)
@@ -935,6 +940,7 @@ class AppSettings {
       'disableNotifications',
       'diagnosticLoggingEnabled',
       'connectionShortcutsEnabled',
+      'crashDumpEnabled',
       'rawDataShellMode',
       'rawDataShellEnabled',
       'shellEnabled',
@@ -1145,6 +1151,7 @@ class AppSettings {
     'disableNotifications': disableNotifications,
     'diagnosticLoggingEnabled': diagnosticLoggingEnabled,
     'connectionShortcutsEnabled': connectionShortcutsEnabled,
+    'crashDumpEnabled': crashDumpEnabled,
     'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
     'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
     'rawDataShellMode': rawDataShellMode,

@@ -98,6 +98,68 @@ jobs:
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           flutter build windows --release "--dart-define=BUILD_TIME=$buildTime"
 
+      - name: Test Windows crash dump handler
+        shell: pwsh
+        run: |
+          $cacheLine = Select-String `
+            -Path "build/windows/x64/CMakeCache.txt" `
+            -Pattern "^CMAKE_COMMAND:INTERNAL=(.+)$" |
+            Select-Object -First 1
+          if ($null -eq $cacheLine) {
+            throw "Unable to locate the CMake executable used by Flutter"
+          }
+          $cmake = $cacheLine.Matches.Groups[1].Value
+          & $cmake `
+            --build "build/windows/x64" `
+            --config Release `
+            --target crash_dump_handler_test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build crash_dump_handler_test"
+          }
+          & "build/windows/x64/runner_tests/Release/crash_dump_handler_test.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Crash dump handler did not produce valid DMP and JSON files"
+          }
+
+      - name: Package Windows debug symbols
+        shell: pwsh
+        run: |
+          $bundle = "build/windows/x64/runner/Release"
+          $symbolRoot = "build/windows-symbols"
+          if (Test-Path -LiteralPath $symbolRoot) {
+            Remove-Item -LiteralPath $symbolRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $symbolRoot | Out-Null
+          $pdbFiles = Get-ChildItem -LiteralPath $bundle -Recurse -File -Filter "*.pdb"
+          if ($pdbFiles.Count -eq 0) {
+            throw "Windows release build did not produce any PDB files"
+          }
+          foreach ($file in $pdbFiles) {
+            $relative = [System.IO.Path]::GetRelativePath(
+              (Resolve-Path -LiteralPath $bundle).Path,
+              $file.FullName
+            )
+            $destination = Join-Path $symbolRoot $relative
+            $destinationDirectory = Split-Path -Parent $destination
+            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination
+          }
+          $version = "${{ github.ref_name }}"
+          if ("${{ github.ref_type }}" -ne "tag") {
+            $version = "v0.0.0-${{ github.sha }}"
+          }
+          Compress-Archive `
+            -Path "$symbolRoot/*" `
+            -DestinationPath "build/vscope_serial-symbols-$version.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload Windows debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscope_serial-windows-symbols
+          path: build/vscope_serial-symbols-*.zip
+          if-no-files-found: error
+
       - name: Install third-party notices
         shell: pwsh
         run: |
@@ -171,6 +233,12 @@ jobs:
           name: vscope_serial-windows
           path: dist
 
+      - name: Download Windows debug symbols
+        uses: actions/download-artifact@v4
+        with:
+          name: vscope_serial-windows-symbols
+          path: symbols
+
       - name: Extract changelog
         id: changelog
         shell: pwsh
@@ -210,6 +278,7 @@ jobs:
           files: |
             dist/*.zip
             dist/update-manifest-*.json
+            symbols/*.zip
           body_path: release_notes.md
 
       - name: Publish Gitee release

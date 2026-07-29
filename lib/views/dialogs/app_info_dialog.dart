@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -15,6 +16,8 @@ import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/connection_owner_service.dart';
+import '../../services/crash_dump_service.dart';
+import '../../services/native_serial_reader.dart';
 import '../../services/rtt_service.dart';
 import '../../services/rtt_backend.dart';
 import '../../services/changelog_service.dart';
@@ -968,6 +971,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
+    var crashDumpEnabled = AppSettings().crashDumpEnabled;
     var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
     var shellEnabled = AppSettings().rawDataShellEnabled;
     var rttEnabled = AppSettings().rttPageEnabled;
@@ -1082,6 +1086,86 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       settings.save();
                     },
                   ),
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.appInfo.crashDump,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.appInfo.crashDumpHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: crashDumpEnabled,
+                    onChanged: (value) async {
+                      setDialogState(() => crashDumpEnabled = value);
+                      final settings = AppSettings()..crashDumpEnabled = value;
+                      final crashDumpService = CrashDumpService();
+                      try {
+                        await crashDumpService.setEnabled(value);
+                        await settings.save();
+                      } catch (error, stackTrace) {
+                        AppLogger().error(
+                          '更新原生崩溃转储开关失败: $error',
+                          category: 'APP',
+                          error: error,
+                          stackTrace: stackTrace,
+                        );
+                        settings.crashDumpEnabled = !value;
+                        try {
+                          await crashDumpService.setEnabled(!value);
+                        } catch (_) {
+                          // 已记录原始失败；回滚同样失败时保持内存值并等待下次启动同步。
+                        }
+                        if (context.mounted) {
+                          setDialogState(
+                            () => crashDumpEnabled = settings.crashDumpEnabled,
+                          );
+                          AppNotifications.show('崩溃转储设置保存失败，请检查程序目录写入权限');
+                        }
+                      }
+                    },
+                  ),
+                  if (kDebugMode) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      AppStrings.appInfo.triggerTestCrashHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey(
+                          'debug-trigger-native-crash-button',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                          side: BorderSide(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          minimumSize: const Size(0, 30),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed:
+                            crashDumpEnabled
+                                ? _confirmAndTriggerTestCrash
+                                : null,
+                        icon: const Icon(Icons.warning_amber_rounded, size: 16),
+                        label: Text(AppStrings.appInfo.triggerTestCrash),
+                      ),
+                    ),
+                  ],
                   const Divider(height: 16),
                   SwitchListTile(
                     key: shortcutsSectionKey,
@@ -1262,6 +1346,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 AppSettings().disableNotifications;
                             diagnosticLoggingEnabled =
                                 AppSettings().diagnosticLoggingEnabled;
+                            crashDumpEnabled = AppSettings().crashDumpEnabled;
                             connectionShortcutsEnabled =
                                 AppSettings().connectionShortcutsEnabled;
                             shellEnabled = AppSettings().rawDataShellEnabled;
@@ -1271,6 +1356,18 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             _plotHistoryLimitController.text =
                                 resetPlotLimit.toString();
                           });
+                          try {
+                            await CrashDumpService().setEnabled(
+                              AppSettings().crashDumpEnabled,
+                            );
+                          } catch (error, stackTrace) {
+                            AppLogger().error(
+                              '恢复默认设置后同步崩溃转储开关失败: $error',
+                              category: 'APP',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                          }
                         }
                       },
                     ),
@@ -1286,6 +1383,52 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
             ],
           ),
     );
+  }
+
+  Future<void> _confirmAndTriggerTestCrash() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.appInfo.triggerTestCrashTitle),
+            content: Text(AppStrings.appInfo.triggerTestCrashMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppStrings.appInfo.triggerTestCrash),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await AppSettings().flushPendingSave();
+      AppLogger().fatal('用户从 Debug 高级设置主动触发原生崩溃测试', category: 'APP');
+      await AppLogger().flush();
+      NativeSerialReader.triggerTestCrash();
+    } catch (error, stackTrace) {
+      AppLogger().error(
+        '触发原生崩溃测试失败: $error',
+        category: 'APP',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) AppNotifications.show('触发原生崩溃测试失败：$error');
+    }
   }
 
   Future<bool> _confirmResetSettings() async {

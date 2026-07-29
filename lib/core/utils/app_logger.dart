@@ -104,6 +104,10 @@ class FileLogOutput extends LogOutput {
     await _raf?.close();
     _raf = null;
   }
+
+  Future<void> flush() async {
+    await _raf?.flush();
+  }
 }
 
 /// 自定义日志打印机 - 使用完整级别名称 + ANSI 颜色
@@ -201,6 +205,11 @@ class AppLogger {
   /// 程序退出时关闭日志文件
   Future<void> disposeLogger() async {
     await _fileOutput.close();
+  }
+
+  /// 在即将主动终止测试进程前确保现有日志已经落盘。
+  Future<void> flush() async {
+    await _fileOutput.flush();
   }
 
   void _log(

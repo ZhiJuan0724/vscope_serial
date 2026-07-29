@@ -75,6 +75,7 @@ void main() {
             ..disableNotifications = true
             ..diagnosticLoggingEnabled = true
             ..connectionShortcutsEnabled = false
+            ..crashDumpEnabled = false
             ..rawDataDisplayLineLimit = 500
             ..rawDataAutoLineBreakIntervalMs = 250
             ..rawDataShellMode = true
@@ -191,6 +192,7 @@ void main() {
       expect(settings.disableNotifications, isFalse);
       expect(settings.diagnosticLoggingEnabled, isFalse);
       expect(settings.connectionShortcutsEnabled, isTrue);
+      expect(settings.crashDumpEnabled, isTrue);
       expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataAutoLineBreakIntervalMs, 100);
       expect(settings.rawDataShellMode, isFalse);
@@ -277,6 +279,7 @@ void main() {
       settings.lastMainPage = 'plot';
       settings.diagnosticLoggingEnabled = true;
       settings.connectionShortcutsEnabled = false;
+      settings.crashDumpEnabled = false;
       settings.xMeasurementLine1Color = 0xFF123456;
       settings.yMeasurementLine2Opacity = 0.45;
       settings.yMeasurementSnapEnabled = false;
@@ -298,6 +301,7 @@ void main() {
       expect(decoded['lastMainPage'], 'plot');
       expect(decoded['diagnosticLoggingEnabled'], isTrue);
       expect(decoded['connectionShortcutsEnabled'], isFalse);
+      expect(decoded['crashDumpEnabled'], isFalse);
       expect(decoded['xMeasurementLine1Color'], 0xFF123456);
       expect(decoded['yMeasurementLine2Opacity'], 0.45);
       expect(decoded['yMeasurementSnapEnabled'], isFalse);

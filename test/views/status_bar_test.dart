@@ -106,16 +106,19 @@ void main() {
     final previousAggregation = AppSettings().plotReceiveAggregationEnabled;
     final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;
     final previousShortcuts = AppSettings().connectionShortcutsEnabled;
+    final previousCrashDump = AppSettings().crashDumpEnabled;
     final previousRttEnabled = AppSettings().rttPageEnabled;
     AppSettings().plotReceiveAggregationEnabled = false;
     AppSettings().diagnosticLoggingEnabled = false;
     AppSettings().connectionShortcutsEnabled = true;
+    AppSettings().crashDumpEnabled = true;
     AppSettings().rttPageEnabled = true;
     AppLogger().setDiagnosticEnabled(false);
     addTearDown(() {
       AppSettings().plotReceiveAggregationEnabled = previousAggregation;
       AppSettings().diagnosticLoggingEnabled = previousDiagnostic;
       AppSettings().connectionShortcutsEnabled = previousShortcuts;
+      AppSettings().crashDumpEnabled = previousCrashDump;
       AppSettings().rttPageEnabled = previousRttEnabled;
       AppLogger().setDiagnosticEnabled(previousDiagnostic);
       rttService.dispose();
@@ -189,6 +192,11 @@ void main() {
     expect(find.text('版本回退'), findsWidgets);
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    expect(find.text(AppStrings.appInfo.crashDump), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('debug-trigger-native-crash-button')),
+      findsOneWidget,
+    );
     final shortcutToggle = find.ancestor(
       of: find.text('启用连接快捷键'),
       matching: find.byType(SwitchListTile),

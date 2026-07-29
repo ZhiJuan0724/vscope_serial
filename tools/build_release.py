@@ -22,6 +22,7 @@ C++ DLL 说明：
     build/releases/
     └── vscope_serial-x.x.x-portable/     # 便携版目录
     └── vscope_serial-x.x.x-portable.zip  # 便携版压缩包
+    └── vscope_serial-x.x.x-symbols.zip   # 独立调试符号，不进入便携版
 
 依赖：
     - Flutter SDK
@@ -225,6 +226,32 @@ def copy_build_output(dst_dir: Path):
         warn("未找到任何 VC++ 运行时 DLL，便携版可能无法在缺少 VC++ 的系统上运行")
 
 
+def package_debug_symbols(version: str) -> Path:
+    """单独归档 PDB，供分析对应版本的 Windows minidump。"""
+    pdb_files = sorted(FLUTTER_BUILD_DIR.rglob("*.pdb"))
+    if not pdb_files:
+        raise FileNotFoundError("Release 构建未生成 PDB，无法归档崩溃分析符号")
+
+    staging_dir = BUILD_DIR / "windows-symbols"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    for source in pdb_files:
+        relative = source.relative_to(FLUTTER_BUILD_DIR)
+        destination = staging_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    archive_path = RELEASE_DIR / f"vscope_serial-{version}-symbols.zip"
+    shutil.make_archive(
+        str(archive_path.with_suffix("")),
+        "zip",
+        root_dir=staging_dir,
+    )
+    shutil.rmtree(staging_dir)
+    return archive_path
+
+
 def create_zip(source_dir: Path, zip_path: Path):
     """创建 zip 压缩包"""
     seven_zip = shutil.which("7z")
@@ -321,6 +348,8 @@ def main():
 
     copy_runtime_notices(FLUTTER_BUILD_DIR)
     install_openocd_runtime(FLUTTER_BUILD_DIR)
+    symbols_zip = package_debug_symbols(version)
+    success(f"调试符号归档完成: {symbols_zip}")
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")
@@ -355,12 +384,15 @@ def main():
     print(f"  目录: {portable_dir}")
     if portable_zip:
         print(f"  Zip:  {portable_zip}")
+    print(f"  符号: {symbols_zip}")
     
     # 显示文件大小
     print(f"\n文件大小:")
     if portable_zip and portable_zip.exists():
         portable_size = portable_zip.stat().st_size / (1024 * 1024)
         print(f"  便携版 zip: {portable_size:.1f} MB")
+    symbols_size = symbols_zip.stat().st_size / (1024 * 1024)
+    print(f"  调试符号 zip: {symbols_size:.1f} MB")
     
     # 列出包含的 DLL
     print(f"\n包含的 DLL:")
