@@ -5,12 +5,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../core/constants/plot_configuration.dart';
+import '../core/utils/plot_value_formatter.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/plot_data.dart';
 import '../data/models/plot_lod_index.dart';
 import '../data/models/probe_plot_config.dart';
 import '../data/models/rtt_config.dart';
 import '../services/j_scope_rtt_parser.dart';
+import '../services/app_settings.dart';
 import '../services/rtt_service.dart';
 import '../views/plot/plot_render_snapshot.dart';
 import '../views/plot/plot_viewport.dart';
@@ -18,6 +21,7 @@ import '../views/plot/plot_viewport.dart';
 /// 探针绘图的独立历史、LOD 和视口状态，不依赖串口绘图 ViewModel。
 class ProbePlotViewModel extends ChangeNotifier {
   ProbePlotViewModel(this.service) {
+    _loadDisplaySettings();
     service.addListener(_handleServiceChanged);
     _subscription = service.probePlotData.listen(_handleRttData);
     _sampleSubscription = service.probeSamples.listen(appendHssSample);
@@ -27,7 +31,13 @@ class ProbePlotViewModel extends ChangeNotifier {
     }
   }
 
-  static const int _exactPointLimit = 100000;
+  static const int maxObservationCount = 100;
+  static const int minWindowPointLimit = 10000;
+  static const int maxWindowPointLimit =
+      PlotConfiguration.maxMaterializedPointCount;
+  static const int minHistoryMemoryLimitMiB = 64;
+  static const int maxHistoryMemoryLimitMiB = 2048;
+  static const int _bytesPerMiB = 1024 * 1024;
   final RttService service;
   final Queue<PlotDataPoint> _exactPoints = Queue<PlotDataPoint>();
   final Map<int, PlotDataPoint> _pointsByIndex = <int, PlotDataPoint>{};
@@ -61,6 +71,19 @@ class ProbePlotViewModel extends ChangeNotifier {
   List<ProbeSymbolInfo> symbols = const [];
   DateTime? _programModifiedAt;
   bool follow = true;
+  late int windowPointLimit;
+  late int historyMemoryLimitMiB;
+  late PlotLodQuality lodQuality;
+  late bool showGrid;
+  late GridDensity gridDensity;
+  late PlotBackgroundStyle backgroundStyle;
+  late double floatingPanelOpacity;
+  late int plotFontSizeDelta;
+  late bool plotFontBold;
+  late double followPositionRatio;
+  late bool observationClickToPlace;
+  bool retentionLimitReached = false;
+  int _exactPointsEstimatedBytes = 0;
   int revision = 0;
   int overlayRevision = 0;
   int pointCount = 0;
@@ -73,6 +96,15 @@ class ProbePlotViewModel extends ChangeNotifier {
   bool _autoFitY = true;
   CursorState? cursor;
   bool vCursorEnabled = false;
+  bool xMeasurementEnabled = false;
+  bool yMeasurementEnabled = false;
+  double? xCursor1;
+  double? xCursor2;
+  double? yCursor1;
+  double? yCursor2;
+  final List<PlotObservation> observations = [];
+  bool observationPlacementActive = false;
+  PlotObservation? observationPreview;
   Timer? _frameNotificationTimer;
   bool _disposed = false;
 
@@ -84,12 +116,92 @@ class ProbePlotViewModel extends ChangeNotifier {
       _exactPoints.isEmpty ? null : _exactPoints.first.index;
   int? get maxJumpPacketIndex =>
       _exactPoints.isEmpty ? null : _exactPoints.last.index;
+  int get estimatedHistoryBytes =>
+      _exactPointsEstimatedBytes + lodIndex.estimatedAllocatedBytes;
+  int get historyMemoryLimitBytes => historyMemoryLimitMiB * _bytesPerMiB;
+  double get historyMemoryUsageRatio =>
+      historyMemoryLimitBytes <= 0
+          ? 0
+          : (estimatedHistoryBytes / historyMemoryLimitBytes).clamp(0.0, 1.0);
+  String? get measurementText {
+    final lines = <String>[];
+    if (xMeasurementEnabled && xCursor1 != null && xCursor2 != null) {
+      lines.addAll([
+        'X1 = ${formatPlotValue(xCursor1!)}',
+        'X2 = ${formatPlotValue(xCursor2!)}',
+        'ΔX = ${formatPlotValue(xCursor2! - xCursor1!)}',
+      ]);
+    }
+    if (yMeasurementEnabled && yCursor1 != null && yCursor2 != null) {
+      if (lines.isNotEmpty) lines.add('---');
+      lines.addAll([
+        'Y1 = ${formatPlotValue(yCursor1!)}',
+        'Y2 = ${formatPlotValue(yCursor2!)}',
+        'ΔY = ${formatPlotValue(yCursor2! - yCursor1!)}',
+      ]);
+    }
+    return lines.isEmpty ? null : lines.join('\n');
+  }
+
   bool get running => service.activityOwner == ProbeActivityOwner.probePlot;
   bool get operationPending => _operationPending;
   int get activeChannelCount => switch (mode) {
     ProbePlotMode.hss => hssVariables.length,
     ProbePlotMode.rtt => _rttActiveChannelCount,
   };
+
+  void _loadDisplaySettings() {
+    final settings = AppSettings();
+    windowPointLimit = settings.probePlotWindowPointLimit.clamp(
+      minWindowPointLimit,
+      maxWindowPointLimit,
+    );
+    historyMemoryLimitMiB = settings.probePlotHistoryMemoryLimitMiB.clamp(
+      minHistoryMemoryLimitMiB,
+      maxHistoryMemoryLimitMiB,
+    );
+    lodQuality = switch (settings.probePlotLodQuality) {
+      'performance' => PlotLodQuality.performance,
+      'balanced' => PlotLodQuality.balanced,
+      _ => PlotLodQuality.quality,
+    };
+    showGrid = settings.probePlotShowGrid;
+    gridDensity = switch (settings.probePlotGridDensity) {
+      'sparse' => GridDensity.sparse,
+      'dense' => GridDensity.dense,
+      _ => GridDensity.normal,
+    };
+    backgroundStyle =
+        settings.probePlotBackground == 'dark'
+            ? PlotBackgroundStyle.dark
+            : PlotBackgroundStyle.light;
+    floatingPanelOpacity = settings.probePlotFloatingPanelOpacity;
+    plotFontSizeDelta = settings.probePlotFontSizeDelta;
+    plotFontBold = settings.probePlotFontBold;
+    followPositionRatio = settings.probePlotFollowPositionRatio;
+    observationClickToPlace = settings.probePlotObservationClickToPlace;
+  }
+
+  void _saveDisplaySettings() {
+    final settings = AppSettings();
+    settings.probePlotWindowPointLimit = windowPointLimit;
+    settings.probePlotHistoryMemoryLimitMiB = historyMemoryLimitMiB;
+    settings.probePlotLodQuality = switch (lodQuality) {
+      PlotLodQuality.performance => 'performance',
+      PlotLodQuality.balanced => 'balanced',
+      PlotLodQuality.quality => 'quality',
+    };
+    settings.probePlotShowGrid = showGrid;
+    settings.probePlotGridDensity = gridDensity.name;
+    settings.probePlotBackground = backgroundStyle.name;
+    settings.probePlotFloatingPanelOpacity = floatingPanelOpacity;
+    settings.probePlotFontSizeDelta = plotFontSizeDelta;
+    settings.probePlotFontBold = plotFontBold;
+    settings.probePlotFollowPositionRatio = followPositionRatio;
+    settings.probePlotObservationClickToPlace = observationClickToPlace;
+    unawaited(settings.save());
+  }
+
   Future<void> start() async {
     if (running || _operationPending) return;
     _operationPending = true;
@@ -348,6 +460,7 @@ class ProbePlotViewModel extends ChangeNotifier {
   }
 
   void _append(double x, List<double> values) {
+    if (retentionLimitReached) return;
     _firstSourceTime ??= x;
     final relativeTime = x - _firstSourceTime!;
     // 共享绘图核心和 LOD 使用连续样本序号作为内部 X 坐标，真实的 helper
@@ -358,10 +471,30 @@ class ProbePlotViewModel extends ChangeNotifier {
       timestamp: relativeTime * 1000,
       values: values,
     );
+    final pointBytes = _estimatePointBytes(point);
+    final evictedBytes =
+        _exactPoints.length >= windowPointLimit
+            ? _estimatePointBytes(_exactPoints.first)
+            : 0;
+    final projectedBytes =
+        estimatedHistoryBytes +
+        pointBytes -
+        evictedBytes +
+        lodIndex.estimatedAdditionalBytesFor(plotX, values.length);
+    if (projectedBytes > historyMemoryLimitBytes) {
+      retentionLimitReached = true;
+      revision++;
+      notifyListeners();
+      unawaited(_stopAfterRetentionLimit());
+      return;
+    }
+
     _exactPoints.add(point);
+    _exactPointsEstimatedBytes += pointBytes;
     _pointsByIndex[plotX] = point;
-    if (_exactPoints.length > _exactPointLimit) {
+    if (_exactPoints.length > windowPointLimit) {
       final removed = _exactPoints.removeFirst();
+      _exactPointsEstimatedBytes -= _estimatePointBytes(removed);
       _pointsByIndex.remove(removed.index);
     }
     _pointsSnapshot = null;
@@ -370,7 +503,8 @@ class ProbePlotViewModel extends ChangeNotifier {
     _updateYRange(values);
     if (follow) {
       final width = viewport.xRange;
-      viewport = viewport.copyWith(xMin: plotX - width, xMax: plotX.toDouble());
+      final xMin = plotX - width * followPositionRatio;
+      viewport = viewport.copyWith(xMin: xMin, xMax: xMin + width);
     }
     final now = DateTime.now();
     final elapsed = now.difference(_lastRateTime);
@@ -382,6 +516,20 @@ class ProbePlotViewModel extends ChangeNotifier {
     }
     revision++;
     _notifyOnNextFrame();
+  }
+
+  int _estimatePointBytes(PlotDataPoint point) {
+    // PlotDataPoint、List<double>、Queue 节点和索引 Map 条目的保守近似。
+    return 112 + point.values.length * 8;
+  }
+
+  Future<void> _stopAfterRetentionLimit() async {
+    if (!running || _operationPending) return;
+    try {
+      await stop();
+    } catch (_) {
+      // 内存保护已经停止接收新点；后端停止错误由连接状态和后续操作呈现。
+    }
   }
 
   void _updateYRange(List<double> values) {
@@ -409,6 +557,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     _exactPoints.clear();
     _pointsByIndex.clear();
     _pointsSnapshot = null;
+    _exactPointsEstimatedBytes = 0;
     lodIndex.clear();
     pointCount = 0;
     actualRate = 0;
@@ -417,6 +566,16 @@ class ProbePlotViewModel extends ChangeNotifier {
     _dataYMax = null;
     _autoFitY = true;
     cursor = null;
+    retentionLimitReached = false;
+    observations.clear();
+    observationPlacementActive = false;
+    observationPreview = null;
+    xMeasurementEnabled = false;
+    yMeasurementEnabled = false;
+    xCursor1 = null;
+    xCursor2 = null;
+    yCursor1 = null;
+    yCursor2 = null;
     _rttParser?.reset();
     revision++;
     overlayRevision++;
@@ -439,6 +598,115 @@ class ProbePlotViewModel extends ChangeNotifier {
 
   void setFollow(bool value) {
     follow = value;
+    if (follow && pointCount > 0) {
+      final latestX = (pointCount - 1).toDouble();
+      final width = viewport.xRange;
+      final xMin = latestX - width * followPositionRatio;
+      viewport = viewport.copyWith(xMin: xMin, xMax: xMin + width);
+    }
+    notifyListeners();
+  }
+
+  void setWindowPointLimit(int value) {
+    windowPointLimit = value.clamp(minWindowPointLimit, maxWindowPointLimit);
+    while (_exactPoints.length > windowPointLimit) {
+      final removed = _exactPoints.removeFirst();
+      _exactPointsEstimatedBytes -= _estimatePointBytes(removed);
+      _pointsByIndex.remove(removed.index);
+    }
+    _pointsSnapshot = null;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setHistoryMemoryLimitMiB(int value) {
+    historyMemoryLimitMiB = value.clamp(
+      minHistoryMemoryLimitMiB,
+      maxHistoryMemoryLimitMiB,
+    );
+    retentionLimitReached = estimatedHistoryBytes >= historyMemoryLimitBytes;
+    _saveDisplaySettings();
+    notifyListeners();
+    if (retentionLimitReached) unawaited(_stopAfterRetentionLimit());
+  }
+
+  void setLodQuality(PlotLodQuality value) {
+    if (lodQuality == value) return;
+    lodQuality = value;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setShowGrid(bool value) {
+    if (showGrid == value) return;
+    showGrid = value;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setGridDensity(GridDensity value) {
+    if (gridDensity == value) return;
+    gridDensity = value;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setBackgroundStyle(PlotBackgroundStyle value) {
+    if (backgroundStyle == value) return;
+    backgroundStyle = value;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setFloatingPanelOpacity(double value) {
+    final next = value.clamp(0.0, 1.0);
+    if ((next - floatingPanelOpacity).abs() < 0.0001) return;
+    floatingPanelOpacity = next;
+    _saveDisplaySettings();
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setPlotFontSizeDelta(int value) {
+    final next = value.clamp(-3, 6);
+    if (next == plotFontSizeDelta) return;
+    plotFontSizeDelta = next;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setPlotFontBold(bool value) {
+    if (plotFontBold == value) return;
+    plotFontBold = value;
+    _saveDisplaySettings();
+    revision++;
+    notifyListeners();
+  }
+
+  void setFollowPositionRatio(double value) {
+    final next = value.clamp(0.5, 0.95);
+    if ((next - followPositionRatio).abs() < 0.0001) return;
+    followPositionRatio = next;
+    _saveDisplaySettings();
+    if (follow) setFollow(true);
+    notifyListeners();
+  }
+
+  void setObservationClickToPlace(bool value) {
+    if (observationClickToPlace == value) return;
+    observationClickToPlace = value;
+    if (!value) {
+      observationPlacementActive = false;
+      observationPreview = null;
+    }
+    _saveDisplaySettings();
+    overlayRevision++;
     notifyListeners();
   }
 
@@ -484,6 +752,216 @@ class ProbePlotViewModel extends ChangeNotifier {
     cursor = null;
     overlayRevision++;
     notifyListeners();
+  }
+
+  Color? get xMeasurementLine1Color {
+    final value = AppSettings().xMeasurementLine1Color;
+    return value == null ? null : Color(value);
+  }
+
+  Color? get xMeasurementLine2Color {
+    final value = AppSettings().xMeasurementLine2Color;
+    return value == null ? null : Color(value);
+  }
+
+  Color? get yMeasurementLine1Color {
+    final value = AppSettings().yMeasurementLine1Color;
+    return value == null ? null : Color(value);
+  }
+
+  Color? get yMeasurementLine2Color {
+    final value = AppSettings().yMeasurementLine2Color;
+    return value == null ? null : Color(value);
+  }
+
+  double get xMeasurementLine1Opacity => AppSettings().xMeasurementLine1Opacity;
+  double get xMeasurementLine2Opacity => AppSettings().xMeasurementLine2Opacity;
+  double get yMeasurementLine1Opacity => AppSettings().yMeasurementLine1Opacity;
+  double get yMeasurementLine2Opacity => AppSettings().yMeasurementLine2Opacity;
+  bool get yMeasurementSnapEnabled => AppSettings().yMeasurementSnapEnabled;
+
+  void toggleXMeasurement() {
+    xMeasurementEnabled = !xMeasurementEnabled;
+    if (xMeasurementEnabled && xCursor1 == null) {
+      final range = viewport.xRange;
+      final center = viewport.xMin + range / 2;
+      xCursor1 =
+          _nearestPoint(center - range / 8)?.index.toDouble() ??
+          center - range / 8;
+      xCursor2 =
+          _nearestPoint(center + range / 8)?.index.toDouble() ??
+          center + range / 8;
+    } else if (!xMeasurementEnabled) {
+      xCursor1 = null;
+      xCursor2 = null;
+    }
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void toggleYMeasurement() {
+    yMeasurementEnabled = !yMeasurementEnabled;
+    if (yMeasurementEnabled && yCursor1 == null) {
+      final range = viewport.yRange;
+      final center = viewport.yMin + range / 2;
+      yCursor1 = center - range / 8;
+      yCursor2 = center + range / 8;
+    } else if (!yMeasurementEnabled) {
+      yCursor1 = null;
+      yCursor2 = null;
+    }
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setXCursor1(double value) {
+    xCursor1 = _nearestPoint(value)?.index.toDouble() ?? value;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setXCursor2(double value) {
+    xCursor2 = _nearestPoint(value)?.index.toDouble() ?? value;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setYCursor1(double value) {
+    yCursor1 = value;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setYCursor2(double value) {
+    yCursor2 = value;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setXMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    final settings = AppSettings();
+    settings.xMeasurementLine1Color = line1Color.toARGB32();
+    settings.xMeasurementLine2Color = line2Color.toARGB32();
+    settings.xMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0);
+    settings.xMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0);
+    unawaited(settings.save());
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setYMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    final settings = AppSettings();
+    settings.yMeasurementLine1Color = line1Color.toARGB32();
+    settings.yMeasurementLine2Color = line2Color.toARGB32();
+    settings.yMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0);
+    settings.yMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0);
+    unawaited(settings.save());
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setYMeasurementSnapEnabled(bool value) {
+    AppSettings().yMeasurementSnapEnabled = value;
+    unawaited(AppSettings().save());
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void addObservation() {
+    if (_exactPoints.isEmpty || observations.length >= maxObservationCount) {
+      return;
+    }
+    final sourceX =
+        cursor != null && viewport.isVisibleX(cursor!.x)
+            ? cursor!.x
+            : viewport.xMin + viewport.xRange / 2;
+    _addObservationAtX(sourceX);
+  }
+
+  void startObservationPlacement() {
+    if (_exactPoints.isEmpty || observations.length >= maxObservationCount) {
+      return;
+    }
+    observationPlacementActive = true;
+    observationPreview = null;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void updateObservationPlacement(double x) {
+    if (!observationPlacementActive) return;
+    observationPreview = PlotObservation(cursor: _cursorAtX(x));
+    overlayRevision++;
+    _notifyOnNextFrame();
+  }
+
+  void commitObservationPlacement(double x) {
+    if (!observationPlacementActive) return;
+    _addObservationAtX(x);
+    observationPlacementActive = false;
+    observationPreview = null;
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void updateObservation(int index, double x) {
+    if (index < 0 || index >= observations.length) return;
+    if (observations[index].locked) return;
+    observations[index] = observations[index].copyWith(cursor: _cursorAtX(x));
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void updateObservationNote(int index, String note) {
+    if (index < 0 || index >= observations.length) return;
+    observations[index] = observations[index].copyWith(note: note);
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void setObservationLocked(int index, bool locked) {
+    if (index < 0 || index >= observations.length) return;
+    observations[index] = observations[index].copyWith(locked: locked);
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void removeObservation(int index) {
+    if (index < 0 || index >= observations.length) return;
+    observations.removeAt(index);
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  void jumpToObservation(int index) {
+    if (index < 0 || index >= observations.length) return;
+    jumpToPacketIndex(observations[index].x.round());
+  }
+
+  void _addObservationAtX(double x) {
+    if (observations.length >= maxObservationCount) return;
+    observations.add(PlotObservation(cursor: _cursorAtX(x)));
+    overlayRevision++;
+    notifyListeners();
+  }
+
+  CursorState _cursorAtX(double x) {
+    final point = _nearestPoint(x);
+    return CursorState(
+      x: point?.index.toDouble() ?? x,
+      channelValues: point?.values,
+      hasData: point != null,
+    );
   }
 
   bool canJumpToPacketIndex(int index) {

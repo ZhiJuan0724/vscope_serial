@@ -58,6 +58,17 @@ void main() {
             ..randomFrequency = 500
             ..followEnabled = true
             ..followPositionRatio = 0.5
+            ..probePlotWindowPointLimit = 200000
+            ..probePlotHistoryMemoryLimitMiB = 1024
+            ..probePlotLodQuality = 'balanced'
+            ..probePlotShowGrid = false
+            ..probePlotGridDensity = 'dense'
+            ..probePlotBackground = 'dark'
+            ..probePlotFloatingPanelOpacity = 0.4
+            ..probePlotFontSizeDelta = 5
+            ..probePlotFontBold = true
+            ..probePlotFollowPositionRatio = 0.6
+            ..probePlotObservationClickToPlace = true
             ..yFitDisplayRatio = 0.95
             ..parserType = 'zobow'
             ..sendProtocolType = 'rProtocol'
@@ -175,6 +186,17 @@ void main() {
       expect(settings.randomFrequency, 1000);
       expect(settings.followEnabled, isFalse);
       expect(settings.followPositionRatio, 0.9);
+      expect(settings.probePlotWindowPointLimit, 100000);
+      expect(settings.probePlotHistoryMemoryLimitMiB, 256);
+      expect(settings.probePlotLodQuality, 'quality');
+      expect(settings.probePlotShowGrid, isTrue);
+      expect(settings.probePlotGridDensity, 'normal');
+      expect(settings.probePlotBackground, 'light');
+      expect(settings.probePlotFloatingPanelOpacity, 0.9);
+      expect(settings.probePlotFontSizeDelta, 0);
+      expect(settings.probePlotFontBold, isFalse);
+      expect(settings.probePlotFollowPositionRatio, 0.9);
+      expect(settings.probePlotObservationClickToPlace, isFalse);
       expect(settings.yFitDisplayRatio, 0.8);
       expect(settings.parserType, 'zobow');
       expect(settings.sendProtocolType, 'none');
@@ -290,28 +312,53 @@ void main() {
         'rtt',
         'probePlot',
       ];
+      settings.probePlotWindowPointLimit = 180000;
+      settings.probePlotHistoryMemoryLimitMiB = 512;
+      settings.probePlotLodQuality = 'balanced';
+      settings.probePlotBackground = 'dark';
       final third = settings.save();
 
       await Future.wait([first, second, third]);
       await settings.flushPendingSave();
-      final decoded = jsonDecode(await File(settingsPath).readAsString());
+      final decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      final global = decoded['global'] as Map<String, dynamic>;
+      final navigation = global['navigation'] as Map<String, dynamic>;
+      final behavior = global['behavior'] as Map<String, dynamic>;
+      final serial = decoded['serial'] as Map<String, dynamic>;
+      final connection = serial['connection'] as Map<String, dynamic>;
+      final measurements = global['plotMeasurements'] as Map<String, dynamic>;
+      final deltaX = measurements['deltaX'] as Map<String, dynamic>;
+      final deltaY = measurements['deltaY'] as Map<String, dynamic>;
+      final probePlot = decoded['probePlot'] as Map<String, dynamic>;
+      final probePerformance = probePlot['performance'] as Map<String, dynamic>;
+      final probeAppearance = probePlot['appearance'] as Map<String, dynamic>;
 
-      expect(decoded['baudRate'], 9600);
-      expect(decoded['dataBits'], 7);
-      expect(decoded['lastMainPage'], 'plot');
-      expect(decoded['diagnosticLoggingEnabled'], isTrue);
-      expect(decoded['connectionShortcutsEnabled'], isFalse);
-      expect(decoded['crashDumpEnabled'], isFalse);
-      expect(decoded['xMeasurementLine1Color'], 0xFF123456);
-      expect(decoded['yMeasurementLine2Opacity'], 0.45);
-      expect(decoded['yMeasurementSnapEnabled'], isFalse);
-      expect(decoded['mainTabOrder'], [
+      expect(decoded['schemaVersion'], 2);
+      expect(decoded.keys.take(3), ['schemaVersion', 'global', 'serial']);
+      expect(decoded.containsKey('baudRate'), isFalse);
+      expect(decoded.containsKey('probePlotBackground'), isFalse);
+      expect(connection['baudRate'], 9600);
+      expect(connection['dataBits'], 7);
+      expect(navigation['lastPage'], 'plot');
+      expect(behavior['diagnosticLogging'], isTrue);
+      expect(behavior['connectionShortcuts'], isFalse);
+      expect(behavior['crashDump'], isFalse);
+      expect(deltaX['line1Color'], 0xFF123456);
+      expect(deltaY['line2Opacity'], 0.45);
+      expect(deltaY['snapEnabled'], isFalse);
+      expect(navigation['pageOrder'], [
         'plot',
         'rawData',
         'shell',
         'rtt',
         'probePlot',
       ]);
+      expect(probePerformance['windowPointLimit'], 180000);
+      expect(probePerformance['historyMemoryLimitMiB'], 512);
+      expect(probePerformance['lodQuality'], 'balanced');
+      expect(probeAppearance['background'], 'dark');
     });
 
     test('截断主文件后自动恢复上一代备份', () async {
@@ -345,6 +392,21 @@ void main() {
 
       expect(settings.baudRate, 19200);
       expect(settings.lastMainPage, 'shell');
+    });
+
+    test('嵌套分组类型错误时恢复上一代完整配置', () async {
+      settings.baudRate = 9600;
+      await settings.save();
+      settings.baudRate = 57600;
+      await settings.save();
+      await File(
+        settingsPath,
+      ).writeAsString(jsonEncode({'schemaVersion': 2, 'serial': 'invalid'}));
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.baudRate, 9600);
+      expect(settings.takeRecoveryNotice(), isNotNull);
     });
 
     test('RTT 设置可保存并从严格校验的快照恢复', () async {
@@ -411,6 +473,44 @@ void main() {
 
       expect(settings.rttControlBlockMode, 'address');
       expect(settings.rttControlBlockAddress, 0x20001000);
+      final migrated =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      expect(migrated['schemaVersion'], 2);
+      expect(migrated.containsKey('rttControlBlockAddress'), isFalse);
+      expect(
+        ((migrated['rtt'] as Map<String, dynamic>)['controlBlock']
+            as Map<String, dynamic>)['address'],
+        0x20001000,
+      );
+    });
+
+    test('嵌套格式可严格校验并完整恢复不同功能的同名设置', () async {
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'appearance': {'background': 'dark', 'showGrid': false},
+          },
+          'probePlot': {
+            'appearance': {'background': 'light', 'showGrid': true},
+            'performance': {
+              'windowPointLimit': 120000,
+              'historyMemoryLimitMiB': 384,
+              'lodQuality': 'quality',
+            },
+          },
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.plotBackground, 'dark');
+      expect(settings.showGrid, isFalse);
+      expect(settings.probePlotBackground, 'light');
+      expect(settings.probePlotShowGrid, isTrue);
+      expect(settings.probePlotWindowPointLimit, 120000);
+      expect(settings.probePlotHistoryMemoryLimitMiB, 384);
     });
   });
 }

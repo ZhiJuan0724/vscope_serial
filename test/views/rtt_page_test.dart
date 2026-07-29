@@ -264,6 +264,7 @@ void main() {
 
     final row = find.byKey(const ValueKey('rtt-terminal-row-3'));
     await tester.ensureVisible(row);
+    expect(tester.widget<ListTile>(row).minTileHeight, 34);
     final position = tester.getCenter(row);
     final secondary = await tester.createGesture(
       kind: PointerDeviceKind.mouse,

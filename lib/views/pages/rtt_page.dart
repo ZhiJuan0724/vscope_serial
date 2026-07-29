@@ -603,6 +603,7 @@ class _TerminalRail extends StatelessWidget {
                   child: ListTile(
                     key: ValueKey('rtt-terminal-row-$terminal'),
                     dense: true,
+                    minTileHeight: 34,
                     selected: selected,
                     selectedTileColor: Theme.of(
                       context,

@@ -114,8 +114,12 @@ void main() {
     // 控件通过 1px 光学校正后允许不同测试字体环境保留 3px 以内偏差。
     expect(hssCenter.dy, closeTo(modeRect.center.dy, 3.1));
     expect(rttCenter.dy, closeTo(modeRect.center.dy, 3.1));
-    expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsNothing);
-    expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsNothing);
+    expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
+    expect(find.text(AppStrings.plot.cursor), findsNothing);
+    expect(find.text(AppStrings.plot.measureXx), findsNothing);
+    expect(find.text(AppStrings.plot.measureYy), findsNothing);
+    expect(find.text(AppStrings.plot.follow), findsNothing);
     expect(find.byTooltip(AppStrings.plot.fitY), findsNothing);
     expect(
       tester.getCenter(find.byTooltip(AppStrings.plot.verticalCursor)).dx,
@@ -243,6 +247,20 @@ void main() {
 
     await tester.tap(find.byTooltip('探针绘图设置'));
     await tester.pumpAndSettle();
-    expect(find.text('暂无可配置的绘图参数。后续仅在此处提供绘图显示相关设置。'), findsOneWidget);
+    expect(find.text('精确窗口点数上限'), findsOneWidget);
+    expect(find.text('历史内存上限'), findsOneWidget);
+    expect(find.text('绘图质量'), findsWidgets);
+    expect(find.text('悬浮窗不透明度'), findsOneWidget);
+    expect(find.text('跟随位置'), findsOneWidget);
+    expect(find.text('观察先跟随鼠标再点击固定'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byTooltip('探针绘图设置'),
+        matching: find.byIcon(Icons.tune),
+      ),
+      findsOneWidget,
+    );
   });
 }

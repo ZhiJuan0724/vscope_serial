@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/probe_plot_config.dart';
+import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/data/models/rtt_config.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
 import 'package:vscope_serial/services/rtt_backend.dart';
@@ -53,6 +54,28 @@ void main() {
     expect(viewModel.pointCount, 1);
     expect(viewModel.points.single.values, [-123, 42]);
     expect(viewModel.activeChannelCount, 2);
+    expect(viewModel.estimatedHistoryBytes, greaterThan(0));
+
+    viewModel
+      ..toggleXMeasurement()
+      ..toggleYMeasurement()
+      ..addObservation();
+    expect(viewModel.xMeasurementEnabled, isTrue);
+    expect(viewModel.yMeasurementEnabled, isTrue);
+    expect(viewModel.measurementText, contains('ΔX'));
+    expect(viewModel.measurementText, contains('ΔY'));
+    expect(viewModel.observations, hasLength(1));
+    expect(viewModel.observations.single.hasData, isTrue);
+
+    viewModel
+      ..setWindowPointLimit(150000)
+      ..setHistoryMemoryLimitMiB(512)
+      ..setLodQuality(PlotLodQuality.balanced)
+      ..setFollowPositionRatio(0.75);
+    expect(viewModel.windowPointLimit, 150000);
+    expect(viewModel.historyMemoryLimitMiB, 512);
+    expect(viewModel.lodQuality, PlotLodQuality.balanced);
+    expect(viewModel.followPositionRatio, 0.75);
 
     viewModel.setVCursorEnabled(true);
     viewModel.updateCursor(

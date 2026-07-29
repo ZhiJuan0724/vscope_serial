@@ -18,6 +18,7 @@ import '../../services/j_scope_rtt_parser.dart';
 import '../../viewmodels/probe_plot_viewmodel.dart';
 import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
 
@@ -157,7 +158,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     ],
                   ),
                   ToolbarLayoutItem(
-                    extent: 72,
+                    extent: kToolbarControlExtent,
                     overflowActions: [
                       ToolbarOverflowAction(
                         icon: const AppIcon(AppIcons.plotCursor),
@@ -177,9 +178,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           unawaited(_showCursorJumpDialog(context, vm));
                         }
                       },
-                      child: ToolbarToggleTextButton(
+                      child: ToolbarToggleIconButton(
                         icon: const AppIcon(AppIcons.plotCursor),
-                        label: AppStrings.plot.cursor,
                         tooltip: AppStrings.plot.verticalCursor,
                         selected: vm.vCursorEnabled,
                         activeColor: Colors.orange,
@@ -192,7 +192,99 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     ),
                   ),
                   ToolbarLayoutItem(
-                    extent: 72,
+                    extent: kToolbarControlExtent,
+                    overflowActions: [
+                      ToolbarOverflowAction(
+                        icon: const Icon(Icons.add_location_alt),
+                        label: AppStrings.plot.observation,
+                        selected: vm.observationPlacementActive,
+                        onPressed:
+                            vm.pointCount == 0
+                                ? null
+                                : () => _addObservation(vm),
+                      ),
+                    ],
+                    child: Listener(
+                      onPointerDown: (event) {
+                        if (event.buttons == kSecondaryMouseButton) {
+                          unawaited(_showObservationManager(context, vm));
+                        }
+                      },
+                      child: ToolbarToggleIconButton(
+                        icon: const Icon(Icons.add_location_alt),
+                        tooltip:
+                            vm.observationPlacementActive
+                                ? AppStrings.plot.placeObservation
+                                : AppStrings.plot.addObservation,
+                        selected: vm.observationPlacementActive,
+                        activeColor: Colors.amber,
+                        onPressed:
+                            vm.pointCount == 0
+                                ? null
+                                : () => _addObservation(vm),
+                      ),
+                    ),
+                  ),
+                  ToolbarLayoutItem(
+                    extent: kToolbarControlExtent,
+                    overflowActions: [
+                      ToolbarOverflowAction(
+                        icon: const AppIcon(AppIcons.plotMeasureXx),
+                        label: AppStrings.plot.measureXx,
+                        selected: vm.xMeasurementEnabled,
+                        onPressed:
+                            vm.pointCount == 0 ? null : vm.toggleXMeasurement,
+                      ),
+                    ],
+                    child: Listener(
+                      onPointerDown: (event) {
+                        if (event.buttons == kSecondaryMouseButton) {
+                          unawaited(
+                            _showMeasurementSettings(context, vm, isX: true),
+                          );
+                        }
+                      },
+                      child: ToolbarToggleIconButton(
+                        icon: const AppIcon(AppIcons.plotMeasureXx),
+                        tooltip: AppStrings.plot.measureXxTooltip,
+                        selected: vm.xMeasurementEnabled,
+                        activeColor: Colors.blue,
+                        onPressed:
+                            vm.pointCount == 0 ? null : vm.toggleXMeasurement,
+                      ),
+                    ),
+                  ),
+                  ToolbarLayoutItem(
+                    extent: kToolbarControlExtent,
+                    overflowActions: [
+                      ToolbarOverflowAction(
+                        icon: const AppIcon(AppIcons.plotMeasureYy),
+                        label: AppStrings.plot.measureYy,
+                        selected: vm.yMeasurementEnabled,
+                        onPressed:
+                            vm.pointCount == 0 ? null : vm.toggleYMeasurement,
+                      ),
+                    ],
+                    child: Listener(
+                      onPointerDown: (event) {
+                        if (event.buttons == kSecondaryMouseButton) {
+                          unawaited(
+                            _showMeasurementSettings(context, vm, isX: false),
+                          );
+                        }
+                      },
+                      child: ToolbarToggleIconButton(
+                        icon: const AppIcon(AppIcons.plotMeasureYy),
+                        tooltip: AppStrings.plot.measureYyTooltip,
+                        selected: vm.yMeasurementEnabled,
+                        activeColor: Colors.blue,
+                        onPressed:
+                            vm.pointCount == 0 ? null : vm.toggleYMeasurement,
+                      ),
+                    ),
+                  ),
+                  ToolbarLayoutItem(
+                    extent: kToolbarControlExtent,
                     overflowActions: [
                       ToolbarOverflowAction(
                         icon: const AppIcon(AppIcons.plotFollow),
@@ -201,9 +293,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         onPressed: () => vm.setFollow(!vm.follow),
                       ),
                     ],
-                    child: ToolbarToggleTextButton(
+                    child: ToolbarToggleIconButton(
                       icon: const AppIcon(AppIcons.plotFollow),
-                      label: AppStrings.plot.follow,
                       tooltip: AppStrings.plot.followTooltip,
                       selected: vm.follow,
                       activeColor: Colors.orange,
@@ -211,7 +302,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     ),
                   ),
                   ToolbarLayoutItem(
-                    extent: 72,
+                    extent: kToolbarControlExtent,
                     overflowActions: [
                       ToolbarOverflowAction(
                         icon: const Icon(Icons.list_alt),
@@ -223,9 +314,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             ),
                       ),
                     ],
-                    child: ToolbarToggleTextButton(
+                    child: ToolbarToggleIconButton(
                       icon: const Icon(Icons.list_alt),
-                      label: AppStrings.plot.legend,
                       tooltip: AppStrings.plot.legend,
                       selected: _legendVisible,
                       activeColor: Colors.teal,
@@ -235,7 +325,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     ),
                   ),
                   ToolbarLayoutItem(
-                    extent: 72,
+                    extent: kToolbarControlExtent,
                     overflowActions: [
                       ToolbarOverflowAction(
                         icon: const Icon(Icons.format_list_numbered),
@@ -247,9 +337,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             ),
                       ),
                     ],
-                    child: ToolbarToggleTextButton(
+                    child: ToolbarToggleIconButton(
                       icon: const Icon(Icons.format_list_numbered),
-                      label: AppStrings.plot.liveValues,
                       tooltip: AppStrings.plot.liveValues,
                       selected: _liveValuesVisible,
                       activeColor: Colors.lightBlue,
@@ -309,15 +398,14 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     extent: kToolbarControlExtent,
                     overflowActions: [
                       ToolbarOverflowAction(
-                        icon: const Icon(Icons.settings),
+                        icon: const Icon(Icons.tune),
                         label: '探针绘图设置',
-                        onPressed: () => _showPlotSettings(context),
+                        onPressed: () => _showPlotSettings(context, vm),
                       ),
                     ],
-                    child: ToolbarIconButton(
-                      icon: const Icon(Icons.settings),
+                    child: ToolbarAdvancedSettingsButton(
                       tooltip: '探针绘图设置',
-                      onPressed: () => _showPlotSettings(context),
+                      onPressed: () => _showPlotSettings(context, vm),
                     ),
                   ),
                 ],
@@ -334,9 +422,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                               PlotLayerPainter.calculateLeftAxisWidth(
                                 viewport: vm.viewport,
                                 canvasHeight: constraints.maxHeight,
-                                gridDensity: GridDensity.normal,
-                                plotFontSizeDelta: 0,
-                                plotFontBold: false,
+                                gridDensity: vm.gridDensity,
+                                plotFontSizeDelta:
+                                    vm.plotFontSizeDelta.toDouble(),
+                                plotFontBold: vm.plotFontBold,
                               );
                           final renderViewport = vm.viewport.copyWith(
                             marginLeft: leftAxisWidth,
@@ -364,13 +453,39 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                             channelConfigRevision: vm.revision,
                                             overlayRevision: vm.overlayRevision,
                                             lodIndex: vm.lodIndex,
-                                            lodQuality: PlotLodQuality.quality,
+                                            lodQuality: vm.lodQuality,
                                             channels: vm.channels,
                                             activeChannelCount:
                                                 vm.activeChannelCount,
-                                            backgroundStyle:
-                                                PlotBackgroundStyle.light,
+                                            showGrid: vm.showGrid,
+                                            gridDensity: vm.gridDensity,
+                                            backgroundStyle: vm.backgroundStyle,
+                                            floatingPanelOpacity:
+                                                vm.floatingPanelOpacity,
                                             cursor: vm.cursor,
+                                            xCursor1: vm.xCursor1,
+                                            xCursor2: vm.xCursor2,
+                                            yCursor1: vm.yCursor1,
+                                            yCursor2: vm.yCursor2,
+                                            xMeasurementLine1Color:
+                                                vm.xMeasurementLine1Color,
+                                            xMeasurementLine2Color:
+                                                vm.xMeasurementLine2Color,
+                                            yMeasurementLine1Color:
+                                                vm.yMeasurementLine1Color,
+                                            yMeasurementLine2Color:
+                                                vm.yMeasurementLine2Color,
+                                            xMeasurementLine1Opacity:
+                                                vm.xMeasurementLine1Opacity,
+                                            xMeasurementLine2Opacity:
+                                                vm.xMeasurementLine2Opacity,
+                                            yMeasurementLine1Opacity:
+                                                vm.yMeasurementLine1Opacity,
+                                            yMeasurementLine2Opacity:
+                                                vm.yMeasurementLine2Opacity,
+                                            plotFontSizeDelta:
+                                                vm.plotFontSizeDelta,
+                                            plotFontBold: vm.plotFontBold,
                                           ),
                                         ),
                                     ],
@@ -384,10 +499,63 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                 activeChannelCount: vm.activeChannelCount,
                                 data: plotPoints,
                                 vCursorEnabled: vm.vCursorEnabled,
+                                refreshFps: 60,
+                                plotFontSizeDelta: vm.plotFontSizeDelta,
+                                observations: vm.observations,
+                                onObservationDrag: vm.updateObservation,
+                                onObservationDelete: vm.removeObservation,
+                                observationPlacementActive:
+                                    vm.observationPlacementActive,
+                                onObservationPlacementHover:
+                                    vm.updateObservationPlacement,
+                                onObservationPlacementCommit:
+                                    vm.commitObservationPlacement,
                                 onViewportChanged: vm.updateViewport,
                                 onCursorChanged: vm.updateCursor,
+                                xCursor1: vm.xCursor1,
+                                xCursor2: vm.xCursor2,
+                                yCursor1: vm.yCursor1,
+                                yCursor2: vm.yCursor2,
+                                yMeasurementSnapEnabled:
+                                    vm.yMeasurementSnapEnabled,
+                                onXCursor1Drag:
+                                    vm.xMeasurementEnabled
+                                        ? vm.setXCursor1
+                                        : null,
+                                onXCursor2Drag:
+                                    vm.xMeasurementEnabled
+                                        ? vm.setXCursor2
+                                        : null,
+                                onYCursor1Drag:
+                                    vm.yMeasurementEnabled
+                                        ? vm.setYCursor1
+                                        : null,
+                                onYCursor2Drag:
+                                    vm.yMeasurementEnabled
+                                        ? vm.setYCursor2
+                                        : null,
                                 child: plotSurface,
                               ),
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: LayoutBuilder(
+                                    builder:
+                                        (context, overlayConstraints) => Stack(
+                                          children: _buildObservationWidgets(
+                                            context,
+                                            vm,
+                                            renderViewport,
+                                            Size(
+                                              overlayConstraints.maxWidth,
+                                              overlayConstraints.maxHeight,
+                                            ),
+                                          ),
+                                        ),
+                                  ),
+                                ),
+                              ),
+                              if (vm.measurementText != null)
+                                _buildMeasurementBox(context, vm),
                               if (_legendVisible) _buildLegendBox(context, vm),
                               if (_liveValuesVisible)
                                 _buildLiveValuesBox(context, vm),
@@ -406,8 +574,13 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: Text(
                   '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
-                  '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz',
+                  '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
+                  '内存 ${_formatBytes(vm.estimatedHistoryBytes)} / '
+                  '${vm.historyMemoryLimitMiB} MiB'
+                  '${vm.retentionLimitReached ? '  已达上限' : ''}',
                   style: kPageStatusBarTextStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -589,6 +762,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       initialRight: 12,
       initialTop: 12,
       borderColor: Colors.teal.withValues(alpha: 0.55),
+      opacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 96, maxWidth: 320),
         child: Column(
@@ -639,6 +815,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       initialRight: 12,
       initialTop: _legendVisible ? 150 : 12,
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
+      opacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 120, maxWidth: 280),
         child: Column(
@@ -751,24 +930,699 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     );
   }
 
-  Future<void> _showPlotSettings(BuildContext context) {
+  void _addObservation(ProbePlotViewModel vm) {
+    if (vm.observationClickToPlace) {
+      vm.startObservationPlacement();
+    } else {
+      vm.addObservation();
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+    return '$bytes B';
+  }
+
+  double _plotFontSize(ProbePlotViewModel vm, double base) {
+    return (base + 1 + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+  }
+
+  Widget _buildMeasurementBox(BuildContext context, ProbePlotViewModel vm) {
+    return _ProbeDraggableInfoBox(
+      key: const ValueKey('probe-plot-measurement-box'),
+      initialRight: 12,
+      initialTop: 12,
+      borderColor: Colors.blue.withValues(alpha: 0.55),
+      opacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
+      child: Text(
+        vm.measurementText!,
+        style: TextStyle(
+          fontFamily: 'SarasaUiSC',
+          fontSize: _plotFontSize(vm, 12),
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildObservationWidgets(
+    BuildContext context,
+    ProbePlotViewModel vm,
+    PlotViewport viewport,
+    Size size,
+  ) {
+    final widgets = <Widget>[];
+    final plotTop = viewport.marginTop;
+    final plotBottom = size.height - viewport.marginBottom;
+    final plotLeft = viewport.marginLeft;
+    final plotRight = size.width - viewport.marginRight;
+
+    void appendObservation(
+      PlotObservation observation,
+      String label,
+      double alpha,
+    ) {
+      final sx = viewport.dataToScreenX(observation.x, size.width);
+      if (sx < plotLeft || sx > plotRight) return;
+      widgets.add(
+        Positioned(
+          left: sx - 5,
+          top: plotTop,
+          bottom: viewport.marginBottom,
+          child: SizedBox(
+            width: 10,
+            child: Center(
+              child: Container(
+                width: 1,
+                color: Colors.amber.withValues(alpha: alpha),
+              ),
+            ),
+          ),
+        ),
+      );
+      widgets.add(
+        Positioned(
+          left: (sx - 22).clamp(plotLeft, plotRight - 44).toDouble(),
+          top: (plotTop - 24).clamp(0, plotBottom).toDouble(),
+          child: Container(
+            width: 44,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: alpha),
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: Colors.black54, width: 0.5),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: _plotFontSize(vm, 10),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    for (var index = 0; index < vm.observations.length; index++) {
+      appendObservation(vm.observations[index], 'O${index + 1}', 0.9);
+    }
+    final preview = vm.observationPreview;
+    if (vm.observationPlacementActive && preview != null) {
+      appendObservation(preview, 'O${vm.observations.length + 1}', 0.65);
+    }
+    return widgets;
+  }
+
+  Future<void> _showObservationManager(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) {
     return showDialog<void>(
       context: context,
       builder:
-          (context) => AlertDialog(
-            title: const Text('探针绘图设置'),
-            content: const SizedBox(
-              width: 360,
-              child: Text('暂无可配置的绘图参数。后续仅在此处提供绘图显示相关设置。'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('关闭'),
-              ),
-            ],
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.plot.observationManage),
+                  content: SizedBox(
+                    width: 520,
+                    height: 360,
+                    child:
+                        vm.observations.isEmpty
+                            ? const Center(child: Text('暂无观察'))
+                            : ListView.separated(
+                              itemCount: vm.observations.length,
+                              separatorBuilder:
+                                  (_, _) => const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final observation = vm.observations[index];
+                                return ListTile(
+                                  dense: true,
+                                  leading: Text(
+                                    'O${index + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.amber,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  title: TextFormField(
+                                    initialValue: observation.note,
+                                    decoration: InputDecoration(
+                                      hintText: '备注',
+                                      isDense: true,
+                                      suffixText:
+                                          'X=${observation.x.toStringAsFixed(0)}',
+                                    ),
+                                    onChanged:
+                                        (value) => vm.updateObservationNote(
+                                          index,
+                                          value,
+                                        ),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: '定位',
+                                        icon: const Icon(Icons.my_location),
+                                        onPressed: () {
+                                          vm.jumpToObservation(index);
+                                          Navigator.pop(dialogContext);
+                                        },
+                                      ),
+                                      IconButton(
+                                        tooltip:
+                                            observation.locked ? '解除锁定' : '锁定',
+                                        icon: Icon(
+                                          observation.locked
+                                              ? Icons.lock
+                                              : Icons.lock_open,
+                                        ),
+                                        onPressed: () {
+                                          vm.setObservationLocked(
+                                            index,
+                                            !observation.locked,
+                                          );
+                                          setDialogState(() {});
+                                        },
+                                      ),
+                                      IconButton(
+                                        tooltip: '删除',
+                                        icon: const Icon(Icons.delete_outline),
+                                        onPressed: () {
+                                          vm.removeObservation(index);
+                                          setDialogState(() {});
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: Text(AppStrings.common.close),
+                    ),
+                  ],
+                ),
           ),
     );
+  }
+
+  Future<Color?> _chooseMeasurementColor(BuildContext context, Color current) {
+    final colors = <Color>[
+      Colors.blue,
+      Colors.lightBlue,
+      Colors.cyan,
+      Colors.teal,
+      Colors.green,
+      Colors.lime,
+      Colors.amber,
+      Colors.orange,
+      Colors.red,
+      Colors.pink,
+      Colors.purple,
+      Colors.white,
+      Colors.black,
+    ];
+    return showDialog<Color>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('选择颜色'),
+            content: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final color in colors)
+                  InkWell(
+                    onTap: () => Navigator.pop(dialogContext, color),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color:
+                              color == current
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Colors.grey,
+                          width: color == current ? 3 : 1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+    );
+  }
+
+  Future<void> _showMeasurementSettings(
+    BuildContext context,
+    ProbePlotViewModel vm, {
+    required bool isX,
+  }) async {
+    var line1Color =
+        (isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color) ??
+        (isX ? Colors.blue : Colors.red);
+    var line2Color =
+        (isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color) ??
+        (isX ? Colors.lightBlue : Colors.purple);
+    var line1Opacity =
+        isX ? vm.xMeasurementLine1Opacity : vm.yMeasurementLine1Opacity;
+    var line2Opacity =
+        isX ? vm.xMeasurementLine2Opacity : vm.yMeasurementLine2Opacity;
+    var snapEnabled = vm.yMeasurementSnapEnabled;
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              Widget lineEditor(
+                String label,
+                Color color,
+                double opacity,
+                ValueChanged<Color> onColor,
+                ValueChanged<double> onOpacity,
+              ) {
+                return Row(
+                  children: [
+                    SizedBox(width: 34, child: Text(label)),
+                    InkWell(
+                      onTap: () async {
+                        final selected = await _chooseMeasurementColor(
+                          dialogContext,
+                          color,
+                        );
+                        if (selected != null) {
+                          setDialogState(() => onColor(selected));
+                        }
+                      },
+                      child: Container(
+                        width: 42,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    const Text('不透明度'),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 82,
+                      child: TextFormField(
+                        initialValue: (opacity * 100).round().toString(),
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                        ],
+                        decoration: secondaryDialogFieldDecoration(
+                          suffixText: '%',
+                        ),
+                        onChanged: (text) {
+                          final value = int.tryParse(text);
+                          if (value != null) {
+                            onOpacity(value.clamp(0, 100) / 100);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              return AlertDialog(
+                title: Text(isX ? 'Delta X 设置' : 'Delta Y 设置'),
+                content: SizedBox(
+                  width: 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      lineEditor(
+                        isX ? 'X1' : 'Y1',
+                        line1Color,
+                        line1Opacity,
+                        (value) => line1Color = value,
+                        (value) => line1Opacity = value,
+                      ),
+                      const SizedBox(height: 12),
+                      lineEditor(
+                        isX ? 'X2' : 'Y2',
+                        line2Color,
+                        line2Opacity,
+                        (value) => line2Color = value,
+                        (value) => line2Opacity = value,
+                      ),
+                      if (!isX) ...[
+                        const Divider(height: 24),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: Text(AppStrings.plot.measurementSnap),
+                          value: snapEnabled,
+                          onChanged:
+                              (value) =>
+                                  setDialogState(() => snapEnabled = value),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(AppStrings.common.cancel),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      if (isX) {
+                        vm.setXMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                      } else {
+                        vm.setYMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                        vm.setYMeasurementSnapEnabled(snapEnabled);
+                      }
+                      Navigator.pop(dialogContext);
+                    },
+                    child: Text(AppStrings.common.save),
+                  ),
+                ],
+              );
+            },
+          ),
+    );
+  }
+
+  Future<void> _showPlotSettings(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) async {
+    final windowController = TextEditingController(
+      text: vm.windowPointLimit.toString(),
+    );
+    final memoryController = TextEditingController(
+      text: vm.historyMemoryLimitMiB.toString(),
+    );
+    final opacityController = TextEditingController(
+      text: (vm.floatingPanelOpacity * 100).round().toString(),
+    );
+    final followController = TextEditingController(
+      text: (vm.followPositionRatio * 100).round().toString(),
+    );
+    var quality = vm.lodQuality;
+    var grid = vm.showGrid;
+    var density = vm.gridDensity;
+    var background = vm.backgroundStyle;
+    var fontDelta = vm.plotFontSizeDelta;
+    var fontBold = vm.plotFontBold;
+    var clickToPlace = vm.observationClickToPlace;
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: const Text('探针绘图设置'),
+                  content: SizedBox(
+                    width: 460,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _ProbeSettingRow(
+                            label: '精确窗口点数上限',
+                            child: SizedBox(
+                              width: 128,
+                              child: TextField(
+                                controller: windowController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: '点',
+                                ),
+                              ),
+                            ),
+                          ),
+                          _ProbeSettingRow(
+                            label: '历史内存上限',
+                            child: SizedBox(
+                              width: 128,
+                              child: TextField(
+                                controller: memoryController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: 'MiB',
+                                ),
+                              ),
+                            ),
+                          ),
+                          _ProbeSettingRow(
+                            label: '绘图质量',
+                            child: NoAnimDropdown<PlotLodQuality>(
+                              value: quality,
+                              hint: '绘图质量',
+                              items: const [
+                                DropdownMenuItem(
+                                  value: PlotLodQuality.performance,
+                                  child: Text('性能优先'),
+                                ),
+                                DropdownMenuItem(
+                                  value: PlotLodQuality.balanced,
+                                  child: Text('均衡'),
+                                ),
+                                DropdownMenuItem(
+                                  value: PlotLodQuality.quality,
+                                  child: Text('质量优先'),
+                                ),
+                              ],
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => quality = value ?? quality,
+                                  ),
+                            ),
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: const Text('显示网格'),
+                            value: grid,
+                            onChanged:
+                                (value) => setDialogState(() => grid = value),
+                          ),
+                          _ProbeSettingRow(
+                            label: '网格密度',
+                            child: NoAnimDropdown<GridDensity>(
+                              value: density,
+                              hint: '网格密度',
+                              items: const [
+                                DropdownMenuItem(
+                                  value: GridDensity.sparse,
+                                  child: Text('稀疏'),
+                                ),
+                                DropdownMenuItem(
+                                  value: GridDensity.normal,
+                                  child: Text('普通'),
+                                ),
+                                DropdownMenuItem(
+                                  value: GridDensity.dense,
+                                  child: Text('密集'),
+                                ),
+                              ],
+                              onChanged:
+                                  grid
+                                      ? (value) => setDialogState(
+                                        () => density = value ?? density,
+                                      )
+                                      : null,
+                            ),
+                          ),
+                          _ProbeSettingRow(
+                            label: '绘图背景',
+                            child: NoAnimDropdown<PlotBackgroundStyle>(
+                              value: background,
+                              hint: '绘图背景',
+                              items: const [
+                                DropdownMenuItem(
+                                  value: PlotBackgroundStyle.light,
+                                  child: Text('浅色'),
+                                ),
+                                DropdownMenuItem(
+                                  value: PlotBackgroundStyle.dark,
+                                  child: Text('深色'),
+                                ),
+                              ],
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => background = value ?? background,
+                                  ),
+                            ),
+                          ),
+                          _ProbeSettingRow(
+                            label: '悬浮窗不透明度',
+                            child: SizedBox(
+                              width: 92,
+                              child: TextField(
+                                controller: opacityController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: '%',
+                                ),
+                              ),
+                            ),
+                          ),
+                          _ProbeSettingRow(
+                            label: '绘图字体大小',
+                            child: NoAnimDropdown<int>(
+                              value: fontDelta,
+                              hint: '字体大小',
+                              items: [
+                                for (var value = -3; value <= 6; value++)
+                                  DropdownMenuItem(
+                                    value: value,
+                                    child: Text(
+                                      value == 0
+                                          ? '默认'
+                                          : value > 0
+                                          ? '+$value'
+                                          : '$value',
+                                    ),
+                                  ),
+                              ],
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => fontDelta = value ?? fontDelta,
+                                  ),
+                            ),
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: const Text('绘图字体粗体'),
+                            value: fontBold,
+                            onChanged:
+                                (value) =>
+                                    setDialogState(() => fontBold = value),
+                          ),
+                          _ProbeSettingRow(
+                            label: '跟随位置',
+                            child: SizedBox(
+                              width: 92,
+                              child: TextField(
+                                controller: followController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                ],
+                                decoration: secondaryDialogFieldDecoration(
+                                  suffixText: '%',
+                                ),
+                              ),
+                            ),
+                          ),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            dense: true,
+                            title: const Text('观察先跟随鼠标再点击固定'),
+                            value: clickToPlace,
+                            onChanged:
+                                (value) =>
+                                    setDialogState(() => clickToPlace = value),
+                          ),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '当前估算占用：${_formatBytes(vm.estimatedHistoryBytes)}；'
+                              '达到历史内存上限时自动停止采集并保留已有图像。',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: Text(AppStrings.common.cancel),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        vm.setWindowPointLimit(
+                          int.tryParse(windowController.text) ??
+                              vm.windowPointLimit,
+                        );
+                        vm.setHistoryMemoryLimitMiB(
+                          int.tryParse(memoryController.text) ??
+                              vm.historyMemoryLimitMiB,
+                        );
+                        vm.setLodQuality(quality);
+                        vm.setShowGrid(grid);
+                        vm.setGridDensity(density);
+                        vm.setBackgroundStyle(background);
+                        vm.setFloatingPanelOpacity(
+                          (int.tryParse(opacityController.text) ?? 90).clamp(
+                                0,
+                                100,
+                              ) /
+                              100,
+                        );
+                        vm.setPlotFontSizeDelta(fontDelta);
+                        vm.setPlotFontBold(fontBold);
+                        vm.setFollowPositionRatio(
+                          (int.tryParse(followController.text) ?? 90).clamp(
+                                50,
+                                95,
+                              ) /
+                              100,
+                        );
+                        vm.setObservationClickToPlace(clickToPlace);
+                        Navigator.of(dialogContext).pop();
+                      },
+                      child: Text(AppStrings.common.save),
+                    ),
+                  ],
+                ),
+          ),
+    );
+    windowController.dispose();
+    memoryController.dispose();
+    opacityController.dispose();
+    followController.dispose();
   }
 }
 
@@ -1477,18 +2331,46 @@ class _HssLabeledControl extends StatelessWidget {
   }
 }
 
+/// 探针绘图设置中统一的“名称 + 控件”行，避免输入框和下拉框尺寸不一致。
+class _ProbeSettingRow extends StatelessWidget {
+  const _ProbeSettingRow({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          const SizedBox(width: 16),
+          SizedBox(width: 170, child: child),
+        ],
+      ),
+    );
+  }
+}
+
 class _ProbeDraggableInfoBox extends StatefulWidget {
   const _ProbeDraggableInfoBox({
     super.key,
     required this.initialRight,
     required this.initialTop,
     required this.borderColor,
+    required this.opacity,
+    required this.fontSizeDelta,
+    required this.fontBold,
     required this.child,
   });
 
   final double initialRight;
   final double initialTop;
   final Color borderColor;
+  final double opacity;
+  final int fontSizeDelta;
+  final bool fontBold;
   final Widget child;
 
   @override
@@ -1531,11 +2413,19 @@ class _ProbeDraggableInfoBoxState extends State<_ProbeDraggableInfoBox> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.9),
+            color: Theme.of(
+              context,
+            ).colorScheme.surface.withValues(alpha: widget.opacity),
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: widget.borderColor),
           ),
-          child: widget.child,
+          child: DefaultTextStyle.merge(
+            style: TextStyle(
+              fontSize: (13 + widget.fontSizeDelta).clamp(7, 25).toDouble(),
+              fontWeight: widget.fontBold ? FontWeight.bold : null,
+            ),
+            child: widget.child,
+          ),
         ),
       ),
     );

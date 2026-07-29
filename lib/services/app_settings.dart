@@ -153,6 +153,23 @@ class AppSettings {
   /// 最新点跟随位置比例，范围 0.50~0.95。
   double followPositionRatio = 0.9;
 
+  // ========== 探针绘图设置 ==========
+  /// 探针绘图同时保留的精确点窗口，范围 10000~250000。
+  int probePlotWindowPointLimit = 100000;
+
+  /// 探针绘图历史内存预算，单位 MiB，范围 64~2048。
+  int probePlotHistoryMemoryLimitMiB = 256;
+
+  String probePlotLodQuality = 'quality';
+  bool probePlotShowGrid = true;
+  String probePlotGridDensity = 'normal';
+  String probePlotBackground = 'light';
+  double probePlotFloatingPanelOpacity = 0.9;
+  int probePlotFontSizeDelta = 0;
+  bool probePlotFontBold = false;
+  double probePlotFollowPositionRatio = 0.9;
+  bool probePlotObservationClickToPlace = false;
+
   /// Y 轴自适应数据显示占比，范围 0.50~0.95。
   double yFitDisplayRatio = 0.8;
 
@@ -407,6 +424,17 @@ class AppSettings {
     randomFrequency = 1000.0;
     followEnabled = false;
     followPositionRatio = 0.9;
+    probePlotWindowPointLimit = 100000;
+    probePlotHistoryMemoryLimitMiB = 256;
+    probePlotLodQuality = 'quality';
+    probePlotShowGrid = true;
+    probePlotGridDensity = 'normal';
+    probePlotBackground = 'light';
+    probePlotFloatingPanelOpacity = 0.9;
+    probePlotFontSizeDelta = 0;
+    probePlotFontBold = false;
+    probePlotFollowPositionRatio = 0.9;
+    probePlotObservationClickToPlace = false;
     yFitDisplayRatio = 0.8;
     mathChannels = MathChannelConfig.createDefaults();
     parserType = 'zobow';
@@ -513,8 +541,10 @@ class AppSettings {
       );
       return;
     }
-    final json = result.snapshot;
-    if (json == null) return;
+    final sourceSnapshot = result.snapshot;
+    if (sourceSnapshot == null) return;
+    final requiresFormatMigration = sourceSnapshot['schemaVersion'] != 2;
+    final json = _flattenSettingsSnapshot(sourceSnapshot);
     if (result.recoveredFromBackup) {
       _recoveryNotice = '应用设置文件损坏，已自动恢复上一份有效设置。';
       AppLogger().warning(
@@ -664,6 +694,38 @@ class AppSettings {
             0.5,
             0.95,
           );
+      probePlotWindowPointLimit =
+          ((json['probePlotWindowPointLimit'] as num?)?.toInt() ?? 100000)
+              .clamp(10000, PlotConfiguration.maxMaterializedPointCount)
+              .toInt();
+      probePlotHistoryMemoryLimitMiB =
+          ((json['probePlotHistoryMemoryLimitMiB'] as num?)?.toInt() ?? 256)
+              .clamp(64, 2048)
+              .toInt();
+      probePlotLodQuality = switch (json['probePlotLodQuality'] as String?) {
+        'performance' => 'performance',
+        'balanced' => 'balanced',
+        _ => 'quality',
+      };
+      probePlotShowGrid = json['probePlotShowGrid'] as bool? ?? true;
+      probePlotGridDensity = switch (json['probePlotGridDensity'] as String?) {
+        'sparse' => 'sparse',
+        'dense' => 'dense',
+        _ => 'normal',
+      };
+      probePlotBackground =
+          json['probePlotBackground'] == 'dark' ? 'dark' : 'light';
+      probePlotFloatingPanelOpacity =
+          ((json['probePlotFloatingPanelOpacity'] as num?)?.toDouble() ?? 0.9)
+              .clamp(0.0, 1.0);
+      probePlotFontSizeDelta =
+          ((json['probePlotFontSizeDelta'] as num?)?.toInt() ?? 0).clamp(-3, 6);
+      probePlotFontBold = json['probePlotFontBold'] as bool? ?? false;
+      probePlotFollowPositionRatio =
+          ((json['probePlotFollowPositionRatio'] as num?)?.toDouble() ?? 0.9)
+              .clamp(0.5, 0.95);
+      probePlotObservationClickToPlace =
+          json['probePlotObservationClickToPlace'] as bool? ?? false;
       yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.8)
           .clamp(0.5, 0.95);
       mathChannels = MathChannelConfig.normalizeList(json['mathChannels']);
@@ -862,7 +924,8 @@ class AppSettings {
       yMax =
           (json['yMax'] as num?)?.toDouble() ??
           PlotConfiguration.viewportDefaultYMax;
-      if (storedMaxVisiblePoints != maxVisiblePoints) {
+      if (requiresFormatMigration ||
+          storedMaxVisiblePoints != maxVisiblePoints) {
         await save();
       }
     } catch (error, stackTrace) {
@@ -878,6 +941,7 @@ class AppSettings {
   }
 
   static void _validateSettingsSnapshot(Map<String, dynamic> json) {
+    final flattened = _flattenSettingsSnapshot(json);
     const stringKeys = <String>{
       'lastPort',
       'lastMainPage',
@@ -885,6 +949,9 @@ class AppSettings {
       'plotLodQuality',
       'gridDensity',
       'plotBackground',
+      'probePlotLodQuality',
+      'probePlotGridDensity',
+      'probePlotBackground',
       'parserType',
       'sendProtocolType',
       'receiveCustomProtocolId',
@@ -935,6 +1002,9 @@ class AppSettings {
       'observationClickToPlace',
       'useRandomSource',
       'followEnabled',
+      'probePlotShowGrid',
+      'probePlotFontBold',
+      'probePlotObservationClickToPlace',
       'rProtocolLooseChannelSettings',
       'autoUpdateCheckEnabled',
       'disableNotifications',
@@ -957,6 +1027,7 @@ class AppSettings {
       'parity',
       'refreshFps',
       'plotFontSizeDelta',
+      'probePlotFontSizeDelta',
     };
     const numberKeys = <String>{
       'maxVisiblePoints',
@@ -978,6 +1049,10 @@ class AppSettings {
       'plotLiveValuesPanelTop',
       'randomFrequency',
       'followPositionRatio',
+      'probePlotWindowPointLimit',
+      'probePlotHistoryMemoryLimitMiB',
+      'probePlotFloatingPanelOpacity',
+      'probePlotFollowPositionRatio',
       'yFitDisplayRatio',
       'justFloatChannelCount',
       'rawDataDisplayLineLimit',
@@ -1009,7 +1084,7 @@ class AppSettings {
       'rttTerminalLabels',
     };
 
-    for (final entry in json.entries) {
+    for (final entry in flattened.entries) {
       final value = entry.value;
       if (value == null) continue;
       final valid = switch (entry.key) {
@@ -1026,19 +1101,19 @@ class AppSettings {
     }
 
     // 在修改实例字段前执行所有可能涉及嵌套结构的归一化。
-    MathChannelConfig.normalizeList(json['mathChannels']);
-    _normalizeStringList(json['rChannelAddresses']);
-    _normalizeZobowChannelIds(json['zobowChannelIds']);
-    _normalizeChannelPresetBindings(json['channelPresetBindings']);
-    _normalizeRttTerminalColors(json['rttTerminalColors']);
-    _normalizeRttTerminalLabels(json['rttTerminalLabels']);
+    MathChannelConfig.normalizeList(flattened['mathChannels']);
+    _normalizeStringList(flattened['rChannelAddresses']);
+    _normalizeZobowChannelIds(flattened['zobowChannelIds']);
+    _normalizeChannelPresetBindings(flattened['channelPresetBindings']);
+    _normalizeRttTerminalColors(flattened['rttTerminalColors']);
+    _normalizeRttTerminalLabels(flattened['rttTerminalLabels']);
     _normalizeDataTypeList(
-      json['zobowChannelTypes'],
+      flattened['zobowChannelTypes'],
       length: ParserConfig.maxZobowChannelCount,
       fallback: DataType.int16,
     );
     _normalizeDataTypeList(
-      json['fixedFrameChannelTypes'],
+      flattened['fixedFrameChannelTypes'],
       length: SendProtocolConfig.maxChannelCount,
       fallback: DataType.uint16,
     );
@@ -1077,7 +1152,9 @@ class AppSettings {
     _applyDefaults();
   }
 
-  Map<String, dynamic> _toJson() => <String, dynamic>{
+  Map<String, dynamic> _toJson() => _nestSettingsSnapshot(_toFlatJson());
+
+  Map<String, dynamic> _toFlatJson() => <String, dynamic>{
     // 串口设置
     'lastPort': lastPort,
     'baudRate': baudRate,
@@ -1127,6 +1204,17 @@ class AppSettings {
     'randomFrequency': randomFrequency,
     'followEnabled': followEnabled,
     'followPositionRatio': followPositionRatio,
+    'probePlotWindowPointLimit': probePlotWindowPointLimit,
+    'probePlotHistoryMemoryLimitMiB': probePlotHistoryMemoryLimitMiB,
+    'probePlotLodQuality': probePlotLodQuality,
+    'probePlotShowGrid': probePlotShowGrid,
+    'probePlotGridDensity': probePlotGridDensity,
+    'probePlotBackground': probePlotBackground,
+    'probePlotFloatingPanelOpacity': probePlotFloatingPanelOpacity,
+    'probePlotFontSizeDelta': probePlotFontSizeDelta,
+    'probePlotFontBold': probePlotFontBold,
+    'probePlotFollowPositionRatio': probePlotFollowPositionRatio,
+    'probePlotObservationClickToPlace': probePlotObservationClickToPlace,
     'yFitDisplayRatio': yFitDisplayRatio,
     'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
     'parserType': parserType,
@@ -1161,7 +1249,6 @@ class AppSettings {
     'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
     'rawDataShellTheme': rawDataShellTheme,
     'rawDataShellCursor': rawDataShellCursor,
-    'shellEnabled': rawDataShellEnabled,
     'shellEncoding': shellEncoding,
     'shellLineEnding': shellLineEnding,
     'shellLocalEcho': shellLocalEcho,
@@ -1206,6 +1293,373 @@ class AppSettings {
     'yMin': yMin,
     'yMax': yMax,
   };
+
+  /// settings.json 第二版结构：先按全局和功能分组，再按功能内部用途分组。
+  ///
+  /// Map 的键仍使用运行时旧字段名，值是新 JSON 中的完整路径。读取时统一
+  /// 展平，业务字段无需感知持久化结构；保存时反向构造嵌套对象。
+  static const Map<String, List<String>> _settingsPaths = {
+    // 全局
+    'lastMainPage': ['global', 'navigation', 'lastPage'],
+    'mainTabOrder': ['global', 'navigation', 'pageOrder'],
+    'rawDataShellEnabled': ['global', 'navigation', 'shellPageEnabled'],
+    'rttPageEnabled': ['global', 'navigation', 'probePagesEnabled'],
+    'disableNotifications': ['global', 'behavior', 'notificationsDisabled'],
+    'diagnosticLoggingEnabled': ['global', 'behavior', 'diagnosticLogging'],
+    'connectionShortcutsEnabled': ['global', 'behavior', 'connectionShortcuts'],
+    'crashDumpEnabled': ['global', 'behavior', 'crashDump'],
+    'autoUpdateCheckEnabled': ['global', 'updates', 'automaticCheck'],
+    'updateChannel': ['global', 'updates', 'channel'],
+    'updateSource': ['global', 'updates', 'source'],
+
+    // 串口连接
+    'lastPort': ['serial', 'connection', 'lastPort'],
+    'baudRate': ['serial', 'connection', 'baudRate'],
+    'dataBits': ['serial', 'connection', 'dataBits'],
+    'stopBits': ['serial', 'connection', 'stopBits'],
+    'parity': ['serial', 'connection', 'parity'],
+    'rts': ['serial', 'connection', 'rts'],
+    'dtr': ['serial', 'connection', 'dtr'],
+
+    // 数据收发
+    'rawDataDisplayLineLimit': ['rawData', 'display', 'lineLimit'],
+    'rawDataAutoLineBreakIntervalMs': [
+      'rawData',
+      'display',
+      'autoLineBreakIntervalMs',
+    ],
+    'rawDataEncoding': ['rawData', 'display', 'encoding'],
+    'rawMultiSendProfileId': ['rawData', 'profiles', 'multiSendProfileId'],
+    'rawDataShellMode': ['rawData', 'legacyShell', 'mode'],
+
+    // Shell
+    'rawDataShellInputMode': ['shell', 'terminal', 'inputMode'],
+    'rawDataTerminalFontSize': ['shell', 'terminal', 'fontSize'],
+    'rawDataTerminalFontFamily': ['shell', 'terminal', 'fontFamily'],
+    'rawDataShellTheme': ['shell', 'terminal', 'theme'],
+    'rawDataShellCursor': ['shell', 'terminal', 'cursor'],
+    'shellEncoding': ['shell', 'terminal', 'encoding'],
+    'shellLineEnding': ['shell', 'terminal', 'lineEnding'],
+    'shellLocalEcho': ['shell', 'terminal', 'localEcho'],
+    'shellScrollbackLines': ['shell', 'terminal', 'scrollbackLines'],
+    'ymodemSaveDirectoryPolicy': [
+      'shell',
+      'fileTransfer',
+      'saveDirectoryPolicy',
+    ],
+
+    // 串口绘图：性能与容量
+    'refreshFps': ['serialPlot', 'performance', 'refreshFps'],
+    'maxVisiblePoints': ['serialPlot', 'performance', 'windowPointLimit'],
+    'plotHistoryMemoryLimitGiB': [
+      'serialPlot',
+      'performance',
+      'historyMemoryLimitGiB',
+    ],
+    'discardInitialPacketCount': [
+      'serialPlot',
+      'performance',
+      'discardInitialPacketCount',
+    ],
+    'plotReceiveAggregationEnabled': [
+      'serialPlot',
+      'performance',
+      'receiveAggregation',
+    ],
+    'plotLodQuality': ['serialPlot', 'performance', 'lodQuality'],
+
+    // 串口绘图：外观
+    'plotFontSizeDelta': ['serialPlot', 'appearance', 'fontSizeDelta'],
+    'plotFontBold': ['serialPlot', 'appearance', 'fontBold'],
+    'showGrid': ['serialPlot', 'appearance', 'showGrid'],
+    'gridDensity': ['serialPlot', 'appearance', 'gridDensity'],
+    'plotBackground': ['serialPlot', 'appearance', 'background'],
+    'floatingPanelOpacity': [
+      'serialPlot',
+      'appearance',
+      'floatingPanelOpacity',
+    ],
+    'plotLegendPanelRight': ['serialPlot', 'appearance', 'legendPanelRight'],
+    'plotLegendPanelTop': ['serialPlot', 'appearance', 'legendPanelTop'],
+    'plotLiveValuesPanelRight': [
+      'serialPlot',
+      'appearance',
+      'liveValuesPanelRight',
+    ],
+    'plotLiveValuesPanelTop': [
+      'serialPlot',
+      'appearance',
+      'liveValuesPanelTop',
+    ],
+
+    // 串口绘图：交互和工具栏
+    'keepPlotOnRestart': ['serialPlot', 'interaction', 'keepOnRestart'],
+    'snapHighlightEnabled': [
+      'serialPlot',
+      'interaction',
+      'snapHighlightEnabled',
+    ],
+    'snapHighlightDiameter': [
+      'serialPlot',
+      'interaction',
+      'snapHighlightDiameter',
+    ],
+    'snapHighlightColorMode': [
+      'serialPlot',
+      'interaction',
+      'snapHighlightColorMode',
+    ],
+    'observationClickToPlace': [
+      'serialPlot',
+      'interaction',
+      'observationClickToPlace',
+    ],
+    'followEnabled': ['serialPlot', 'interaction', 'followEnabled'],
+    'followPositionRatio': ['serialPlot', 'interaction', 'followPositionRatio'],
+    'yFitDisplayRatio': ['serialPlot', 'interaction', 'yFitDisplayRatio'],
+    'statsToolbarEnabled': ['serialPlot', 'toolbar', 'statistics'],
+    'triggerToolbarEnabled': ['serialPlot', 'toolbar', 'trigger'],
+    'previewToolbarEnabled': ['serialPlot', 'toolbar', 'locator'],
+
+    // Delta 测量样式由串口绘图与探针绘图共用。
+    'xMeasurementLine1Color': [
+      'global',
+      'plotMeasurements',
+      'deltaX',
+      'line1Color',
+    ],
+    'xMeasurementLine2Color': [
+      'global',
+      'plotMeasurements',
+      'deltaX',
+      'line2Color',
+    ],
+    'xMeasurementLine1Opacity': [
+      'global',
+      'plotMeasurements',
+      'deltaX',
+      'line1Opacity',
+    ],
+    'xMeasurementLine2Opacity': [
+      'global',
+      'plotMeasurements',
+      'deltaX',
+      'line2Opacity',
+    ],
+    'yMeasurementLine1Color': [
+      'global',
+      'plotMeasurements',
+      'deltaY',
+      'line1Color',
+    ],
+    'yMeasurementLine2Color': [
+      'global',
+      'plotMeasurements',
+      'deltaY',
+      'line2Color',
+    ],
+    'yMeasurementLine1Opacity': [
+      'global',
+      'plotMeasurements',
+      'deltaY',
+      'line1Opacity',
+    ],
+    'yMeasurementLine2Opacity': [
+      'global',
+      'plotMeasurements',
+      'deltaY',
+      'line2Opacity',
+    ],
+    'yMeasurementSnapEnabled': [
+      'global',
+      'plotMeasurements',
+      'deltaY',
+      'snapEnabled',
+    ],
+
+    // 串口绘图：数据源、协议、通道和视口
+    'useRandomSource': ['serialPlot', 'dataSource', 'randomEnabled'],
+    'randomFrequency': ['serialPlot', 'dataSource', 'randomFrequency'],
+    'parserType': ['serialPlot', 'protocols', 'receiveType'],
+    'sendProtocolType': ['serialPlot', 'protocols', 'sendType'],
+    'receiveCustomProtocolId': ['serialPlot', 'protocols', 'receiveCustomId'],
+    'sendCustomProtocolId': ['serialPlot', 'protocols', 'sendCustomId'],
+    'rProtocolLooseChannelSettings': [
+      'serialPlot',
+      'protocols',
+      'rProtocolLooseChannels',
+    ],
+    'justFloatChannelCount': [
+      'serialPlot',
+      'protocols',
+      'justFloatChannelCount',
+    ],
+    'zobowProfileId': ['serialPlot', 'profiles', 'zobowProfileId'],
+    'rProfileId': ['serialPlot', 'profiles', 'rProtocolProfileId'],
+    'zobowPresetViewMode': ['serialPlot', 'profiles', 'zobowPresetViewMode'],
+    'mathChannels': ['serialPlot', 'channels', 'math'],
+    'rChannelAddresses': ['serialPlot', 'channels', 'rProtocolAddresses'],
+    'zobowChannelIds': ['serialPlot', 'channels', 'zobowIds'],
+    'zobowChannelTypes': ['serialPlot', 'channels', 'zobowTypes'],
+    'channelPresetBindings': ['serialPlot', 'channels', 'presetBindings'],
+    'fixedFrameChannelTypes': ['serialPlot', 'channels', 'fixedFrameTypes'],
+    'xMin': ['serialPlot', 'viewport', 'xMin'],
+    'xMax': ['serialPlot', 'viewport', 'xMax'],
+    'yMin': ['serialPlot', 'viewport', 'yMin'],
+    'yMax': ['serialPlot', 'viewport', 'yMax'],
+
+    // 探针绘图
+    'probePlotWindowPointLimit': [
+      'probePlot',
+      'performance',
+      'windowPointLimit',
+    ],
+    'probePlotHistoryMemoryLimitMiB': [
+      'probePlot',
+      'performance',
+      'historyMemoryLimitMiB',
+    ],
+    'probePlotLodQuality': ['probePlot', 'performance', 'lodQuality'],
+    'probePlotShowGrid': ['probePlot', 'appearance', 'showGrid'],
+    'probePlotGridDensity': ['probePlot', 'appearance', 'gridDensity'],
+    'probePlotBackground': ['probePlot', 'appearance', 'background'],
+    'probePlotFloatingPanelOpacity': [
+      'probePlot',
+      'appearance',
+      'floatingPanelOpacity',
+    ],
+    'probePlotFontSizeDelta': ['probePlot', 'appearance', 'fontSizeDelta'],
+    'probePlotFontBold': ['probePlot', 'appearance', 'fontBold'],
+    'probePlotFollowPositionRatio': [
+      'probePlot',
+      'interaction',
+      'followPositionRatio',
+    ],
+    'probePlotObservationClickToPlace': [
+      'probePlot',
+      'interaction',
+      'observationClickToPlace',
+    ],
+    'probeRttPollingIntervalMs': ['probePlot', 'rtt', 'pollingIntervalMs'],
+
+    // RTT 与探针连接
+    'rttBackendSelection': ['rtt', 'connection', 'backend'],
+    'rttJlinkExecutablePath': ['rtt', 'connection', 'jlinkExecutable'],
+    'rttOpenocdExecutablePath': ['rtt', 'connection', 'openocdExecutable'],
+    'rttPyocdPythonPath': ['rtt', 'connection', 'pyocdPython'],
+    'rttPyocdCmsisDapVersion': ['rtt', 'connection', 'pyocdCmsisDapVersion'],
+    'rttBuiltinHelperPath': ['rtt', 'connection', 'builtinHelper'],
+    'rttOpenocdInterfaceConfig': [
+      'rtt',
+      'connection',
+      'openocdInterfaceConfig',
+    ],
+    'rttOpenocdTargetConfig': ['rtt', 'connection', 'openocdTargetConfig'],
+    'rttProbeKind': ['rtt', 'connection', 'probeKind'],
+    'rttLastProbeId': ['rtt', 'connection', 'lastProbeId'],
+    'rttTarget': ['rtt', 'connection', 'target'],
+    'rttAutoDetectTarget': ['rtt', 'connection', 'autoDetectTarget'],
+    'rttWireProtocol': ['rtt', 'connection', 'wireProtocol'],
+    'rttClockKhz': ['rtt', 'connection', 'clockKhz'],
+    'rttControlBlockMode': ['rtt', 'controlBlock', 'mode'],
+    'rttControlBlockAddress': ['rtt', 'controlBlock', 'address'],
+    'rttControlBlockRangeStart': ['rtt', 'controlBlock', 'rangeStart'],
+    'rttControlBlockRangeEnd': ['rtt', 'controlBlock', 'rangeEnd'],
+
+    // RTT Viewer
+    'rttViewerPollingIntervalMs': ['rttViewer', 'receive', 'pollingIntervalMs'],
+    'rttEncoding': ['rttViewer', 'display', 'encoding'],
+    'rttDisplayMode': ['rttViewer', 'display', 'mode'],
+    'rttTimestampEnabled': ['rttViewer', 'display', 'timestamp'],
+    'rttAutoScroll': ['rttViewer', 'display', 'autoScroll'],
+    'rttFontFamily': ['rttViewer', 'display', 'fontFamily'],
+    'rttFontSize': ['rttViewer', 'display', 'fontSize'],
+    'rttHistoryLineLimit': ['rttViewer', 'history', 'lineLimit'],
+    'rttTerminalColors': ['rttViewer', 'terminals', 'colors'],
+    'rttTerminalLabels': ['rttViewer', 'terminals', 'labels'],
+  };
+
+  static final Object _missingSettingValue = Object();
+
+  static Map<String, dynamic> _nestSettingsSnapshot(
+    Map<String, dynamic> flattened,
+  ) {
+    final unmapped = flattened.keys
+        .where((key) => !_settingsPaths.containsKey(key))
+        .toList(growable: false);
+    if (unmapped.isNotEmpty) {
+      throw StateError('存在未分组的设置字段：${unmapped.join(', ')}');
+    }
+
+    final result = <String, dynamic>{'schemaVersion': 2};
+    for (final pathEntry in _settingsPaths.entries) {
+      if (!flattened.containsKey(pathEntry.key)) continue;
+      final path = pathEntry.value;
+      Map<String, dynamic> current = result;
+      for (var index = 0; index < path.length - 1; index++) {
+        final segment = path[index];
+        final child = current.putIfAbsent(segment, () => <String, dynamic>{});
+        if (child is! Map<String, dynamic>) {
+          throw StateError('设置分组路径冲突：${path.join('.')}');
+        }
+        current = child;
+      }
+      current[path.last] = flattened[pathEntry.key];
+    }
+    return result;
+  }
+
+  static Map<String, dynamic> _flattenSettingsSnapshot(
+    Map<String, dynamic> snapshot,
+  ) {
+    final schemaVersion = snapshot['schemaVersion'];
+    if (schemaVersion != null && schemaVersion is! int) {
+      throw const FormatException('设置字段 schemaVersion 类型错误');
+    }
+    if (schemaVersion is int && schemaVersion > 2) {
+      throw FormatException('不支持的设置格式版本：$schemaVersion');
+    }
+
+    final flattened = <String, dynamic>{};
+    // 兼容 v1 单层格式，以及用户手工保留的单层字段。
+    for (final key in _settingsPaths.keys) {
+      if (snapshot.containsKey(key)) flattened[key] = snapshot[key];
+    }
+    for (final legacyKey in const [
+      'shellEnabled',
+      'rttPollingIntervalMs',
+      'lineEnding',
+    ]) {
+      if (snapshot.containsKey(legacyKey)) {
+        flattened[legacyKey] = snapshot[legacyKey];
+      }
+    }
+
+    // v2 嵌套字段优先于同名的旧单层字段。
+    for (final entry in _settingsPaths.entries) {
+      final value = _readNestedSetting(snapshot, entry.value);
+      if (!identical(value, _missingSettingValue)) {
+        flattened[entry.key] = value;
+      }
+    }
+    return flattened;
+  }
+
+  static Object? _readNestedSetting(
+    Map<String, dynamic> snapshot,
+    List<String> path,
+  ) {
+    Object? current = snapshot;
+    for (var index = 0; index < path.length; index++) {
+      if (current is! Map) {
+        throw FormatException('设置分组 ${path.take(index).join('.')} 必须为对象');
+      }
+      final segment = path[index];
+      if (!current.containsKey(segment)) return _missingSettingValue;
+      current = current[segment];
+    }
+    return current;
+  }
 
   static List<String> _normalizeStringList(Object? value) {
     final values =
