@@ -7,9 +7,21 @@ import argparse
 import hashlib
 import os
 import shutil
+import sys
 import urllib.request
 import zipfile
 from pathlib import Path
+
+
+def _configure_utf8_output() -> None:
+    """确保 Windows CI 的非 UTF-8 控制台也能输出中文诊断信息。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+_configure_utf8_output()
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
