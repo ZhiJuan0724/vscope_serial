@@ -7,7 +7,8 @@ VScope Serial Windows Release 打包工具
 2. flutter analyze - 静态分析
 3. flutter test - 运行单元测试
 4. 清理旧 Windows 构建目录并执行全新 Release 构建
-5. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
+5. 内置固定版本的轻量 OpenOCD 运行时
+6. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
 
 C++ DLL 说明：
 - native_serial_reader.dll 由 CMake 自动编译，输出到 build/windows/x64/runner/Release/
@@ -21,6 +22,7 @@ C++ DLL 说明：
     build/releases/
     └── vscope_serial-x.x.x-portable/     # 便携版目录
     └── vscope_serial-x.x.x-portable.zip  # 便携版压缩包
+    └── vscope_serial-x.x.x-symbols.zip   # 独立调试符号，不进入便携版
 
 依赖：
     - Flutter SDK
@@ -149,6 +151,21 @@ def get_build_time() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def copy_runtime_notices(bundle_dir: Path):
+    """把随内置 OpenOCD 发布的第三方许可说明放入发布目录。"""
+    shutil.copy2(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md", bundle_dir)
+
+
+def install_openocd_runtime(bundle_dir: Path):
+    """下载、校验并安装发布包内置的轻量 OpenOCD 运行时。"""
+    run_cmd([
+        sys.executable,
+        str(PROJECT_ROOT / "tools" / "prepare_openocd_runtime.py"),
+        "--bundle",
+        str(bundle_dir),
+    ])
+
+
 def clean_release_dir():
     """清理旧的发布目录"""
     if RELEASE_DIR.exists():
@@ -209,6 +226,32 @@ def copy_build_output(dst_dir: Path):
         warn("未找到任何 VC++ 运行时 DLL，便携版可能无法在缺少 VC++ 的系统上运行")
 
 
+def package_debug_symbols(version: str) -> Path:
+    """单独归档 PDB，供分析对应版本的 Windows minidump。"""
+    pdb_files = sorted(FLUTTER_BUILD_DIR.rglob("*.pdb"))
+    if not pdb_files:
+        raise FileNotFoundError("Release 构建未生成 PDB，无法归档崩溃分析符号")
+
+    staging_dir = BUILD_DIR / "windows-symbols"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    for source in pdb_files:
+        relative = source.relative_to(FLUTTER_BUILD_DIR)
+        destination = staging_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    archive_path = RELEASE_DIR / f"vscope_serial-{version}-symbols.zip"
+    shutil.make_archive(
+        str(archive_path.with_suffix("")),
+        "zip",
+        root_dir=staging_dir,
+    )
+    shutil.rmtree(staging_dir)
+    return archive_path
+
+
 def create_zip(source_dir: Path, zip_path: Path):
     """创建 zip 压缩包"""
     seven_zip = shutil.which("7z")
@@ -260,7 +303,6 @@ def main():
         error("未找到 Flutter SDK，请确保 flutter 命令在 PATH 中")
         sys.exit(1)
     info(f"Flutter 路径: {flutter_cmd}")
-    
     # ========== 步骤 1: 静态分析 ==========
     if not args.skip_analyze:
         step("步骤 1/3: 静态分析 (flutter analyze)")
@@ -285,7 +327,7 @@ def main():
     else:
         warn("跳过单元测试")
     
-    # ========== 步骤 3: Release 构建 ==========
+    # ========== 步骤 3: Flutter Release 构建 ==========
     step("步骤 3/3: 全新 Release 构建 (flutter build windows --release)")
     try:
         # Flutter/CMake 默认执行增量构建。必须先删除整个 Windows 构建树，
@@ -303,6 +345,11 @@ def main():
     except subprocess.CalledProcessError:
         error("Release 构建失败")
         sys.exit(1)
+
+    copy_runtime_notices(FLUTTER_BUILD_DIR)
+    install_openocd_runtime(FLUTTER_BUILD_DIR)
+    symbols_zip = package_debug_symbols(version)
+    success(f"调试符号归档完成: {symbols_zip}")
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")
@@ -337,12 +384,15 @@ def main():
     print(f"  目录: {portable_dir}")
     if portable_zip:
         print(f"  Zip:  {portable_zip}")
+    print(f"  符号: {symbols_zip}")
     
     # 显示文件大小
     print(f"\n文件大小:")
     if portable_zip and portable_zip.exists():
         portable_size = portable_zip.stat().st_size / (1024 * 1024)
         print(f"  便携版 zip: {portable_size:.1f} MB")
+    symbols_size = symbols_zip.stat().st_size / (1024 * 1024)
+    print(f"  调试符号 zip: {symbols_size:.1f} MB")
     
     # 列出包含的 DLL
     print(f"\n包含的 DLL:")

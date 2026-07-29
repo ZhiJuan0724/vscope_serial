@@ -7,6 +7,7 @@ project(runner LANGUAGES CXX)
 #
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
+  "crash_dump_handler.cpp"
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
@@ -19,6 +20,7 @@ add_executable(${BINARY_NAME} WIN32
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
+target_compile_options(${BINARY_NAME} PRIVATE "/utf-8")
 
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
@@ -34,8 +36,33 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dbghelp.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "${CMAKE_BINARY_DIR}/runner/$<CONFIG>/native_serial_reader.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_options(${BINARY_NAME} PRIVATE
+  "$<$<OR:$<CONFIG:Release>,$<CONFIG:Profile>>:/DEBUG>"
+)
+set_target_properties(${BINARY_NAME} PROPERTIES
+  PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner/$<CONFIG>"
+)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+if(BUILD_TESTING)
+  add_executable(crash_dump_handler_test EXCLUDE_FROM_ALL
+    "crash_dump_handler.cpp"
+    "crash_dump_handler.h"
+    "tests/crash_dump_handler_test.cpp"
+  )
+  target_compile_features(crash_dump_handler_test PRIVATE cxx_std_17)
+  target_compile_options(crash_dump_handler_test PRIVATE /W4 /WX /utf-8)
+  target_compile_definitions(crash_dump_handler_test PRIVATE
+    "FLUTTER_VERSION=\"test\""
+  )
+  target_link_libraries(crash_dump_handler_test PRIVATE "dbghelp.lib")
+  set_target_properties(crash_dump_handler_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner_tests/$<CONFIG>"
+  )
+  add_test(NAME crash_dump_handler_test COMMAND crash_dump_handler_test)
+endif()

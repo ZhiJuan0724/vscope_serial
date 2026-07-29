@@ -7,6 +7,8 @@ import '../core/utils/atomic_file.dart';
 typedef SettingsSnapshotValidator =
     void Function(Map<String, dynamic> snapshot);
 
+const JsonEncoder _settingsJsonEncoder = JsonEncoder.withIndent('  ');
+
 /// 设置读取及备份恢复结果。
 ///
 /// 读取失败不会半量应用字段：调用方只能使用已完整校验的 [snapshot]，或保留内存
@@ -107,7 +109,7 @@ class SettingsRepository {
   Future<void> save(Map<String, dynamic> snapshot) {
     // 防抖将连续 UI 修改合并为一次原子提交；调用者仍可用 flush 等待落盘。
     if (_path == null) return Future<void>.value();
-    _pendingContent = jsonEncode(snapshot);
+    _pendingContent = _settingsJsonEncoder.convert(snapshot);
     _saveDebounceTimer?.cancel();
     final pending = _pendingSave ??= Completer<void>();
     _saveDebounceTimer = Timer(_saveDebounce, _enqueueSave);

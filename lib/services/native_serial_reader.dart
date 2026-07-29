@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import '../core/utils/app_logger.dart';
 
 // 仅本项目的原生串口 DLL。开发目录与发布目录的布局不同，统一在这里回退查找。
@@ -110,6 +111,9 @@ typedef NsrStartPortMonitorDart = int Function(int dartPort);
 
 typedef NsrStopPortMonitorC = Void Function();
 typedef NsrStopPortMonitorDart = void Function();
+
+typedef NsrTriggerTestCrashC = Void Function();
+typedef NsrTriggerTestCrashDart = void Function();
 
 // 进程启动时解析所有 FFI 符号，后续调用只使用已绑定函数指针。
 final _nsrInitDartApi = _dll
@@ -520,6 +524,31 @@ class NativeSerialReader {
   bool _isOpen = false;
   bool _dartApiInitialized = false;
   NativeSerialWriteQueue? _writeQueue;
+
+  /// 在应用启动阶段通过只读状态查询预热原生 DLL 与 FFI 绑定。
+  ///
+  /// 部分 Windows 环境在首次串口连接流程中才触发 FFI 延迟初始化时，
+  /// 可能在 Dart/原生边界直接退出。此调用不打开或枚举串口、不创建线程，
+  /// 也不修改任何串口状态；不能用连接阶段的诊断日志配置调用替代。
+  static void warmUpNativeBinding() {
+    _nsrIsOpen();
+  }
+
+  /// 仅 Debug 构建使用，制造真实原生访问冲突以验证 Runner 转储链路。
+  ///
+  /// Release DLL 不导出该符号；保持调用时才解析，避免 Release 启动阶段查找
+  /// 一个有意不存在的测试入口。
+  static void triggerTestCrash() {
+    if (!kDebugMode) {
+      throw UnsupportedError('原生崩溃测试仅在 Debug 构建中可用');
+    }
+    final trigger = _dll
+        .lookupFunction<NsrTriggerTestCrashC, NsrTriggerTestCrashDart>(
+          'nsr_trigger_test_crash',
+        );
+    trigger();
+    throw StateError('原生崩溃测试入口意外返回');
+  }
 
   static void configureDiagnosticLogging(bool enabled, String? logPath) {
     final pathPtr = (logPath ?? '').toNativeUtf8();

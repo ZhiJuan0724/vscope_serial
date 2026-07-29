@@ -6,6 +6,9 @@ const double kSecondaryDialogFieldWidth = 140;
 /// 二级弹窗内较长选项输入框和下拉框的默认宽度。
 const double kSecondaryDialogWideFieldWidth = 220;
 
+/// 二级弹窗内文本输入和下拉选择统一使用的控件高度。
+const double kSecondaryDialogControlHeight = 40;
+
 /// 三个业务页面高级设置弹窗的统一内容宽度。
 const double kAdvancedSettingsDialogWidth = 420;
 
@@ -733,6 +736,86 @@ InputDecoration secondaryDialogFieldDecoration({
     suffixText: suffixText,
     counterText: counterText,
   );
+}
+
+/// 二级弹窗统一的紧凑单行输入控件。
+class SecondaryDialogTextField extends StatelessWidget {
+  const SecondaryDialogTextField({
+    super.key,
+    required this.controller,
+    this.hintText,
+    this.keyboardType,
+    this.onChanged,
+    this.onSubmitted,
+    this.prefixIcon,
+    this.suffixIcon,
+    this.enabled = true,
+  });
+
+  final TextEditingController controller;
+  final String? hintText;
+  final TextInputType? keyboardType;
+  final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+  final Widget? prefixIcon;
+  final Widget? suffixIcon;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: kSecondaryDialogControlHeight,
+      child: TextField(
+        controller: controller,
+        enabled: enabled,
+        keyboardType: keyboardType,
+        onChanged: onChanged,
+        onSubmitted: onSubmitted,
+        decoration: secondaryDialogFieldDecoration(hintText: hintText).copyWith(
+          prefixIcon: prefixIcon,
+          suffixIcon: suffixIcon,
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 36,
+            minHeight: kSecondaryDialogControlHeight,
+          ),
+          suffixIconConstraints: const BoxConstraints(
+            minWidth: 36,
+            minHeight: kSecondaryDialogControlHeight,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 二级弹窗统一的紧凑下拉控件，复用应用自有的无动画下拉菜单。
+class SecondaryDialogDropdown<T> extends StatelessWidget {
+  const SecondaryDialogDropdown({
+    super.key,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.hint = '',
+  });
+
+  final T? value;
+  final String hint;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: kSecondaryDialogControlHeight,
+      child: NoAnimDropdown<T>(
+        value: value,
+        hint: hint,
+        items: items,
+        onChanged: onChanged,
+        decoration: secondaryDialogFieldDecoration(),
+      ),
+    );
+  }
 }
 
 /// 设置弹窗右下角的统一主操作按钮。

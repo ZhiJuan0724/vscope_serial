@@ -1,17 +1,25 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/constants/plot_configuration.dart';
+import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/app_logger.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
+import '../../services/connection_owner_service.dart';
+import '../../services/crash_dump_service.dart';
+import '../../services/native_serial_reader.dart';
+import '../../services/rtt_service.dart';
+import '../../services/rtt_backend.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
 import '../../services/serial_service.dart';
@@ -20,6 +28,7 @@ import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../../viewmodels/rtt_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
 /// 打开应用信息、更新和版本说明窗口。
@@ -357,6 +366,16 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   final _plotHistoryLimitController = TextEditingController(
     text: AppSettings().plotHistoryMemoryLimitGiB.toString(),
   );
+  final _rttJlinkPathController = TextEditingController(
+    text: AppSettings().rttJlinkExecutablePath,
+  );
+  final _rttOpenocdPathController = TextEditingController(
+    text: AppSettings().rttOpenocdExecutablePath,
+  );
+  final _rttPyocdPythonPathController = TextEditingController(
+    text: AppSettings().rttPyocdPythonPath,
+  );
+  Future<Map<String, RttBackendAvailability>>? _rttBackendAvailability;
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
   UpdateChannel _updateChannel = UpdateChannel.fromString(
@@ -396,6 +415,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   void dispose() {
     _advancedSettingsScrollController.dispose();
     _plotHistoryLimitController.dispose();
+    _rttJlinkPathController.dispose();
+    _rttOpenocdPathController.dispose();
+    _rttPyocdPythonPathController.dispose();
     super.dispose();
   }
 
@@ -728,6 +750,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     required int rawTextCacheUsedBytes,
     required int shellQueueUsedBytes,
     required int ymodemQueueUsedBytes,
+    required int rttQueueUsedBytes,
+    required int rttRawHistoryUsedBytes,
     required VoidCallback onApplyPlotHistoryLimit,
   }) {
     final emergencyRssLimitBytes = math.max(
@@ -797,6 +821,18 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           subtitle: AppStrings.appInfo.ymodemQueueMemoryLimitSummary,
           usedBytes: ymodemQueueUsedBytes,
           limitBytes: YmodemService.defaultInputHighWaterBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rttQueueMemoryLimit,
+          subtitle: AppStrings.appInfo.rttQueueMemoryLimitSummary,
+          usedBytes: rttQueueUsedBytes,
+          limitBytes: RttConfiguration.receiveQueueLimitBytes,
+        ),
+        _MemoryLimitRow(
+          title: AppStrings.appInfo.rttRawHistoryMemoryLimit,
+          subtitle: AppStrings.appInfo.rttRawHistoryMemoryLimitSummary,
+          usedBytes: rttRawHistoryUsedBytes,
+          limitBytes: RttConfiguration.rawHistoryLimitBytes,
           showDivider: false,
         ),
       ],
@@ -838,15 +874,114 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
   }
 
+  Widget _buildProbeBackendSection(
+    BuildContext context,
+    StateSetter setDialogState,
+  ) {
+    final settings = AppSettings();
+    _rttBackendAvailability ??=
+        context.read<RttService>().checkBackendAvailability();
+
+    void refreshAvailability() {
+      setDialogState(() {
+        _rttBackendAvailability =
+            context.read<RttService>().checkBackendAvailability();
+      });
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _rttJlinkPathController,
+          decoration: const InputDecoration(
+            labelText: 'JLinkGDBServerCL.exe 路径',
+            helperText: '留空时从 SEGGER 安装目录和 PATH 自动查找',
+          ),
+          onChanged: (value) {
+            settings.rttJlinkExecutablePath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _rttOpenocdPathController,
+          decoration: const InputDecoration(
+            labelText: '外置 openocd.exe 路径',
+            helperText: '留空时从 PATH 查找；仅影响外置 OpenOCD',
+          ),
+          onChanged: (value) {
+            settings.rttOpenocdExecutablePath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _rttPyocdPythonPathController,
+          decoration: const InputDecoration(
+            labelText: '外置 pyOCD Python 路径',
+            helperText: '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x',
+          ),
+          onChanged: (value) {
+            settings.rttPyocdPythonPath = value.trim();
+            unawaited(settings.save());
+          },
+          onSubmitted: (_) => refreshAvailability(),
+        ),
+        const SizedBox(height: 12),
+        FutureBuilder<Map<String, RttBackendAvailability>>(
+          future: _rttBackendAvailability,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const Text('正在检测探针后端...');
+
+            String state(String id) {
+              final status = snapshot.data![id];
+              if (status == null || !status.available) return '未检测到';
+              final version = status.version?.trim();
+              return version == null || version.isEmpty
+                  ? '已检测到（版本未知）'
+                  : version;
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('J-Link: ${state('external-jlink')}'),
+                Text('内置 OpenOCD: ${state('bundled-openocd')}'),
+                Text('外置 OpenOCD: ${state('external-openocd')}'),
+                Text('外置 pyOCD: ${state('external-pyocd')}'),
+              ],
+            );
+          },
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: refreshAvailability,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新检测'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
     var disableNotifications = _disableNotifications;
     var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
+    var crashDumpEnabled = AppSettings().crashDumpEnabled;
+    var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
     var shellEnabled = AppSettings().rawDataShellEnabled;
+    var rttEnabled = AppSettings().rttPageEnabled;
     var plotReceiveAggregationEnabled =
         AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
     final diagnosticsSectionKey = GlobalKey();
+    final shortcutsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
+    final probeBackendSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
     final rollbackSectionKey = GlobalKey();
@@ -869,7 +1004,16 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   label: '诊断',
                   anchorKey: diagnosticsSectionKey,
                 ),
+                SettingsNavigationItem(
+                  label: '快捷键',
+                  anchorKey: shortcutsSectionKey,
+                ),
                 SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                if (rttEnabled)
+                  SettingsNavigationItem(
+                    label: '探针后端',
+                    anchorKey: probeBackendSectionKey,
+                  ),
                 SettingsNavigationItem(
                   label: AppStrings.appInfo.receivePerformance,
                   anchorKey: receivePerformanceSectionKey,
@@ -944,7 +1088,137 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ),
                   const Divider(height: 16),
                   SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.appInfo.crashDump,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.appInfo.crashDumpHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: crashDumpEnabled,
+                    onChanged: (value) async {
+                      setDialogState(() => crashDumpEnabled = value);
+                      final settings = AppSettings()..crashDumpEnabled = value;
+                      final crashDumpService = CrashDumpService();
+                      try {
+                        await crashDumpService.setEnabled(value);
+                        await settings.save();
+                      } catch (error, stackTrace) {
+                        AppLogger().error(
+                          '更新原生崩溃转储开关失败: $error',
+                          category: 'APP',
+                          error: error,
+                          stackTrace: stackTrace,
+                        );
+                        settings.crashDumpEnabled = !value;
+                        try {
+                          await crashDumpService.setEnabled(!value);
+                        } catch (_) {
+                          // 已记录原始失败；回滚同样失败时保持内存值并等待下次启动同步。
+                        }
+                        if (context.mounted) {
+                          setDialogState(
+                            () => crashDumpEnabled = settings.crashDumpEnabled,
+                          );
+                          AppNotifications.show('崩溃转储设置保存失败，请检查程序目录写入权限');
+                        }
+                      }
+                    },
+                  ),
+                  if (kDebugMode) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      AppStrings.appInfo.triggerTestCrashHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey(
+                          'debug-trigger-native-crash-button',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Theme.of(context).colorScheme.error,
+                          side: BorderSide(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                          minimumSize: const Size(0, 30),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed:
+                            crashDumpEnabled
+                                ? _confirmAndTriggerTestCrash
+                                : null,
+                        icon: const Icon(Icons.warning_amber_rounded, size: 16),
+                        label: Text(AppStrings.appInfo.triggerTestCrash),
+                      ),
+                    ),
+                  ],
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    key: shortcutsSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      '启用连接快捷键',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；'
+                      '关闭后全部不响应。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: connectionShortcutsEnabled,
+                    onChanged: (value) {
+                      setDialogState(() => connectionShortcutsEnabled = value);
+                      final settings =
+                          AppSettings()..connectionShortcutsEnabled = value;
+                      unawaited(settings.save());
+                    },
+                  ),
+                  const Divider(height: 16),
+                  SwitchListTile(
                     key: pageSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      AppStrings.rtt.showPage,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      AppStrings.rtt.showPageHelp,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: rttEnabled,
+                    onChanged:
+                        ConnectionOwnerService().owner == ConnectionOwner.rtt
+                            ? null
+                            : (value) {
+                              setDialogState(() => rttEnabled = value);
+                              context.read<RttService>().setPageEnabled(value);
+                            },
+                  ),
+                  SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     title: Text(
@@ -970,6 +1244,13 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             },
                   ),
                   const Divider(height: 16),
+                  if (rttEnabled) ...[
+                    KeyedSubtree(
+                      key: probeBackendSectionKey,
+                      child: _buildProbeBackendSection(context, setDialogState),
+                    ),
+                    const Divider(height: 16),
+                  ],
                   SwitchListTile(
                     key: receivePerformanceSectionKey,
                     contentPadding: EdgeInsets.zero,
@@ -1007,6 +1288,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       builder: (context, _) {
                         final plotViewModel = context.read<PlotViewModel>();
                         final serialService = context.read<SerialService>();
+                        final rttService = context.read<RttService?>();
+                        final rttViewModel = context.read<RttViewModel?>();
                         final plotUsage = plotViewModel.plotRetentionUsage;
                         return _buildMemoryLimitsSection(
                           context,
@@ -1022,6 +1305,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               serialService.shellPendingReceiveBytes,
                           ymodemQueueUsedBytes:
                               serialService.ymodemService.incomingBytes,
+                          rttQueueUsedBytes: rttService?.queuedBytes ?? 0,
+                          rttRawHistoryUsedBytes:
+                              rttViewModel?.rawHistoryBytes ?? 0,
                           onApplyPlotHistoryLimit: () {
                             final value = int.tryParse(
                               _plotHistoryLimitController.text,
@@ -1058,12 +1344,30 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           setDialogState(() {
                             disableNotifications =
                                 AppSettings().disableNotifications;
+                            diagnosticLoggingEnabled =
+                                AppSettings().diagnosticLoggingEnabled;
+                            crashDumpEnabled = AppSettings().crashDumpEnabled;
+                            connectionShortcutsEnabled =
+                                AppSettings().connectionShortcutsEnabled;
                             shellEnabled = AppSettings().rawDataShellEnabled;
+                            rttEnabled = AppSettings().rttPageEnabled;
                             plotReceiveAggregationEnabled =
                                 AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =
                                 resetPlotLimit.toString();
                           });
+                          try {
+                            await CrashDumpService().setEnabled(
+                              AppSettings().crashDumpEnabled,
+                            );
+                          } catch (error, stackTrace) {
+                            AppLogger().error(
+                              '恢复默认设置后同步崩溃转储开关失败: $error',
+                              category: 'APP',
+                              error: error,
+                              stackTrace: stackTrace,
+                            );
+                          }
                         }
                       },
                     ),
@@ -1079,6 +1383,52 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
             ],
           ),
     );
+  }
+
+  Future<void> _confirmAndTriggerTestCrash() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            title: Text(AppStrings.appInfo.triggerTestCrashTitle),
+            content: Text(AppStrings.appInfo.triggerTestCrashMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                  elevation: 0,
+                ),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppStrings.appInfo.triggerTestCrash),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await AppSettings().flushPendingSave();
+      AppLogger().fatal('用户从 Debug 高级设置主动触发原生崩溃测试', category: 'APP');
+      await AppLogger().flush();
+      NativeSerialReader.triggerTestCrash();
+    } catch (error, stackTrace) {
+      AppLogger().error(
+        '触发原生崩溃测试失败: $error',
+        category: 'APP',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) AppNotifications.show('触发原生崩溃测试失败：$error');
+    }
   }
 
   Future<bool> _confirmResetSettings() async {

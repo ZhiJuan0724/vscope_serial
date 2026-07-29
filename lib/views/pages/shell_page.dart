@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 
+import '../../core/constants/terminal_fonts.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/app_notifications.dart';
@@ -43,16 +44,6 @@ class ShellPage extends StatefulWidget {
 
 class _ShellPageState extends State<ShellPage> {
   static const int _maxReceiveBytesPerFrame = 64 * 1024;
-  static const _terminalFontFamilies = <String>[
-    'Consolas',
-    'Cascadia Mono',
-    'Cascadia Code',
-    'Courier New',
-    'JetBrains Mono',
-    'Fira Code',
-    'Sarasa Mono SC',
-    'SarasaUiSC',
-  ];
 
   late Terminal _terminal;
   late ShellStreamDecoder _decoder;
@@ -997,7 +988,7 @@ class _ShellPageState extends State<ShellPage> {
                               hint: '选择终端字体',
                               decoration: secondaryDialogFieldDecoration(),
                               items:
-                                  _terminalFontFamilies
+                                  terminalFontFamilies
                                       .map(
                                         (font) => DropdownMenuItem(
                                           value: font,

@@ -32,6 +32,16 @@ static std::mutex g_diagnosticLogMutex;
 static std::wstring g_diagnosticLogPath;
 static std::atomic<bool> g_diagnosticLogEnabled{false};
 
+#ifdef VSCOPE_ENABLE_TEST_CRASH
+void nsr_trigger_test_crash() {
+    // 使用运行时地址而不是 RaiseException，确保转储记录的异常位置落在本 DLL。
+    volatile uintptr_t invalidAddress = 0;
+    volatile uint32_t* crashTarget =
+        reinterpret_cast<volatile uint32_t*>(invalidAddress);
+    *crashTarget = 0x56534350;
+}
+#endif
+
 static std::wstring utf8_to_wide(const char* value) {
     if (value == NULL || value[0] == '\0') return std::wstring();
     const int required = MultiByteToWideChar(

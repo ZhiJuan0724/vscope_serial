@@ -17,6 +17,7 @@ abstract final class AppStrings {
   static const update = _UpdateStrings();
   static const appInfo = _AppInfoStrings();
   static const profile = _ProfileStrings();
+  static const rtt = _RttStrings();
 }
 
 final class _NavStrings {
@@ -25,6 +26,7 @@ final class _NavStrings {
   String get rawData => '数据收发';
   String get shell => 'Shell';
   String get plot => '绘图';
+  String get rtt => 'RTT Viewer';
   String get protocol => '协议';
 }
 
@@ -409,7 +411,7 @@ final class _RawDataStrings {
   String get displayLineLimit => '接收区最大显示行数:';
   String get displayLineLimitHelp => '默认 100000 行。降低上限后会立即移除最早的显示内容，不影响原始字节导出。';
   String get enableShellEntry => '显示 Shell 页面';
-  String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签；默认关闭。';
+  String get enableShellEntryHelp => '开启后在主窗口显示独立 Shell 标签。';
   String get autoLineBreakTimeInvalid => '自动换行时间请输入 1 ~ 10000 ms';
   String get displayLineLimitInvalid => '显示行数请输入 100 ~ 100000 之间的数值';
   String advancedSettingsSaved(int lines) => '高级设置已保存，接收区最多显示 $lines 行';
@@ -463,7 +465,7 @@ final class _AppInfoStrings {
   String get unknown => '未知';
   String get releaseNotes => '版本说明';
   String get autoCheckUpdates => '启动时自动检查更新';
-  String get autoCheckUpdatesHelp => '默认关闭；开启后每次打开应用会按更新来源设置检查更新';
+  String get autoCheckUpdatesHelp => '开启后每次打开应用会按更新来源设置检查更新';
   String get updateChannelTitle => '更新通道';
   String get updateChannelAndSourceTitle => '更新通道和来源';
   String get betaChannelHelp => '只检查预发布版本';
@@ -488,6 +490,26 @@ final class _AppInfoStrings {
   String get disableNotificationsHelp => '开启后不再显示应用内临时提示';
   String get diagnosticLogging => '调试模式';
   String get diagnosticLoggingHelp => '记录串口连接等详细诊断信息并立即写入日志；仅排查问题时开启，日志量会明显增加。';
+  String get crashDump => '原生崩溃转储';
+  String get crashDumpHelp =>
+      '发生无法由应用捕获的 Windows 原生崩溃时保存小型转储，最多保留 10 份；文件可能包含少量运行时内存，仅在用户主动提供时用于排查。';
+  String get crashDumpDetectedTitle => '检测到上次原生崩溃';
+  String crashDumpDetectedMessage(
+    int count,
+    String time,
+    String exceptionCode,
+  ) =>
+      '发现 $count 份尚未查看的崩溃记录。\n'
+      '最近一次：$time\n'
+      '异常代码：$exceptionCode\n\n'
+      '转储和对应日志保存在程序目录中，可在反馈问题时一并提供。';
+  String get openCrashDumpDirectory => '打开转储目录';
+  String get triggerTestCrash => '触发测试崩溃';
+  String get triggerTestCrashHelp => '仅 Debug 构建提供，用于验证原生崩溃转储链路。';
+  String get triggerTestCrashTitle => '确认触发原生崩溃';
+  String get triggerTestCrashMessage =>
+      '应用将立即发生真实的原生访问冲突并退出，不会执行正常断开和数据保存流程。'
+      '请先停止串口、探针及其他重要任务；重新启动后应看到崩溃转储提示。';
   String get receivePerformance => '接收性能';
   String get plotReceiveAggregation => '绘图高频接收合并';
   String get plotReceiveAggregationHelp =>
@@ -506,6 +528,10 @@ final class _AppInfoStrings {
   String get shellQueueMemoryLimitSummary => '超出后丢弃最早的完整数据块';
   String get ymodemQueueMemoryLimit => 'YMODEM 输入队列';
   String get ymodemQueueMemoryLimitSummary => '超出后取消当前文件传输';
+  String get rttQueueMemoryLimit => 'RTT 待处理接收队列';
+  String get rttQueueMemoryLimitSummary => '超出后丢弃最早的完整 RTT 数据块并重新同步解码';
+  String get rttRawHistoryMemoryLimit => 'RTT 原始重建历史';
+  String get rttRawHistoryMemoryLimitSummary => '用于切换编码、文本或 HEX 显示以及导出当前保留范围';
   String memoryUsage(String used, String limit, String percent) =>
       '当前占用: $used / $limit ($percent)';
   String get confirmResetSettingsTitle => '确认恢复默认设置';
@@ -527,6 +553,18 @@ final class _AppInfoStrings {
   }) {
     return '未发现更新（当前版本: $currentVersion；$channel最新发布版本: $tagName，$source）';
   }
+}
+
+final class _RttStrings {
+  const _RttStrings();
+
+  String get probe => '探针';
+  String get settings => 'RTT Viewer 设置';
+  String get showPage => '显示探针功能';
+  String get showPageHelp => '显示 RTT Viewer 和探针绘图标签';
+  String get connect => '探针连接';
+  String get waitingData => '等待 RTT Up 0 数据';
+  String get connectHint => '点击左下角连接 J-Link 或 CMSIS-DAP';
 }
 
 final class _ProfileStrings {

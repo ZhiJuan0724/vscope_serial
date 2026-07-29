@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke tests for the native Windows updater."""
+"""原生 Windows 更新器端到端冒烟测试。"""
 
 import hashlib
 import json

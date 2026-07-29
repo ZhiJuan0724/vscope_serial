@@ -1,6 +1,6 @@
 # 测试工具
 
-`test_tools/` 用于模拟下位机设备和生成绘图测试文件，配合 VScope Serial 验证协议解析、串口收发和大数据绘图性能。
+`test_tools/` 保存设备模拟、测试数据生成、后端/更新器验证、稳定性压测和绘图性能基准工具。
 
 ## 环境要求
 
@@ -187,6 +187,24 @@ dart run test_tools/zobow_c_profile_import.dart --ignore-comments E:\temp\device
 
 - `--ignore-comments`：忽略注释中的通道名称，输出预设时不使用注释提供的名称。
 - `<file.c>`：待解析的 C 文件路径，必填且只能提供一个。
+
+## Windows 更新器测试
+
+`test_updater.py` 对已构建的原生 `vscope_updater.exe` 执行端到端冒烟测试，覆盖：
+
+- 正常更新、旧文件清理和回退快照生成。
+- `settings/` 等用户文件保留。
+- payload 缺失或校验失败后的自动回滚。
+- 主程序仍在运行时拒绝替换文件。
+
+脚本使用 `build/windows/x64/runner/Debug/vscope_updater.exe`，运行前先完成 Windows Debug 构建：
+
+```bash
+flutter build windows --debug
+python test_tools/test_updater.py
+```
+
+测试只在临时目录中复制和操作更新器，不修改当前开发目录中的应用文件。
 
 ## 建议测试流程
 

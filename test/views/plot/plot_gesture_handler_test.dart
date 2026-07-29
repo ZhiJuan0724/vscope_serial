@@ -357,6 +357,42 @@ void main() {
     expect(viewportChanged, isFalse);
   });
 
+  testWidgets('连续光标 hover 每帧只回调最后一个位置', (tester) async {
+    final cursors = <CursorState>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (cursor) {
+                if (cursor != null) cursors.add(cursor);
+              },
+              vCursorEnabled: true,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: topLeft + const Offset(100, 200));
+    for (var x = 101.0; x <= 700; x++) {
+      await gesture.moveTo(topLeft + Offset(x, 200));
+    }
+
+    expect(cursors, isEmpty);
+    await tester.pump();
+    expect(cursors, hasLength(1));
+    expect(cursors.single.screenPosition!.dx, closeTo(700, 0.001));
+  });
+
   Future<void> pumpObservationGestureHarness(
     WidgetTester tester, {
     required bool locked,
@@ -453,5 +489,94 @@ void main() {
 
     expect(deleteCount, 1);
     expect(dragCount, greaterThan(0));
+  });
+
+  testWidgets('触控板双指移动平移视口并在结束后保存', (tester) async {
+    var viewport = initialViewport;
+    final fromDragValues = <bool>[];
+    var dragEndCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                fromDragValues.add(fromDrag);
+              },
+              onDragEnd: () => dragEndCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await gesture.panZoomStart(center);
+    await gesture.panZoomUpdate(center, pan: const Offset(80, -40), scale: 1);
+    await gesture.panZoomEnd();
+    await tester.pump();
+
+    expect(viewport.xRange, initialViewport.xRange);
+    expect(viewport.yRange, initialViewport.yRange);
+    expect(viewport.xMin, isNot(initialViewport.xMin));
+    expect(viewport.yMin, isNot(initialViewport.yMin));
+    expect(fromDragValues, isNotEmpty);
+    expect(fromDragValues.every((value) => value), isTrue);
+    expect(dragEndCount, 1);
+  });
+
+  testWidgets('触控板累计捏合比例按增量缩放且不标记为拖动', (tester) async {
+    var viewport = initialViewport;
+    final fromDragValues = <bool>[];
+    var dragEndCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                fromDragValues.add(fromDrag);
+              },
+              onDragEnd: () => dragEndCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await gesture.panZoomStart(center);
+    await gesture.panZoomUpdate(center, scale: 1.2);
+    await gesture.panZoomUpdate(center, scale: 2);
+    await gesture.panZoomEnd();
+    await tester.pump();
+
+    expect(viewport.xRange, closeTo(initialViewport.xRange / 2, 0.001));
+    expect(viewport.yRange, closeTo(initialViewport.yRange / 2, 0.001));
+    expect(fromDragValues, isNotEmpty);
+    expect(fromDragValues.every((value) => !value), isTrue);
+    expect(dragEndCount, 0);
   });
 }

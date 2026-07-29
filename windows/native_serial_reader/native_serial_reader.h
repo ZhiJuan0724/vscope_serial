@@ -88,6 +88,11 @@ NSR_API int nsr_list_port_details(char* buffer, int capacity);
 NSR_API int nsr_start_port_monitor(int64_t dartPort);
 NSR_API void nsr_stop_port_monitor();
 
+#ifdef VSCOPE_ENABLE_TEST_CRASH
+// 仅 Debug DLL 导出：制造真实的原生访问冲突，用于验证 Runner 转储链路。
+NSR_API void nsr_trigger_test_crash();
+#endif
+
 #ifdef __cplusplus
 }
 #endif
