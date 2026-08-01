@@ -73,6 +73,53 @@ docs/                 # 长期上下文、报告和图片
 
 修改模块边界、连接生命周期、绘图数据链路或探针后端前，先阅读 [docs/CONTEXT.md](docs/CONTEXT.md) 中对应的长期架构与安全约束。
 
+### 3.1 连接数据流向
+
+串口、TCP 和 UDP 最终汇入统一的数据连接服务，再按当前活动页面分流。箭头表示接收方向；发送沿相同链路反向返回设备或网络对端。
+
+```mermaid
+flowchart LR
+    serialDevice["串口设备"] --> nativeSerial["原生串口 DLL / SerialTransport"]
+    tcpPeer["TCP 对端"] --> tcpTransport["TCP 客户端或单客户端服务端"]
+    udpPeer["固定 UDP 远端"] --> udpTransport["UDP Transport"]
+
+    nativeSerial --> session["DataTransportSession"]
+    tcpTransport --> session
+    udpTransport --> session
+
+    session --> connectionService["DataConnectionService"]
+    connectionService --> rawSession["RawReceiveSession"] --> rawPage["数据收发"]
+    connectionService --> shellSession["ShellSession / YMODEM"] --> shellPage["Shell（仅串口）"]
+    connectionService --> dataSource["ConnectionDataSource / DataSourceManager"] --> parser["IDataParser"]
+    parser --> plotVm["PlotViewModel / 历史与 LOD"] --> plotPage["绘图"]
+
+    outbound["OutboundDataCodec"] -. 构造发送负载 .-> connectionService
+```
+
+页面入口按连接类型限制：串口可进入数据收发、Shell 和绘图；TCP 客户端、UDP 可进入数据收发和绘图；TCP 服务端只进入数据收发。
+
+随机源不建立外部连接，只模拟绘图接收数据：
+
+```mermaid
+flowchart LR
+    randomSource["RandomDataSource"] --> dataSource["DataSourceManager"]
+    dataSource --> parser["FireWater / IDataParser"]
+    parser --> plotVm["PlotViewModel / 历史与 LOD"] --> plotPage["绘图"]
+```
+
+探针连接由独立服务管理，RTT Viewer 与探针绘图共享空闲连接，但数据活动分别进入各自链路：
+
+```mermaid
+flowchart LR
+    probe["J-Link 或 CMSIS-DAP"] --> backend["J-Link / OpenOCD / pyOCD Worker"]
+    backend --> probeService["ProbeConnectionService"]
+
+    probeService --> viewerQueue["RTT 接收队列与终端解析"] --> rttVm["RttViewModel"] --> rttPage["RTT Viewer"]
+    probeService --> rttPlot["RTT Up / J-Scope 解析"] --> probeVm["ProbePlotViewModel / LOD"]
+    probeService --> hss["HSS 运行态内存采样"] --> probeVm
+    probeVm --> probePage["探针绘图"]
+```
+
 ## 4. 代码检查与测试
 
 提交前至少执行：

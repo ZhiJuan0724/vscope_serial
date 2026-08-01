@@ -16,7 +16,7 @@
 
 - `lib/core/`：日志、CRC 等底层工具；使用 `AppLogger`，不直接 `print()`。
 - `lib/data/`：模型、收发协议、解析器和 LOD。接收解析器实现 `IDataParser`；高频链路优先使用 `feedBatch()`。
-- `lib/services/`：串口、探针、设置、更新、通知和原生接口。连接生命周期、缓存和设置写入均由单一所有者管理。
+- `lib/services/`：数据连接、探针、设置、更新、通知和原生接口。连接生命周期、缓存和设置写入均由单一所有者管理。
 - `lib/viewmodels/`：页面状态和业务流程；业务计算保持无 UI 依赖。
 - `lib/views/`：页面、弹窗、Painter 和手势；高频状态使用 Selector 和分层 Painter 隔离重建。
 - `windows/`：Windows Runner、原生串口 DLL 和更新器。
@@ -25,14 +25,14 @@
 
 ### 2.2 活动与连接所有权
 
-- 数据收发、Shell 和绘图通过 `SerialActivityOwner` 互斥占用数据接收活动；绘图可复用串口、TCP客户端或UDP数据流。
+- 数据收发、Shell 和绘图通过 `DataActivityOwner` 互斥占用数据接收活动；绘图可复用串口、TCP客户端或UDP数据流。
 - 串口/TCP/UDP数据连接和探针由 `ConnectionOwnerService` 互斥管理；全局只允许一个实际连接或监听会话。
 - RTT Viewer 与探针绘图可共享空闲探针连接，但任一数据活动开始后必须锁定当前探针页面。
-- 普通发送、Shell、粘贴和 YMODEM 共用单一有序串口写队列，禁止并发打乱字节。
+- 数据连接发送共用单一有序写队列；Shell、粘贴和 YMODEM 仅在串口会话中使用该队列，禁止并发打乱字节。
 
 ### 2.3 协议边界
 
-- 接收协议与发送协议分离。接收侧统一由 `IDataParser` 负责；发送侧实现 `SendProtocol<TConfig>`，不得把具体协议耦合进 `SerialService`。
+- 接收协议与发送协议分离。接收侧统一由 `IDataParser` 负责；发送侧实现 `SendProtocol<TConfig>`，不得把具体协议耦合进 `DataConnectionService`。
 - Zobow 地址只接受十六进制；r 协议保留十进制或 `0x` 十六进制原文。Zobow 当前只支持 4/8 通道固定帧。
 - FixedFrame 通道数为 `1~16`，帧头和帧尾不能同时全为 `0`；FireWater 只处理 ASCII 数字；随机源只输出 FireWater。
 
@@ -69,10 +69,11 @@
 - HSS 通过 OpenOCD Tcl RPC 或受限 pyOCD MEM-AP 运行态读取，不是 SEGGER HSS SDK。
 - RTT 从控制块枚举 Up 通道；`JScope_<FORMAT>` 自动解析格式，普通名称允许手动设置。ELF/AXF/OUT 由主应用解析，不依赖后端。
 
-## 4. 串口生命周期与原生安全
+## 4. 数据连接生命周期与原生串口安全
 
-- 串口打开、检查、重连、断开和退出共用同一异步操作队列；每次连接有独立 generation，失效会话不得更新当前状态或投递数据。
-- `SerialService.shutdown()` 是唯一应用退出入口，必须等待连接生命周期收敛。任何两个原生 open/close 生命周期不得交叉。
+- 串口/TCP/UDP 打开、检查、重连、断开和退出共用 `DataConnectionCoordinator` 异步操作队列；每次连接有独立 generation，失效会话不得更新当前状态或投递数据。
+- `SerialTransport` 和 `NetworkTransport` 打开成功后统一提供 `DataTransportSession`；`DataConnectionService` 只持有一个活动会话、一组数据/错误订阅和一条清理路径。
+- `DataConnectionService.shutdown()` 是唯一数据连接退出入口，必须等待连接生命周期收敛。任何两个原生串口 open/close 生命周期不得交叉。
 - Windows 串口打开在后台 isolate 中执行；串口打开、健康检查和枚举由 `native_serial_reader.dll` 完成。
 - 默认枚举只读取 COM 号。只有用户显式开启详细信息并手动刷新时，才在后台读取设备名称；自动刷新、插拔和自动连接不得扫描 USB 元数据或阻塞 UI。
 - 串口列表使用缓存和设备到达/移除通知；枚举失败不得清除已保存端口和参数。
@@ -89,6 +90,7 @@
 
 ### 5.1 原始数据与 Shell
 
+- `DataConnectionService` 是页面共享的 Provider 门面；原始数据由 `RawReceiveSession` 管理，Shell 终端配置、编解码和 YMODEM 由 `ShellSession` 管理，普通发送负载由 `OutboundDataCodec` 构造。
 - 原始显示缓存与完整字节记录分离。完整记录上限 `512 MiB`，80% 预警，满后停止原始接收并保留数据；清空后可继续。
 - 显示行数范围 `100~100000`，默认 `100000`；减少上限只按 FIFO 清理显示，不影响容量内导出。
 - 文本导出按当前编码重新解析完整记录；多字节编码必须使用有状态流式解码。
@@ -118,6 +120,7 @@
 
 - 主设置位于 `<exe_dir>/settings/settings.json`，使用带 `schemaVersion` 的嵌套 JSON：根节点按全局和功能分组，功能内按连接、性能、外观、交互等分组。
 - 运行时字段通过集中路径表映射；新增字段必须有默认值和路径。旧单层格式读取成功后自动重写，不单独维护迁移脚本。
+- 页面可见性与顺序只由 `visibleMainPages/mainTabOrder` 保存；已发布旧配置中的 Shell/RTT 页面开关仅用于读取迁移，保存时不得再次输出。
 - 设置文件不加密，不得保存敏感数据。“恢复默认设置”只重置主设置，不删除协议配置文件。
 
 ### 6.2 UI 规则
