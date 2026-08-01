@@ -86,8 +86,7 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (AppSettings().networkConnectionsEnabled &&
-                    widget.pageId != 'shell') ...[
+                if (AppSettings().networkConnectionsEnabled) ...[
                   NoAnimDropdown<DataConnectionType>(
                     value: _connectionType,
                     hint: '连接类型',
@@ -101,7 +100,8 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                               DataConnectionType.tcpClient,
                               if (widget.pageId == 'rawData')
                                 DataConnectionType.tcpServer,
-                              DataConnectionType.udp,
+                              if (widget.pageId != 'shell')
+                                DataConnectionType.udp,
                             ]
                             .map(
                               (type) => DropdownMenuItem(

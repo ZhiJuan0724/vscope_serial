@@ -8,7 +8,8 @@ abstract final class MainPagePolicy {
       switch (type) {
         DataConnectionType.serial =>
           pageId == 'rawData' || pageId == 'shell' || pageId == 'plot',
-        DataConnectionType.tcpClient ||
+        DataConnectionType.tcpClient =>
+          pageId == 'rawData' || pageId == 'shell' || pageId == 'plot',
         DataConnectionType.udp => pageId == 'rawData' || pageId == 'plot',
         DataConnectionType.tcpServer => pageId == 'rawData',
       };

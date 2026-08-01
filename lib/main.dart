@@ -15,6 +15,7 @@ import 'core/utils/app_logger.dart';
 import 'data/models/probe_connection_config.dart';
 import 'data/models/data_connection_config.dart';
 import 'data/models/main_page_policy.dart';
+import 'data/models/ssh_connection_config.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
@@ -23,11 +24,13 @@ import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
 import 'services/native_serial_reader.dart';
 import 'services/probe_connection_service.dart';
+import 'services/ssh_connection_service.dart';
 import 'services/data_connection_service.dart';
 import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'views/dialogs/probe_connection_dialog.dart';
+import 'views/dialogs/ssh_connection_dialog.dart';
 import 'views/dialogs/data_connection_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'viewmodels/probe_plot_viewmodel.dart';
@@ -129,17 +132,19 @@ class MyApp extends StatelessWidget {
     // DataConnectionService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
     final connectionService = DataConnectionService();
+    final sshService = SshConnectionService();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: connectionService),
+        ChangeNotifierProvider.value(value: sshService),
         ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(connectionService),
         ),
         ChangeNotifierProvider(
-          create: (context) => ShellViewModel(connectionService),
+          create: (context) => ShellViewModel(connectionService, sshService),
         ),
         ChangeNotifierProvider(
           create:
@@ -540,10 +545,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   bool _pagesLocked(
     DataConnectionService connectionService,
     ProbeConnectionService probeConnectionService,
-    ConnectionOwnerService owners,
-  ) =>
+    ConnectionOwnerService owners, [
+    SshConnectionService? sshService,
+  ]) =>
       owners.owner != ConnectionOwner.none ||
       connectionService.isConnecting ||
+      (sshService?.isConnecting ?? false) ||
       probeConnectionService.isConnecting ||
       probeConnectionService.isReconnecting;
 
@@ -645,12 +652,19 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   bool get _usesProbeConnection =>
       _currentTabId == 'rtt' || _currentTabId == 'probePlot';
 
+  bool get _usesSshConnection =>
+      _currentTabId == 'shell' &&
+      ShellConnectionMode.fromString(AppSettings().shellConnectionMode) ==
+          ShellConnectionMode.ssh;
+
   void _handleConnectionShortcut(LogicalKeyboardKey key) {
     if (!AppSettings().connectionShortcutsEnabled) return;
     if (key == LogicalKeyboardKey.f1) {
       unawaited(
         _usesProbeConnection
             ? showProbeConnectionDialog(context)
+            : _usesSshConnection
+            ? showSshConnectionDialog(context)
             : showDataConnectionDialog(context, pageId: _currentTabId),
       );
       return;
@@ -667,6 +681,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     try {
       if (_usesProbeConnection) {
         await _runProbeConnectionShortcut(key);
+      } else if (_usesSshConnection) {
+        await _runSshConnectionShortcut(key);
       } else {
         await _runSerialConnectionShortcut(key);
       }
@@ -773,12 +789,42 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     await service.connect(savedProbeConnectionConfig());
   }
 
+  Future<void> _runSshConnectionShortcut(LogicalKeyboardKey key) async {
+    final service = context.read<SshConnectionService>();
+    if (key == LogicalKeyboardKey.f2) {
+      if (service.isConnected) {
+        AppNotifications.show('快捷连接：SSH 已连接');
+      } else {
+        AppNotifications.show('快捷连接：请填写本次 SSH 凭据');
+        await showSshConnectionDialog(context);
+      }
+      return;
+    }
+    if (key == LogicalKeyboardKey.f3) {
+      if (!service.isConnected && !service.isConnecting) {
+        AppNotifications.show('快捷断开：SSH 当前未连接');
+        return;
+      }
+      AppNotifications.show('快捷断开：正在断开 SSH');
+      await service.disconnect();
+      return;
+    }
+    if (!service.isConnected) {
+      AppNotifications.show('快捷重连：请填写本次 SSH 凭据');
+      await showSshConnectionDialog(context);
+      return;
+    }
+    AppNotifications.show('快捷重连：正在重新连接 SSH');
+    await service.reconnect();
+  }
+
   @override
   Widget build(BuildContext context) {
     final connectionService = Provider.of<DataConnectionService>(context);
     final connectionOwner = Provider.of<ConnectionOwnerService>(context);
     // 探针连接和活动变化会直接影响两个探针页面的切换权限。
     final probeConnectionService = Provider.of<ProbeConnectionService>(context);
+    final sshConnectionService = Provider.of<SshConnectionService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
       _currentTabId = tabs.first.id;
@@ -865,7 +911,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                       tab.id == 'probePlot',
                                               },
                                             ConnectionOwner.data =>
-                                              ownerTab != null
+                                              sshConnectionService
+                                                          .isConnected ||
+                                                      sshConnectionService
+                                                          .isConnecting
+                                                  ? tab.id == 'shell'
+                                                  : ownerTab != null
                                                   ? tab.id == ownerTab
                                                   : _tabSupportsConnection(
                                                     tab.id,
@@ -881,6 +932,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                             connectionService,
                                             probeConnectionService,
                                             connectionOwner,
+                                            sshConnectionService,
                                           );
                                           final colorScheme =
                                               Theme.of(context).colorScheme;
@@ -1233,8 +1285,13 @@ class _WindowCloseListener extends WindowListener {
       context,
       listen: false,
     );
+    final sshConnectionService = Provider.of<SshConnectionService>(
+      context,
+      listen: false,
+    );
     await AppSettings().flushPendingSave();
     await probeConnectionService.shutdown();
+    await sshConnectionService.shutdown();
     await connectionService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();
