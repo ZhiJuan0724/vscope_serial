@@ -15,25 +15,31 @@ import 'core/utils/app_logger.dart';
 import 'data/models/probe_connection_config.dart';
 import 'data/models/data_connection_config.dart';
 import 'data/models/main_page_policy.dart';
+import 'data/models/modbus_models.dart';
+import 'data/models/ssh_connection_config.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
 import 'services/bundled_openocd_runtime.dart';
 import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
+import 'services/modbus_client_service.dart';
 import 'services/native_serial_reader.dart';
 import 'services/probe_connection_service.dart';
+import 'services/ssh_connection_service.dart';
 import 'services/data_connection_service.dart';
 import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
 import 'views/dialogs/probe_connection_dialog.dart';
+import 'views/dialogs/ssh_connection_dialog.dart';
 import 'views/dialogs/data_connection_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
+import 'views/pages/modbus_page.dart';
 import 'views/pages/probe_plot_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/pages/rtt_page.dart';
@@ -129,17 +135,32 @@ class MyApp extends StatelessWidget {
     // DataConnectionService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
     final connectionService = DataConnectionService();
+    final sshService = SshConnectionService();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: connectionService),
+        ChangeNotifierProvider.value(value: sshService),
+        ChangeNotifierProvider(
+          create:
+              (_) => ModbusClientService(
+                DataConnectionModbusLink(connectionService),
+                initialMode: ModbusMode.fromString(AppSettings().modbusMode),
+                timeoutMs: AppSettings().modbusTimeoutMs,
+                initialTasks: AppSettings().modbusPollingTasks,
+                onTasksChanged: (tasks) {
+                  AppSettings().modbusPollingTasks = List.of(tasks);
+                  unawaited(AppSettings().save());
+                },
+              ),
+        ),
         ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(connectionService),
         ),
         ChangeNotifierProvider(
-          create: (context) => ShellViewModel(connectionService),
+          create: (context) => ShellViewModel(connectionService, sshService),
         ),
         ChangeNotifierProvider(
           create:
@@ -491,6 +512,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             icon: Icons.monitor_heart_outlined,
             page: const ProbePlotPage(),
           ),
+          'modbus': (
+            id: 'modbus',
+            label: 'Modbus',
+            icon: Icons.swap_horiz,
+            page: const ModbusPage(),
+          ),
         };
     return [
       for (final id in AppSettings().mainTabOrder)
@@ -505,6 +532,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     'plot': (label: AppStrings.nav.plot, icon: Icons.show_chart),
     'rtt': (label: AppStrings.nav.rtt, icon: Icons.developer_board),
     'probePlot': (label: '探针绘图', icon: Icons.monitor_heart_outlined),
+    'modbus': (label: 'Modbus', icon: Icons.swap_horiz),
   };
 
   void _persistVisiblePages(List<String> pages) {
@@ -540,10 +568,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   bool _pagesLocked(
     DataConnectionService connectionService,
     ProbeConnectionService probeConnectionService,
-    ConnectionOwnerService owners,
-  ) =>
+    ConnectionOwnerService owners, [
+    SshConnectionService? sshService,
+  ]) =>
       owners.owner != ConnectionOwner.none ||
       connectionService.isConnecting ||
+      (sshService?.isConnecting ?? false) ||
       probeConnectionService.isConnecting ||
       probeConnectionService.isReconnecting;
 
@@ -617,7 +647,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     });
     final settings = AppSettings();
     settings.lastMainPage = id;
-    if (id == 'rawData' || id == 'shell' || id == 'plot') {
+    if (id == 'rawData' || id == 'shell' || id == 'plot' || id == 'modbus') {
       DataConnectionService().selectSerialProfile(id);
     }
     unawaited(settings.save());
@@ -645,12 +675,19 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   bool get _usesProbeConnection =>
       _currentTabId == 'rtt' || _currentTabId == 'probePlot';
 
+  bool get _usesSshConnection =>
+      _currentTabId == 'shell' &&
+      ShellConnectionMode.fromString(AppSettings().shellConnectionMode) ==
+          ShellConnectionMode.ssh;
+
   void _handleConnectionShortcut(LogicalKeyboardKey key) {
     if (!AppSettings().connectionShortcutsEnabled) return;
     if (key == LogicalKeyboardKey.f1) {
       unawaited(
         _usesProbeConnection
             ? showProbeConnectionDialog(context)
+            : _usesSshConnection
+            ? showSshConnectionDialog(context)
             : showDataConnectionDialog(context, pageId: _currentTabId),
       );
       return;
@@ -667,6 +704,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     try {
       if (_usesProbeConnection) {
         await _runProbeConnectionShortcut(key);
+      } else if (_usesSshConnection) {
+        await _runSshConnectionShortcut(key);
       } else {
         await _runSerialConnectionShortcut(key);
       }
@@ -714,6 +753,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
         return;
       }
       AppNotifications.show('快捷断开：正在断开连接');
+      if (_currentTabId == 'modbus') {
+        await context.read<ModbusClientService>().stop();
+      }
       await service.disconnect();
       return;
     }
@@ -736,6 +778,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final reconnectNetwork = service.activeNetworkConfig;
     final reconnectPage = service.activeConnectionPage ?? _currentTabId;
     AppNotifications.show('快捷重连：正在断开并重新连接');
+    if (_currentTabId == 'modbus') {
+      await context.read<ModbusClientService>().stop();
+    }
     await service.disconnect();
     if (reconnectType == DataConnectionType.serial &&
         !service.canConnectSelectedPort) {
@@ -773,12 +818,42 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     await service.connect(savedProbeConnectionConfig());
   }
 
+  Future<void> _runSshConnectionShortcut(LogicalKeyboardKey key) async {
+    final service = context.read<SshConnectionService>();
+    if (key == LogicalKeyboardKey.f2) {
+      if (service.isConnected) {
+        AppNotifications.show('快捷连接：SSH 已连接');
+      } else {
+        AppNotifications.show('快捷连接：请填写本次 SSH 凭据');
+        await showSshConnectionDialog(context);
+      }
+      return;
+    }
+    if (key == LogicalKeyboardKey.f3) {
+      if (!service.isConnected && !service.isConnecting) {
+        AppNotifications.show('快捷断开：SSH 当前未连接');
+        return;
+      }
+      AppNotifications.show('快捷断开：正在断开 SSH');
+      await service.disconnect();
+      return;
+    }
+    if (!service.isConnected) {
+      AppNotifications.show('快捷重连：请填写本次 SSH 凭据');
+      await showSshConnectionDialog(context);
+      return;
+    }
+    AppNotifications.show('快捷重连：正在重新连接 SSH');
+    await service.reconnect();
+  }
+
   @override
   Widget build(BuildContext context) {
     final connectionService = Provider.of<DataConnectionService>(context);
     final connectionOwner = Provider.of<ConnectionOwnerService>(context);
     // 探针连接和活动变化会直接影响两个探针页面的切换权限。
     final probeConnectionService = Provider.of<ProbeConnectionService>(context);
+    final sshConnectionService = Provider.of<SshConnectionService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
       _currentTabId = tabs.first.id;
@@ -849,6 +924,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                   'shell',
                                                 DataActivityOwner.plot =>
                                                   'plot',
+                                                DataActivityOwner.modbus =>
+                                                  'modbus',
                                                 DataActivityOwner.none => null,
                                               };
                                           final canSwitch = switch (connectionOwner
@@ -865,7 +942,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                       tab.id == 'probePlot',
                                               },
                                             ConnectionOwner.data =>
-                                              ownerTab != null
+                                              sshConnectionService
+                                                          .isConnected ||
+                                                      sshConnectionService
+                                                          .isConnecting
+                                                  ? tab.id == 'shell'
+                                                  : ownerTab != null
                                                   ? tab.id == ownerTab
                                                   : _tabSupportsConnection(
                                                     tab.id,
@@ -881,6 +963,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                             connectionService,
                                             probeConnectionService,
                                             connectionOwner,
+                                            sshConnectionService,
                                           );
                                           final colorScheme =
                                               Theme.of(context).colorScheme;
@@ -1233,8 +1316,18 @@ class _WindowCloseListener extends WindowListener {
       context,
       listen: false,
     );
+    final sshConnectionService = Provider.of<SshConnectionService>(
+      context,
+      listen: false,
+    );
+    final modbusService = Provider.of<ModbusClientService>(
+      context,
+      listen: false,
+    );
     await AppSettings().flushPendingSave();
+    await modbusService.stop();
     await probeConnectionService.shutdown();
+    await sshConnectionService.shutdown();
     await connectionService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();

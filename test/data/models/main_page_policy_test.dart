@@ -46,7 +46,7 @@ void main() {
         'shell',
         DataConnectionType.tcpClient,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       MainPagePolicy.supportsDataConnection('plot', DataConnectionType.udp),
@@ -57,6 +57,17 @@ void main() {
         'plot',
         DataConnectionType.tcpServer,
       ),
+      isFalse,
+    );
+    expect(
+      MainPagePolicy.supportsDataConnection(
+        'modbus',
+        DataConnectionType.tcpClient,
+      ),
+      isTrue,
+    );
+    expect(
+      MainPagePolicy.supportsDataConnection('modbus', DataConnectionType.udp),
       isFalse,
     );
   });

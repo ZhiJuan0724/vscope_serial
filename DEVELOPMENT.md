@@ -89,14 +89,16 @@ flowchart LR
 
     session --> connectionService["DataConnectionService"]
     connectionService --> rawSession["RawReceiveSession"] --> rawPage["数据收发"]
-    connectionService --> shellSession["ShellSession / YMODEM"] --> shellPage["Shell（仅串口）"]
+    connectionService --> shellSession["ShellSession / YMODEM"] --> shellPage["普通 Shell（串口或 TCP 客户端）"]
+    connectionService --> modbusService["ModbusClientService / RTU ASCII TCP"] --> modbusPage["Modbus 主站"]
+    sshPeer["SSH 服务端"] --> sshService["SshConnectionService / PTY"] --> shellPage
     connectionService --> dataSource["ConnectionDataSource / DataSourceManager"] --> parser["IDataParser"]
     parser --> plotVm["PlotViewModel / 历史与 LOD"] --> plotPage["绘图"]
 
     outbound["OutboundDataCodec"] -. 构造发送负载 .-> connectionService
 ```
 
-页面入口按连接类型限制：串口可进入数据收发、Shell 和绘图；TCP 客户端、UDP 可进入数据收发和绘图；TCP 服务端只进入数据收发。
+页面入口按连接类型限制：串口可进入数据收发、Shell、绘图和Modbus；TCP客户端可进入数据收发、Shell、绘图和Modbus；UDP可进入数据收发和绘图；TCP服务端只进入数据收发。SSH使用独立加密会话，但仍与数据连接和探针连接共享全局连接所有权。
 
 随机源不建立外部连接，只模拟绘图接收数据：
 

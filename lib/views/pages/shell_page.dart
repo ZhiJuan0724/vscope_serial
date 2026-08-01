@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import '../../core/constants/terminal_fonts.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
+import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/shell_session.dart';
 import '../../services/shell_receive_queue.dart';
@@ -93,7 +94,7 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   void dispose() {
-    _viewModel?.connectionService.updateShellPendingReceiveBytes(0);
+    _viewModel?.updatePendingReceiveBytes(0);
     unawaited(_receiveSubscription?.cancel());
     _terminalScrollController.removeListener(_handleScrollPosition);
     _terminalScrollController.dispose();
@@ -114,7 +115,8 @@ class _ShellPageState extends State<ShellPage> {
   Terminal _createTerminal(int maxLines) {
     return Terminal(
       maxLines: maxLines,
-      onResize: (_, _, _, _) {
+      onResize: (columns, rows, _, _) {
+        _viewModel?.resizeSshTerminal(columns, rows);
         if (_terminalSizeUpdateScheduled || !mounted) return;
         _terminalSizeUpdateScheduled = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -202,9 +204,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _syncReceiveQueueUsage() {
-    _viewModel?.connectionService.updateShellPendingReceiveBytes(
-      _receiveQueue.queuedBytes,
-    );
+    _viewModel?.updatePendingReceiveBytes(_receiveQueue.queuedBytes);
   }
 
   bool get _isAtBottom {
@@ -240,7 +240,7 @@ class _ShellPageState extends State<ShellPage> {
       await vm.stop();
       return;
     }
-    if (!vm.start()) return;
+    if (!await vm.start()) return;
     _receiveQueue.reset();
     _syncReceiveQueueUsage();
     _receivedBytes = 0;
@@ -410,7 +410,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   Widget _buildToolbar(ShellViewModel vm) {
-    final canTransfer = vm.isRunning || vm.isYmodemActive;
+    final canTransfer = vm.canUseYmodem && (vm.isRunning || vm.isYmodemActive);
     final canConfigure = !vm.isRunning;
     return UnifiedToolbar(
       leadingItems: [
@@ -425,6 +425,54 @@ class _ShellPageState extends State<ShellPage> {
                 vm.isConnected || vm.isRunning
                     ? () => _toggleRunning(vm)
                     : null,
+          ),
+        ),
+        ToolbarLayoutItem(
+          extent: 104,
+          child: SizedBox(
+            height: 24,
+            child: SegmentedButton<ShellConnectionMode>(
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                minimumSize: WidgetStatePropertyAll(Size(44, 24)),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8),
+                ),
+                textStyle: WidgetStatePropertyAll(
+                  TextStyle(
+                    fontSize: 12,
+                    height: 1,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                alignment: Alignment.center,
+                shape: WidgetStatePropertyAll(
+                  RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(4)),
+                  ),
+                ),
+              ),
+              segments: const [
+                ButtonSegment(
+                  value: ShellConnectionMode.normal,
+                  label: SizedBox(width: 30, child: Center(child: Text('普通'))),
+                ),
+                ButtonSegment(
+                  value: ShellConnectionMode.ssh,
+                  label: SizedBox(width: 30, child: Center(child: Text('SSH'))),
+                ),
+              ],
+              selected: {vm.connectionMode},
+              showSelectedIcon: false,
+              onSelectionChanged:
+                  vm.isConnected || vm.isRunning
+                      ? (selection) => unawaited(
+                        _confirmConnectionModeChange(vm, selection.first),
+                      )
+                      : (selection) =>
+                          unawaited(vm.setConnectionMode(selection.first)),
+            ),
           ),
         ),
         _shellModeToolbarItem(vm, RawShellInputMode.line),
@@ -494,6 +542,32 @@ class _ShellPageState extends State<ShellPage> {
         ),
       ],
     );
+  }
+
+  Future<void> _confirmConnectionModeChange(
+    ShellViewModel vm,
+    ShellConnectionMode mode,
+  ) async {
+    if (mode == vm.connectionMode) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('切换 Shell 连接模式'),
+            content: const Text('切换普通终端与 SSH 前必须断开当前连接，是否继续？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('断开并切换'),
+              ),
+            ],
+          ),
+    );
+    if (confirmed == true) await vm.setConnectionMode(mode);
   }
 
   ToolbarLayoutItem _shellActionToolbarItem({

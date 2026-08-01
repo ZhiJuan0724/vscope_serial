@@ -14,7 +14,8 @@ SerialTools 是面向 Windows 的串口收发与波形分析工具，支持实�
 - FireWater、固定帧、Zobow、JustFloat 接收协议，以及独立的发送协议和地址配置。
 - 最多 16 个普通通道和 4 个数学通道；支持缩放、平移、跟随、光标、观察、Delta X/Y、区间统计、图例和实时值。
 - CSV、BIN、旧版 DAT 数据导入及流式导出；大数据使用 LOD 绘制。
-- 可选 Shell 页面，支持 ANSI、命令行/逐键输入、命令历史和 YMODEM。
+- 可选 Shell 页面，支持串口/TCP普通终端、SSH、ANSI、命令行/逐键输入、命令历史和串口YMODEM。
+- 可选 Modbus 主站页面，支持 RTU、ASCII、TCP、常用读写功能码和周期轮询。
 - 可选 RTT Viewer 与探针绘图，支持 J-Link、CMSIS-DAP、RTT Up/Down、HSS 和 ELF 符号选择。
 - 稳定版/Beta 更新通道、更新包校验和本地版本回退。
 
@@ -75,14 +76,20 @@ SerialTools 是面向 Windows 的串口收发与波形分析工具，支持实�
 
 ## Shell 与 YMODEM
 
-Shell 默认隐藏，可在高级设置中开启。它使用独立的编码、行尾、本地回显、字体和滚动历史，支持：
+Shell 默认隐藏，可通过主标签末尾的“+”添加。它提供“普通/SSH”两种模式，并使用独立的编码、行尾、本地回显、字体和滚动历史：
 
 - ANSI 终端、命令行和逐键输入。
 - UTF-8、GBK、BIG5、Shift_JIS、EUC-KR 等流式文本解码。
 - `Ctrl+C` 发送 ETX；`Ctrl+Shift+C` 或右键复制。
-- 命令历史、文本导出和 YMODEM 文件发送/接收。
+- 普通模式支持串口或TCP客户端；YMODEM文件发送/接收仅用于串口。
+- SSH模式支持密码或PEM私钥认证、主机指纹确认和PTY终端，密码及私钥口令不会保存。
+- 命令历史和终端文本导出。
 
 接收文件默认保存到 `<程序目录>/exports/ymodem/`。
+
+## Modbus 主站
+
+Modbus 页面默认隐藏，可通过主标签末尾的“+”添加。RTU和ASCII复用串口连接，TCP使用客户端连接；页面提供手动请求、顺序轮询、响应结果与原始帧记录。地址输入统一使用0基PDU地址，并同步显示常见的00001/10001/30001/40001参考号。轮询任务会自动保存，也可通过带版本号的JSON文件导入导出。
 
 ## RTT Viewer 与探针绘图
 

@@ -86,8 +86,7 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (AppSettings().networkConnectionsEnabled &&
-                    widget.pageId != 'shell') ...[
+                if (AppSettings().networkConnectionsEnabled) ...[
                   NoAnimDropdown<DataConnectionType>(
                     value: _connectionType,
                     hint: '连接类型',
@@ -97,11 +96,17 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                     ),
                     items:
                         [
-                              DataConnectionType.serial,
-                              DataConnectionType.tcpClient,
+                              if (widget.pageId != 'modbus' ||
+                                  AppSettings().modbusMode != 'tcp')
+                                DataConnectionType.serial,
+                              if (widget.pageId != 'modbus' ||
+                                  AppSettings().modbusMode == 'tcp')
+                                DataConnectionType.tcpClient,
                               if (widget.pageId == 'rawData')
                                 DataConnectionType.tcpServer,
-                              DataConnectionType.udp,
+                              if (widget.pageId != 'shell' &&
+                                  widget.pageId != 'modbus')
+                                DataConnectionType.udp,
                             ]
                             .map(
                               (type) => DropdownMenuItem(
