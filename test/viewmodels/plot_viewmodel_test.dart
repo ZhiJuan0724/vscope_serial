@@ -2604,7 +2604,7 @@ void main() {
 
       expect(vm.isPlotting, false);
       expect(connectionService.isConnected, false);
-      expect(vm.lastStatusMessage, contains('检测到串口已断开'));
+      expect(vm.lastStatusMessage, contains('检测到数据连接已断开'));
     });
 
     test('stopPlotting先更新UI状态并阻止重复停止', () async {

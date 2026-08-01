@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
+import 'package:vscope_serial/services/shell_session.dart';
 import 'package:vscope_serial/viewmodels/shell_viewmodel.dart';
 import 'package:vscope_serial/views/pages/shell_page.dart';
 import 'package:xterm/xterm.dart';

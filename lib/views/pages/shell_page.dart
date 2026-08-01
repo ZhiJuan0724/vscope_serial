@@ -14,7 +14,7 @@ import '../../core/constants/terminal_fonts.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/app_notifications.dart';
-import '../../services/data_connection_service.dart';
+import '../../services/shell_session.dart';
 import '../../services/shell_receive_queue.dart';
 import '../../services/shell_stream_decoder.dart';
 import '../../services/ymodem_service.dart';

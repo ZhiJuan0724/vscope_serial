@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -17,12 +16,14 @@ import 'connection_owner_service.dart';
 import 'data_transport_session.dart';
 import 'native_serial_reader.dart';
 import 'network_transport.dart';
+import 'outbound_data_codec.dart';
 import 'raw_receive_session.dart';
+import 'shell_session.dart';
 import 'data_connection_coordinator.dart';
 import 'serial_port_catalog.dart';
 import 'serial_transport.dart';
+import 'text_encoding_codec.dart';
 import 'ymodem_service.dart';
-import 'windows_code_page_codec.dart';
 
 /// 发送记录应显示在原始收发区时的来源标签。
 enum SendDisplaySource { user, plot }
@@ -37,87 +38,6 @@ typedef ExportProgressCallback = void Function(double progress);
 
 class _ConnectionCancelled implements Exception {
   const _ConnectionCancelled();
-}
-
-String _decodeBytesWithEncoding(Uint8List data, String encoding) {
-  String decodeOrFallback(String Function(Uint8List) decode) {
-    try {
-      return decode(data);
-    } on FormatException {
-      return String.fromCharCodes(data);
-    }
-  }
-
-  return switch (encoding) {
-    'UTF-8' => utf8.decode(data, allowMalformed: true),
-    'GBK' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 936)),
-    'BIG5' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 950)),
-    'Shift_JIS' => decodeOrFallback(
-      (bytes) => decodeWindowsCodePage(bytes, 932),
-    ),
-    'EUC-KR' => decodeOrFallback((bytes) => decodeWindowsCodePage(bytes, 949)),
-    'Latin-1' => decodeOrFallback(latin1.decode),
-    'ASCII' => decodeOrFallback(ascii.decode),
-    _ => utf8.decode(data, allowMalformed: true),
-  };
-}
-
-Uint8List _encodeTextWithEncoding(String text, String encoding) {
-  final bytes = switch (encoding) {
-    'UTF-8' => utf8.encode(text),
-    'GBK' => encodeWindowsCodePage(text, 936),
-    'BIG5' => encodeWindowsCodePage(text, 950),
-    'Shift_JIS' => encodeWindowsCodePage(text, 932),
-    'EUC-KR' => encodeWindowsCodePage(text, 949),
-    'Latin-1' => latin1.encode(text),
-    'ASCII' => ascii.encode(text),
-    _ => utf8.encode(text),
-  };
-  return Uint8List.fromList(bytes);
-}
-
-enum RawShellInputMode {
-  line('line', '命令行'),
-  key('key', '逐键');
-
-  final String value;
-  final String label;
-  const RawShellInputMode(this.value, this.label);
-
-  static RawShellInputMode fromString(String value) {
-    return value == key.value ? key : line;
-  }
-}
-
-enum RawShellThemeMode {
-  light('light', '浅色'),
-  dark('dark', '深色');
-
-  final String value;
-  final String label;
-  const RawShellThemeMode(this.value, this.label);
-
-  static RawShellThemeMode fromString(String value) {
-    return value == dark.value ? dark : light;
-  }
-}
-
-enum RawShellCursorMode {
-  verticalBar('verticalBar', '竖线'),
-  underline('underline', '下划线'),
-  block('block', '方块');
-
-  final String value;
-  final String label;
-  const RawShellCursorMode(this.value, this.label);
-
-  static RawShellCursorMode fromString(String value) {
-    return switch (value) {
-      'block' => block,
-      'underline' => underline,
-      _ => verticalBar,
-    };
-  }
 }
 
 /// 串口、TCP和UDP数据连接的全局UI门面。
@@ -144,7 +64,7 @@ class DataConnectionService extends ChangeNotifier {
         });
       },
       onRetentionLimitReached: () {
-        // 原始字节到达上限只停止原始接收，不会主动断开串口。
+        // 原始字节到达上限只停止原始接收，不会主动断开数据连接。
         if (isRawReceiving) stopRawReceiving();
       },
     );
@@ -299,8 +219,11 @@ class DataConnectionService extends ChangeNotifier {
   final _dataController = StreamController<DataPacket>.broadcast();
   Stream<DataPacket> get dataStream => _dataController.stream;
 
-  final _shellDataController = StreamController<Uint8List>.broadcast();
-  Stream<Uint8List> get shellDataStream => _shellDataController.stream;
+  late final ShellSession _shellSession = ShellSession(
+    sendBytes: sendRawBytes,
+    onChanged: _notifyListenersSoon,
+  );
+  Stream<Uint8List> get shellDataStream => _shellSession.dataStream;
 
   late final RawReceiveSession _rawSession;
   static const int rawRetentionLimitBytes =
@@ -323,12 +246,11 @@ class DataConnectionService extends ChangeNotifier {
   String get textEncoding => _rawSession.textEncoding;
   RetentionUsage get rawRetentionUsage => _rawSession.retentionUsage;
   int get rawTextDisplayCacheBytes => _rawSession.textDisplayCacheBytes;
-  int _shellPendingReceiveBytes = 0;
-  int get shellPendingReceiveBytes => _shellPendingReceiveBytes;
+  int get shellPendingReceiveBytes => _shellSession.pendingReceiveBytes;
 
   /// Shell 页面同步尚未消费的本地队列字节数，供统一内存视图读取。
   void updateShellPendingReceiveBytes(int value) {
-    _shellPendingReceiveBytes = value < 0 ? 0 : value;
+    _shellSession.updatePendingReceiveBytes(value);
   }
 
   bool get hasRawData => _rawSession.hasRawData;
@@ -341,33 +263,99 @@ class DataConnectionService extends ChangeNotifier {
 
   // 显示选项
   bool autoScroll = true;
-  RawShellInputMode rawShellInputMode = RawShellInputMode.line;
-  double rawDataTerminalFontSize = 13.0;
-  String rawDataTerminalFontFamily = 'Consolas';
-  RawShellThemeMode rawShellThemeMode = RawShellThemeMode.light;
-  RawShellCursorMode rawShellCursorMode = RawShellCursorMode.verticalBar;
-  String shellEncoding = 'UTF-8';
-  String shellLineEnding = '\r\n';
-  bool shellLocalEcho = true;
-  int shellScrollbackLines = 10000;
+
+  void setAutoScroll(bool value) {
+    if (autoScroll == value) return;
+    autoScroll = value;
+    _notifyListenersSoon();
+  }
+
+  RawShellInputMode get rawShellInputMode => _shellSession.inputMode;
+  double get rawDataTerminalFontSize => _shellSession.fontSize;
+  String get rawDataTerminalFontFamily => _shellSession.fontFamily;
+  RawShellThemeMode get rawShellThemeMode => _shellSession.themeMode;
+  RawShellCursorMode get rawShellCursorMode => _shellSession.cursorMode;
+  String get shellEncoding => _shellSession.encoding;
+  String get shellLineEnding => _shellSession.lineEnding;
+  bool get shellLocalEcho => _shellSession.localEcho;
+  int get shellScrollbackLines => _shellSession.scrollbackLines;
 
   // 发送选项
-  bool sendHex = false;
-  bool keepSendText = false;
-  bool appendLineEnding = false;
-  String lineEnding = '\r\n';
-  bool enableCrc = false;
-  CrcByteOrder crcByteOrder = CrcByteOrder.big;
-  CrcType crcType = CrcType.crc16;
-  String crcPolyName = 'CRC-16/MODBUS';
+  final OutboundDataCodec _outboundCodec = OutboundDataCodec();
+  bool get sendHex => _outboundCodec.sendHex;
+  bool get keepSendText => _outboundCodec.keepSendText;
+  bool get appendLineEnding => _outboundCodec.appendLineEnding;
+  String get lineEnding => _outboundCodec.lineEnding;
+  bool get enableCrc => _outboundCodec.enableCrc;
+  CrcByteOrder get crcByteOrder => _outboundCodec.crcByteOrder;
+  CrcType get crcType => _outboundCodec.crcType;
+  String get crcPolyName => _outboundCodec.crcPolyName;
 
   bool get crcReverseBytes => crcByteOrder == CrcByteOrder.little;
   set crcReverseBytes(bool value) {
-    crcByteOrder = value ? CrcByteOrder.little : CrcByteOrder.big;
+    _outboundCodec.crcByteOrder =
+        value ? CrcByteOrder.little : CrcByteOrder.big;
+  }
+
+  void setSendHex(bool value) {
+    if (_outboundCodec.sendHex == value) return;
+    _outboundCodec.sendHex = value;
+    if (!value) _outboundCodec.enableCrc = false;
+    _notifyListenersSoon();
+  }
+
+  void setKeepSendText(bool value) {
+    if (_outboundCodec.keepSendText == value) return;
+    _outboundCodec.keepSendText = value;
+    _notifyListenersSoon();
+  }
+
+  void setAppendLineEnding(bool value) {
+    if (_outboundCodec.appendLineEnding == value) return;
+    _outboundCodec.appendLineEnding = value;
+    _notifyListenersSoon();
+  }
+
+  void setLineEnding(String value) {
+    if (_outboundCodec.lineEnding == value) return;
+    _outboundCodec.lineEnding = value;
+    _notifyListenersSoon();
+  }
+
+  void setEnableCrc(bool value) {
+    if (_outboundCodec.enableCrc == value) return;
+    _outboundCodec.enableCrc = value;
+    _notifyListenersSoon();
+  }
+
+  void setCrcByteOrder(CrcByteOrder value) {
+    if (_outboundCodec.crcByteOrder == value) return;
+    _outboundCodec.crcByteOrder = value;
+    _notifyListenersSoon();
+  }
+
+  void setCrcType(CrcType value) {
+    if (_outboundCodec.crcType == value) return;
+    _outboundCodec.crcType = value;
+    final polys = getPolysByType(value);
+    if (polys.isNotEmpty) _outboundCodec.crcPolyName = polys.keys.first;
+    _notifyListenersSoon();
+  }
+
+  void setCrcPolyName(String value) {
+    if (_outboundCodec.crcPolyName == value) return;
+    _outboundCodec.crcPolyName = value;
+    _notifyListenersSoon();
   }
 
   // 绘图选项
   bool useRandomSource = false;
+
+  void setUseRandomSource(bool value, {bool notify = true}) {
+    if (useRandomSource == value) return;
+    useRandomSource = value;
+    if (notify) _notifyListenersSoon();
+  }
 
   // 绘图状态标志
   bool isPlotting = false;
@@ -381,9 +369,7 @@ class DataConnectionService extends ChangeNotifier {
   /// 是否在绘图接收期间请求原生层合并连续小块数据。
   bool get plotReceiveAggregationEnabled =>
       AppSettings().plotReceiveAggregationEnabled;
-  late final YmodemService ymodemService = YmodemService(
-    sendBytes: sendRawBytes,
-  );
+  YmodemService get ymodemService => _shellSession.ymodemService;
 
   /// 从 AppSettings 加载配置
   void loadSettings() {
@@ -394,25 +380,7 @@ class DataConnectionService extends ChangeNotifier {
     _rawSession.setAutoLineBreakIntervalMs(
       settings.rawDataAutoLineBreakIntervalMs,
     );
-    rawShellInputMode = RawShellInputMode.fromString(
-      settings.rawDataShellInputMode,
-    );
-    rawDataTerminalFontSize = settings.rawDataTerminalFontSize.clamp(
-      10.0,
-      24.0,
-    );
-    rawDataTerminalFontFamily = settings.rawDataTerminalFontFamily;
-    rawShellThemeMode = RawShellThemeMode.fromString(
-      settings.rawDataShellTheme,
-    );
-    rawShellCursorMode = RawShellCursorMode.fromString(
-      settings.rawDataShellCursor,
-    );
-    shellEncoding = settings.shellEncoding;
-    shellLineEnding = settings.shellLineEnding;
-    shellLocalEcho = settings.shellLocalEcho;
-    shellScrollbackLines = settings.shellScrollbackLines;
-    ymodemService.attach(shellDataStream);
+    _shellSession.loadSettings(settings);
     _rawSession.setTextEncoding(settings.rawDataEncoding);
     _syncPlotReceiveAggregation();
   }
@@ -984,7 +952,7 @@ class DataConnectionService extends ChangeNotifier {
       // YMODEM 文件本身由接收服务直接落盘；原始追踪达到上限后不再增长，
       // 但不能因此截断正在进行的文件传输。
       _rawSession.appendRawBytes(data, stopAtLimit: false);
-      ymodemService.addIncomingBytes(data);
+      _shellSession.addYmodemBytes(data);
       return;
     }
 
@@ -1003,7 +971,7 @@ class DataConnectionService extends ChangeNotifier {
 
     if (shouldReceiveShell) {
       _recordReceiveLog(data.length);
-      _shellDataController.add(data);
+      _shellSession.addTerminalBytes(data);
     }
   }
 
@@ -1017,7 +985,7 @@ class DataConnectionService extends ChangeNotifier {
   @visibleForTesting
   void debugAddShellData(Uint8List data) {
     if (_activityOwner == DataActivityOwner.shell) {
-      _shellDataController.add(data);
+      _shellSession.addTerminalBytes(data);
     }
   }
 
@@ -1175,8 +1143,7 @@ class DataConnectionService extends ChangeNotifier {
   void debugFlushSendLogForTest() => _flushSendLog();
 
   /// 使用当前选择的编码解码字节数据
-  String _decodeBytes(Uint8List data) =>
-      _decodeBytesWithEncoding(data, textEncoding);
+  String _decodeBytes(Uint8List data) => decodeTextBytes(data, textEncoding);
 
   /// 使用当前文本编码解码数据，供 Shell 等原始文本显示复用。
   String decodeText(Uint8List data) => _decodeBytes(data);
@@ -1243,89 +1210,29 @@ class DataConnectionService extends ChangeNotifier {
   }
 
   void setRawShellInputMode(RawShellInputMode value) {
-    if (rawShellInputMode == value) return;
-    rawShellInputMode = value;
-    final settings = AppSettings();
-    settings.rawDataShellInputMode = value.value;
-    unawaited(settings.save());
-    AppLogger().info('Shell输入模式切换为 ${value.label}', category: 'DATA');
-    _notifyListenersSoon();
+    _shellSession.setInputMode(value);
   }
 
-  void setShellEncoding(String value) {
-    if (shellEncoding == value) return;
-    shellEncoding = value;
-    final settings = AppSettings()..shellEncoding = value;
-    unawaited(settings.save());
-    _notifyListenersSoon();
-  }
+  void setShellEncoding(String value) => _shellSession.setEncoding(value);
 
-  void setShellLineEnding(String value) {
-    if (shellLineEnding == value) return;
-    shellLineEnding = value;
-    final settings = AppSettings()..shellLineEnding = value;
-    unawaited(settings.save());
-    _notifyListenersSoon();
-  }
+  void setShellLineEnding(String value) => _shellSession.setLineEnding(value);
 
-  void setShellLocalEcho(bool value) {
-    if (shellLocalEcho == value) return;
-    shellLocalEcho = value;
-    final settings = AppSettings()..shellLocalEcho = value;
-    unawaited(settings.save());
-    _notifyListenersSoon();
-  }
+  void setShellLocalEcho(bool value) => _shellSession.setLocalEcho(value);
 
-  void setShellScrollbackLines(int value) {
-    final next = value.clamp(1000, 100000);
-    if (shellScrollbackLines == next) return;
-    shellScrollbackLines = next;
-    final settings = AppSettings()..shellScrollbackLines = next;
-    unawaited(settings.save());
-    _notifyListenersSoon();
-  }
+  void setShellScrollbackLines(int value) =>
+      _shellSession.setScrollbackLines(value);
 
-  void setRawDataTerminalFontSize(double value) {
-    final next = value.clamp(10.0, 24.0);
-    if (rawDataTerminalFontSize == next) return;
-    rawDataTerminalFontSize = next;
-    final settings = AppSettings();
-    settings.rawDataTerminalFontSize = next;
-    unawaited(settings.save());
-    AppLogger().info('Shell字体大小设置为 $next', category: 'DATA');
-    _notifyListenersSoon();
-  }
+  void setRawDataTerminalFontSize(double value) =>
+      _shellSession.setFontSize(value);
 
-  void setRawDataTerminalFontFamily(String value) {
-    final next = value.trim().isEmpty ? 'Consolas' : value.trim();
-    if (rawDataTerminalFontFamily == next) return;
-    rawDataTerminalFontFamily = next;
-    final settings = AppSettings();
-    settings.rawDataTerminalFontFamily = next;
-    unawaited(settings.save());
-    AppLogger().info('Shell字体设置为 $next', category: 'DATA');
-    _notifyListenersSoon();
-  }
+  void setRawDataTerminalFontFamily(String value) =>
+      _shellSession.setFontFamily(value);
 
-  void setRawShellThemeMode(RawShellThemeMode value) {
-    if (rawShellThemeMode == value) return;
-    rawShellThemeMode = value;
-    final settings = AppSettings();
-    settings.rawDataShellTheme = value.value;
-    unawaited(settings.save());
-    AppLogger().info('Shell主题切换为 ${value.label}', category: 'DATA');
-    _notifyListenersSoon();
-  }
+  void setRawShellThemeMode(RawShellThemeMode value) =>
+      _shellSession.setThemeMode(value);
 
-  void setRawShellCursorMode(RawShellCursorMode value) {
-    if (rawShellCursorMode == value) return;
-    rawShellCursorMode = value;
-    final settings = AppSettings();
-    settings.rawDataShellCursor = value.value;
-    unawaited(settings.save());
-    AppLogger().info('Shell光标样式切换为 ${value.label}', category: 'DATA');
-    _notifyListenersSoon();
-  }
+  void setRawShellCursorMode(RawShellCursorMode value) =>
+      _shellSession.setCursorMode(value);
 
   void setReceiveHex(bool value) {
     if (!_rawSession.setReceiveHex(value)) return;
@@ -1393,113 +1300,44 @@ class DataConnectionService extends ChangeNotifier {
       return null;
     }
 
-    return _prepareSendPayload(text);
+    return _outboundCodec.prepare(text, encoding: textEncoding);
   }
 
   @visibleForTesting
-  Uint8List? prepareSendDataForTest(String text) => _prepareSendPayload(text);
+  Uint8List? prepareSendDataForTest(String text) =>
+      _outboundCodec.prepare(text, encoding: textEncoding);
 
   /// 多条发送条目使用独立的有效载荷规则：不追加普通发送区的行尾或 CRC。
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) {
     if (!isConnected || _activeSession == null || text.isEmpty) return null;
-    try {
-      if (!isHex) return _encodeTextWithEncoding(text, textEncoding);
-      final hex = text.replaceAll(RegExp(r'\s+'), '');
-      if (hex.isEmpty || hex.length.isOdd) return null;
-      final bytes = <int>[];
-      for (var index = 0; index < hex.length; index += 2) {
-        final value = int.tryParse(hex.substring(index, index + 2), radix: 16);
-        if (value == null) return null;
-        bytes.add(value);
-      }
-      return Uint8List.fromList(bytes);
-    } catch (_) {
-      return null;
-    }
+    return _outboundCodec.prepareMulti(
+      text,
+      isHex: isHex,
+      encoding: textEncoding,
+    );
   }
 
   @visibleForTesting
   Uint8List? prepareMultiSendDataForTest(String text, {required bool isHex}) {
-    if (text.isEmpty) return null;
-    if (!isHex) return _encodeTextWithEncoding(text, textEncoding);
-    final hex = text.replaceAll(RegExp(r'\s+'), '');
-    if (hex.isEmpty || hex.length.isOdd) return null;
-    final bytes = <int>[];
-    for (var index = 0; index < hex.length; index += 2) {
-      final value = int.tryParse(hex.substring(index, index + 2), radix: 16);
-      if (value == null) return null;
-      bytes.add(value);
-    }
-    return Uint8List.fromList(bytes);
-  }
-
-  Uint8List? _prepareSendPayload(String text) {
-    if (text.isEmpty) return null;
-
-    try {
-      Uint8List data;
-      if (sendHex) {
-        final hexString = text.replaceAll(' ', '');
-        if (hexString.length % 2 != 0) {
-          AppLogger().error('十六进制数据长度必须为偶数', category: 'SERIAL');
-          return null;
-        }
-        final bytes = <int>[];
-        for (var i = 0; i < hexString.length; i += 2) {
-          final byte = int.tryParse(hexString.substring(i, i + 2), radix: 16);
-          if (byte == null) {
-            AppLogger().error('无效的十六进制数据', category: 'SERIAL');
-            return null;
-          }
-          bytes.add(byte);
-        }
-        data = Uint8List.fromList(bytes);
-      } else {
-        data = prepareTextSendData(text);
-      }
-
-      // 追加 CRC
-      if (enableCrc && sendHex) {
-        final poly = getPolysByType(crcType)[crcPolyName];
-        if (poly != null) {
-          final crc = calculateCrc(data, poly);
-          var crcBytes = crcToBytes(crc, poly.width);
-          if (crcByteOrder == CrcByteOrder.little) {
-            crcBytes = crcBytes.reversed.toList();
-          }
-          final newData = Uint8List(data.length + crcBytes.length);
-          newData.setRange(0, data.length, data);
-          newData.setRange(data.length, newData.length, crcBytes);
-          data = newData;
-        }
-      }
-
-      return data;
-    } catch (e) {
-      AppLogger().error('发送失败: $e', category: 'SERIAL');
-      return null;
-    }
+    return _outboundCodec.prepareMulti(
+      text,
+      isHex: isHex,
+      encoding: textEncoding,
+    );
   }
 
   @visibleForTesting
-  Uint8List prepareTextSendData(String text) {
-    final content = appendLineEnding ? '$text$lineEnding' : text;
-    return _encodeTextWithEncoding(content, textEncoding);
-  }
+  Uint8List prepareTextSendData(String text) =>
+      _outboundCodec.prepareText(text, encoding: textEncoding);
 
-  Uint8List prepareShellTextData(String text) {
-    final content = '$text$shellLineEnding';
-    return _encodeTextWithEncoding(content, shellEncoding);
-  }
+  Uint8List prepareShellTextData(String text) =>
+      _shellSession.prepareLine(text);
 
-  Uint8List encodeShellText(String text) =>
-      _encodeTextWithEncoding(text, shellEncoding);
+  Uint8List encodeShellText(String text) => _shellSession.encodeText(text);
 
-  String decodeShellText(Uint8List data) =>
-      _decodeBytesWithEncoding(data, shellEncoding);
+  String decodeShellText(Uint8List data) => _shellSession.decodeText(data);
 
-  Uint8List encodeText(String text) =>
-      _encodeTextWithEncoding(text, textEncoding);
+  Uint8List encodeText(String text) => encodeTextBytes(text, textEncoding);
 
   Future<void> send(
     Uint8List data, {
@@ -1553,11 +1391,7 @@ class DataConnectionService extends ChangeNotifier {
     _recordSendLog(sent);
   }
 
-  Future<File?> receiveYmodemFile() async {
-    final exeDir = File(Platform.resolvedExecutable).parent;
-    final dir = Directory('${exeDir.path}/exports/ymodem');
-    return ymodemService.receiveFile(dir);
-  }
+  Future<File?> receiveYmodemFile() => _shellSession.receiveYmodemFile();
 
   void _handleIoDisconnected(String message) {
     AppLogger().warning(message, category: 'SERIAL');
@@ -1613,7 +1447,7 @@ class DataConnectionService extends ChangeNotifier {
   /// 开始接收原始数据
   bool startRawReceiving() {
     if (!isConnected) {
-      AppLogger().warning('串口未连接，无法开始接收', category: 'SERIAL');
+      AppLogger().warning('数据连接未建立，无法开始接收', category: 'DATA');
       return false;
     }
     if (rawRetentionUsage.state == RetentionState.limitReached) {
@@ -1666,9 +1500,15 @@ class DataConnectionService extends ChangeNotifier {
     _notifyListenersSoon();
   }
 
-  /// 尝试原子取得串口活动所有权；同一所有者重复调用视为成功。
-  bool tryAcquireActivity(DataActivityOwner owner) =>
-      _tryAcquireActivity(owner);
+  /// 尝试原子取得数据活动所有权；同一所有者重复调用视为成功。
+  bool tryAcquireActivity(DataActivityOwner owner) {
+    final previous = _activityOwner;
+    final acquired = _tryAcquireActivity(owner);
+    if (acquired && previous != _activityOwner) {
+      _notifyListenersSoon();
+    }
+    return acquired;
+  }
 
   bool _tryAcquireActivity(DataActivityOwner owner) {
     if (owner == DataActivityOwner.none) return false;
@@ -1710,7 +1550,7 @@ class DataConnectionService extends ChangeNotifier {
     _activityOwner = DataActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
-    if (ymodemService.isActive) ymodemService.abort('串口已断开');
+    _shellSession.abort('串口已断开');
   }
 
   /// 仅 Windows 原生 transport 支持该优化；其它实现保持原有逐块交付。
@@ -1752,9 +1592,8 @@ class DataConnectionService extends ChangeNotifier {
       }),
     );
     isConnected = false;
-    unawaited(ymodemService.dispose());
+    unawaited(_shellSession.dispose());
     _dataController.close();
-    _shellDataController.close();
     super.dispose();
   }
 }

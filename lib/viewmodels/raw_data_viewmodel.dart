@@ -52,9 +52,8 @@ class RawDataViewModel extends BaseViewModel {
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在数据收发页面
   void setUseRandomSource(bool value) {
     if (connectionService.useRandomSource == value) return;
-    connectionService.useRandomSource = value;
+    connectionService.setUseRandomSource(value);
     AppLogger().info('数据收发页随机源${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   /// 开始接收原始数据
@@ -81,79 +80,65 @@ class RawDataViewModel extends BaseViewModel {
 
   void setAutoScroll(bool value) {
     if (connectionService.autoScroll == value) return;
-    connectionService.autoScroll = value;
+    connectionService.setAutoScroll(value);
     AppLogger().info('接收区自动滚动${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setSendHex(bool value) {
     if (connectionService.sendHex == value) return;
-    connectionService.sendHex = value;
-    if (!value) connectionService.enableCrc = false;
+    connectionService.setSendHex(value);
     AppLogger().info(
       '发送格式切换为${value ? 'HEX' : '文本'}${value ? '' : '，CRC已关闭'}',
       category: 'DATA',
     );
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setKeepSendText(bool value) {
     if (connectionService.keepSendText == value) return;
-    connectionService.keepSendText = value;
+    connectionService.setKeepSendText(value);
     AppLogger().info('发送后${value ? '保留' : '清空'}输入内容', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setAppendLineEnding(bool value) {
     if (connectionService.appendLineEnding == value) return;
-    connectionService.appendLineEnding = value;
+    connectionService.setAppendLineEnding(value);
     AppLogger().info('发送行尾追加${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setLineEnding(String value) {
     if (connectionService.lineEnding == value) return;
-    connectionService.lineEnding = value;
+    connectionService.setLineEnding(value);
     AppLogger().info(
       '发送行尾设置为 ${value.replaceAll('\r', r'\r').replaceAll('\n', r'\n')}',
       category: 'DATA',
     );
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setEnableCrc(bool value) {
     if (connectionService.enableCrc == value) return;
-    connectionService.enableCrc = value;
+    connectionService.setEnableCrc(value);
     AppLogger().info('发送CRC${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setCrcByteOrder(CrcByteOrder value) {
     if (connectionService.crcByteOrder == value) return;
-    connectionService.crcByteOrder = value;
+    connectionService.setCrcByteOrder(value);
     AppLogger().info('CRC字节序设置为 ${value.label}', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setCrcType(CrcType type) {
     if (connectionService.crcType == type) return;
-    connectionService.crcType = type;
-    final polys = getPolysByType(type);
-    if (polys.isNotEmpty) {
-      connectionService.crcPolyName = polys.keys.first;
-    }
+    connectionService.setCrcType(type);
     AppLogger().info(
       'CRC类型设置为 ${type.name}，多项式=${connectionService.crcPolyName}',
       category: 'DATA',
     );
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setCrcPolyName(String name) {
     if (connectionService.crcPolyName == name) return;
-    connectionService.crcPolyName = name;
+    connectionService.setCrcPolyName(name);
     AppLogger().info('CRC多项式设置为 $name', category: 'DATA');
-    Future.microtask(() => connectionService.notifyListeners());
   }
 
   void setAutoLineBreakIntervalMs(int milliseconds) {

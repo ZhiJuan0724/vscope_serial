@@ -703,7 +703,7 @@ class PlotViewModel extends BaseViewModel {
       ),
     );
     // 同步到 connectionService
-    connectionService.useRandomSource = _useRandomSource;
+    connectionService.setUseRandomSource(_useRandomSource, notify: false);
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
     _parserConfig
@@ -1481,7 +1481,7 @@ class PlotViewModel extends BaseViewModel {
   /// 状态栏提示文本，根据当前状态给用户操作建议
   ///
   /// 提示场景：
-  /// - 未连接串口且未使用随机源 → 提示先连接串口或启用随机源
+  /// - 未建立数据连接且未使用随机源 → 提示先连接或启用随机源
   /// - 串口连接中 → 提示正在连接
   /// - 数据连接已建立但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
@@ -2042,7 +2042,6 @@ class PlotViewModel extends BaseViewModel {
         connectionService.releaseActivity(DataActivityOwner.plot);
       },
       onStarted: () {
-        Future.microtask(() => connectionService.notifyListeners());
         _startRefreshTimer();
         AppLogger().info('开始绘图', category: 'PLOT');
         showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
@@ -2114,7 +2113,7 @@ class PlotViewModel extends BaseViewModel {
     }
 
     if (!connectionService.isConnected && _useRandomSource && !canUseRandom) {
-      const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或连接串口';
+      const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或建立数据连接';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
       return false;
@@ -2174,8 +2173,6 @@ class PlotViewModel extends BaseViewModel {
     );
     _startRefreshTimer();
     showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
-    Future.microtask(() => connectionService.notifyListeners());
-
     return _sessionController.stop(
       releaseActivity: () {
         connectionService.releaseActivity(DataActivityOwner.plot);
@@ -2220,8 +2217,8 @@ class PlotViewModel extends BaseViewModel {
             : settings.lastPort;
     if (lastPort != null && lastPort.isNotEmpty) {
       AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
-      connectionService.config = connectionService.config.copyWith(
-        port: lastPort,
+      connectionService.updateConfig(
+        connectionService.config.copyWith(port: lastPort),
       );
       await connectionService.connect();
       if (connectionService.isConnected) {
@@ -2242,8 +2239,8 @@ class PlotViewModel extends BaseViewModel {
         return;
       }
       AppLogger().info('尝试连接唯一串口: $solePort', category: 'PLOT');
-      connectionService.config = connectionService.config.copyWith(
-        port: solePort,
+      connectionService.updateConfig(
+        connectionService.config.copyWith(port: solePort),
       );
       await connectionService.connect();
       if (connectionService.isConnected) {

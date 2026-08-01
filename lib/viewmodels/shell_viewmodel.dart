@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
-import '../services/data_connection_service.dart';
+import '../services/shell_session.dart';
 import '../services/shell_stream_decoder.dart';
 import '../services/ymodem_service.dart';
 import 'base_viewmodel.dart';

@@ -243,7 +243,7 @@ class MultiSendViewModel extends ChangeNotifier {
       isHex: entry.isHex,
     );
     if (data == null || data.isEmpty) {
-      throw StateError('“${entry.name}”内容无效或串口未连接');
+      throw StateError('“${entry.name}”内容无效或数据连接未建立');
     }
     await _connectionService.send(data, displayAsHex: entry.isHex);
   }

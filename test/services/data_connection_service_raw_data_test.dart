@@ -22,8 +22,10 @@ void main() {
         DataConnectionService.defaultAutoLineBreakIntervalMs,
       );
       service.setTextEncoding('UTF-8');
-      service.sendHex = false;
-      service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
+      service.setSendHex(false);
+      service.setDisplayLineLimit(
+        DataConnectionService.defaultDisplayLineLimit,
+      );
     });
 
     tearDown(() {
@@ -36,8 +38,10 @@ void main() {
         DataConnectionService.defaultAutoLineBreakIntervalMs,
       );
       service.setTextEncoding('UTF-8');
-      service.sendHex = false;
-      service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
+      service.setSendHex(false);
+      service.setDisplayLineLimit(
+        DataConnectionService.defaultDisplayLineLimit,
+      );
       service.stopRawReceiving();
       service.isConnected = false;
       service.debugRawRetentionLimitBytes = null;
@@ -186,21 +190,21 @@ void main() {
     });
 
     test('text send data can append configured line ending', () {
-      service.appendLineEnding = true;
+      service.setAppendLineEnding(true);
 
-      service.lineEnding = '\r';
+      service.setLineEnding('\r');
       expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\r');
 
-      service.lineEnding = '\n';
+      service.setLineEnding('\n');
       expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\n');
 
-      service.lineEnding = '\r\n';
+      service.setLineEnding('\r\n');
       expect(utf8.decode(service.prepareTextSendData('AT')), 'AT\r\n');
     });
 
     test('shell line send always appends configured line ending', () {
-      service.appendLineEnding = false;
-      service.shellLineEnding = '\n';
+      service.setAppendLineEnding(false);
+      service.setShellLineEnding('\n');
 
       expect(utf8.decode(service.prepareShellTextData('help')), 'help\n');
     });
@@ -208,9 +212,9 @@ void main() {
     test('普通文本和Shell文本发送使用设置中的编码', () {
       service.setTextEncoding('GBK');
       service.setShellEncoding('GBK');
-      service.appendLineEnding = false;
-      service.lineEnding = '\r\n';
-      service.shellLineEnding = '\r\n';
+      service.setAppendLineEnding(false);
+      service.setLineEnding('\r\n');
+      service.setShellLineEnding('\r\n');
 
       expect(service.prepareTextSendData('中文'), gbk.encode('中文'));
       expect(service.prepareShellTextData('中文'), gbk.encode('中文\r\n'));
@@ -227,15 +231,15 @@ void main() {
     });
 
     test('hex send appends CRC using selected byte order', () {
-      service.sendHex = true;
-      service.enableCrc = true;
-      service.crcType = CrcType.crc16;
-      service.crcPolyName = 'CRC-16/MODBUS';
+      service.setSendHex(true);
+      service.setEnableCrc(true);
+      service.setCrcType(CrcType.crc16);
+      service.setCrcPolyName('CRC-16/MODBUS');
 
-      service.crcByteOrder = CrcByteOrder.big;
+      service.setCrcByteOrder(CrcByteOrder.big);
       final bigEndian = service.prepareSendDataForTest('0102')!;
 
-      service.crcByteOrder = CrcByteOrder.little;
+      service.setCrcByteOrder(CrcByteOrder.little);
       final littleEndian = service.prepareSendDataForTest('0102')!;
 
       expect(bigEndian.take(2), [0x01, 0x02]);
@@ -245,10 +249,10 @@ void main() {
 
     test('多条发送不继承普通发送区的行尾或 CRC', () {
       service.setTextEncoding('UTF-8');
-      service.appendLineEnding = true;
-      service.lineEnding = '\r\n';
-      service.sendHex = true;
-      service.enableCrc = true;
+      service.setAppendLineEnding(true);
+      service.setLineEnding('\r\n');
+      service.setSendHex(true);
+      service.setEnableCrc(true);
 
       expect(
         service.prepareMultiSendDataForTest('AT', isHex: false),
@@ -260,7 +264,7 @@ void main() {
     });
 
     test('plot binary send is marked and displayed as hex', () {
-      service.sendHex = false;
+      service.setSendHex(false);
       service.debugAddPlotSendDataForTest(
         Uint8List.fromList([0x01, 0x02, 0xFF]),
         displayAsHex: true,
@@ -270,14 +274,14 @@ void main() {
     });
 
     test('user hex send keeps original display marker', () {
-      service.sendHex = true;
+      service.setSendHex(true);
       service.debugAddSendData(Uint8List.fromList([0x01, 0x02]));
 
       expect(service.receivedLines.single, '[HEX] 01 02 (2 bytes)');
     });
 
     test('plot text send is marked without forcing hex display', () {
-      service.sendHex = true;
+      service.setSendHex(true);
       service.debugAddPlotSendDataForTest(
         Uint8List.fromList(utf8.encode('r 1 2\n')),
         displayAsHex: false,
