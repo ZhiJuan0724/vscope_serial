@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/dialogs/address_profile_dialog.dart';
 
 void main() {
-  final serialService = SerialService();
+  final connectionService = DataConnectionService();
   late PlotViewModel viewModel;
 
   setUp(() {
-    viewModel = PlotViewModel(serialService);
+    viewModel = PlotViewModel(connectionService);
   });
 
   tearDown(() {

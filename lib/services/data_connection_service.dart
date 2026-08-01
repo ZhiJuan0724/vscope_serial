@@ -17,7 +17,7 @@ import 'connection_owner_service.dart';
 import 'native_serial_reader.dart';
 import 'network_transport.dart';
 import 'raw_receive_session.dart';
-import 'serial_connection_coordinator.dart';
+import 'data_connection_coordinator.dart';
 import 'serial_port_catalog.dart';
 import 'serial_transport.dart';
 import 'ymodem_service.dart';
@@ -30,7 +30,7 @@ enum SendDisplaySource { user, plot }
 ///
 /// 同一时刻只能有一个页面消费串口数据，避免数据收发、Shell 与绘图
 /// 在切换页面后继续并行运行或争抢同一批字节。
-enum SerialActivityOwner { none, rawData, shell, plot }
+enum DataActivityOwner { none, rawData, shell, plot }
 
 typedef ExportProgressCallback = void Function(double progress);
 
@@ -119,21 +119,21 @@ enum RawShellCursorMode {
   }
 }
 
-/// 串口服务的全局 UI 门面。
+/// 串口、TCP和UDP数据连接的全局UI门面。
 ///
 /// 连接生命周期、原始接收缓存和后台写队列分别由专属组件管理；此类负责把它们
 /// 组合为页面可用状态，并确保数据收发、Shell、绘图只会有一个接收活动所有者。
-class SerialService extends ChangeNotifier {
-  static final SerialService _instance = SerialService._internal();
-  factory SerialService() => _instance;
-  SerialService._internal() : this._withTransport(NativeSerialTransport.new);
+class DataConnectionService extends ChangeNotifier {
+  static final DataConnectionService _instance = DataConnectionService._internal();
+  factory DataConnectionService() => _instance;
+  DataConnectionService._internal() : this._withTransport(NativeSerialTransport.new);
 
   @visibleForTesting
-  SerialService.forTesting({
+  DataConnectionService.forTesting({
     required SerialTransport Function() transportFactory,
   }) : this._withTransport(transportFactory);
 
-  SerialService._withTransport(this._transportFactory) {
+  DataConnectionService._withTransport(this._transportFactory) {
     _rawSession = RawReceiveSession(
       onChanged: () {
         Future.microtask(() {
@@ -169,8 +169,8 @@ class SerialService extends ChangeNotifier {
   bool isConnected = false;
   bool isConnecting = false;
   final ConnectionOwnerService _connectionOwners = ConnectionOwnerService();
-  final SerialConnectionCoordinator _connectionCoordinator =
-      SerialConnectionCoordinator();
+  final DataConnectionCoordinator _connectionCoordinator =
+      DataConnectionCoordinator();
   late final SerialPortCatalog _portCatalog;
   NativeSerialPortMonitor? _portMonitor;
   StreamSubscription<void>? _portMonitorSubscription;
@@ -250,7 +250,7 @@ class SerialService extends ChangeNotifier {
     final port = config.port;
     return port != null &&
         port.isNotEmpty &&
-        _connectionOwners.owner != ConnectionOwner.rtt &&
+        _connectionOwners.owner != ConnectionOwner.probe &&
         !isRefreshingPorts &&
         !isPortUnavailable(port);
   }
@@ -372,9 +372,9 @@ class SerialService extends ChangeNotifier {
 
   // 原始数据接收开关（独立于串口连接和绘图状态）
   bool isRawReceiving = false;
-  SerialActivityOwner _activityOwner = SerialActivityOwner.none;
-  SerialActivityOwner get activityOwner => _activityOwner;
-  bool get isShellReceiving => _activityOwner == SerialActivityOwner.shell;
+  DataActivityOwner _activityOwner = DataActivityOwner.none;
+  DataActivityOwner get activityOwner => _activityOwner;
+  bool get isShellReceiving => _activityOwner == DataActivityOwner.shell;
 
   /// 是否在绘图接收期间请求原生层合并连续小块数据。
   bool get plotReceiveAggregationEnabled =>
@@ -673,7 +673,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().trace('connect() 被忽略，串口已连接', category: 'SERIAL');
       return;
     }
-    if (!_connectionOwners.tryAcquire(ConnectionOwner.serial)) {
+    if (!_connectionOwners.tryAcquire(ConnectionOwner.data)) {
       isConnecting = false;
       AppNotifications.show('探针已连接，请先手动断开探针连接');
       _notifyListenersSoon();
@@ -853,7 +853,7 @@ class SerialService extends ChangeNotifier {
     String pageId,
   ) async {
     if (isConnected) return;
-    if (!_connectionOwners.tryAcquire(ConnectionOwner.serial)) {
+    if (!_connectionOwners.tryAcquire(ConnectionOwner.data)) {
       isConnecting = false;
       AppNotifications.show('探针已连接，请先手动断开探针');
       _notifyListenersSoon();
@@ -925,7 +925,7 @@ class SerialService extends ChangeNotifier {
     _networkSubscription = null;
     _networkErrorSubscription = null;
     isConnected = false;
-    _connectionOwners.release(ConnectionOwner.serial);
+    _connectionOwners.release(ConnectionOwner.data);
     _releaseAllActivities();
     _notifyListenersSoon();
     await subscription?.cancel();
@@ -953,17 +953,17 @@ class SerialService extends ChangeNotifier {
     final owner = _activityOwner;
     final shouldReceiveYmodem =
         isConnected &&
-        owner == SerialActivityOwner.shell &&
+        owner == DataActivityOwner.shell &&
         ymodemService.isActive;
     final shouldReceiveRaw =
-        isConnected && owner == SerialActivityOwner.rawData;
+        isConnected && owner == DataActivityOwner.rawData;
     final shouldReceiveShell =
-        isConnected && owner == SerialActivityOwner.shell;
-    if (owner == SerialActivityOwner.none) {
+        isConnected && owner == DataActivityOwner.shell;
+    if (owner == DataActivityOwner.none) {
       return;
     }
 
-    if (owner == SerialActivityOwner.plot) {
+    if (owner == DataActivityOwner.plot) {
       _dataController.add(DataPacket(data: data));
       return;
     }
@@ -1016,7 +1016,7 @@ class SerialService extends ChangeNotifier {
   /// 测试独立 Shell 的接收调度，不绕过活动所有权约束。
   @visibleForTesting
   void debugAddShellData(Uint8List data) {
-    if (_activityOwner == SerialActivityOwner.shell) {
+    if (_activityOwner == DataActivityOwner.shell) {
       _shellDataController.add(data);
     }
   }
@@ -1623,7 +1623,7 @@ class SerialService extends ChangeNotifier {
       AppNotifications.show(message);
       return false;
     }
-    if (!_tryAcquireActivity(SerialActivityOwner.rawData)) {
+    if (!_tryAcquireActivity(DataActivityOwner.rawData)) {
       AppLogger().warning('其他页面正在接收，无法开始接收原始数据', category: 'SERIAL');
       return false;
     }
@@ -1638,7 +1638,7 @@ class SerialService extends ChangeNotifier {
     _rawSession.flushAutoLineBreak();
     _rawSession.flushTextDecoder();
     isRawReceiving = false;
-    _releaseActivity(SerialActivityOwner.rawData);
+    _releaseActivity(DataActivityOwner.rawData);
     AppLogger().info('停止接收原始数据', category: 'SERIAL');
     _notifyListenersSoon();
   }
@@ -1649,7 +1649,7 @@ class SerialService extends ChangeNotifier {
       AppLogger().warning('串口未连接，无法启动 Shell', category: 'SERIAL');
       return false;
     }
-    if (!_tryAcquireActivity(SerialActivityOwner.shell)) {
+    if (!_tryAcquireActivity(DataActivityOwner.shell)) {
       AppLogger().warning('其他页面正在接收，无法启动 Shell', category: 'SERIAL');
       return false;
     }
@@ -1662,53 +1662,53 @@ class SerialService extends ChangeNotifier {
     if (ymodemService.isActive) {
       await ymodemService.cancel();
     }
-    _releaseActivity(SerialActivityOwner.shell);
+    _releaseActivity(DataActivityOwner.shell);
     AppLogger().info('Shell 会话已停止', category: 'SERIAL');
     _notifyListenersSoon();
   }
 
   /// 尝试原子取得串口活动所有权；同一所有者重复调用视为成功。
-  bool tryAcquireActivity(SerialActivityOwner owner) =>
+  bool tryAcquireActivity(DataActivityOwner owner) =>
       _tryAcquireActivity(owner);
 
-  bool _tryAcquireActivity(SerialActivityOwner owner) {
-    if (owner == SerialActivityOwner.none) return false;
-    if (_activityOwner != SerialActivityOwner.none && _activityOwner != owner) {
+  bool _tryAcquireActivity(DataActivityOwner owner) {
+    if (owner == DataActivityOwner.none) return false;
+    if (_activityOwner != DataActivityOwner.none && _activityOwner != owner) {
       return false;
     }
     _activityOwner = owner;
-    isRawReceiving = owner == SerialActivityOwner.rawData;
-    isPlotting = owner == SerialActivityOwner.plot;
+    isRawReceiving = owner == DataActivityOwner.rawData;
+    isPlotting = owner == DataActivityOwner.plot;
     _syncPlotReceiveAggregation();
     return true;
   }
 
-  void releaseActivity(SerialActivityOwner owner) {
+  void releaseActivity(DataActivityOwner owner) {
     _releaseActivity(owner);
     _notifyListenersSoon();
   }
 
-  void _releaseActivity(SerialActivityOwner owner) {
+  void _releaseActivity(DataActivityOwner owner) {
     if (_activityOwner != owner) return;
-    if (owner == SerialActivityOwner.plot) {
+    if (owner == DataActivityOwner.plot) {
       _setPlotReceiveAggregation(_transport, enabled: false);
     }
-    if (owner == SerialActivityOwner.rawData) {
+    if (owner == DataActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
       _rawSession.flushTextDecoder();
     }
-    _activityOwner = SerialActivityOwner.none;
+    _activityOwner = DataActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
   }
 
   void _releaseAllActivities() {
     _setPlotReceiveAggregation(_transport, enabled: false);
-    if (_activityOwner == SerialActivityOwner.rawData) {
+    if (_activityOwner == DataActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
       _rawSession.flushTextDecoder();
     }
-    _activityOwner = SerialActivityOwner.none;
+    _activityOwner = DataActivityOwner.none;
     isRawReceiving = false;
     isPlotting = false;
     if (ymodemService.isActive) ymodemService.abort('串口已断开');
@@ -1719,7 +1719,7 @@ class SerialService extends ChangeNotifier {
     _setPlotReceiveAggregation(
       _transport,
       enabled:
-          _activityOwner == SerialActivityOwner.plot &&
+          _activityOwner == DataActivityOwner.plot &&
           AppSettings().plotReceiveAggregationEnabled,
     );
   }

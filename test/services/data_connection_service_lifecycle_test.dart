@@ -5,17 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 
 void main() {
-  group('SerialService lifecycle queue', () {
+  group('DataConnectionService lifecycle queue', () {
     test(
       'disconnect while opening invalidates and closes only stale transport',
       () async {
         final open = Completer<bool>();
         final first = _FakeTransport(openResult: open.future);
-        final service = SerialService.forTesting(transportFactory: () => first)
+        final service = DataConnectionService.forTesting(transportFactory: () => first)
           ..config = SerialConfig(port: 'COM7');
 
         final connecting = service.connect();
@@ -35,7 +35,7 @@ void main() {
       final first = _FakeTransport(openResult: firstOpen.future);
       final second = _FakeTransport();
       final transports = <_FakeTransport>[first, second];
-      final service = SerialService.forTesting(
+      final service = DataConnectionService.forTesting(
         transportFactory: () => transports.removeAt(0),
       )..config = SerialConfig(port: 'COM7');
 
@@ -61,7 +61,7 @@ void main() {
         final second = _FakeTransport(name: 'new', events: events);
         final transports = <_FakeTransport>[first, second];
         final service =
-            SerialService.forTesting(
+            DataConnectionService.forTesting(
                 transportFactory: () => transports.removeAt(0),
               )
               ..config = SerialConfig(port: 'COM7')
@@ -88,7 +88,7 @@ void main() {
         final first = _FakeTransport();
         final second = _FakeTransport();
         final transports = <_FakeTransport>[first, second];
-        final service = SerialService.forTesting(
+        final service = DataConnectionService.forTesting(
           transportFactory: () => transports.removeAt(0),
         )..config = SerialConfig(port: 'COM7');
 
@@ -111,7 +111,7 @@ void main() {
       'repeated write disconnect signals close the active transport once',
       () async {
         final transport = _FakeTransport(writeResult: 0);
-        final service = SerialService.forTesting(
+        final service = DataConnectionService.forTesting(
           transportFactory: () => transport,
         )..config = SerialConfig(port: 'COM7');
         await service.connect();
@@ -130,7 +130,7 @@ void main() {
     );
 
     test('queued activity notifications are ignored after disposal', () async {
-      final service = SerialService()..isConnected = true;
+      final service = DataConnectionService()..isConnected = true;
 
       expect(service.startRawReceiving(), isTrue);
       service.stopRawReceiving();
@@ -144,7 +144,7 @@ void main() {
       final previous = AppSettings().plotReceiveAggregationEnabled;
       AppSettings().plotReceiveAggregationEnabled = true;
       final transport = _AggregationFakeTransport();
-      final service = SerialService.forTesting(
+      final service = DataConnectionService.forTesting(
         transportFactory: () => transport,
       )..config = SerialConfig(port: 'COM7');
 
@@ -156,9 +156,9 @@ void main() {
         expect(transport.aggregationStates, [false, false]);
         service.stopRawReceiving();
 
-        expect(service.tryAcquireActivity(SerialActivityOwner.plot), isTrue);
+        expect(service.tryAcquireActivity(DataActivityOwner.plot), isTrue);
         expect(transport.aggregationStates.last, isTrue);
-        service.releaseActivity(SerialActivityOwner.plot);
+        service.releaseActivity(DataActivityOwner.plot);
         expect(transport.aggregationStates.last, isFalse);
 
         await service.shutdown();

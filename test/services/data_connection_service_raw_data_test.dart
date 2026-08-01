@@ -6,24 +6,24 @@ import 'package:charset/charset.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/retention_usage.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 
 void main() {
-  group('SerialService raw data display', () {
-    late SerialService service;
+  group('DataConnectionService raw data display', () {
+    late DataConnectionService service;
 
     setUp(() {
-      service = SerialService();
+      service = DataConnectionService();
       service.clearReceivedData();
       service.setReceiveHex(false);
       service.setShowTimestamp(false);
       service.setAutoLineBreak(true);
       service.setAutoLineBreakIntervalMs(
-        SerialService.defaultAutoLineBreakIntervalMs,
+        DataConnectionService.defaultAutoLineBreakIntervalMs,
       );
       service.setTextEncoding('UTF-8');
       service.sendHex = false;
-      service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+      service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
     });
 
     tearDown(() {
@@ -33,11 +33,11 @@ void main() {
       service.setShowTimestamp(false);
       service.setAutoLineBreak(true);
       service.setAutoLineBreakIntervalMs(
-        SerialService.defaultAutoLineBreakIntervalMs,
+        DataConnectionService.defaultAutoLineBreakIntervalMs,
       );
       service.setTextEncoding('UTF-8');
       service.sendHex = false;
-      service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+      service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
       service.stopRawReceiving();
       service.isConnected = false;
       service.debugRawRetentionLimitBytes = null;
@@ -140,7 +140,7 @@ void main() {
       expect(service.autoLineBreak, isTrue);
       expect(
         service.autoLineBreakIntervalMs,
-        SerialService.defaultAutoLineBreakIntervalMs,
+        DataConnectionService.defaultAutoLineBreakIntervalMs,
       );
     });
 
@@ -301,7 +301,7 @@ void main() {
     });
 
     test('display line limit defaults to 100000 and removes oldest lines', () {
-      expect(SerialService.defaultDisplayLineLimit, 100000);
+      expect(DataConnectionService.defaultDisplayLineLimit, 100000);
       service.setDisplayLineLimit(100);
 
       for (var i = 0; i < 105; i++) {

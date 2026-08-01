@@ -34,7 +34,7 @@ import '../data/protocol/plot_protocol_codec.dart';
 import '../data/protocol/send_protocol.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
-import '../services/serial_service.dart';
+import '../services/data_connection_service.dart';
 import '../services/address_profile_service.dart';
 import '../services/plot_protocol_initializer.dart';
 import '../views/plot/plot_painter.dart';
@@ -544,7 +544,7 @@ class PlotViewModel extends BaseViewModel {
 
   /// 创建 PlotViewModel 并初始化数据源管理器、加载设置、启动定时刷新
   PlotViewModel(
-    super.serialService, {
+    super.connectionService, {
     int? retentionLimitBytes,
     int? materializedPointLimit,
   }) : _materializedPointLimit =
@@ -584,14 +584,14 @@ class PlotViewModel extends BaseViewModel {
       },
     );
     _sessionController = PlotSessionController(
-      serialService,
+      connectionService,
       onStateChanged: () {
         Future.microtask(() {
           if (!_disposed) notifyListeners();
         });
       },
     );
-    _protocolInitializer = PlotProtocolInitializer(serialService);
+    _protocolInitializer = PlotProtocolInitializer(connectionService);
     _loadSettings();
     _initAddressProfileServices();
     _startRefreshTimer();
@@ -702,8 +702,8 @@ class PlotViewModel extends BaseViewModel {
         yMax: settings.yMax,
       ),
     );
-    // 同步到 serialService
-    serialService.useRandomSource = _useRandomSource;
+    // 同步到 connectionService
+    connectionService.useRandomSource = _useRandomSource;
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
     _parserConfig
@@ -1489,18 +1489,18 @@ class PlotViewModel extends BaseViewModel {
     if (_plotRetentionLimitReached && !_isPlotting && !_isStopping) {
       return _plotRetentionStopReason ?? '绘图历史已达到容量上限，请清空后继续';
     }
-    if (serialService.isConnecting) {
-      return '正在连接${serialService.activeConnectionType.label}...';
+    if (connectionService.isConnecting) {
+      return '正在连接${connectionService.activeConnectionType.label}...';
     }
     if (_isStarting) {
       return '正在启动绘图...';
     }
     if (_isPlotting) {
       final sources = <String>[];
-      if (serialService.isConnected) {
+      if (connectionService.isConnected) {
         sources.add(
-          '${serialService.activeConnectionType.label} '
-                  '${serialService.connectionDescription}'
+          '${connectionService.activeConnectionType.label} '
+                  '${connectionService.connectionDescription}'
               .trim(),
         );
       }
@@ -1513,19 +1513,19 @@ class PlotViewModel extends BaseViewModel {
       return '正在停止绘图...';
     }
     if (_useRandomSource && _parserType != ParserType.fireWater) {
-      if (!serialService.isConnected) {
+      if (!connectionService.isConnected) {
         return '随机源仅支持 FireWater；当前解析器需要连接数据源后绘图';
       }
       return '随机源已保留；当前解析器仅使用外部连接数据';
     }
-    if (!serialService.isConnected && !_useRandomSource) {
+    if (!connectionService.isConnected && !_useRandomSource) {
       return '数据源未连接，无法绘图；可建立连接或启用随机源';
     }
-    if (!serialService.isConnected && _useRandomSource) {
+    if (!connectionService.isConnected && _useRandomSource) {
       return '随机源已启用，点击开始绘图';
     }
-    if (serialService.isConnected) {
-      return '${serialService.activeConnectionType.label}已连接，点击开始按钮开始绘图';
+    if (connectionService.isConnected) {
+      return '${connectionService.activeConnectionType.label}已连接，点击开始按钮开始绘图';
     }
     return '';
   }
@@ -1712,13 +1712,13 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 数据源控制 ==========
   /// 切换随机数据源开关
-  /// 同时同步更新 serialService 的随机源状态。
+  /// 同时同步更新 connectionService 的随机源状态。
   void setUseRandomSource(bool value) {
     if (_useRandomSource == value) return;
     if (!_canModifyInputConfiguration()) return;
     _useRandomSource = value;
     _sourceConfig.useRandom = value && _parserType == ParserType.fireWater;
-    _sourceConfig.useSerial = serialService.isConnected;
+    _sourceConfig.useConnection = connectionService.isConnected;
     // 根据 FireWater 配置的通道数设置随机数据源通道数
     // 如果 fireWaterChannelCount 为 0，则默认输出 4 通道
     _sourceConfig.randomChannelCount =
@@ -2039,17 +2039,17 @@ class PlotViewModel extends BaseViewModel {
         AppLogger().error('数据源错误: $error', category: 'PLOT');
       },
       releaseActivity: () {
-        serialService.releaseActivity(SerialActivityOwner.plot);
+        connectionService.releaseActivity(DataActivityOwner.plot);
       },
       onStarted: () {
-        Future.microtask(() => serialService.notifyListeners());
+        Future.microtask(() => connectionService.notifyListeners());
         _startRefreshTimer();
         AppLogger().info('开始绘图', category: 'PLOT');
         showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
         Future.microtask(() => notifyListeners());
       },
       onStartRejected: () {
-        _sourceConfig.useSerial = false;
+        _sourceConfig.useConnection = false;
         _sourceConfig.useRandom = false;
         final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
         showStatusMessage(message);
@@ -2057,7 +2057,7 @@ class PlotViewModel extends BaseViewModel {
         Future.microtask(() => notifyListeners());
       },
       onStartFailed: (error, stackTrace) {
-        _sourceConfig.useSerial = false;
+        _sourceConfig.useConnection = false;
         _sourceConfig.useRandom = false;
         AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
         showStatusMessage('绘图启动失败，已恢复页面操作');
@@ -2072,14 +2072,14 @@ class PlotViewModel extends BaseViewModel {
   Future<bool> _preparePlotSessionStart(int generation) async {
     AppLogger().info(
       '用户请求开始绘图：接收协议=${_parserType.label}，发送协议=${effectiveSendProtocolType.label}，'
-      '数据连接=${serialService.isConnected}，类型=${serialService.activeConnectionType.label}，'
+      '数据连接=${connectionService.isConnected}，类型=${connectionService.activeConnectionType.label}，'
       '随机源=$_useRandomSource，'
       '随机频率=${_sourceConfig.randomFrequencyHz.toInt()}Hz，丢弃前置包=$_discardInitialPacketCount',
       category: 'PLOT',
     );
 
-    if (serialService.isConnected) {
-      final connected = await serialService.refreshConnectionStatus();
+    if (connectionService.isConnected) {
+      final connected = await connectionService.refreshConnectionStatus();
       if (!_isPlotSessionCurrent(generation)) return false;
       if (!connected && !_useRandomSource) {
         const message = '检测到数据连接已断开，无法绘图；请重新建立连接';
@@ -2092,7 +2092,7 @@ class PlotViewModel extends BaseViewModel {
     final canUseRandom =
         _useRandomSource && _parserType == ParserType.fireWater;
 
-    if (!serialService.isConnected &&
+    if (!connectionService.isConnected &&
         canUseRandom &&
         _sendProtocolType == SendProtocolType.rProtocol) {
       _sendProtocolType = SendProtocolType.none;
@@ -2102,10 +2102,10 @@ class PlotViewModel extends BaseViewModel {
     }
 
     // 检查是否有数据源，并按页面配置尝试建立数据连接。
-    if (!serialService.isConnected && !_useRandomSource) {
+    if (!connectionService.isConnected && !_useRandomSource) {
       await _autoConnectData();
       if (!_isPlotSessionCurrent(generation)) return false;
-      if (!serialService.isConnected) {
+      if (!connectionService.isConnected) {
         const message = '数据连接未建立，无法绘图；请建立连接或启用随机源';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
@@ -2113,7 +2113,7 @@ class PlotViewModel extends BaseViewModel {
       }
     }
 
-    if (!serialService.isConnected && _useRandomSource && !canUseRandom) {
+    if (!connectionService.isConnected && _useRandomSource && !canUseRandom) {
       const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或连接串口';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
@@ -2128,14 +2128,14 @@ class PlotViewModel extends BaseViewModel {
     }
 
     // 再次确认数据源配置与实际状态一致
-    _sourceConfig.useSerial = serialService.isConnected;
+    _sourceConfig.useConnection = connectionService.isConnected;
     _sourceConfig.useRandom = canUseRandom;
     AppLogger().info(
-      '绘图数据源确认：串口=${_sourceConfig.useSerial}，随机源=${_sourceConfig.useRandom}',
+      '绘图数据源确认：串口=${_sourceConfig.useConnection}，随机源=${_sourceConfig.useRandom}',
       category: 'PLOT',
     );
 
-    if (!serialService.tryAcquireActivity(SerialActivityOwner.plot)) {
+    if (!connectionService.tryAcquireActivity(DataActivityOwner.plot)) {
       const message = '其他页面正在接收数据，请先停止后再开始绘图';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
@@ -2143,7 +2143,7 @@ class PlotViewModel extends BaseViewModel {
     }
 
     if (!_isPlotSessionCurrent(generation)) {
-      serialService.releaseActivity(SerialActivityOwner.plot);
+      connectionService.releaseActivity(DataActivityOwner.plot);
       return false;
     }
     _prepareHistoryForStart();
@@ -2174,11 +2174,11 @@ class PlotViewModel extends BaseViewModel {
     );
     _startRefreshTimer();
     showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
-    Future.microtask(() => serialService.notifyListeners());
+    Future.microtask(() => connectionService.notifyListeners());
 
     return _sessionController.stop(
       releaseActivity: () {
-        serialService.releaseActivity(SerialActivityOwner.plot);
+        connectionService.releaseActivity(DataActivityOwner.plot);
       },
       onStopped: () {
         _notifyTimer?.cancel();
@@ -2216,13 +2216,15 @@ class PlotViewModel extends BaseViewModel {
     // 但已保存端口的 CreateFile 可以在后台 isolate 中快速确认是否可用。
     final lastPort =
         settings.separateSerialProfiles
-            ? serialService.config.port
+            ? connectionService.config.port
             : settings.lastPort;
     if (lastPort != null && lastPort.isNotEmpty) {
       AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
-      serialService.config = serialService.config.copyWith(port: lastPort);
-      await serialService.connect();
-      if (serialService.isConnected) {
+      connectionService.config = connectionService.config.copyWith(
+        port: lastPort,
+      );
+      await connectionService.connect();
+      if (connectionService.isConnected) {
         showStatusMessage(
           '已自动连接 $lastPort',
           duration: const Duration(seconds: 2),
@@ -2232,17 +2234,19 @@ class PlotViewModel extends BaseViewModel {
     }
 
     // 历史端口失败后只刷新一次；若当前只有另一个串口，则尝试该端口。
-    final refreshed = await serialService.refreshPorts(reason: '自动连接唯一端口');
-    if (refreshed && serialService.availablePorts.length == 1) {
-      final solePort = serialService.availablePorts.first;
+    final refreshed = await connectionService.refreshPorts(reason: '自动连接唯一端口');
+    if (refreshed && connectionService.availablePorts.length == 1) {
+      final solePort = connectionService.availablePorts.first;
       if (solePort == lastPort) {
         AppLogger().warning('历史串口连接失败，不重复尝试: $solePort', category: 'PLOT');
         return;
       }
       AppLogger().info('尝试连接唯一串口: $solePort', category: 'PLOT');
-      serialService.config = serialService.config.copyWith(port: solePort);
-      await serialService.connect();
-      if (serialService.isConnected) {
+      connectionService.config = connectionService.config.copyWith(
+        port: solePort,
+      );
+      await connectionService.connect();
+      if (connectionService.isConnected) {
         showStatusMessage(
           '已自动连接 $solePort',
           duration: const Duration(seconds: 2),
@@ -2257,7 +2261,7 @@ class PlotViewModel extends BaseViewModel {
   Future<void> _autoConnectData() async {
     final settings = AppSettings();
     final type = settings.connectionTypeForPage('plot');
-    serialService.selectSerialProfile('plot');
+    connectionService.selectSerialProfile('plot');
     if (type == DataConnectionType.serial) {
       await _autoConnectSerial();
       return;
@@ -2266,7 +2270,7 @@ class PlotViewModel extends BaseViewModel {
       '正在连接${type.label}...',
       duration: const Duration(seconds: 2),
     );
-    await serialService.connectNetwork(
+    await connectionService.connectNetwork(
       settings.networkConfigForPage('plot').copyWith(type: type),
       pageId: 'plot',
     );
@@ -3281,7 +3285,7 @@ class PlotViewModel extends BaseViewModel {
     _cancelPendingDragViewportNotification();
     unawaited(_sessionController.dispose());
     _resetRateState();
-    serialService.releaseActivity(SerialActivityOwner.plot);
+    connectionService.releaseActivity(DataActivityOwner.plot);
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;

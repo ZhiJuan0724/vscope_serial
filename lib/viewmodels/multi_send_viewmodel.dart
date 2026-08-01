@@ -5,7 +5,7 @@ import '../core/utils/app_logger.dart';
 import '../data/models/multi_send_profile.dart';
 import '../services/app_settings.dart';
 import '../services/multi_send_profile_service.dart';
-import '../services/serial_service.dart';
+import '../services/data_connection_service.dart';
 
 /// 多条发送调度模式：仅执行一轮或在末条间隔后继续循环。
 enum MultiSendRunMode { once, loop }
@@ -16,7 +16,7 @@ enum MultiSendRunMode { once, loop }
 /// 循环发送不使用重叠周期定时器：每次串口写完成后才等待下一条间隔，停止、断线
 /// 或页面离开会使取消 token 失效并阻止继续调度。
 class MultiSendViewModel extends ChangeNotifier {
-  final SerialService _serialService;
+  final DataConnectionService _connectionService;
   final MultiSendProfileService _profileService;
   MultiSendProfile? _selectedProfile;
   bool _loading = false;
@@ -29,12 +29,12 @@ class MultiSendViewModel extends ChangeNotifier {
   late bool _lastRawReceiving;
 
   MultiSendViewModel(
-    this._serialService, {
+    this._connectionService, {
     MultiSendProfileService? profileService,
   }) : _profileService = profileService ?? MultiSendProfileService() {
-    _lastConnected = _serialService.isConnected;
-    _lastRawReceiving = _serialService.isRawReceiving;
-    _serialService.addListener(_handleSerialChange);
+    _lastConnected = _connectionService.isConnected;
+    _lastRawReceiving = _connectionService.isRawReceiving;
+    _connectionService.addListener(_handleSerialChange);
   }
 
   bool get loading => _loading;
@@ -44,7 +44,9 @@ class MultiSendViewModel extends ChangeNotifier {
   List<MultiSendProfile> get profiles => _profileService.profiles;
   MultiSendProfile? get selectedProfile => _selectedProfile;
   bool get canSendManually =>
-      !_running && _serialService.isConnected && _serialService.isRawReceiving;
+      !_running &&
+      _connectionService.isConnected &&
+      _connectionService.isRawReceiving;
   bool get canRun => canSendManually && enabledEntries.isNotEmpty;
   List<MultiSendEntry> get enabledEntries =>
       _selectedProfile?.entries.where((entry) => entry.enabled).toList() ??
@@ -232,18 +234,18 @@ class MultiSendViewModel extends ChangeNotifier {
   bool _isActive(int token) =>
       _running &&
       token == _runToken &&
-      _serialService.isConnected &&
-      _serialService.isRawReceiving;
+      _connectionService.isConnected &&
+      _connectionService.isRawReceiving;
 
   Future<void> _sendEntry(MultiSendEntry entry) async {
-    final data = _serialService.prepareMultiSendData(
+    final data = _connectionService.prepareMultiSendData(
       entry.isHex ? entry.content : '${entry.content}${entry.textLineEnding}',
       isHex: entry.isHex,
     );
     if (data == null || data.isEmpty) {
       throw StateError('“${entry.name}”内容无效或串口未连接');
     }
-    await _serialService.send(data, displayAsHex: entry.isHex);
+    await _connectionService.send(data, displayAsHex: entry.isHex);
   }
 
   Future<void> _saveProfile(MultiSendProfile profile) async {
@@ -266,8 +268,8 @@ class MultiSendViewModel extends ChangeNotifier {
   }
 
   void _handleSerialChange() {
-    final connected = _serialService.isConnected;
-    final rawReceiving = _serialService.isRawReceiving;
+    final connected = _connectionService.isConnected;
+    final rawReceiving = _connectionService.isRawReceiving;
     final availabilityChanged =
         connected != _lastConnected || rawReceiving != _lastRawReceiving;
     _lastConnected = connected;
@@ -284,7 +286,7 @@ class MultiSendViewModel extends ChangeNotifier {
   @override
   void dispose() {
     stop();
-    _serialService.removeListener(_handleSerialChange);
+    _connectionService.removeListener(_handleSerialChange);
     super.dispose();
   }
 }

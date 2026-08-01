@@ -6,7 +6,7 @@ import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/parser/firewater_parser.dart';
 import 'package:vscope_serial/data/parser/just_float_parser.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 const _runParserSoak = bool.fromEnvironment('RUN_P1_PARSER_SOAK');
@@ -65,10 +65,10 @@ void main() {
     () async {
       expect(await File(_importFile).exists(), isTrue);
       AppSettings().plotHistoryMemoryLimitGiB = 8;
-      final serialService = SerialService();
-      final viewModel = PlotViewModel(serialService);
+      final connectionService = DataConnectionService();
+      final viewModel = PlotViewModel(connectionService);
       addTearDown(viewModel.dispose);
-      addTearDown(serialService.dispose);
+      addTearDown(connectionService.dispose);
 
       final error = await viewModel.importFromBin(_importFile);
 

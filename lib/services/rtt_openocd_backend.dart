@@ -4,15 +4,15 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../data/models/probe_plot_config.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 import 'elf_symbol_reader.dart';
-import 'rtt_backend.dart';
+import 'probe_backend.dart';
 import 'rtt_process_backend_base.dart';
 
 /// OpenOCD 后端只使用 RTT 与运行态 read_memory；不得发送 halt/reset/resume。
-class ExternalOpenOcdBackend extends TcpProcessRttBackend
+class ExternalOpenOcdBackend extends TcpProcessProbeBackend
     implements
-        RttBackendVersionProvider,
+        ProbeBackendVersionProvider,
         ProbePlotBackend,
         RttChannelMetadataProvider {
   ExternalOpenOcdBackend({
@@ -58,22 +58,22 @@ class ExternalOpenOcdBackend extends TcpProcessRttBackend
   @override
   Stream<ProbeSampleChunk> get sampleStream => _sampleController.stream;
   @override
-  Set<RttBackendCapability> get capabilities => {
+  Set<ProbeBackendCapability> get capabilities => {
     ...super.capabilities,
-    RttBackendCapability.memorySampling,
-    RttBackendCapability.channelMetadata,
+    ProbeBackendCapability.memorySampling,
+    ProbeBackendCapability.channelMetadata,
   };
 
   @override
-  Future<String?> executablePath(RttProbeKind kind) {
-    if (kind != RttProbeKind.cmsisDap) return Future.value();
+  Future<String?> executablePath(ProbeKind kind) {
+    if (kind != ProbeKind.cmsisDap) return Future.value();
     return bundledRuntime
         ? findBundledOpenOcdExecutable()
         : findExternalOpenOcdExecutable(configuredPath());
   }
 
   @override
-  Future<String?> detectVersion(RttProbeKind kind) async {
+  Future<String?> detectVersion(ProbeKind kind) async {
     final executable = await executablePath(kind);
     if (executable == null) return null;
     final result = await Process.run(executable, const [
@@ -83,16 +83,16 @@ class ExternalOpenOcdBackend extends TcpProcessRttBackend
   }
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => [
-    RttProbeInfo(id: '', name: 'OpenOCD（按接口配置连接）', kind: kind),
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => [
+    ProbeInfo(id: '', name: 'OpenOCD（按接口配置连接）', kind: kind),
   ];
 
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
 
   @override
   Future<List<String>> buildArguments(
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
     int port,
   ) async {
     final interfaceConfig = config.openOcdInterfaceConfig.trim();

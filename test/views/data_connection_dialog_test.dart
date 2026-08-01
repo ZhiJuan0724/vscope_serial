@@ -7,16 +7,16 @@ import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
-import 'package:vscope_serial/views/dialogs/status_dialog.dart';
+import 'package:vscope_serial/views/dialogs/data_connection_dialog.dart';
 
 void main() {
-  late SerialService service;
+  late DataConnectionService service;
 
   setUp(() {
-    service = SerialService.forTesting(
-      transportFactory: _StatusDialogTransport.new,
+    service = DataConnectionService.forTesting(
+      transportFactory: _DataConnectionDialogTransport.new,
     );
   });
 
@@ -48,9 +48,9 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(900, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
-        child: const MaterialApp(home: Scaffold(body: StatusDialog())),
+        child: const MaterialApp(home: Scaffold(body: DataConnectionDialog())),
       ),
     );
     await tester.pump();
@@ -106,9 +106,9 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(900, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
-        child: const MaterialApp(home: Scaffold(body: StatusDialog())),
+        child: const MaterialApp(home: Scaffold(body: DataConnectionDialog())),
       ),
     );
     await tester.pump();
@@ -132,10 +132,10 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(
-          home: Scaffold(body: StatusDialog(pageId: 'rawData')),
+          home: Scaffold(body: DataConnectionDialog(pageId: 'rawData')),
         ),
       ),
     );
@@ -148,10 +148,10 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(
-          home: Scaffold(body: StatusDialog(pageId: 'plot')),
+          home: Scaffold(body: DataConnectionDialog(pageId: 'plot')),
         ),
       ),
     );
@@ -164,7 +164,7 @@ void main() {
   });
 }
 
-class _StatusDialogTransport implements SerialTransport {
+class _DataConnectionDialogTransport implements SerialTransport {
   @override
   Stream<NativeSerialData> get dataStream => const Stream.empty();
 

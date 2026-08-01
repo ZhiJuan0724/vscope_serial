@@ -11,7 +11,7 @@ import '../../core/localization/app_strings.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/probe_plot_config.dart';
-import '../../data/models/rtt_config.dart';
+import '../../data/models/probe_connection_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/j_scope_rtt_parser.dart';

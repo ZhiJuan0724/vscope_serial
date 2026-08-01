@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/rtt_receive_queue.dart';
 
 void main() {

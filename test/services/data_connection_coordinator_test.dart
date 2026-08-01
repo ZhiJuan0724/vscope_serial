@@ -1,14 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/services/serial_connection_coordinator.dart';
+import 'package:vscope_serial/services/data_connection_coordinator.dart';
 
 void main() {
-  group('SerialConnectionCoordinator', () {
+  group('DataConnectionCoordinator', () {
     test(
       'serializes lifecycle operations and propagates their results',
       () async {
-        final coordinator = SerialConnectionCoordinator();
+        final coordinator = DataConnectionCoordinator();
         final firstGate = Completer<void>();
         final events = <String>[];
 
@@ -33,7 +33,7 @@ void main() {
     );
 
     test('disconnect invalidates an in-flight connection generation', () async {
-      final coordinator = SerialConnectionCoordinator();
+      final coordinator = DataConnectionCoordinator();
       final openGate = Completer<void>();
 
       final connect = coordinator.connect(
@@ -51,7 +51,7 @@ void main() {
     test(
       'connect, IO disconnect and shutdown are independently single-flight',
       () async {
-        final coordinator = SerialConnectionCoordinator();
+        final coordinator = DataConnectionCoordinator();
         final connectGate = Completer<void>();
         var connectCalls = 0;
 

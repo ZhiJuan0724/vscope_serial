@@ -1,18 +1,18 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import '../../services/serial_service.dart';
+import '../../services/data_connection_service.dart';
 import '../models/data_source_config.dart';
 import 'random_data_source.dart';
-import 'serial_data_source.dart';
+import 'connection_data_source.dart';
 
 /// 数据源管理器
 /// 管理多个数据源，根据配置合并或切换输出
 class DataSourceManager {
-  final SerialService _serialService;
+  final DataConnectionService _connectionService;
   final DataSourceConfig config;
 
-  SerialDataSource? _serialSource;
+  ConnectionDataSource? _serialSource;
   RandomDataSource? _randomSource;
   final List<StreamSubscription> _subscriptions = [];
   final _controller = StreamController<Uint8List>.broadcast();
@@ -20,7 +20,7 @@ class DataSourceManager {
   int _generation = 0;
   bool _disposed = false;
 
-  DataSourceManager(this._serialService, {DataSourceConfig? config})
+  DataSourceManager(this._connectionService, {DataSourceConfig? config})
     : config = config ?? DataSourceConfig();
 
   /// 合并后的字节流
@@ -62,9 +62,9 @@ class DataSourceManager {
     if (_disposed) return;
     final generation = ++_generation;
 
-    // 串口数据源
-    if (config.useSerial) {
-      _serialSource = SerialDataSource(_serialService);
+    // 当前活动的数据连接，可能来自串口、TCP或UDP。
+    if (config.useConnection) {
+      _serialSource = ConnectionDataSource(_connectionService);
       _subscribe(_serialSource!.byteStream, generation);
       await _serialSource!.start();
     }
@@ -117,7 +117,7 @@ class DataSourceManager {
   }
 
   void _copyConfig(DataSourceConfig value) {
-    config.useSerial = value.useSerial;
+    config.useConnection = value.useConnection;
     config.useRandom = value.useRandom;
     config.randomChannelCount = value.randomChannelCount;
     config.randomMinValue = value.randomMinValue;

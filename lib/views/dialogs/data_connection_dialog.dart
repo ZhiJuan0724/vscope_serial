@@ -7,32 +7,32 @@ import '../../core/localization/app_strings.dart';
 import '../../data/models/serial_config.dart';
 import '../../data/models/data_connection_config.dart';
 import '../../services/app_settings.dart';
-import '../../services/serial_service.dart';
+import '../../services/data_connection_service.dart';
 import '../widgets/common_widgets.dart';
 
 /// 打开数据连接配置窗口，供状态栏和主窗口快捷键共用。
-Future<void> showSerialConnectionDialog(
+Future<void> showDataConnectionDialog(
   BuildContext context, {
   String pageId = 'rawData',
 }) {
   return showDialog(
     context: context,
-    builder: (context) => StatusDialog(pageId: pageId),
+    builder: (context) => DataConnectionDialog(pageId: pageId),
   );
 }
 
 /// 状态栏点击弹出的数据连接配置窗口。
 ///
 /// 默认只显示 COM 号；用户主动勾选详细信息后才在后台查询设备友好名称。
-class StatusDialog extends StatefulWidget {
-  const StatusDialog({super.key, this.pageId = 'rawData'});
+class DataConnectionDialog extends StatefulWidget {
+  const DataConnectionDialog({super.key, this.pageId = 'rawData'});
   final String pageId;
 
   @override
-  State<StatusDialog> createState() => _StatusDialogState();
+  State<DataConnectionDialog> createState() => _DataConnectionDialogState();
 }
 
-class _StatusDialogState extends State<StatusDialog> {
+class _DataConnectionDialogState extends State<DataConnectionDialog> {
   bool _showPortDetails = false;
   late DataConnectionType _connectionType;
   late NetworkConnectionConfig _networkConfig;
@@ -41,7 +41,7 @@ class _StatusDialogState extends State<StatusDialog> {
   void initState() {
     super.initState();
     final settings = AppSettings();
-    final service = context.read<SerialService>();
+    final service = context.read<DataConnectionService>();
     _connectionType =
         service.isConnectionBusy
             ? service.activeConnectionType
@@ -53,7 +53,7 @@ class _StatusDialogState extends State<StatusDialog> {
     service.selectSerialProfile(widget.pageId, notify: false);
     // 打开弹窗时自动刷新串口列表
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(context.read<SerialService>().refreshConnectionStatus());
+      unawaited(context.read<DataConnectionService>().refreshConnectionStatus());
     });
   }
 
@@ -66,7 +66,7 @@ class _StatusDialogState extends State<StatusDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SerialService>(
+    return Consumer<DataConnectionService>(
       builder: (context, service, child) {
         final selectedPort = service.config.port;
         final displayedPorts =

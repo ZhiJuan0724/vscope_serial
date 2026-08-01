@@ -6,7 +6,7 @@ import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/retention_usage.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 void main() {
@@ -21,7 +21,7 @@ void main() {
         ..keepPlotOnRestart = false
         ..plotHistoryMemoryLimitGiB = 2
         ..mathChannels = MathChannelConfig.createDefaults();
-      vm = PlotViewModel(SerialService());
+      vm = PlotViewModel(DataConnectionService());
       vm.setParserType(ParserType.fireWater);
     });
 
@@ -41,10 +41,10 @@ void main() {
         await first;
         expect(vm.isStarting, isFalse);
         expect(vm.isPlotting, isTrue);
-        expect(vm.serialService.activityOwner, SerialActivityOwner.plot);
+        expect(vm.connectionService.activityOwner, DataActivityOwner.plot);
 
         await vm.stopPlotting();
-        expect(vm.serialService.activityOwner, SerialActivityOwner.none);
+        expect(vm.connectionService.activityOwner, DataActivityOwner.none);
       },
     );
 
@@ -57,12 +57,15 @@ void main() {
       expect(vm.isStarting, isFalse);
       expect(vm.isStopping, isFalse);
       expect(vm.isPlotting, isFalse);
-      expect(vm.serialService.activityOwner, SerialActivityOwner.none);
+      expect(vm.connectionService.activityOwner, DataActivityOwner.none);
     });
 
     test('plot budget warns, stops before overflow, and clear rearms it', () {
       vm.dispose();
-      vm = PlotViewModel(SerialService(), retentionLimitBytes: 48 * 1024);
+      vm = PlotViewModel(
+        DataConnectionService(),
+        retentionLimitBytes: 48 * 1024,
+      );
       vm.setParserType(ParserType.fireWater);
 
       for (var i = 0; i < 5000; i++) {
@@ -86,7 +89,7 @@ void main() {
 
     test('CSV import cannot bypass the plot retention budget', () async {
       vm.dispose();
-      vm = PlotViewModel(SerialService(), retentionLimitBytes: 512);
+      vm = PlotViewModel(DataConnectionService(), retentionLimitBytes: 512);
       final directory = await Directory.systemTemp.createTemp(
         'vscope_p0_import_budget_',
       );

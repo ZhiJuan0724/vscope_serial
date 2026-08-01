@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/probe_plot_config.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
 import 'package:vscope_serial/viewmodels/probe_plot_viewmodel.dart';
 import 'package:vscope_serial/views/plot/plot_render_snapshot.dart';
 
@@ -20,15 +20,18 @@ void main() {
 
   test('首次开始自动选择 J-Scope Up 通道并忽略其他 Up 数据', () async {
     final backend = _PlotBackend();
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
     final viewModel = ProbePlotViewModel(service);
     var notifications = 0;
     viewModel.addListener(() => notifications++);
 
     await service.connect(
-      const RttConnectionConfig(
-        backend: RttBackendSelection.externalOpenocd,
-        probeKind: RttProbeKind.cmsisDap,
+      const ProbeConnectionConfig(
+        backend: ProbeBackendSelection.externalOpenocd,
+        probeKind: ProbeKind.cmsisDap,
         target: '',
       ),
     );
@@ -115,7 +118,10 @@ void main() {
 
   test('HSS 每组采样按包序号递增且通道数量与 ELF 变量一致', () async {
     final backend = _PlotBackend();
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
     final viewModel = ProbePlotViewModel(service)..setMode(ProbePlotMode.hss);
 
     viewModel.addHssVariable(
@@ -140,9 +146,9 @@ void main() {
     ]);
 
     await service.connect(
-      const RttConnectionConfig(
-        backend: RttBackendSelection.externalOpenocd,
-        probeKind: RttProbeKind.cmsisDap,
+      const ProbeConnectionConfig(
+        backend: ProbeBackendSelection.externalOpenocd,
+        probeKind: ProbeKind.cmsisDap,
         target: '',
       ),
     );
@@ -196,13 +202,16 @@ void main() {
 
   test('RTT 绘图断开后保留历史数据与活动通道数量', () async {
     final backend = _PlotBackend();
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
     final viewModel = ProbePlotViewModel(service);
 
     await service.connect(
-      const RttConnectionConfig(
-        backend: RttBackendSelection.externalOpenocd,
-        probeKind: RttProbeKind.cmsisDap,
+      const ProbeConnectionConfig(
+        backend: ProbeBackendSelection.externalOpenocd,
+        probeKind: ProbeKind.cmsisDap,
         target: '',
       ),
     );
@@ -233,7 +242,7 @@ void main() {
 
 class _PlotBackend
     implements
-        RttBackend,
+        ProbeBackend,
         RttActivityBackend,
         ProbePlotBackend,
         RttChannelMetadataProvider {
@@ -263,20 +272,20 @@ class _PlotBackend
   @override
   Stream<ProbeSampleChunk> get sampleStream => _samples.stream;
   @override
-  Set<RttBackendCapability> get capabilities => {
-    RttBackendCapability.independentActivity,
-    RttBackendCapability.memorySampling,
-    RttBackendCapability.channelMetadata,
+  Set<ProbeBackendCapability> get capabilities => {
+    ProbeBackendCapability.independentActivity,
+    ProbeBackendCapability.memorySampling,
+    ProbeBackendCapability.channelMetadata,
   };
 
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => true;
+  Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
   @override
-  Future<void> connect(RttConnectionConfig config) async => _connected = true;
+  Future<void> connect(ProbeConnectionConfig config) async => _connected = true;
   @override
   Future<void> disconnect() async => _connected = false;
   @override

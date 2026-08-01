@@ -1,7 +1,7 @@
 import 'dart:collection';
 
 import '../core/constants/rtt_configuration.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 
 /// RTT 页面尚未消费的有界数据块队列。
 class RttReceiveQueue {

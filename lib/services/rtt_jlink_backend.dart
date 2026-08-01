@@ -4,13 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
-import '../data/models/rtt_config.dart';
-import 'rtt_backend.dart';
+import '../data/models/probe_connection_config.dart';
+import 'probe_backend.dart';
 import 'rtt_process_backend_base.dart';
 import 'windows_file_version.dart';
 
-class ExternalJLinkBackend extends TcpProcessRttBackend
-    implements RttBackendVersionProvider {
+class ExternalJLinkBackend extends TcpProcessProbeBackend
+    implements ProbeBackendVersionProvider {
   ExternalJLinkBackend({
     required this.configuredPath,
     this.fileVersionReader = readWindowsFileVersion,
@@ -41,8 +41,8 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
       parseJlinkConnectionFailure(line);
 
   @override
-  Future<String?> executablePath(RttProbeKind kind) async {
-    if (kind != RttProbeKind.jlink) return null;
+  Future<String?> executablePath(ProbeKind kind) async {
+    if (kind != ProbeKind.jlink) return null;
     return findRttExecutable(
       configuredPath(),
       'JLinkGDBServerCL.exe',
@@ -56,7 +56,7 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
   }
 
   @override
-  Future<String?> detectVersion(RttProbeKind kind) async {
+  Future<String?> detectVersion(ProbeKind kind) async {
     final executable = await executablePath(kind);
     if (executable == null) return null;
     final resourceVersion = fileVersionReader(executable);
@@ -65,7 +65,7 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
   }
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async {
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async {
     final gdbServer = await executablePath(kind);
     if (gdbServer == null) return const [];
     final commander = File(
@@ -103,12 +103,12 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
       }
     }
     return const [
-      RttProbeInfo(id: '', name: 'J-Link（自动选择）', kind: RttProbeKind.jlink),
+      ProbeInfo(id: '', name: 'J-Link（自动选择）', kind: ProbeKind.jlink),
     ];
   }
 
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async {
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async {
     final executable = await executablePath(kind);
     if (executable == null) return const [];
     final root = File(executable).parent;
@@ -135,14 +135,14 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
       }
     }
     return names
-        .map((name) => RttTargetInfo(name: name, source: 'J-Link'))
+        .map((name) => ProbeTargetInfo(name: name, source: 'J-Link'))
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
   @override
   Future<List<String>> buildArguments(
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
     int port,
   ) async {
     if (config.autoDetectTarget || config.target.trim().isEmpty) {
@@ -153,7 +153,7 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
       '-device',
       config.target,
       '-if',
-      config.wireProtocol == RttWireProtocol.swd ? 'SWD' : 'JTAG',
+      config.wireProtocol == ProbeWireProtocol.swd ? 'SWD' : 'JTAG',
       '-speed',
       '${config.clockKhz}',
       if (config.probeId.isNotEmpty) ...['-USB', config.probeId],
@@ -171,7 +171,7 @@ class ExternalJLinkBackend extends TcpProcessRttBackend
   @override
   Future<void> configureRttSocket(
     Socket socket,
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
   ) async {
     final command = buildJlinkRttConfigString(config);
     if (command == null) return;
@@ -263,7 +263,7 @@ String? parseJlinkConnectionFailure(String line) {
   return null;
 }
 
-String? buildJlinkRttConfigString(RttConnectionConfig config) {
+String? buildJlinkRttConfigString(ProbeConnectionConfig config) {
   switch (config.controlBlockMode) {
     case RttControlBlockMode.automatic:
       return null;
@@ -287,8 +287,8 @@ String? buildJlinkRttConfigString(RttConnectionConfig config) {
   }
 }
 
-List<RttProbeInfo> parseJlinkProbeList(String output) {
-  final probes = <RttProbeInfo>[];
+List<ProbeInfo> parseJlinkProbeList(String output) {
+  final probes = <ProbeInfo>[];
   final pattern = RegExp(
     r'J-Link\[\d+\]:.*?Serial number:\s*([^,\r\n]+)'
     r'(?:,\s*ProductName:\s*([^\r\n]+))?',
@@ -299,13 +299,13 @@ List<RttProbeInfo> parseJlinkProbeList(String output) {
     if (serial.isEmpty) continue;
     final product = match.group(2)?.trim();
     probes.add(
-      RttProbeInfo(
+      ProbeInfo(
         id: serial,
         name:
             product == null || product.isEmpty
                 ? 'J-Link ($serial)'
                 : '$product ($serial)',
-        kind: RttProbeKind.jlink,
+        kind: ProbeKind.jlink,
       ),
     );
   }

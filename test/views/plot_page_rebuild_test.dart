@@ -3,15 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/utils/plot_performance_metrics.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 
 void main() {
   testWidgets('绘图页面按数据、通道和覆盖状态隔离重建', (tester) async {
-    final serialService = SerialService();
-    final vm = PlotViewModel(serialService);
+    final connectionService = DataConnectionService();
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -76,7 +76,7 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
-    serialService.dispose();
+    connectionService.dispose();
     await tester.pump(const Duration(milliseconds: 100));
   }, skip: !PlotPerformanceMetrics.enabled);
 }

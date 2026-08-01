@@ -5,12 +5,12 @@ import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_notifications.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 void main() {
-  group('SerialService connection', () {
-    final service = SerialService();
+  group('DataConnectionService connection', () {
+    final service = DataConnectionService();
 
     tearDown(() {
       service.debugPortOpener = null;

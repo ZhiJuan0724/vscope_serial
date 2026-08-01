@@ -7,7 +7,7 @@ import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/parser/zobow_parser.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 Uint8List _zobowFrame(int value) {
@@ -45,7 +45,7 @@ void main() {
     late PlotViewModel vm;
 
     setUp(() {
-      vm = PlotViewModel(SerialService());
+      vm = PlotViewModel(DataConnectionService());
       vm.setParserType(ParserType.zobow);
     });
 
@@ -126,7 +126,7 @@ void main() {
 
     test('prefetches a full exact block and debounces drag reloads', () async {
       final smallVm = PlotViewModel(
-        SerialService(),
+        DataConnectionService(),
         materializedPointLimit: 100,
       );
       smallVm.setParserType(ParserType.zobow);
@@ -172,7 +172,7 @@ void main() {
 
     test('latest display point keeps updating while viewing history', () {
       final smallVm = PlotViewModel(
-        SerialService(),
+        DataConnectionService(),
         materializedPointLimit: 100,
       );
       smallVm.setParserType(ParserType.zobow);

@@ -4,9 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../data/models/probe_plot_config.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 import 'elf_symbol_reader.dart';
-import 'rtt_backend.dart';
+import 'probe_backend.dart';
 
 const _pyOcdMagic = <int>[0x56, 0x53, 0x50, 0x59]; // VSPY
 const _pyOcdProtocolVersion = 1;
@@ -391,14 +391,14 @@ Future<String?> findPyOcdWorkerScript() async {
 /// 本后端不暴露烧录、核心控制、断点或观察点命令。
 class ExternalPyOcdBackend
     implements
-        RttBackend,
-        RttBackendVersionProvider,
-        RttBackendFailureProvider,
+        ProbeBackend,
+        ProbeBackendVersionProvider,
+        ProbeBackendFailureProvider,
         RttActivityBackend,
         RttControlBlockConfigurable,
         ProbePlotBackend,
         RttChannelMetadataProvider,
-        ConfiguredRttProbeDiscovery {
+        ConfiguredProbeDiscovery {
   ExternalPyOcdBackend({required this.configuredPythonPath});
 
   final String Function() configuredPythonPath;
@@ -441,11 +441,11 @@ class ExternalPyOcdBackend
   @override
   Stream<ProbeSampleChunk> get sampleStream => _sampleController.stream;
   @override
-  Set<RttBackendCapability> get capabilities => const {
-    RttBackendCapability.downChannel0,
-    RttBackendCapability.independentActivity,
-    RttBackendCapability.memorySampling,
-    RttBackendCapability.channelMetadata,
+  Set<ProbeBackendCapability> get capabilities => const {
+    ProbeBackendCapability.downChannel0,
+    ProbeBackendCapability.independentActivity,
+    ProbeBackendCapability.memorySampling,
+    ProbeBackendCapability.channelMetadata,
   };
 
   Future<(String, String)?> _runtime() async {
@@ -459,7 +459,7 @@ class ExternalPyOcdBackend
   Future<Map<String, dynamic>> _check() async {
     final runtime = await _runtime();
     if (runtime == null) {
-      throw const RttBackendUnavailableException(
+      throw const ProbeBackendUnavailableException(
         '请在高级设置中配置能够 import pyocd 的 python.exe',
       );
     }
@@ -481,8 +481,8 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async {
-    if (kind != RttProbeKind.cmsisDap) return false;
+  Future<bool> isAvailable(ProbeKind kind) async {
+    if (kind != ProbeKind.cmsisDap) return false;
     try {
       await _check();
       return true;
@@ -492,8 +492,8 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<String?> detectVersion(RttProbeKind kind) async {
-    if (kind != RttProbeKind.cmsisDap) return null;
+  Future<String?> detectVersion(ProbeKind kind) async {
+    if (kind != ProbeKind.cmsisDap) return null;
     final result = await _check();
     return 'Python ${result['pythonVersion']} / pyOCD ${result['pyocdVersion']}';
   }
@@ -504,7 +504,7 @@ class ExternalPyOcdBackend
     // 枚举和版本查询不应占用长期探针会话，完成后始终回收临时 Worker。
     final runtime = await _runtime();
     if (runtime == null) {
-      throw const RttBackendUnavailableException(
+      throw const ProbeBackendUnavailableException(
         '请在高级设置中配置能够 import pyocd 的 python.exe',
       );
     }
@@ -536,9 +536,9 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async {
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async {
     return listProbesForConfig(
-      RttConnectionConfig(
+      ProbeConnectionConfig(
         probeKind: kind,
         target: '',
         pyOcdCmsisDapVersion: PyOcdCmsisDapVersion.automatic,
@@ -547,11 +547,11 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<List<RttProbeInfo>> listProbesForConfig(
-    RttConnectionConfig config,
+  Future<List<ProbeInfo>> listProbesForConfig(
+    ProbeConnectionConfig config,
   ) async {
     final kind = config.probeKind;
-    if (kind != RttProbeKind.cmsisDap) return const [];
+    if (kind != ProbeKind.cmsisDap) return const [];
     return _withTemporaryClient((client) async {
       // 用户主动刷新只读取 Windows 缓存的 USB 名称和 VID/PID，不运行
       // pyOCD 全量探针发现；真正连接时再对用户选中的设备定向识别。
@@ -559,13 +559,13 @@ class ExternalPyOcdBackend
       return List<Object?>.from(response['value'] as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
           .map(
-            (item) => RttProbeInfo(
+            (item) => ProbeInfo(
               id: 'usb:${item['vendorId'] as int}:${item['productId'] as int}',
               name:
                   '${item['name'] ?? 'USB 设备'} '
                   '(${(item['vendorId'] as int).toRadixString(16).padLeft(4, '0').toUpperCase()}:'
                   '${(item['productId'] as int).toRadixString(16).padLeft(4, '0').toUpperCase()})',
-              kind: RttProbeKind.cmsisDap,
+              kind: ProbeKind.cmsisDap,
               usbVendorId: item['vendorId'] as int?,
               usbProductId: item['productId'] as int?,
             ),
@@ -575,14 +575,14 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async {
-    if (kind != RttProbeKind.cmsisDap) return const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async {
+    if (kind != ProbeKind.cmsisDap) return const [];
     return _withTemporaryClient((client) async {
       final response = await client.request('listTargets');
       return List<Object?>.from(response['value'] as List)
           .map((item) => Map<String, dynamic>.from(item as Map))
           .map(
-            (item) => RttTargetInfo(
+            (item) => ProbeTargetInfo(
               name: '${item['name'] ?? ''}',
               vendor: '${item['vendor'] ?? ''}',
               source: '${item['source'] ?? 'pyOCD'}',
@@ -593,14 +593,14 @@ class ExternalPyOcdBackend
   }
 
   @override
-  Future<void> connect(RttConnectionConfig config) async {
-    if (config.probeKind != RttProbeKind.cmsisDap) {
-      throw const RttBackendUnavailableException('外置 pyOCD 仅支持 CMSIS-DAP');
+  Future<void> connect(ProbeConnectionConfig config) async {
+    if (config.probeKind != ProbeKind.cmsisDap) {
+      throw const ProbeBackendUnavailableException('外置 pyOCD 仅支持 CMSIS-DAP');
     }
     await disconnect();
     final runtime = await _runtime();
     if (runtime == null) {
-      throw const RttBackendUnavailableException(
+      throw const ProbeBackendUnavailableException(
         '请在高级设置中配置能够 import pyocd 的 python.exe',
       );
     }

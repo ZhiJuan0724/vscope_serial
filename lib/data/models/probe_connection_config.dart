@@ -3,18 +3,18 @@ import 'dart:typed_data';
 /// 连接窗口中明确选择的探针后端。
 ///
 /// `automatic` 只在工具缺失时回退，不会在目标连接失败后偷偷切换后端。
-enum RttBackendSelection {
+enum ProbeBackendSelection {
   automatic('automatic', '自动'),
   externalJlink('external-jlink', '外部 J-Link'),
   bundledOpenocd('bundled-openocd', '内置 OpenOCD'),
   externalOpenocd('external-openocd', '外置 OpenOCD'),
   externalPyocd('external-pyocd', '外置 pyOCD');
 
-  const RttBackendSelection(this.value, this.label);
+  const ProbeBackendSelection(this.value, this.label);
   final String value;
   final String label;
 
-  static RttBackendSelection fromString(String? value) => switch (value) {
+  static ProbeBackendSelection fromString(String? value) => switch (value) {
     'external-jlink' => externalJlink,
     'bundled-openocd' => bundledOpenocd,
     'external-openocd' => externalOpenocd,
@@ -23,27 +23,27 @@ enum RttBackendSelection {
   };
 }
 
-enum RttProbeKind {
+enum ProbeKind {
   jlink('jlink', 'J-Link'),
   cmsisDap('cmsisDap', 'CMSIS-DAP');
 
-  const RttProbeKind(this.value, this.label);
+  const ProbeKind(this.value, this.label);
   final String value;
   final String label;
 
-  static RttProbeKind fromString(String? value) =>
+  static ProbeKind fromString(String? value) =>
       value == 'cmsisDap' ? cmsisDap : jlink;
 }
 
-enum RttWireProtocol {
+enum ProbeWireProtocol {
   swd('swd', 'SWD'),
   jtag('jtag', 'JTAG');
 
-  const RttWireProtocol(this.value, this.label);
+  const ProbeWireProtocol(this.value, this.label);
   final String value;
   final String label;
 
-  static RttWireProtocol fromString(String? value) =>
+  static ProbeWireProtocol fromString(String? value) =>
       value == 'jtag' ? jtag : swd;
 }
 
@@ -100,7 +100,7 @@ enum RttDisplayMode {
       value == 'hex' ? hex : text;
 }
 
-enum RttConnectionState {
+enum ProbeConnectionState {
   disconnected,
   discovering,
   connecting,
@@ -115,7 +115,7 @@ enum RttConnectionState {
 enum ProbeActivityOwner { none, rttViewer, probePlot }
 
 /// RTT 后端向上层声明的可选能力。
-enum RttBackendCapability {
+enum ProbeBackendCapability {
   /// 能够向 RTT Down 0 写入数据。
   downChannel0,
 
@@ -129,8 +129,8 @@ enum RttBackendCapability {
   channelMetadata,
 }
 
-class RttProbeInfo {
-  const RttProbeInfo({
+class ProbeInfo {
+  const ProbeInfo({
     required this.id,
     required this.name,
     required this.kind,
@@ -141,7 +141,7 @@ class RttProbeInfo {
 
   final String id;
   final String name;
-  final RttProbeKind kind;
+  final ProbeKind kind;
   final bool available;
 
   /// 轻量 USB 刷新得到的设备标识；存在时连接后端应优先定向检查该设备。
@@ -149,8 +149,8 @@ class RttProbeInfo {
   final int? usbProductId;
 }
 
-class RttTargetInfo {
-  const RttTargetInfo({required this.name, this.vendor = '', this.source = ''});
+class ProbeTargetInfo {
+  const ProbeTargetInfo({required this.name, this.vendor = '', this.source = ''});
 
   final String name;
   final String vendor;
@@ -158,16 +158,16 @@ class RttTargetInfo {
 }
 
 /// 后端无关的 RTT 连接参数。
-class RttConnectionConfig {
-  const RttConnectionConfig({
+class ProbeConnectionConfig {
+  const ProbeConnectionConfig({
     required this.probeKind,
     required this.target,
-    this.backend = RttBackendSelection.automatic,
+    this.backend = ProbeBackendSelection.automatic,
     this.probeId = '',
     this.usbVendorId,
     this.usbProductId,
     this.autoDetectTarget = false,
-    this.wireProtocol = RttWireProtocol.swd,
+    this.wireProtocol = ProbeWireProtocol.swd,
     this.clockKhz = 4000,
     this.controlBlockMode = RttControlBlockMode.automatic,
     this.controlBlockAddress,
@@ -179,8 +179,8 @@ class RttConnectionConfig {
     this.pyOcdCmsisDapVersion = PyOcdCmsisDapVersion.automatic,
   });
 
-  final RttBackendSelection backend;
-  final RttProbeKind probeKind;
+  final ProbeBackendSelection backend;
+  final ProbeKind probeKind;
   final String probeId;
 
   /// 用户显式选择 USB 设备时保存；为空表示由后端自动发现探针。
@@ -188,7 +188,7 @@ class RttConnectionConfig {
   final int? usbProductId;
   final String target;
   final bool autoDetectTarget;
-  final RttWireProtocol wireProtocol;
+  final ProbeWireProtocol wireProtocol;
   final int clockKhz;
   final RttControlBlockMode controlBlockMode;
   final int? controlBlockAddress;
@@ -199,8 +199,8 @@ class RttConnectionConfig {
   final String openOcdTargetConfig;
   final PyOcdCmsisDapVersion pyOcdCmsisDapVersion;
 
-  RttConnectionConfig copyWithControlBlock(RttControlBlockConfig value) {
-    return RttConnectionConfig(
+  ProbeConnectionConfig copyWithControlBlock(RttControlBlockConfig value) {
+    return ProbeConnectionConfig(
       backend: backend,
       probeKind: probeKind,
       probeId: probeId,

@@ -6,9 +6,9 @@ import 'package:flutter/foundation.dart';
 
 import '../core/constants/rtt_configuration.dart';
 import '../core/utils/atomic_file.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 import '../services/app_settings.dart';
-import '../services/rtt_service.dart';
+import '../services/probe_connection_service.dart';
 import '../services/shell_stream_decoder.dart';
 import '../services/rtt_virtual_terminal_router.dart';
 import '../services/terminal_control_filter.dart';
@@ -32,7 +32,7 @@ class RttViewModel extends ChangeNotifier {
     service.addListener(_handleServiceChanged);
   }
 
-  final RttService service;
+  final ProbeConnectionService service;
   final List<String> _lines = [];
   final List<_RttTerminalBuffer> _terminals = [];
   final RttVirtualTerminalRouter _terminalRouter = RttVirtualTerminalRouter();

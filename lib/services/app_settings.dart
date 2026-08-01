@@ -121,7 +121,7 @@ class AppSettings {
 
   /// 绘图接收时是否在原生层短暂合并连续小块数据。
   ///
-  /// 默认关闭。启用后只在 [SerialActivityOwner.plot] 持有接收活动时生效，
+  /// 默认关闭。启用后只在 [DataActivityOwner.plot] 持有接收活动时生效，
   /// 数据收发、Shell 和 YMODEM 始终保持逐块即时交付。
   bool plotReceiveAggregationEnabled = false;
 

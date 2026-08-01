@@ -4,14 +4,14 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
-import '../data/models/rtt_config.dart';
-import 'rtt_backend.dart';
+import '../data/models/probe_connection_config.dart';
+import 'probe_backend.dart';
 
 /// 管理外部调试工具进程，并从其 RTT TCP 端口读取 Up 0。
-abstract class TcpProcessRttBackend
+abstract class TcpProcessProbeBackend
     implements
-        RttBackend,
-        RttBackendFailureProvider,
+        ProbeBackend,
+        ProbeBackendFailureProvider,
         RttActivityBackend,
         RttControlBlockConfigurable {
   static final Stopwatch _monotonicClock = Stopwatch()..start();
@@ -34,7 +34,7 @@ abstract class TcpProcessRttBackend
   int _realtimeDiagnosticCount = 0;
   DateTime? _lastRealtimeDiagnosticLogAt;
   bool _fatalDisconnectHandled = false;
-  RttConnectionConfig? _connectionConfig;
+  ProbeConnectionConfig? _connectionConfig;
   int? _rttPort;
 
   @override
@@ -49,26 +49,26 @@ abstract class TcpProcessRttBackend
   bool get connectRttSocketOnConnect => true;
   @override
   bool get supportsAutomaticControlBlock => true;
-  RttConnectionConfig get connectionConfig =>
+  ProbeConnectionConfig get connectionConfig =>
       _connectionConfig ?? (throw StateError('$displayName 尚未保存连接参数'));
   int get rttTransportPort =>
       _rttPort ?? (throw StateError('$displayName 尚未分配 RTT 端口'));
 
   @override
-  Set<RttBackendCapability> get capabilities => {
-    RttBackendCapability.independentActivity,
-    if (supportsDownChannel0) RttBackendCapability.downChannel0,
+  Set<ProbeBackendCapability> get capabilities => {
+    ProbeBackendCapability.independentActivity,
+    if (supportsDownChannel0) ProbeBackendCapability.downChannel0,
   };
 
   Duration get startupStabilityDuration => const Duration(milliseconds: 800);
   Duration get startupTimeout => const Duration(seconds: 12);
 
-  Future<String?> executablePath(RttProbeKind kind);
-  Future<List<String>> buildArguments(RttConnectionConfig config, int port);
+  Future<String?> executablePath(ProbeKind kind);
+  Future<List<String>> buildArguments(ProbeConnectionConfig config, int port);
 
   Future<void> configureRttSocket(
     Socket socket,
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
   ) async {}
 
   Uint8List filterRttData(Uint8List data) => data;
@@ -107,11 +107,11 @@ abstract class TcpProcessRttBackend
   int get monotonicMicroseconds => _monotonicClock.elapsedMicroseconds;
 
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async =>
+  Future<bool> isAvailable(ProbeKind kind) async =>
       await executablePath(kind) != null;
 
   @override
-  Future<void> connect(RttConnectionConfig config) async {
+  Future<void> connect(ProbeConnectionConfig config) async {
     await disconnect();
     _lastFailure = null;
     _lastDiagnostic = null;
@@ -123,7 +123,7 @@ abstract class TcpProcessRttBackend
     _connectionConfig = config;
     final executable = await executablePath(config.probeKind);
     if (executable == null) {
-      throw RttBackendUnavailableException('$displayName 未安装或路径无效');
+      throw ProbeBackendUnavailableException('$displayName 未安装或路径无效');
     }
     final port = await reserveRttTcpPort();
     _rttPort = port;

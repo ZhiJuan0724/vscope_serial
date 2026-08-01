@@ -11,10 +11,10 @@ import '../data/models/channel_config.dart';
 import '../data/models/plot_data.dart';
 import '../data/models/plot_lod_index.dart';
 import '../data/models/probe_plot_config.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 import '../services/j_scope_rtt_parser.dart';
 import '../services/app_settings.dart';
-import '../services/rtt_service.dart';
+import '../services/probe_connection_service.dart';
 import '../views/plot/plot_render_snapshot.dart';
 import '../views/plot/plot_viewport.dart';
 
@@ -39,7 +39,7 @@ class ProbePlotViewModel extends ChangeNotifier {
   static const int minHistoryMemoryLimitMiB = 64;
   static const int maxHistoryMemoryLimitMiB = 2048;
   static const int _bytesPerMiB = 1024 * 1024;
-  final RttService service;
+  final ProbeConnectionService service;
   final Queue<PlotDataPoint> _exactPoints = Queue<PlotDataPoint>();
   final Map<int, PlotDataPoint> _pointsByIndex = <int, PlotDataPoint>{};
   List<PlotDataPoint>? _pointsSnapshot;
@@ -455,7 +455,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     _wasConnected = connected;
     final nextSignature = _currentServiceStateSignature();
     _serviceStateSignature = nextSignature;
-    // 后端诊断文本也会触发 RttService 通知，但它与探针绘图页面无关。
+    // 后端诊断文本也会触发 ProbeConnectionService 通知，但它与探针绘图页面无关。
     // 这里只响应连接、能力和活动状态变化，避免实时诊断造成整页重建。
     if (channelStateChanged || previousSignature != nextSignature) {
       notifyListeners();

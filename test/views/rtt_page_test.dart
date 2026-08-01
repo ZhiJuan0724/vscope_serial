@@ -7,11 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/constants/rtt_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
 import 'package:vscope_serial/viewmodels/rtt_viewmodel.dart';
 import 'package:vscope_serial/views/pages/rtt_page.dart';
 
@@ -21,7 +21,7 @@ void main() {
   testWidgets('RTT 窄窗口下显示完整工具栏与连接空态', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: const [
         _UnavailableBackend('external-jlink'),
         _UnavailableBackend('external-openocd'),
@@ -36,7 +36,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<RttService>.value(value: service),
+          ChangeNotifierProvider<ProbeConnectionService>.value(value: service),
           ChangeNotifierProvider<RttViewModel>.value(value: viewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: RttPage())),
@@ -82,7 +82,7 @@ void main() {
   testWidgets('RTT 设置复用 Shell 字体范围和字体调整样式', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: const [
         _UnavailableBackend('external-jlink'),
         _UnavailableBackend('external-openocd'),
@@ -97,7 +97,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<RttService>.value(value: service),
+          ChangeNotifierProvider<ProbeConnectionService>.value(value: service),
           ChangeNotifierProvider<RttViewModel>.value(value: viewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: RttPage())),
@@ -126,9 +126,9 @@ void main() {
     final previousPollingInterval = settings.rttViewerPollingIntervalMs;
     settings
       ..rttControlBlockMode = RttControlBlockMode.automatic.value
-      ..rttBackendSelection = RttBackendSelection.externalOpenocd.value
+      ..rttBackendSelection = ProbeBackendSelection.externalOpenocd.value
       ..rttViewerPollingIntervalMs = 10;
-    final service = RttService(backends: const []);
+    final service = ProbeConnectionService(backends: const []);
     final viewModel = RttViewModel(service);
     addTearDown(() {
       settings.rttControlBlockMode = previousMode;
@@ -141,7 +141,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<RttService>.value(value: service),
+          ChangeNotifierProvider<ProbeConnectionService>.value(value: service),
           ChangeNotifierProvider<RttViewModel>.value(value: viewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: RttPage())),
@@ -174,19 +174,19 @@ void main() {
   testWidgets('RTT Viewer 启动过程显示启动中且停止过程显示停止中', (tester) async {
     ConnectionOwnerService().reset();
     final backend = _DeferredActivityBackend();
-    final service = RttService(backends: [backend]);
+    final service = ProbeConnectionService(backends: [backend]);
     final viewModel = RttViewModel(service);
     await service.connect(
-      const RttConnectionConfig(
-        backend: RttBackendSelection.externalOpenocd,
-        probeKind: RttProbeKind.cmsisDap,
+      const ProbeConnectionConfig(
+        backend: ProbeBackendSelection.externalOpenocd,
+        probeKind: ProbeKind.cmsisDap,
         target: 'TEST',
       ),
     );
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<RttService>.value(value: service),
+          ChangeNotifierProvider<ProbeConnectionService>.value(value: service),
           ChangeNotifierProvider<RttViewModel>.value(value: viewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: RttPage())),
@@ -219,7 +219,7 @@ void main() {
   testWidgets('All Terminals 前缀与左侧列表同色且右键可修改', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: const [
         _UnavailableBackend('external-jlink'),
         _UnavailableBackend('external-openocd'),
@@ -234,7 +234,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<RttService>.value(value: service),
+          ChangeNotifierProvider<ProbeConnectionService>.value(value: service),
           ChangeNotifierProvider<RttViewModel>.value(value: viewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: RttPage())),
@@ -330,7 +330,7 @@ class _TerminalColorViewModel extends RttViewModel {
   }
 }
 
-class _UnavailableBackend implements RttBackend {
+class _UnavailableBackend implements ProbeBackend {
   const _UnavailableBackend(this.id);
 
   @override
@@ -348,26 +348,26 @@ class _UnavailableBackend implements RttBackend {
   @override
   bool get isConnected => false;
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => false;
+  Future<bool> isAvailable(ProbeKind kind) async => false;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
   @override
-  Future<void> connect(RttConnectionConfig config) async {}
+  Future<void> connect(ProbeConnectionConfig config) async {}
   @override
   Future<void> disconnect() async {}
   @override
   Future<void> dispose() async {}
 }
 
-class _DeferredActivityBackend implements RttBackend, RttActivityBackend {
+class _DeferredActivityBackend implements ProbeBackend, RttActivityBackend {
   final Completer<void> startGate = Completer<void>();
   final Completer<void> stopGate = Completer<void>();
   bool _connected = false;
 
   @override
-  String get id => RttBackendSelection.externalOpenocd.value;
+  String get id => ProbeBackendSelection.externalOpenocd.value;
   @override
   String get displayName => '测试 OpenOCD';
   @override
@@ -381,19 +381,19 @@ class _DeferredActivityBackend implements RttBackend, RttActivityBackend {
   @override
   Stream<String> get diagnosticStream => const Stream.empty();
   @override
-  Set<RttBackendCapability> get capabilities => const {
-    RttBackendCapability.independentActivity,
-    RttBackendCapability.downChannel0,
+  Set<ProbeBackendCapability> get capabilities => const {
+    ProbeBackendCapability.independentActivity,
+    ProbeBackendCapability.downChannel0,
   };
 
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => true;
+  Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
   @override
-  Future<void> connect(RttConnectionConfig config) async => _connected = true;
+  Future<void> connect(ProbeConnectionConfig config) async => _connected = true;
   @override
   Future<void> disconnect() async => _connected = false;
   @override

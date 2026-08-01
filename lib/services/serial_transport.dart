@@ -7,7 +7,7 @@ import 'native_serial_reader.dart';
 
 /// 单个串口 open/close 生命周期的可替换 transport。
 ///
-/// SerialService 负责操作排序和 generation 隔离；transport 只拥有本次
+/// DataConnectionService 负责操作排序和 generation 隔离；transport 只拥有本次
 /// 打开的句柄、读取流和写队列，便于用 fake 精确验证竞态。
 abstract interface class SerialTransport {
   Stream<NativeSerialData> get dataStream;
@@ -22,7 +22,7 @@ abstract interface class SerialTransport {
   Future<void> close();
 }
 
-/// 支持由 [SerialService] 按活动页面切换原生接收合并策略的 transport。
+/// 支持由 [DataConnectionService] 按活动页面切换原生接收合并策略的 transport。
 ///
 /// 测试 transport 和未来非 Windows 实现可以不实现此接口，串口基础收发不受影响。
 abstract interface class PlotReceiveAggregationTransport {

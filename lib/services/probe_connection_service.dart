@@ -4,16 +4,16 @@ import 'package:flutter/foundation.dart';
 
 import '../core/utils/app_logger.dart';
 import '../data/models/probe_plot_config.dart';
-import '../data/models/rtt_config.dart';
+import '../data/models/probe_connection_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'connection_owner_service.dart';
 import 'elf_symbol_reader.dart';
-import 'rtt_backend.dart';
+import 'probe_backend.dart';
 import 'rtt_process_backends.dart';
 import 'rtt_receive_queue.dart';
 
-bool _hasUsableAutomaticOpenOcdConfig(RttConnectionConfig config) {
+bool _hasUsableAutomaticOpenOcdConfig(ProbeConnectionConfig config) {
   return config.openOcdInterfaceConfig.trim().isNotEmpty &&
       config.openOcdTargetConfig.trim().isNotEmpty;
 }
@@ -25,24 +25,24 @@ class _RttConnectCancelled implements Exception {
 /// 从最近一次成功连接保存的设置创建快捷连接参数。
 ///
 /// 显式后端会约束探针类型，防止旧设置中的类型与后端不匹配。
-RttConnectionConfig savedRttConnectionConfig([AppSettings? source]) {
+ProbeConnectionConfig savedProbeConnectionConfig([AppSettings? source]) {
   final settings = source ?? AppSettings();
-  final backend = RttBackendSelection.fromString(settings.rttBackendSelection);
-  final savedKind = RttProbeKind.fromString(settings.rttProbeKind);
+  final backend = ProbeBackendSelection.fromString(settings.rttBackendSelection);
+  final savedKind = ProbeKind.fromString(settings.rttProbeKind);
   final kind = switch (backend) {
-    RttBackendSelection.externalJlink => RttProbeKind.jlink,
-    RttBackendSelection.bundledOpenocd ||
-    RttBackendSelection.externalOpenocd ||
-    RttBackendSelection.externalPyocd => RttProbeKind.cmsisDap,
-    RttBackendSelection.automatic => savedKind,
+    ProbeBackendSelection.externalJlink => ProbeKind.jlink,
+    ProbeBackendSelection.bundledOpenocd ||
+    ProbeBackendSelection.externalOpenocd ||
+    ProbeBackendSelection.externalPyocd => ProbeKind.cmsisDap,
+    ProbeBackendSelection.automatic => savedKind,
   };
-  return RttConnectionConfig(
+  return ProbeConnectionConfig(
     backend: backend,
     probeKind: kind,
     probeId: settings.rttLastProbeId,
     target: settings.rttTarget,
     autoDetectTarget: settings.rttAutoDetectTarget,
-    wireProtocol: RttWireProtocol.fromString(settings.rttWireProtocol),
+    wireProtocol: ProbeWireProtocol.fromString(settings.rttWireProtocol),
     clockKhz: settings.rttClockKhz,
     controlBlockMode: RttControlBlockMode.fromString(
       settings.rttControlBlockMode,
@@ -59,11 +59,11 @@ RttConnectionConfig savedRttConnectionConfig([AppSettings? source]) {
 }
 
 /// RTT 连接、后端选择和接收队列的唯一所有者。
-class RttService extends ChangeNotifier {
-  RttService({
+class ProbeConnectionService extends ChangeNotifier {
+  ProbeConnectionService({
     ConnectionOwnerService? connectionOwners,
     RttReceiveQueue? receiveQueue,
-    List<RttBackend>? backends,
+    List<ProbeBackend>? backends,
   }) : _connectionOwners = connectionOwners ?? ConnectionOwnerService(),
        _receiveQueue = receiveQueue ?? RttReceiveQueue() {
     final settings = AppSettings();
@@ -88,7 +88,7 @@ class RttService extends ChangeNotifier {
 
   final ConnectionOwnerService _connectionOwners;
   final RttReceiveQueue _receiveQueue;
-  late final List<RttBackend> _backends;
+  late final List<ProbeBackend> _backends;
   // 由可等待的 shutdown() 统一关闭；dispose() 会启动同一收敛流程。
   // ignore: close_sinks
   final StreamController<void> _dataAvailableController =
@@ -103,10 +103,10 @@ class RttService extends ChangeNotifier {
   StreamSubscription<String>? _diagnosticSubscription;
   StreamSubscription<ProbeSampleChunk>? _sampleSubscription;
   Timer? _connectionMonitor;
-  RttBackend? _activeBackend;
-  RttProbeKind? _activeProbeKind;
+  ProbeBackend? _activeBackend;
+  ProbeKind? _activeProbeKind;
   ProbeActivityOwner _activityOwner = ProbeActivityOwner.none;
-  RttConnectionState _state = RttConnectionState.disconnected;
+  ProbeConnectionState _state = ProbeConnectionState.disconnected;
   String? _lastError;
   String _diagnostic = '';
   int _receivedBytes = 0;
@@ -115,12 +115,12 @@ class RttService extends ChangeNotifier {
   int _connectionGeneration = 0;
   Future<void>? _shutdownFuture;
 
-  RttConnectionState get state => _state;
-  bool get isConnected => _state == RttConnectionState.connected;
+  ProbeConnectionState get state => _state;
+  bool get isConnected => _state == ProbeConnectionState.connected;
   bool get isConnecting =>
-      _state == RttConnectionState.connecting ||
-      _state == RttConnectionState.reconnecting;
-  bool get isReconnecting => _state == RttConnectionState.reconnecting;
+      _state == ProbeConnectionState.connecting ||
+      _state == ProbeConnectionState.reconnecting;
+  bool get isReconnecting => _state == ProbeConnectionState.reconnecting;
   String? get lastError => _lastError;
   String get diagnostic => _diagnostic;
   String get activeBackendName => _activeBackend?.displayName ?? '';
@@ -130,18 +130,18 @@ class RttService extends ChangeNotifier {
       backend.supportsAutomaticControlBlock,
     _ => _savedBackendSupportsAutomaticControlBlock(),
   };
-  RttProbeKind? get activeProbeKind => _activeProbeKind;
+  ProbeKind? get activeProbeKind => _activeProbeKind;
   ProbeActivityOwner get activityOwner => _activityOwner;
   bool get isActivityRunning => _activityOwner != ProbeActivityOwner.none;
   bool get canWriteDownChannel0 =>
       _activeBackend is RttActivityBackend &&
       (_activeBackend as RttActivityBackend).capabilities.contains(
-        RttBackendCapability.downChannel0,
+        ProbeBackendCapability.downChannel0,
       );
   bool get supportsProbePlot =>
       _activeBackend is RttActivityBackend &&
       (_activeBackend as RttActivityBackend).capabilities.contains(
-        RttBackendCapability.memorySampling,
+        ProbeBackendCapability.memorySampling,
       );
   int get receivedBytes => _receivedBytes;
   int get queuedBytes => _receiveQueue.queuedBytes;
@@ -152,29 +152,29 @@ class RttService extends ChangeNotifier {
 
   bool _savedBackendSupportsAutomaticControlBlock() {
     final settings = AppSettings();
-    final selection = RttBackendSelection.fromString(
+    final selection = ProbeBackendSelection.fromString(
       settings.rttBackendSelection,
     );
-    if (selection == RttBackendSelection.externalOpenocd ||
-        selection == RttBackendSelection.bundledOpenocd) {
+    if (selection == ProbeBackendSelection.externalOpenocd ||
+        selection == ProbeBackendSelection.bundledOpenocd) {
       return false;
     }
-    if (selection != RttBackendSelection.automatic) return true;
-    final kind = RttProbeKind.fromString(settings.rttProbeKind);
-    if (kind != RttProbeKind.cmsisDap) return true;
+    if (selection != ProbeBackendSelection.automatic) return true;
+    final kind = ProbeKind.fromString(settings.rttProbeKind);
+    if (kind != ProbeKind.cmsisDap) return true;
     return settings.rttOpenocdInterfaceConfig.trim().isEmpty ||
         settings.rttOpenocdTargetConfig.trim().isEmpty;
   }
 
-  Future<List<RttProbeInfo>> listProbes(
-    RttProbeKind kind, {
-    RttBackendSelection backend = RttBackendSelection.automatic,
-    RttConnectionConfig? connectionConfig,
+  Future<List<ProbeInfo>> listProbes(
+    ProbeKind kind, {
+    ProbeBackendSelection backend = ProbeBackendSelection.automatic,
+    ProbeConnectionConfig? connectionConfig,
   }) async {
     // 连接窗口在活动会话中可能被再次打开。此时刷新辅助信息不能覆盖连接
     // 状态，否则界面会显示已断开，但实际后端进程仍在运行。
-    final reportsDiscovery = _state == RttConnectionState.disconnected;
-    if (reportsDiscovery) _setState(RttConnectionState.discovering);
+    final reportsDiscovery = _state == ProbeConnectionState.disconnected;
+    if (reportsDiscovery) _setState(ProbeConnectionState.discovering);
     try {
       final resolved = await _resolveBackend(
         kind,
@@ -186,8 +186,8 @@ class RttService extends ChangeNotifier {
         category: 'RTT',
       );
       final probes =
-          resolved is ConfiguredRttProbeDiscovery && connectionConfig != null
-              ? await (resolved as ConfiguredRttProbeDiscovery)
+          resolved is ConfiguredProbeDiscovery && connectionConfig != null
+              ? await (resolved as ConfiguredProbeDiscovery)
                   .listProbesForConfig(connectionConfig)
               : await resolved.listProbes(kind);
       AppLogger().info(
@@ -204,16 +204,16 @@ class RttService extends ChangeNotifier {
       );
       rethrow;
     } finally {
-      if (reportsDiscovery && _state == RttConnectionState.discovering) {
-        _setState(RttConnectionState.disconnected);
+      if (reportsDiscovery && _state == ProbeConnectionState.discovering) {
+        _setState(ProbeConnectionState.disconnected);
       }
     }
   }
 
-  Future<List<RttTargetInfo>> listTargets(
-    RttProbeKind kind, {
-    RttBackendSelection backend = RttBackendSelection.automatic,
-    RttConnectionConfig? connectionConfig,
+  Future<List<ProbeTargetInfo>> listTargets(
+    ProbeKind kind, {
+    ProbeBackendSelection backend = ProbeBackendSelection.automatic,
+    ProbeConnectionConfig? connectionConfig,
   }) async {
     try {
       final resolved = await _resolveBackend(
@@ -246,9 +246,9 @@ class RttService extends ChangeNotifier {
   ///
   /// 连接窗口与正式连接共用此选择逻辑，避免自动回退状态与实际行为不一致。
   Future<String> expectedBackendName(
-    RttProbeKind kind, {
-    RttBackendSelection backend = RttBackendSelection.automatic,
-    RttConnectionConfig? connectionConfig,
+    ProbeKind kind, {
+    ProbeBackendSelection backend = ProbeBackendSelection.automatic,
+    ProbeConnectionConfig? connectionConfig,
   }) async {
     final resolved = await _resolveBackend(
       kind,
@@ -260,23 +260,23 @@ class RttService extends ChangeNotifier {
   }
 
   /// 检测设置页展示的三个后端，不触发探针连接。
-  Future<Map<String, RttBackendAvailability>> checkBackendAvailability() async {
-    final result = <String, RttBackendAvailability>{};
+  Future<Map<String, ProbeBackendAvailability>> checkBackendAvailability() async {
+    final result = <String, ProbeBackendAvailability>{};
     for (final backend in _backends) {
       final kind = switch (backend.id) {
-        'external-jlink' => RttProbeKind.jlink,
-        'bundled-openocd' => RttProbeKind.cmsisDap,
-        'external-openocd' => RttProbeKind.cmsisDap,
-        'external-pyocd' => RttProbeKind.cmsisDap,
-        _ => RttProbeKind.jlink,
+        'external-jlink' => ProbeKind.jlink,
+        'bundled-openocd' => ProbeKind.cmsisDap,
+        'external-openocd' => ProbeKind.cmsisDap,
+        'external-pyocd' => ProbeKind.cmsisDap,
+        _ => ProbeKind.jlink,
       };
       try {
         AppLogger().info('检测探针后端：${backend.displayName}', category: 'RTT');
         final available = await backend.isAvailable(kind);
         String? version;
-        if (available && backend is RttBackendVersionProvider) {
+        if (available && backend is ProbeBackendVersionProvider) {
           try {
-            version = await (backend as RttBackendVersionProvider)
+            version = await (backend as ProbeBackendVersionProvider)
                 .detectVersion(kind);
           } catch (error) {
             // 工具已找到但版本命令失败时仍应报告可用，避免误导为未安装。
@@ -286,7 +286,7 @@ class RttService extends ChangeNotifier {
             );
           }
         }
-        result[backend.id] = RttBackendAvailability(
+        result[backend.id] = ProbeBackendAvailability(
           available: available,
           version: version,
         );
@@ -296,7 +296,7 @@ class RttService extends ChangeNotifier {
           category: 'RTT',
         );
       } catch (error, stackTrace) {
-        result[backend.id] = const RttBackendAvailability(available: false);
+        result[backend.id] = const ProbeBackendAvailability(available: false);
         AppLogger().error(
           '探针后端检测失败：${backend.displayName}，$error',
           category: 'RTT',
@@ -308,16 +308,16 @@ class RttService extends ChangeNotifier {
     return result;
   }
 
-  Future<void> connect(RttConnectionConfig config) async {
+  Future<void> connect(ProbeConnectionConfig config) async {
     if (isConnected || isConnecting) return;
-    if (!_connectionOwners.tryAcquire(ConnectionOwner.rtt)) {
+    if (!_connectionOwners.tryAcquire(ConnectionOwner.probe)) {
       throw StateError('数据连接已占用连接入口，请先手动断开数据连接');
     }
     _lastError = null;
     _handlingUnexpectedDisconnect = false;
     _receivedBytes = 0;
     _receiveQueue.clear(resetDropped: true);
-    _setState(RttConnectionState.connecting);
+    _setState(ProbeConnectionState.connecting);
     final generation = ++_connectionGeneration;
     try {
       final backend = await _resolveBackend(
@@ -347,7 +347,7 @@ class RttService extends ChangeNotifier {
         throw const _RttConnectCancelled();
       }
       _persistConnection(config);
-      _setState(RttConnectionState.connected);
+      _setState(ProbeConnectionState.connected);
       AppLogger().info(
         '探针连接成功：类型=${config.probeKind.label}，后端=${backend.displayName}',
         category: 'RTT',
@@ -355,8 +355,8 @@ class RttService extends ChangeNotifier {
       _startConnectionMonitor();
     } on _RttConnectCancelled {
       await _unbindBackend(disconnect: true);
-      _connectionOwners.release(ConnectionOwner.rtt);
-      _setState(RttConnectionState.disconnected);
+      _connectionOwners.release(ConnectionOwner.probe);
+      _setState(ProbeConnectionState.disconnected);
       rethrow;
     } catch (error, stackTrace) {
       // disconnect() 可能在 backend.connect() 尚未返回时终止底层进程，
@@ -364,8 +364,8 @@ class RttService extends ChangeNotifier {
       // 用户取消处理，不能把预期的取消显示成连接失败。
       if (generation != _connectionGeneration) {
         await _unbindBackend(disconnect: true);
-        _connectionOwners.release(ConnectionOwner.rtt);
-        _setState(RttConnectionState.disconnected);
+        _connectionOwners.release(ConnectionOwner.probe);
+        _setState(ProbeConnectionState.disconnected);
         throw const _RttConnectCancelled();
       }
       _lastError = '$error';
@@ -376,36 +376,36 @@ class RttService extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       await _unbindBackend(disconnect: true);
-      _connectionOwners.release(ConnectionOwner.rtt);
-      _setState(RttConnectionState.disconnected);
+      _connectionOwners.release(ConnectionOwner.probe);
+      _setState(ProbeConnectionState.disconnected);
       rethrow;
     }
   }
 
-  Future<RttBackend> _resolveBackend(
-    RttProbeKind kind,
-    RttBackendSelection selection, {
+  Future<ProbeBackend> _resolveBackend(
+    ProbeKind kind,
+    ProbeBackendSelection selection, {
     bool requireNonIntrusiveTargetAccess = false,
-    RttConnectionConfig? connectionConfig,
+    ProbeConnectionConfig? connectionConfig,
   }) async {
-    if (selection != RttBackendSelection.automatic) {
+    if (selection != ProbeBackendSelection.automatic) {
       final backend = _backends.firstWhere(
         (item) => item.id == selection.value,
         orElse:
             () =>
-                throw RttBackendUnavailableException(
+                throw ProbeBackendUnavailableException(
                   '后端不存在：${selection.label}',
                 ),
       );
       if (requireNonIntrusiveTargetAccess &&
           !backend.guaranteesNonIntrusiveTargetAccess) {
-        throw RttBackendUnavailableException(
+        throw ProbeBackendUnavailableException(
           backend.nonIntrusiveSafetyBlockReason ??
               '${backend.displayName} 无法保证非侵入式目标访问',
         );
       }
       if (!await backend.isAvailable(kind)) {
-        throw RttBackendUnavailableException(
+        throw ProbeBackendUnavailableException(
           '${selection.label} 不支持 ${kind.label}，或工具路径无效',
         );
       }
@@ -416,7 +416,7 @@ class RttService extends ChangeNotifier {
     // 连接阶段只要求 OpenOCD 接口和目标脚本完整，
     // RTT 控制块由具体数据活动开始前单独配置。
     final candidateIds =
-        kind == RttProbeKind.jlink
+        kind == ProbeKind.jlink
             ? const ['external-jlink']
             : const ['external-openocd', 'bundled-openocd', 'external-pyocd'];
     for (final id in candidateIds) {
@@ -446,17 +446,17 @@ class RttService extends ChangeNotifier {
       );
       if (available) return backend;
     }
-    throw const RttBackendUnavailableException('没有可用的探针后端');
+    throw const ProbeBackendUnavailableException('没有可用的探针后端');
   }
 
-  Future<void> _bindBackend(RttBackend backend) async {
+  Future<void> _bindBackend(ProbeBackend backend) async {
     await _dataSubscription?.cancel();
     await _diagnosticSubscription?.cancel();
     _dataSubscription = backend.dataStream.listen(_handleData);
     _diagnosticSubscription = backend.diagnosticStream.listen((message) {
       _diagnostic = message;
       _notify();
-      if (_state == RttConnectionState.connected &&
+      if (_state == ProbeConnectionState.connected &&
           identical(_activeBackend, backend) &&
           !backend.isConnected) {
         unawaited(_handleUnexpectedDisconnect());
@@ -602,7 +602,7 @@ class RttService extends ChangeNotifier {
   }
 
   Future<void> _configureRttControlBlock(
-    RttBackend? backend, {
+    ProbeBackend? backend, {
     required int pollingIntervalMs,
   }) async {
     if (backend is! RttControlBlockConfigurable) return;
@@ -622,15 +622,15 @@ class RttService extends ChangeNotifier {
   Future<void> stopActivity() async {
     if (_activityOwner == ProbeActivityOwner.none) return;
     final backend = _activeBackend;
-    if (backend?.id == RttBackendSelection.externalJlink.value) {
+    if (backend?.id == ProbeBackendSelection.externalJlink.value) {
       _connectionMonitor?.cancel();
       _connectionMonitor = null;
-      _setState(RttConnectionState.reconnecting);
+      _setState(ProbeConnectionState.reconnecting);
       AppLogger().info('J-Link 正在停止 RTT：终止当前后端并重新建立空闲目标会话', category: 'RTT');
       try {
         await (backend as RttActivityBackend).stopActivity();
         _activityOwner = ProbeActivityOwner.none;
-        _setState(RttConnectionState.connected);
+        _setState(ProbeConnectionState.connected);
         _startConnectionMonitor();
         AppLogger().info('J-Link RTT 已停止，空闲目标会话已重新连接', category: 'RTT');
       } catch (error, stackTrace) {
@@ -642,8 +642,8 @@ class RttService extends ChangeNotifier {
           stackTrace: stackTrace,
         );
         await _unbindBackend(disconnect: true);
-        _connectionOwners.release(ConnectionOwner.rtt);
-        _setState(RttConnectionState.disconnected);
+        _connectionOwners.release(ConnectionOwner.probe);
+        _setState(ProbeConnectionState.disconnected);
         AppNotifications.show(_lastError!);
       }
       return;
@@ -665,7 +665,7 @@ class RttService extends ChangeNotifier {
     }
     final activityBackend = backend as RttActivityBackend;
     if (!activityBackend.capabilities.contains(
-      RttBackendCapability.downChannel0,
+      ProbeBackendCapability.downChannel0,
     )) {
       throw StateError('当前后端不支持 RTT Down 0');
     }
@@ -681,20 +681,20 @@ class RttService extends ChangeNotifier {
       category: 'RTT',
     );
     _lastError = null;
-    if (_activeBackend?.id == RttBackendSelection.externalJlink.value &&
+    if (_activeBackend?.id == ProbeBackendSelection.externalJlink.value &&
         _activityOwner != ProbeActivityOwner.none) {
       _activityOwner = ProbeActivityOwner.none;
     } else {
       await stopActivity();
     }
     await _unbindBackend(disconnect: true);
-    _connectionOwners.release(ConnectionOwner.rtt);
-    _setState(RttConnectionState.disconnected);
+    _connectionOwners.release(ConnectionOwner.probe);
+    _setState(ProbeConnectionState.disconnected);
     AppLogger().info('探针已断开', category: 'RTT');
   }
 
   Future<void> _handleUnexpectedDisconnect() async {
-    if (_state == RttConnectionState.disconnected ||
+    if (_state == ProbeConnectionState.disconnected ||
         _handlingUnexpectedDisconnect) {
       return;
     }
@@ -702,8 +702,8 @@ class RttService extends ChangeNotifier {
     try {
       final backend = _activeBackend;
       final backendFailure =
-          backend is RttBackendFailureProvider
-              ? (backend as RttBackendFailureProvider).lastFailure
+          backend is ProbeBackendFailureProvider
+              ? (backend as ProbeBackendFailureProvider).lastFailure
               : null;
       _lastError =
           backendFailure ??
@@ -712,8 +712,8 @@ class RttService extends ChangeNotifier {
       // 后端虽已报告断线，仍执行一次完整资源清理，关闭 Tcl/RTT 附加
       // socket，并回收可能尚未退出的外部工具进程。
       await _unbindBackend(disconnect: true);
-      _connectionOwners.release(ConnectionOwner.rtt);
-      _setState(RttConnectionState.disconnected);
+      _connectionOwners.release(ConnectionOwner.probe);
+      _setState(ProbeConnectionState.disconnected);
       AppNotifications.show(_lastError!);
     } finally {
       _handlingUnexpectedDisconnect = false;
@@ -745,7 +745,7 @@ class RttService extends ChangeNotifier {
     _sampleSubscription = null;
   }
 
-  void _persistConnection(RttConnectionConfig config) {
+  void _persistConnection(ProbeConnectionConfig config) {
     final settings =
         AppSettings()
           ..rttProbeKind = config.probeKind.value
@@ -765,7 +765,7 @@ class RttService extends ChangeNotifier {
     unawaited(settings.save());
   }
 
-  void _setState(RttConnectionState value) {
+  void _setState(ProbeConnectionState value) {
     if (_state == value) return;
     _state = value;
     _notify();
@@ -812,7 +812,7 @@ class RttService extends ChangeNotifier {
     if (!_probeSamplesController.isClosed) {
       await runBestEffort(_probeSamplesController.close);
     }
-    _connectionOwners.release(ConnectionOwner.rtt);
+    _connectionOwners.release(ConnectionOwner.probe);
     if (firstError != null) {
       Error.throwWithStackTrace(firstError!, firstStackTrace!);
     }

@@ -10,7 +10,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/utils/plot_performance_metrics.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
 
@@ -49,11 +49,11 @@ void main() {
     // 这里手动搭建绘图页需要的最小 Provider 环境，不启动完整 main.dart。
     // 好处是测试只覆盖绘图页面和 PlotViewModel，减少更新检查、窗口管理等
     // 与绘图性能无关的因素对结果的干扰。
-    final serialService = SerialService();
-    final vm = PlotViewModel(serialService);
+    final connectionService = DataConnectionService();
+    final vm = PlotViewModel(connectionService);
     addTearDown(() {
       vm.dispose();
-      serialService.dispose();
+      connectionService.dispose();
     });
 
     await tester.pumpWidget(

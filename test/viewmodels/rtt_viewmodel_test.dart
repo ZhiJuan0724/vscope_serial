@@ -4,18 +4,18 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
 import 'package:vscope_serial/services/rtt_receive_queue.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
 import 'package:vscope_serial/viewmodels/rtt_viewmodel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late _DataBackend backend;
-  late RttService service;
+  late ProbeConnectionService service;
   late RttViewModel viewModel;
   late String previousEncoding;
   late String previousMode;
@@ -31,18 +31,18 @@ void main() {
     previousTerminalColors = List.of(AppSettings().rttTerminalColors);
     previousTerminalLabels = List.of(AppSettings().rttTerminalLabels);
     AppSettings()
-      ..rttBackendSelection = RttBackendSelection.externalJlink.value
+      ..rttBackendSelection = ProbeBackendSelection.externalJlink.value
       ..rttEncoding = 'UTF-8'
       ..rttDisplayMode = RttDisplayMode.text.value
       ..rttTimestampEnabled = false;
     backend = _DataBackend();
-    service = RttService(
+    service = ProbeConnectionService(
       receiveQueue: RttReceiveQueue(maxBytes: 1024),
       backends: [backend],
     );
     viewModel = RttViewModel(service);
     await service.connect(
-      const RttConnectionConfig(probeKind: RttProbeKind.jlink, target: 'TEST'),
+      const ProbeConnectionConfig(probeKind: ProbeKind.jlink, target: 'TEST'),
     );
     await service.startRttViewer();
   });
@@ -213,7 +213,7 @@ Future<void> _settleTimers() async {
   }
 }
 
-class _DataBackend implements RttBackend {
+class _DataBackend implements ProbeBackend {
   final StreamController<RttDataChunk> _data =
       StreamController<RttDataChunk>.broadcast();
   final StreamController<String> _diagnostics =
@@ -235,13 +235,13 @@ class _DataBackend implements RttBackend {
   @override
   bool get isConnected => _connected;
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => true;
+  Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
   @override
-  Future<void> connect(RttConnectionConfig config) async => _connected = true;
+  Future<void> connect(ProbeConnectionConfig config) async => _connected = true;
   @override
   Future<void> disconnect() async => _connected = false;
 

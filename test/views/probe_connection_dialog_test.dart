@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
-import 'package:vscope_serial/views/dialogs/rtt_connection_dialog.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
+import 'package:vscope_serial/views/dialogs/probe_connection_dialog.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -19,12 +19,12 @@ void main() {
     final previousTarget = settings.rttTarget;
     final previousAutoDetect = settings.rttAutoDetectTarget;
     settings
-      ..rttProbeKind = RttProbeKind.jlink.value
-      ..rttBackendSelection = RttBackendSelection.externalJlink.value
+      ..rttProbeKind = ProbeKind.jlink.value
+      ..rttBackendSelection = ProbeBackendSelection.externalJlink.value
       ..rttTarget = 'TEST'
       ..rttAutoDetectTarget = false;
     final backend = _DelayedConnectBackend('external-jlink');
-    final service = RttService(backends: [backend]);
+    final service = ProbeConnectionService(backends: [backend]);
     addTearDown(() async {
       await service.shutdown();
       settings
@@ -35,7 +35,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -44,7 +44,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -71,8 +71,8 @@ void main() {
     final previousAutoDetect = settings.rttAutoDetectTarget;
     final previousTargetConfig = settings.rttOpenocdTargetConfig;
     settings
-      ..rttProbeKind = RttProbeKind.jlink.value
-      ..rttBackendSelection = RttBackendSelection.automatic.value
+      ..rttProbeKind = ProbeKind.jlink.value
+      ..rttBackendSelection = ProbeBackendSelection.automatic.value
       ..rttAutoDetectTarget = false
       ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg';
     addTearDown(() {
@@ -85,11 +85,11 @@ void main() {
 
     final jlink = _DiscoveryBackend('external-jlink');
     final openocd = _DiscoveryBackend('external-openocd');
-    final service = RttService(backends: [jlink, openocd]);
+    final service = ProbeConnectionService(backends: [jlink, openocd]);
     addTearDown(service.dispose);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -98,7 +98,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -158,8 +158,8 @@ void main() {
     final previousAutoDetect = settings.rttAutoDetectTarget;
     final previousTarget = settings.rttTarget;
     settings
-      ..rttProbeKind = RttProbeKind.jlink.value
-      ..rttBackendSelection = RttBackendSelection.automatic.value
+      ..rttProbeKind = ProbeKind.jlink.value
+      ..rttBackendSelection = ProbeBackendSelection.automatic.value
       ..rttAutoDetectTarget = false
       ..rttTarget = '';
     addTearDown(() {
@@ -171,13 +171,13 @@ void main() {
     });
 
     final jlink = _TargetBackend('external-jlink');
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: [jlink, _TargetBackend('external-openocd', available: false)],
     );
     addTearDown(service.dispose);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -186,7 +186,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -223,8 +223,8 @@ void main() {
     final previousBackend = settings.rttBackendSelection;
     final previousProbeId = settings.rttLastProbeId;
     settings
-      ..rttProbeKind = RttProbeKind.jlink.value
-      ..rttBackendSelection = RttBackendSelection.automatic.value
+      ..rttProbeKind = ProbeKind.jlink.value
+      ..rttBackendSelection = ProbeBackendSelection.automatic.value
       ..rttLastProbeId = 'OLD-PROBE';
     addTearDown(() {
       settings
@@ -233,7 +233,7 @@ void main() {
         ..rttLastProbeId = previousProbeId;
     });
 
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: [
         _ImmediateProbeBackend('external-jlink'),
         _ImmediateProbeBackend('external-openocd', available: false),
@@ -242,7 +242,7 @@ void main() {
     addTearDown(service.dispose);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -251,7 +251,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -289,8 +289,8 @@ void main() {
     final previousBackend = settings.rttBackendSelection;
     final previousControlBlockMode = settings.rttControlBlockMode;
     settings
-      ..rttProbeKind = RttProbeKind.jlink.value
-      ..rttBackendSelection = RttBackendSelection.automatic.value
+      ..rttProbeKind = ProbeKind.jlink.value
+      ..rttBackendSelection = ProbeBackendSelection.automatic.value
       ..rttControlBlockMode = RttControlBlockMode.automatic.value;
     addTearDown(() {
       settings
@@ -299,7 +299,7 @@ void main() {
         ..rttControlBlockMode = previousControlBlockMode;
     });
 
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: [
         _ImmediateProbeBackend('external-jlink'),
         _ImmediateProbeBackend('external-openocd'),
@@ -308,7 +308,7 @@ void main() {
     addTearDown(service.dispose);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -317,7 +317,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -372,7 +372,7 @@ void main() {
     final previousBackend = settings.rttBackendSelection;
     final previousVersion = settings.rttPyocdCmsisDapVersion;
     settings
-      ..rttBackendSelection = RttBackendSelection.externalPyocd.value
+      ..rttBackendSelection = ProbeBackendSelection.externalPyocd.value
       ..rttPyocdCmsisDapVersion = PyOcdCmsisDapVersion.automatic.value;
     addTearDown(() {
       settings
@@ -380,12 +380,12 @@ void main() {
         ..rttPyocdCmsisDapVersion = previousVersion;
     });
 
-    final service = RttService(
+    final service = ProbeConnectionService(
       backends: [_ImmediateProbeBackend('external-pyocd')],
     );
     addTearDown(service.dispose);
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -394,7 +394,7 @@ void main() {
                   onPressed:
                       () => showDialog<void>(
                         context: context,
-                        builder: (_) => const RttConnectionDialog(),
+                        builder: (_) => const ProbeConnectionDialog(),
                       ),
                   child: const Text('打开'),
                 ),
@@ -423,7 +423,7 @@ void main() {
     final previousInterfaceConfig = settings.rttOpenocdInterfaceConfig;
     final previousTargetConfig = settings.rttOpenocdTargetConfig;
     settings
-      ..rttBackendSelection = RttBackendSelection.externalOpenocd.value
+      ..rttBackendSelection = ProbeBackendSelection.externalOpenocd.value
       ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
       ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg';
     addTearDown(() {
@@ -433,13 +433,13 @@ void main() {
         ..rttOpenocdTargetConfig = previousTargetConfig;
     });
 
-    final service = RttService(backends: [_TargetBackend('external-openocd')]);
+    final service = ProbeConnectionService(backends: [_TargetBackend('external-openocd')]);
     addTearDown(service.dispose);
     const interfacePath = r'C:\OpenOCD\scripts\interface\cmsis-dap.cfg';
     const targetPath = r'C:\OpenOCD\scripts\target\stm32f4x.cfg';
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<RttService>.value(
+      ChangeNotifierProvider<ProbeConnectionService>.value(
         value: service,
         child: MaterialApp(
           home: Builder(
@@ -449,7 +449,7 @@ void main() {
                       () => showDialog<void>(
                         context: context,
                         builder:
-                            (_) => RttConnectionDialog(
+                            (_) => ProbeConnectionDialog(
                               openOcdConfigDirectoryResolver:
                                   (_, category) async =>
                                       'C:\\OpenOCD\\scripts\\$category',
@@ -526,13 +526,13 @@ void main() {
   });
 }
 
-class _DiscoveryBackend implements RttBackend {
+class _DiscoveryBackend implements ProbeBackend {
   _DiscoveryBackend(this.id);
 
   @override
   final String id;
-  final Completer<List<RttProbeInfo>> _probes = Completer();
-  final Completer<List<RttTargetInfo>> _targets = Completer();
+  final Completer<List<ProbeInfo>> _probes = Completer();
+  final Completer<List<ProbeTargetInfo>> _targets = Completer();
   int discoveryCount = 0;
 
   @override
@@ -548,15 +548,15 @@ class _DiscoveryBackend implements RttBackend {
   @override
   Stream<String> get diagnosticStream => const Stream.empty();
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => true;
+  Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) {
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) {
     discoveryCount++;
     return _probes.future;
   }
 
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) {
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) {
     discoveryCount++;
     return _targets.future;
   }
@@ -567,14 +567,14 @@ class _DiscoveryBackend implements RttBackend {
   }
 
   @override
-  Future<void> connect(RttConnectionConfig config) async {}
+  Future<void> connect(ProbeConnectionConfig config) async {}
   @override
   Future<void> disconnect() async {}
   @override
   Future<void> dispose() async => completeDiscovery();
 }
 
-class _TargetBackend implements RttBackend {
+class _TargetBackend implements ProbeBackend {
   _TargetBackend(this.id, {this.available = true});
 
   @override
@@ -594,24 +594,24 @@ class _TargetBackend implements RttBackend {
   @override
   Stream<String> get diagnosticStream => const Stream.empty();
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => available;
+  Future<bool> isAvailable(ProbeKind kind) async => available;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [
-    RttTargetInfo(
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [
+    ProbeTargetInfo(
       name: 'STM32F407VG',
       vendor: 'STMicroelectronics',
       source: '内置目标',
     ),
-    RttTargetInfo(
+    ProbeTargetInfo(
       name: 'nRF52840_xxAA',
       vendor: 'Nordic Semiconductor',
       source: '内置目标',
     ),
   ];
   @override
-  Future<void> connect(RttConnectionConfig config) async {}
+  Future<void> connect(ProbeConnectionConfig config) async {}
   @override
   Future<void> disconnect() async {}
   @override
@@ -622,11 +622,11 @@ class _ImmediateProbeBackend extends _TargetBackend {
   _ImmediateProbeBackend(super.id, {super.available});
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [
-    RttProbeInfo(
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [
+    ProbeInfo(
       id: 'JLINK-A',
       name: 'J-Link Probe A',
-      kind: RttProbeKind.jlink,
+      kind: ProbeKind.jlink,
     ),
   ];
 }
@@ -638,7 +638,7 @@ class _DelayedConnectBackend extends _TargetBackend {
   int disconnectCount = 0;
 
   @override
-  Future<void> connect(RttConnectionConfig config) => _connectGate.future;
+  Future<void> connect(ProbeConnectionConfig config) => _connectGate.future;
 
   @override
   Future<void> disconnect() async {

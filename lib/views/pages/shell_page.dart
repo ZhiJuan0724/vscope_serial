@@ -14,7 +14,7 @@ import '../../core/constants/terminal_fonts.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/app_notifications.dart';
-import '../../services/serial_service.dart';
+import '../../services/data_connection_service.dart';
 import '../../services/shell_receive_queue.dart';
 import '../../services/shell_stream_decoder.dart';
 import '../../services/ymodem_service.dart';
@@ -93,7 +93,7 @@ class _ShellPageState extends State<ShellPage> {
 
   @override
   void dispose() {
-    _viewModel?.serialService.updateShellPendingReceiveBytes(0);
+    _viewModel?.connectionService.updateShellPendingReceiveBytes(0);
     unawaited(_receiveSubscription?.cancel());
     _terminalScrollController.removeListener(_handleScrollPosition);
     _terminalScrollController.dispose();
@@ -202,7 +202,7 @@ class _ShellPageState extends State<ShellPage> {
   }
 
   void _syncReceiveQueueUsage() {
-    _viewModel?.serialService.updateShellPendingReceiveBytes(
+    _viewModel?.connectionService.updateShellPendingReceiveBytes(
       _receiveQueue.queuedBytes,
     );
   }

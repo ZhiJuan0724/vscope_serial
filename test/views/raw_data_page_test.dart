@@ -6,19 +6,16 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/multi_send_viewmodel.dart';
 import 'package:vscope_serial/views/pages/raw_data_page.dart';
 
 void main() {
   testWidgets('未开始接收时禁用手动发送', (tester) async {
-    final service =
-        SerialService()
-          ..isConnected = true
-          ..setRawDataShellEnabled(false);
+    final service = DataConnectionService()..isConnected = true;
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -54,11 +51,10 @@ void main() {
   testWidgets('发送工具栏在扩展过渡宽度下自动换行且不溢出', (tester) async {
     await tester.binding.setSurfaceSize(const Size(480, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = SerialService();
-    service.setRawDataShellEnabled(false);
+    final service = DataConnectionService();
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -76,10 +72,10 @@ void main() {
   testWidgets('接收显示选项靠左且清空保存设置靠右', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = SerialService()..setRawDataShellEnabled(false);
+    final service = DataConnectionService();
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -98,10 +94,10 @@ void main() {
   testWidgets('向下拖动分隔条时发送区保持最低高度', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = SerialService()..setRawDataShellEnabled(false);
+    final service = DataConnectionService();
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -188,10 +184,9 @@ void main() {
       return true;
     });
 
-    final service = SerialService();
-    service.setRawDataShellEnabled(false);
+    final service = DataConnectionService();
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -235,12 +230,11 @@ void main() {
   testWidgets('无原始数据时禁用保存按钮，收到数据后恢复', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = SerialService();
+    final service = DataConnectionService();
     service.clearReceivedData();
-    service.setRawDataShellEnabled(false);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -287,10 +281,10 @@ void main() {
   });
 
   testWidgets('开启自动滚动时保持在最新行', (tester) async {
-    final service = SerialService();
+    final service = DataConnectionService();
     service.clearReceivedData();
     service.autoScroll = true;
-    service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+    service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
     for (var i = 0; i < 100; i++) {
       service.debugAddRawReceiveData(
         Uint8List.fromList(utf8.encode('line$i\n')),
@@ -298,7 +292,7 @@ void main() {
     }
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -342,7 +336,7 @@ void main() {
   });
 
   testWidgets('关闭自动滚动后淘汰最旧行会保持当前视口', (tester) async {
-    final service = SerialService();
+    final service = DataConnectionService();
     service.clearReceivedData();
     service.autoScroll = false;
     service.setDisplayLineLimit(100);
@@ -353,7 +347,7 @@ void main() {
     }
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),
@@ -382,13 +376,12 @@ void main() {
 
   testWidgets('普通收发高级设置未变化时不显示保存提示', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
-    final service = SerialService();
+    final service = DataConnectionService();
     service.clearReceivedData();
-    service.setRawDataShellEnabled(false);
-    service.setDisplayLineLimit(SerialService.defaultDisplayLineLimit);
+    service.setDisplayLineLimit(DataConnectionService.defaultDisplayLineLimit);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SerialService>.value(
+      ChangeNotifierProvider<DataConnectionService>.value(
         value: service,
         child: const MaterialApp(home: Scaffold(body: RawDataPage())),
       ),

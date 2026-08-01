@@ -4,19 +4,19 @@ import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/widgets/status_bar.dart';
 
 void main() {
   testWidgets('状态栏按页面标识串口或探针连接状态', (tester) async {
-    final serialService = SerialService();
-    final plotViewModel = PlotViewModel(serialService);
-    final rttService = RttService();
+    final connectionService = DataConnectionService();
+    final plotViewModel = PlotViewModel(connectionService);
+    final probeConnectionService = ProbeConnectionService();
     final previousNetworkEnabled = AppSettings().networkConnectionsEnabled;
     addTearDown(() {
       AppSettings().networkConnectionsEnabled = previousNetworkEnabled;
@@ -24,9 +24,13 @@ void main() {
 
     Widget app(String pageId) => MultiProvider(
       providers: [
-        ChangeNotifierProvider<SerialService>.value(value: serialService),
+        ChangeNotifierProvider<DataConnectionService>.value(
+          value: connectionService,
+        ),
         ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
-        ChangeNotifierProvider<RttService>.value(value: rttService),
+        ChangeNotifierProvider<ProbeConnectionService>.value(
+          value: probeConnectionService,
+        ),
       ],
       child: MaterialApp(
         home: Scaffold(body: StatusBar(currentPageId: pageId)),
@@ -36,7 +40,7 @@ void main() {
     await tester.pumpWidget(app('rawData'));
     expect(find.text('串口未连接'), findsOneWidget);
 
-    serialService.setNetworkConnectionsEnabled(true);
+    connectionService.setNetworkConnectionsEnabled(true);
     await tester.pump();
     expect(find.text('串口/网络未连接'), findsOneWidget);
 
@@ -66,12 +70,12 @@ void main() {
 
     // 定时刷新器必须在 Widget 测试结束前释放，避免残留 FakeTimer。
     await tester.pumpWidget(const SizedBox.shrink());
-    rttService.dispose();
+    probeConnectionService.dispose();
     plotViewModel.dispose();
   });
 
   testWidgets('随机源状态仅在 FireWater 协议下显示', (tester) async {
-    final service = SerialService();
+    final service = DataConnectionService();
     final plotViewModel = PlotViewModel(service);
     plotViewModel.setParserType(ParserType.fireWater);
     plotViewModel.setUseRandomSource(true);
@@ -79,7 +83,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<SerialService>.value(value: service),
+          ChangeNotifierProvider<DataConnectionService>.value(value: service),
           ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: StatusBar())),
@@ -102,9 +106,9 @@ void main() {
   testWidgets('应用信息和高级设置使用独立入口', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = SerialService();
+    final service = DataConnectionService();
     final plotViewModel = PlotViewModel(service);
-    final rttService = RttService(
+    final probeConnectionService = ProbeConnectionService(
       backends: [
         _VersionBackend('external-jlink', 'v8.24a'),
         _VersionBackend('external-openocd', 'v0.12.0-external'),
@@ -126,15 +130,17 @@ void main() {
       AppSettings().connectionShortcutsEnabled = previousShortcuts;
       AppSettings().crashDumpEnabled = previousCrashDump;
       AppLogger().setDiagnosticEnabled(previousDiagnostic);
-      rttService.dispose();
+      probeConnectionService.dispose();
     });
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<SerialService>.value(value: service),
+          ChangeNotifierProvider<DataConnectionService>.value(value: service),
           ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
-          ChangeNotifierProvider<RttService>.value(value: rttService),
+          ChangeNotifierProvider<ProbeConnectionService>.value(
+            value: probeConnectionService,
+          ),
         ],
         child: const MaterialApp(home: Scaffold(body: StatusBar())),
       ),
@@ -259,7 +265,7 @@ void main() {
   });
 }
 
-class _VersionBackend implements RttBackend, RttBackendVersionProvider {
+class _VersionBackend implements ProbeBackend, ProbeBackendVersionProvider {
   const _VersionBackend(this.id, this.version);
 
   @override
@@ -279,15 +285,15 @@ class _VersionBackend implements RttBackend, RttBackendVersionProvider {
   @override
   Stream<String> get diagnosticStream => const Stream.empty();
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => true;
+  Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
-  Future<String?> detectVersion(RttProbeKind kind) async => version;
+  Future<String?> detectVersion(ProbeKind kind) async => version;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
   @override
-  Future<void> connect(RttConnectionConfig config) async {}
+  Future<void> connect(ProbeConnectionConfig config) async {}
   @override
   Future<void> disconnect() async {}
   @override

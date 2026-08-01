@@ -6,7 +6,7 @@ import '../data/models/data_source_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/parser/data_parser.dart';
 import '../data/source/data_source_manager.dart';
-import '../services/serial_service.dart';
+import '../services/data_connection_service.dart';
 
 typedef PlotSessionPrepare = Future<bool> Function(int generation);
 typedef PlotSessionData =
@@ -18,9 +18,9 @@ typedef PlotSessionData =
 /// session generation、parser、数据订阅和 DataSourceManager 的释放顺序。
 class PlotSessionController {
   PlotSessionController(
-    SerialService serialService, {
+    DataConnectionService connectionService, {
     required void Function() onStateChanged,
-  }) : _sourceManager = DataSourceManager(serialService),
+  }) : _sourceManager = DataSourceManager(connectionService),
        _onStateChanged = onStateChanged;
 
   final DataSourceManager _sourceManager;

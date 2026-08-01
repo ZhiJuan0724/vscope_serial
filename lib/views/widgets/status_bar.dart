@@ -5,12 +5,12 @@ import '../../core/localization/app_strings.dart';
 import '../../data/models/parser_config.dart';
 import '../../data/models/data_connection_config.dart';
 import '../../services/app_settings.dart';
-import '../../services/serial_service.dart';
-import '../../services/rtt_service.dart';
+import '../../services/data_connection_service.dart';
+import '../../services/probe_connection_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/app_info_dialog.dart';
-import '../dialogs/status_dialog.dart';
-import '../dialogs/rtt_connection_dialog.dart';
+import '../dialogs/data_connection_dialog.dart';
+import '../dialogs/probe_connection_dialog.dart';
 
 /// 根据当前页面连接类型生成无歧义的状态文案。
 @visibleForTesting
@@ -44,16 +44,16 @@ class StatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer2<SerialService, PlotViewModel>(
+    return Consumer2<DataConnectionService, PlotViewModel>(
       builder: (context, service, plotVm, _) {
         if (currentPageId == 'rtt' || currentPageId == 'probePlot') {
-          return Consumer<RttService>(
+          return Consumer<ProbeConnectionService>(
             builder:
-                (context, rttService, _) => _buildStatus(
+                (context, probeConnectionService, _) => _buildStatus(
                   context,
                   service,
                   plotVm,
-                  rttService: rttService,
+                  probeConnectionService: probeConnectionService,
                 ),
           );
         }
@@ -64,14 +64,15 @@ class StatusBar extends StatelessWidget {
 
   Widget _buildStatus(
     BuildContext context,
-    SerialService service,
+    DataConnectionService service,
     PlotViewModel plotVm, {
-    RttService? rttService,
+    ProbeConnectionService? probeConnectionService,
   }) {
-    final isRttPage = rttService != null;
-    final connected = isRttPage ? rttService.isConnected : service.isConnected;
+    final isRttPage = probeConnectionService != null;
+    final connected =
+        isRttPage ? probeConnectionService.isConnected : service.isConnected;
     final connecting =
-        isRttPage ? rttService.isConnecting : service.isConnecting;
+        isRttPage ? probeConnectionService.isConnecting : service.isConnecting;
     return Container(
       height: 26,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -86,8 +87,8 @@ class StatusBar extends StatelessWidget {
             onTap:
                 () =>
                     isRttPage
-                        ? showRttConnectionDialog(context)
-                        : showSerialConnectionDialog(
+                        ? showProbeConnectionDialog(context)
+                        : showDataConnectionDialog(
                           context,
                           pageId: currentPageId,
                         ),
@@ -113,7 +114,8 @@ class StatusBar extends StatelessWidget {
                     isProbe: isRttPage,
                     connected: connected,
                     connecting: connecting,
-                    reconnecting: rttService?.isReconnecting ?? false,
+                    reconnecting:
+                        probeConnectionService?.isReconnecting ?? false,
                     dataConnectionName:
                         !isRttPage &&
                                 !connected &&
@@ -126,10 +128,10 @@ class StatusBar extends StatelessWidget {
                 ),
                 if (isRttPage &&
                     connected &&
-                    rttService.activeProbeKind != null) ...[
+                    probeConnectionService.activeProbeKind != null) ...[
                   const SizedBox(width: 4),
                   Text(
-                    '(${rttService.activeProbeKind!.label})',
+                    '(${probeConnectionService.activeProbeKind!.label})',
                     style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,

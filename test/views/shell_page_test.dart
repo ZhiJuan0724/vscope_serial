@@ -3,24 +3,24 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/shell_viewmodel.dart';
 import 'package:vscope_serial/views/pages/shell_page.dart';
 import 'package:xterm/xterm.dart';
 
 class _TestShellViewModel extends ShellViewModel {
-  _TestShellViewModel(super.serialService);
+  _TestShellViewModel(super.connectionService);
 
   @override
   Future<void> sendText(String text) async {}
 }
 
 void main() {
-  late SerialService service;
+  late DataConnectionService service;
   late ShellViewModel viewModel;
 
   setUp(() {
-    service = SerialService();
+    service = DataConnectionService();
     service.isConnected = false;
     service.releaseActivity(service.activityOwner);
     service.setRawShellInputMode(RawShellInputMode.line);
@@ -36,7 +36,7 @@ void main() {
   Widget buildPage({int receiveQueueLimitBytes = 256 * 1024 * 1024}) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<SerialService>.value(value: service),
+        ChangeNotifierProvider<DataConnectionService>.value(value: service),
         ChangeNotifierProvider<ShellViewModel>.value(value: viewModel),
       ],
       child: MaterialApp(

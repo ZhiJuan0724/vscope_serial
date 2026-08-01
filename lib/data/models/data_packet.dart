@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-/// 串口数据包模型
+/// 数据连接接收包，保留数据到达应用时的时间戳。
 class DataPacket {
   final Uint8List data;
   final DateTime timestamp;

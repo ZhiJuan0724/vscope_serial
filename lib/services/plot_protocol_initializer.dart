@@ -1,6 +1,6 @@
 import '../core/utils/app_logger.dart';
 import '../data/protocol/send_protocol.dart';
-import 'serial_service.dart';
+import 'data_connection_service.dart';
 
 class PlotProtocolInitializationResult {
   const PlotProtocolInitializationResult._({
@@ -20,16 +20,16 @@ class PlotProtocolInitializationResult {
 /// 绘图启动前协议命令的发送边界。
 ///
 /// ViewModel 提供不可变配置快照；本类负责协议编码、数据连接写入、日志及错误
-/// 归一化。通用 [SerialService] 不感知 ZobowDevice 或 r 协议。
+/// 归一化。通用 [DataConnectionService] 不感知 ZobowDevice 或 r 协议。
 class PlotProtocolInitializer {
-  PlotProtocolInitializer(this._serialService);
+  PlotProtocolInitializer(this._connectionService);
 
-  final SerialService _serialService;
+  final DataConnectionService _connectionService;
 
   Future<PlotProtocolInitializationResult> initialize<
     TConfig extends SendProtocolInitializationConfig
   >({required SendProtocol<TConfig> protocol, required TConfig config}) async {
-    if (!_serialService.isConnected) {
+    if (!_connectionService.isConnected) {
       final message = '${protocol.initializationName}初始化失败：数据连接未建立，无法发送初始化数据。';
       AppLogger().debug(message, category: 'PLOT');
       return PlotProtocolInitializationResult.failure(message);
@@ -37,7 +37,7 @@ class PlotProtocolInitializer {
 
     try {
       final bytes = protocol.buildInitializationData(config);
-      await _serialService.send(
+      await _connectionService.send(
         bytes,
         displaySource: SendDisplaySource.plot,
         displayAsHex: protocol.displayAsHex,

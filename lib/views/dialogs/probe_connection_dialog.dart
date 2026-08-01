@@ -6,15 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/localization/app_strings.dart';
-import '../../data/models/rtt_config.dart';
+import '../../data/models/probe_connection_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/rtt_process_backends.dart';
-import '../../services/rtt_service.dart';
+import '../../services/probe_connection_service.dart';
 import '../widgets/common_widgets.dart';
 
-class RttConnectionDialog extends StatefulWidget {
-  const RttConnectionDialog({
+class ProbeConnectionDialog extends StatefulWidget {
+  const ProbeConnectionDialog({
     super.key,
     this.openOcdConfigFilePicker,
     this.openOcdConfigDirectoryResolver,
@@ -26,13 +26,13 @@ class RttConnectionDialog extends StatefulWidget {
   openOcdConfigDirectoryResolver;
 
   @override
-  State<RttConnectionDialog> createState() => _RttConnectionDialogState();
+  State<ProbeConnectionDialog> createState() => _ProbeConnectionDialogState();
 }
 
-class _RttConnectionDialogState extends State<RttConnectionDialog> {
-  late RttBackendSelection _backend;
-  late RttProbeKind _kind;
-  late RttWireProtocol _wireProtocol;
+class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
+  late ProbeBackendSelection _backend;
+  late ProbeKind _kind;
+  late ProbeWireProtocol _wireProtocol;
   late PyOcdCmsisDapVersion _pyOcdCmsisDapVersion;
   late bool _autoDetect;
   late String _probeId;
@@ -41,7 +41,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   late final TextEditingController _clockController;
   late final TextEditingController _openOcdInterfaceController;
   late final TextEditingController _openOcdTargetController;
-  List<RttProbeInfo> _probes = const [];
+  List<ProbeInfo> _probes = const [];
   bool _refreshing = false;
   bool _connecting = false;
   bool _cancellingConnection = false;
@@ -54,17 +54,17 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   String? _error;
 
   bool get _showsOpenOcdConfig =>
-      _backend == RttBackendSelection.bundledOpenocd ||
-      _backend == RttBackendSelection.externalOpenocd ||
-      (_backend == RttBackendSelection.automatic &&
-          _kind == RttProbeKind.cmsisDap);
+      _backend == ProbeBackendSelection.bundledOpenocd ||
+      _backend == ProbeBackendSelection.externalOpenocd ||
+      (_backend == ProbeBackendSelection.automatic &&
+          _kind == ProbeKind.cmsisDap);
 
-  RttConnectionConfig _draftConfig() {
+  ProbeConnectionConfig _draftConfig() {
     // pyOCD 的刷新列表使用合成 ID 展示 USB 设备；正式连接必须把选中项
     // 还原成 VID/PID，才能让 Worker 跳过全量 USB 探针发现。
     final selectedProbe =
         _probes.where((item) => item.id == _probeId).firstOrNull;
-    return RttConnectionConfig(
+    return ProbeConnectionConfig(
       backend: _backend,
       probeKind: _kind,
       probeId: _probeId,
@@ -90,16 +90,16 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   void initState() {
     super.initState();
     final settings = AppSettings();
-    _backend = RttBackendSelection.fromString(settings.rttBackendSelection);
-    _kind = RttProbeKind.fromString(settings.rttProbeKind);
+    _backend = ProbeBackendSelection.fromString(settings.rttBackendSelection);
+    _kind = ProbeKind.fromString(settings.rttProbeKind);
     _kind = switch (_backend) {
-      RttBackendSelection.externalJlink => RttProbeKind.jlink,
-      RttBackendSelection.bundledOpenocd ||
-      RttBackendSelection.externalOpenocd ||
-      RttBackendSelection.externalPyocd => RttProbeKind.cmsisDap,
-      RttBackendSelection.automatic => _kind,
+      ProbeBackendSelection.externalJlink => ProbeKind.jlink,
+      ProbeBackendSelection.bundledOpenocd ||
+      ProbeBackendSelection.externalOpenocd ||
+      ProbeBackendSelection.externalPyocd => ProbeKind.cmsisDap,
+      ProbeBackendSelection.automatic => _kind,
     };
-    _wireProtocol = RttWireProtocol.fromString(settings.rttWireProtocol);
+    _wireProtocol = ProbeWireProtocol.fromString(settings.rttWireProtocol);
     _pyOcdCmsisDapVersion = PyOcdCmsisDapVersion.fromString(
       settings.rttPyocdCmsisDapVersion,
     );
@@ -145,7 +145,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       _expectedBackendError = null;
     });
     try {
-      final name = await context.read<RttService>().expectedBackendName(
+      final name = await context.read<ProbeConnectionService>().expectedBackendName(
         kind,
         backend: backend,
         connectionConfig: _draftConfig(),
@@ -156,7 +156,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
           backend != _backend) {
         return;
       }
-      final suffix = backend == RttBackendSelection.automatic ? '（自动选择）' : '';
+      final suffix = backend == ProbeBackendSelection.automatic ? '（自动选择）' : '';
       setState(() => _expectedBackend = '$name$suffix');
     } catch (error) {
       if (!mounted || generation != _backendPreviewGeneration) return;
@@ -180,7 +180,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       _error = null;
     });
     try {
-      final service = context.read<RttService>();
+      final service = context.read<ProbeConnectionService>();
       final probes = await service.listProbes(
         kind,
         backend: backend,
@@ -197,7 +197,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
         if (_probeId.isNotEmpty &&
             !_probes.any((item) => item.id == _probeId)) {
           _probes = [
-            RttProbeInfo(
+            ProbeInfo(
               id: _probeId,
               name: '$_probeId（当前不存在）',
               kind: _kind,
@@ -221,12 +221,12 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   Future<void> _selectTarget() async {
     final kind = _kind;
     final backend = _backend;
-    final selected = await showDialog<RttTargetInfo>(
+    final selected = await showDialog<ProbeTargetInfo>(
       context: context,
       builder:
           (_) => _RttTargetSearchDialog(
             loadTargets:
-                () => context.read<RttService>().listTargets(
+                () => context.read<ProbeConnectionService>().listTargets(
                   kind,
                   backend: backend,
                   connectionConfig: _draftConfig(),
@@ -252,9 +252,9 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
     var initialDirectory =
         directoryResolver != null
             ? await directoryResolver(configuredPath, category)
-            : _backend == RttBackendSelection.bundledOpenocd
+            : _backend == ProbeBackendSelection.bundledOpenocd
             ? await findBundledOpenOcdConfigDirectory(category)
-            : _backend == RttBackendSelection.automatic
+            : _backend == ProbeBackendSelection.automatic
             ? await findOpenOcdConfigDirectory(configuredPath, category)
             : await findExternalOpenOcdConfigDirectory(
               configuredPath,
@@ -329,15 +329,15 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       setState(() => _error = '调试时钟范围为 100~50000 kHz');
       return;
     }
-    if (_backend != RttBackendSelection.externalOpenocd &&
-        _backend != RttBackendSelection.bundledOpenocd &&
+    if (_backend != ProbeBackendSelection.externalOpenocd &&
+        _backend != ProbeBackendSelection.bundledOpenocd &&
         !_autoDetect &&
         _target.trim().isEmpty) {
       setState(() => _error = '请选择或输入目标芯片');
       return;
     }
-    if (_backend == RttBackendSelection.externalOpenocd ||
-        _backend == RttBackendSelection.bundledOpenocd) {
+    if (_backend == ProbeBackendSelection.externalOpenocd ||
+        _backend == ProbeBackendSelection.bundledOpenocd) {
       if (_openOcdInterfaceController.text.trim().isEmpty ||
           _openOcdTargetController.text.trim().isEmpty) {
         setState(() => _error = 'OpenOCD 需要接口配置和目标配置');
@@ -349,7 +349,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       _error = null;
     });
     try {
-      await context.read<RttService>().connect(_draftConfig());
+      await context.read<ProbeConnectionService>().connect(_draftConfig());
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted && !_cancellingConnection) {
@@ -363,7 +363,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   Future<void> _cancelConnection() async {
     if (!_connecting || _cancellingConnection) return;
     setState(() => _cancellingConnection = true);
-    final service = context.read<RttService>();
+    final service = context.read<ProbeConnectionService>();
     // 连接窗口本身不应被慢速驱动枚举或外部进程退出阻塞；先响应用户关闭，
     // 服务层继续等待后端完整收敛，并以连接代次阻止旧请求重新变为已连接。
     Navigator.of(context).pop();
@@ -376,7 +376,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final service = context.watch<RttService>();
+    final service = context.watch<ProbeConnectionService>();
     return AlertDialog(
       shape: kAdvancedSettingsDialogShape,
       title: Text(AppStrings.rtt.connect),
@@ -391,13 +391,13 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                NoAnimDropdown<RttBackendSelection>(
+                NoAnimDropdown<ProbeBackendSelection>(
                   key: const ValueKey('rtt-backend-field'),
                   value: _backend,
                   hint: '选择后端',
                   decoration: _connectionFieldDecoration('探针后端'),
                   items:
-                      RttBackendSelection.values
+                      ProbeBackendSelection.values
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
@@ -414,14 +414,14 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                               _refreshGeneration++;
                               _refreshing = false;
                               _backend = value;
-                              if (value == RttBackendSelection.externalJlink) {
-                                _kind = RttProbeKind.jlink;
+                              if (value == ProbeBackendSelection.externalJlink) {
+                                _kind = ProbeKind.jlink;
                               } else if (value ==
-                                      RttBackendSelection.bundledOpenocd ||
+                                      ProbeBackendSelection.bundledOpenocd ||
                                   value ==
-                                      RttBackendSelection.externalOpenocd ||
-                                  value == RttBackendSelection.externalPyocd) {
-                                _kind = RttProbeKind.cmsisDap;
+                                      ProbeBackendSelection.externalOpenocd ||
+                                  value == ProbeBackendSelection.externalPyocd) {
+                                _kind = ProbeKind.cmsisDap;
                               }
                               _probeId = '';
                               _probes = const [];
@@ -434,13 +434,13 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: NoAnimDropdown<RttProbeKind>(
+                      child: NoAnimDropdown<ProbeKind>(
                         key: const ValueKey('rtt-probe-kind-field'),
                         value: _kind,
                         hint: '探针类型',
                         decoration: _connectionFieldDecoration('探针类型'),
                         items:
-                            RttProbeKind.values
+                            ProbeKind.values
                                 .where(
                                   (item) =>
                                       _backendSupportsProbe(_backend, item),
@@ -466,7 +466,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                                       _backend,
                                       value,
                                     )) {
-                                      _backend = RttBackendSelection.automatic;
+                                      _backend = ProbeBackendSelection.automatic;
                                     }
                                     _probeId = '';
                                     _probes = const [];
@@ -513,7 +513,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                     const SizedBox(width: 8),
                     Tooltip(
                       message:
-                          _backend == RttBackendSelection.externalPyocd
+                          _backend == ProbeBackendSelection.externalPyocd
                               ? '扫描 USB 设备'
                               : '刷新探针',
                       child: InkWell(
@@ -577,7 +577,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                     ],
                   ),
                 ),
-                if (_backend == RttBackendSelection.externalPyocd) ...[
+                if (_backend == ProbeBackendSelection.externalPyocd) ...[
                   const SizedBox(height: 12),
                   NoAnimDropdown<PyOcdCmsisDapVersion>(
                     key: const ValueKey('rtt-pyocd-cmsis-dap-version'),
@@ -643,8 +643,8 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                if (_backend != RttBackendSelection.externalOpenocd &&
-                    _backend != RttBackendSelection.bundledOpenocd)
+                if (_backend != ProbeBackendSelection.externalOpenocd &&
+                    _backend != ProbeBackendSelection.bundledOpenocd)
                   Row(
                     children: [
                       Expanded(
@@ -687,12 +687,12 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: NoAnimDropdown<RttWireProtocol>(
+                      child: NoAnimDropdown<ProbeWireProtocol>(
                         value: _wireProtocol,
                         hint: '接口',
                         decoration: _connectionFieldDecoration('调试接口'),
                         items:
-                            RttWireProtocol.values
+                            ProbeWireProtocol.values
                                 .map(
                                   (item) => DropdownMenuItem(
                                     value: item,
@@ -784,26 +784,26 @@ String _displayRttError(Object error) => '$error'.replaceFirst(
   '',
 );
 
-bool _backendSupportsProbe(RttBackendSelection backend, RttProbeKind kind) =>
+bool _backendSupportsProbe(ProbeBackendSelection backend, ProbeKind kind) =>
     switch (backend) {
-      RttBackendSelection.externalJlink => kind == RttProbeKind.jlink,
-      RttBackendSelection.bundledOpenocd ||
-      RttBackendSelection.externalOpenocd ||
-      RttBackendSelection.externalPyocd => kind == RttProbeKind.cmsisDap,
-      RttBackendSelection.automatic => true,
+      ProbeBackendSelection.externalJlink => kind == ProbeKind.jlink,
+      ProbeBackendSelection.bundledOpenocd ||
+      ProbeBackendSelection.externalOpenocd ||
+      ProbeBackendSelection.externalPyocd => kind == ProbeKind.cmsisDap,
+      ProbeBackendSelection.automatic => true,
     };
 
 class _RttTargetSearchDialog extends StatefulWidget {
   const _RttTargetSearchDialog({required this.loadTargets});
 
-  final Future<List<RttTargetInfo>> Function() loadTargets;
+  final Future<List<ProbeTargetInfo>> Function() loadTargets;
 
   @override
   State<_RttTargetSearchDialog> createState() => _RttTargetSearchDialogState();
 }
 
 class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
-  late Future<List<RttTargetInfo>> _targetsFuture;
+  late Future<List<ProbeTargetInfo>> _targetsFuture;
   String _query = '';
 
   @override
@@ -838,7 +838,7 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
             ),
             const SizedBox(height: 10),
             Expanded(
-              child: FutureBuilder<List<RttTargetInfo>>(
+              child: FutureBuilder<List<ProbeTargetInfo>>(
                 future: _targetsFuture,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState != ConnectionState.done) {
@@ -863,7 +863,7 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
                       ),
                     );
                   }
-                  final matches = (snapshot.data ?? const <RttTargetInfo>[])
+                  final matches = (snapshot.data ?? const <ProbeTargetInfo>[])
                       .where((item) => _matchesTarget(item, _query))
                       .toList(growable: false);
                   if (matches.isEmpty) {
@@ -915,7 +915,7 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
   }
 }
 
-bool _matchesTarget(RttTargetInfo target, String query) {
+bool _matchesTarget(ProbeTargetInfo target, String query) {
   final tokens = query
       .trim()
       .toLowerCase()
@@ -966,12 +966,12 @@ InputDecoration _connectionFieldDecoration(
   );
 }
 
-Future<void> showRttConnectionDialog(BuildContext context) async {
+Future<void> showProbeConnectionDialog(BuildContext context) async {
   try {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const RttConnectionDialog(),
+      builder: (_) => const ProbeConnectionDialog(),
     );
   } catch (error) {
     AppNotifications.show('打开探针连接窗口失败: $error');

@@ -12,7 +12,7 @@ import 'core/constants/window_configuration.dart';
 import 'core/localization/app_strings.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_logger.dart';
-import 'data/models/rtt_config.dart';
+import 'data/models/probe_connection_config.dart';
 import 'data/models/data_connection_config.dart';
 import 'data/models/main_page_policy.dart';
 import 'services/app_notifications.dart';
@@ -21,13 +21,13 @@ import 'services/app_settings.dart';
 import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
 import 'services/native_serial_reader.dart';
-import 'services/rtt_service.dart';
-import 'services/serial_service.dart';
+import 'services/probe_connection_service.dart';
+import 'services/data_connection_service.dart';
 import 'services/update_checker.dart';
 import 'services/update_service.dart';
 import 'views/dialogs/app_info_dialog.dart';
-import 'views/dialogs/rtt_connection_dialog.dart';
-import 'views/dialogs/status_dialog.dart';
+import 'views/dialogs/probe_connection_dialog.dart';
+import 'views/dialogs/data_connection_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
@@ -87,8 +87,8 @@ void main() async {
   } catch (error, stackTrace) {
     AppLogger().warning('同步原生崩溃转储开关失败: $error\n$stackTrace', category: 'APP');
   }
-  SerialService().loadSettings();
-  SerialService().initializePortDiscovery();
+  DataConnectionService().loadSettings();
+  DataConnectionService().initializePortDiscovery();
   await AppIcon.precacheAll();
 
   // 初始化窗口管理
@@ -124,25 +124,28 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // SerialService 是全局单例，使用 Provider.value 避免 Provider
+    // DataConnectionService 是全局单例，使用 Provider.value 避免 Provider
     // 在重建时 dispose 单例导致连接被意外断开。
-    final serialService = SerialService();
+    final connectionService = DataConnectionService();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
-        ChangeNotifierProvider.value(value: serialService),
-        ChangeNotifierProvider(create: (_) => RttService()),
+        ChangeNotifierProvider.value(value: connectionService),
+        ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
-          create: (context) => PlotViewModel(serialService),
+          create: (context) => PlotViewModel(connectionService),
         ),
         ChangeNotifierProvider(
-          create: (context) => ShellViewModel(serialService),
+          create: (context) => ShellViewModel(connectionService),
         ),
         ChangeNotifierProvider(
-          create: (context) => RttViewModel(context.read<RttService>()),
+          create:
+              (context) => RttViewModel(context.read<ProbeConnectionService>()),
         ),
         ChangeNotifierProvider(
-          create: (context) => ProbePlotViewModel(context.read<RttService>()),
+          create:
+              (context) =>
+                  ProbePlotViewModel(context.read<ProbeConnectionService>()),
         ),
       ],
       child: MaterialApp(
@@ -525,14 +528,14 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   bool _pagesLocked(
-    SerialService serialService,
-    RttService rttService,
+    DataConnectionService connectionService,
+    ProbeConnectionService probeConnectionService,
     ConnectionOwnerService owners,
   ) =>
       owners.owner != ConnectionOwner.none ||
-      serialService.isConnecting ||
-      rttService.isConnecting ||
-      rttService.isReconnecting;
+      connectionService.isConnecting ||
+      probeConnectionService.isConnecting ||
+      probeConnectionService.isReconnecting;
 
   void _closeTab(String id) {
     final pages = AppSettings().visibleMainPages;
@@ -552,7 +555,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     setState(() {});
   }
 
-  bool _tabSupportsConnection(String tabId, SerialService service) {
+  bool _tabSupportsConnection(String tabId, DataConnectionService service) {
     return MainPagePolicy.supportsDataConnection(
       tabId,
       service.activeConnectionType,
@@ -605,7 +608,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final settings = AppSettings();
     settings.lastMainPage = id;
     if (id == 'rawData' || id == 'shell' || id == 'plot') {
-      SerialService().selectSerialProfile(id);
+      DataConnectionService().selectSerialProfile(id);
     }
     unawaited(settings.save());
   }
@@ -637,8 +640,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     if (key == LogicalKeyboardKey.f1) {
       unawaited(
         _usesProbeConnection
-            ? showRttConnectionDialog(context)
-            : showSerialConnectionDialog(context, pageId: _currentTabId),
+            ? showProbeConnectionDialog(context)
+            : showDataConnectionDialog(context, pageId: _currentTabId),
       );
       return;
     }
@@ -670,7 +673,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   Future<void> _runSerialConnectionShortcut(LogicalKeyboardKey key) async {
-    final service = context.read<SerialService>();
+    final service = context.read<DataConnectionService>();
     service.selectSerialProfile(_currentTabId);
     final settings = AppSettings();
     final type = settings.connectionTypeForPage(_currentTabId);
@@ -736,14 +739,14 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   }
 
   Future<void> _runProbeConnectionShortcut(LogicalKeyboardKey key) async {
-    final service = context.read<RttService>();
+    final service = context.read<ProbeConnectionService>();
     if (key == LogicalKeyboardKey.f2) {
       if (service.isConnected) {
         AppNotifications.show('快捷连接：探针已连接');
         return;
       }
       AppNotifications.show('快捷连接：正在连接探针');
-      await service.connect(savedRttConnectionConfig());
+      await service.connect(savedProbeConnectionConfig());
       return;
     }
     if (key == LogicalKeyboardKey.f3) {
@@ -757,15 +760,15 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     }
     AppNotifications.show('快捷重连：正在断开并重新连接探针');
     await service.disconnect();
-    await service.connect(savedRttConnectionConfig());
+    await service.connect(savedProbeConnectionConfig());
   }
 
   @override
   Widget build(BuildContext context) {
-    final serialService = Provider.of<SerialService>(context);
+    final connectionService = Provider.of<DataConnectionService>(context);
     final connectionOwner = Provider.of<ConnectionOwnerService>(context);
     // 探针连接和活动变化会直接影响两个探针页面的切换权限。
-    final rttService = Provider.of<RttService>(context);
+    final probeConnectionService = Provider.of<ProbeConnectionService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
       _currentTabId = tabs.first.id;
@@ -827,19 +830,21 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                           final tab = tabs[index];
                                           final isSelected =
                                               index == currentIndex;
-                                          final ownerTab = switch (serialService
-                                              .activityOwner) {
-                                            SerialActivityOwner.rawData =>
-                                              'rawData',
-                                            SerialActivityOwner.shell =>
-                                              'shell',
-                                            SerialActivityOwner.plot => 'plot',
-                                            SerialActivityOwner.none => null,
-                                          };
+                                          final ownerTab =
+                                              switch (connectionService
+                                                  .activityOwner) {
+                                                DataActivityOwner.rawData =>
+                                                  'rawData',
+                                                DataActivityOwner.shell =>
+                                                  'shell',
+                                                DataActivityOwner.plot =>
+                                                  'plot',
+                                                DataActivityOwner.none => null,
+                                              };
                                           final canSwitch = switch (connectionOwner
                                               .owner) {
-                                            ConnectionOwner.rtt =>
-                                              switch (rttService
+                                            ConnectionOwner.probe =>
+                                              switch (probeConnectionService
                                                   .activityOwner) {
                                                 ProbeActivityOwner.rttViewer =>
                                                   tab.id == 'rtt',
@@ -849,22 +854,22 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                   tab.id == 'rtt' ||
                                                       tab.id == 'probePlot',
                                               },
-                                            ConnectionOwner.serial =>
+                                            ConnectionOwner.data =>
                                               ownerTab != null
                                                   ? tab.id == ownerTab
                                                   : _tabSupportsConnection(
                                                     tab.id,
-                                                    serialService,
+                                                    connectionService,
                                                   ),
                                             ConnectionOwner.none =>
-                                              !serialService.isConnecting ||
+                                              !connectionService.isConnecting ||
                                                   tab.id ==
-                                                      serialService
+                                                      connectionService
                                                           .activeConnectionPage,
                                           };
                                           final closeLocked = _pagesLocked(
-                                            serialService,
-                                            rttService,
+                                            connectionService,
+                                            probeConnectionService,
                                             connectionOwner,
                                           );
                                           final colorScheme =
@@ -1210,11 +1215,17 @@ class _WindowCloseListener extends WindowListener {
   void onWindowClose() async {
     if (_isClosing) return;
     _isClosing = true;
-    final serialService = Provider.of<SerialService>(context, listen: false);
-    final rttService = Provider.of<RttService>(context, listen: false);
+    final connectionService = Provider.of<DataConnectionService>(
+      context,
+      listen: false,
+    );
+    final probeConnectionService = Provider.of<ProbeConnectionService>(
+      context,
+      listen: false,
+    );
     await AppSettings().flushPendingSave();
-    await rttService.shutdown();
-    await serialService.shutdown();
+    await probeConnectionService.shutdown();
+    await connectionService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();
   }

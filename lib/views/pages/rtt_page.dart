@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants/rtt_configuration.dart';
-import '../../data/models/rtt_config.dart';
+import '../../data/models/probe_connection_config.dart';
 import '../../core/localization/app_strings.dart';
 import '../../services/app_notifications.dart';
 import '../../viewmodels/rtt_viewmodel.dart';

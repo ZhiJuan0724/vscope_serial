@@ -3,36 +3,36 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/probe_plot_config.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/rtt_backend.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
 import 'package:vscope_serial/services/rtt_receive_queue.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
 
 void main() {
   test('快捷连接参数恢复最近配置并按显式后端约束探针类型', () {
     final settings =
         AppSettings()
-          ..rttBackendSelection = RttBackendSelection.externalOpenocd.value
-          ..rttProbeKind = RttProbeKind.jlink.value
+          ..rttBackendSelection = ProbeBackendSelection.externalOpenocd.value
+          ..rttProbeKind = ProbeKind.jlink.value
           ..rttLastProbeId = 'CMSIS-DAP-V2'
           ..rttTarget = 'stm32f407zgtx'
           ..rttAutoDetectTarget = true
-          ..rttWireProtocol = RttWireProtocol.jtag.value
+          ..rttWireProtocol = ProbeWireProtocol.jtag.value
           ..rttClockKhz = 8000
           ..rttOpenocdInterfaceConfig = 'interface/cmsis-dap.cfg'
           ..rttOpenocdTargetConfig = 'target/stm32f4x.cfg'
           ..rttPyocdCmsisDapVersion = PyOcdCmsisDapVersion.v2.value;
 
-    final config = savedRttConnectionConfig(settings);
+    final config = savedProbeConnectionConfig(settings);
 
-    expect(config.backend, RttBackendSelection.externalOpenocd);
-    expect(config.probeKind, RttProbeKind.cmsisDap);
+    expect(config.backend, ProbeBackendSelection.externalOpenocd);
+    expect(config.probeKind, ProbeKind.cmsisDap);
     expect(config.probeId, 'CMSIS-DAP-V2');
     expect(config.target, 'stm32f407zgtx');
     expect(config.autoDetectTarget, isTrue);
-    expect(config.wireProtocol, RttWireProtocol.jtag);
+    expect(config.wireProtocol, ProbeWireProtocol.jtag);
     expect(config.clockKhz, 8000);
     expect(config.openOcdTargetConfig, 'target/stm32f4x.cfg');
     expect(config.pyOcdCmsisDapVersion, PyOcdCmsisDapVersion.v2);
@@ -51,15 +51,15 @@ void main() {
   test('CMSIS-DAP 自动模式优先使用外置 OpenOCD', () async {
     final openocd = _FakeBackend('external-openocd');
     final bundled = _FakeBackend('bundled-openocd');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [openocd, bundled],
     );
-    await service.connect(_config(kind: RttProbeKind.cmsisDap, openOcd: true));
+    await service.connect(_config(kind: ProbeKind.cmsisDap, openOcd: true));
 
     expect(openocd.connectCount, 1);
     expect(bundled.connectCount, 0);
-    expect(owners.owner, ConnectionOwner.rtt);
+    expect(owners.owner, ConnectionOwner.probe);
     await service.disconnect();
     expect(owners.owner, ConnectionOwner.none);
     service.dispose();
@@ -69,12 +69,12 @@ void main() {
     final external = _FakeBackend('external-openocd', available: false);
     final bundled = _FakeBackend('bundled-openocd', available: false);
     final pyocd = _FakeBackend('external-pyocd');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [external, bundled, pyocd],
     );
 
-    await service.connect(_config(kind: RttProbeKind.cmsisDap, openOcd: true));
+    await service.connect(_config(kind: ProbeKind.cmsisDap, openOcd: true));
 
     expect(external.connectCount, 0);
     expect(bundled.connectCount, 0);
@@ -87,12 +87,12 @@ void main() {
     final external = _FakeBackend('external-openocd');
     final bundled = _FakeBackend('bundled-openocd');
     final pyocd = _FakeBackend('external-pyocd');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [external, bundled, pyocd],
     );
 
-    await service.connect(_config(kind: RttProbeKind.cmsisDap));
+    await service.connect(_config(kind: ProbeKind.cmsisDap));
 
     expect(external.connectCount, 0);
     expect(bundled.connectCount, 0);
@@ -104,15 +104,15 @@ void main() {
   test('显式选择外置 pyOCD 时不会尝试 OpenOCD', () async {
     final openocd = _FakeBackend('external-openocd');
     final pyocd = _FakeBackend('external-pyocd');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [openocd, pyocd],
     );
 
     await service.connect(
       _config(
-        backend: RttBackendSelection.externalPyocd,
-        kind: RttProbeKind.cmsisDap,
+        backend: ProbeBackendSelection.externalPyocd,
+        kind: ProbeKind.cmsisDap,
       ),
     );
 
@@ -125,12 +125,12 @@ void main() {
   test('CMSIS-DAP 自动模式找不到外置 OpenOCD 时回退内置版本', () async {
     final external = _FakeBackend('external-openocd', available: false);
     final bundled = _FakeBackend('bundled-openocd');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [external, bundled],
     );
 
-    await service.connect(_config(kind: RttProbeKind.cmsisDap, openOcd: true));
+    await service.connect(_config(kind: ProbeKind.cmsisDap, openOcd: true));
 
     expect(external.connectCount, 0);
     expect(bundled.connectCount, 1);
@@ -146,7 +146,7 @@ void main() {
       ..rttViewerPollingIntervalMs = 25
       ..probeRttPollingIntervalMs = 40;
     final backend = _FakeBackend('external-openocd');
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
     addTearDown(() async {
       settings
         ..rttViewerPollingIntervalMs = previousViewerInterval
@@ -156,8 +156,8 @@ void main() {
     });
     await service.connect(
       _config(
-        backend: RttBackendSelection.externalOpenocd,
-        kind: RttProbeKind.cmsisDap,
+        backend: ProbeBackendSelection.externalOpenocd,
+        kind: ProbeKind.cmsisDap,
         openOcd: true,
       ),
     );
@@ -172,11 +172,11 @@ void main() {
 
   test('CMSIS-DAP 自动模式在 OpenOCD 配置不完整时拒绝连接', () async {
     final openocd = _FakeBackend('external-openocd');
-    final service = RttService(connectionOwners: owners, backends: [openocd]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [openocd]);
 
     await expectLater(
-      service.connect(_config(kind: RttProbeKind.cmsisDap)),
-      throwsA(isA<RttBackendUnavailableException>()),
+      service.connect(_config(kind: ProbeKind.cmsisDap)),
+      throwsA(isA<ProbeBackendUnavailableException>()),
     );
 
     expect(openocd.connectCount, 0);
@@ -188,7 +188,7 @@ void main() {
       'external-jlink',
       connectError: StateError('目标错误'),
     );
-    final service = RttService(connectionOwners: owners, backends: [external]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [external]);
     await expectLater(service.connect(_config()), throwsStateError);
 
     expect(external.connectCount, 1);
@@ -199,10 +199,10 @@ void main() {
   test('连接中断开按取消收敛且不记录连接失败', () async {
     final connectGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', connectGate: connectGate);
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
 
     final connecting = service.connect(
-      _config(backend: RttBackendSelection.externalJlink),
+      _config(backend: ProbeBackendSelection.externalJlink),
     );
     while (backend.connectCount == 0) {
       await Future<void>.delayed(Duration.zero);
@@ -210,7 +210,7 @@ void main() {
     await service.disconnect();
 
     await expectLater(connecting, throwsA(anything));
-    expect(service.state, RttConnectionState.disconnected);
+    expect(service.state, ProbeConnectionState.disconnected);
     expect(service.lastError, isNull);
     expect(owners.owner, ConnectionOwner.none);
     await service.shutdown();
@@ -219,7 +219,7 @@ void main() {
   test('shutdown 等待后端异步释放完成', () async {
     final disposeGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', disposeGate: disposeGate);
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
     var completed = false;
 
     final shutdown = service.shutdown().then((_) => completed = true);
@@ -235,12 +235,12 @@ void main() {
 
   test('显式选择不能保证非侵入式访问的后端时在连接前拒绝', () async {
     final unsafe = _FakeBackend('external-jlink', nonIntrusive: false);
-    final service = RttService(connectionOwners: owners, backends: [unsafe]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [unsafe]);
 
     await expectLater(
-      service.connect(_config(backend: RttBackendSelection.externalJlink)),
+      service.connect(_config(backend: ProbeBackendSelection.externalJlink)),
       throwsA(
-        isA<RttBackendUnavailableException>().having(
+        isA<ProbeBackendUnavailableException>().having(
           (error) => error.message,
           'message',
           contains('非侵入式安全要求'),
@@ -254,8 +254,8 @@ void main() {
   });
 
   test('串口持有应用连接时拒绝 RTT 连接', () async {
-    expect(owners.tryAcquire(ConnectionOwner.serial), isTrue);
-    final service = RttService(
+    expect(owners.tryAcquire(ConnectionOwner.data), isTrue);
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [
         _FakeBackend('external-jlink'),
@@ -264,21 +264,21 @@ void main() {
     );
 
     await expectLater(service.connect(_config()), throwsStateError);
-    expect(owners.owner, ConnectionOwner.serial);
+    expect(owners.owner, ConnectionOwner.data);
     service.dispose();
   });
 
   test('活动连接期间刷新探针不会伪造断开状态', () async {
     final external = _FakeBackend('external-jlink');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [external, _FakeBackend('external-openocd')],
     );
     await service.connect(_config());
-    await service.listProbes(RttProbeKind.jlink);
+    await service.listProbes(ProbeKind.jlink);
 
     expect(service.isConnected, isTrue);
-    expect(owners.owner, ConnectionOwner.rtt);
+    expect(owners.owner, ConnectionOwner.probe);
     expect(external.disconnectCount, 0);
 
     await service.disconnect();
@@ -289,14 +289,14 @@ void main() {
 
   test('运行中后端断线会停止活动、清理连接并释放占用', () async {
     final external = _FakeBackend('external-jlink');
-    final service = RttService(connectionOwners: owners, backends: [external]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [external]);
     await service.connect(_config());
     await service.startRttViewer();
 
     external.dropConnection('调试探针的 USB 连接已中断');
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    expect(service.state, RttConnectionState.disconnected);
+    expect(service.state, ProbeConnectionState.disconnected);
     expect(service.activityOwner, ProbeActivityOwner.none);
     expect(service.lastError, '调试探针的 USB 连接已中断');
     expect(external.disconnectCount, 1);
@@ -305,7 +305,7 @@ void main() {
   });
 
   test('后端检测结果包含已检测工具的版本号', () async {
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [
         _FakeBackend('external-jlink', version: 'v8.24a'),
@@ -323,25 +323,25 @@ void main() {
   });
 
   test('OpenOCD 不可用时预期后端报告不可用', () async {
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [_FakeBackend('external-openocd', available: false)],
     );
     await expectLater(
-      service.expectedBackendName(RttProbeKind.cmsisDap),
-      throwsA(isA<RttBackendUnavailableException>()),
+      service.expectedBackendName(ProbeKind.cmsisDap),
+      throwsA(isA<ProbeBackendUnavailableException>()),
     );
     service.dispose();
   });
 
   test('清空接收缓存会重置队列、过载和接收字节统计', () async {
     final external = _FakeBackend('external-jlink');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       receiveQueue: RttReceiveQueue(maxBytes: 4),
       backends: [external, _FakeBackend('external-openocd', available: false)],
     );
-    await service.connect(_config(backend: RttBackendSelection.externalJlink));
+    await service.connect(_config(backend: ProbeBackendSelection.externalJlink));
     await service.startRttViewer();
 
     external.addData([1, 2, 3, 4, 5]);
@@ -364,7 +364,7 @@ void main() {
 
   test('连接后和停止后不接收数据，只有开始 RTT Viewer 后才进入队列', () async {
     final backend = _FakeBackend('external-jlink');
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: owners,
       backends: [backend, _FakeBackend('external-openocd', available: false)],
     );
@@ -395,33 +395,33 @@ void main() {
   test('J-Link 停止时进入重连状态，完成后恢复空闲连接', () async {
     final stopGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', stopGate: stopGate);
-    final service = RttService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
 
-    await service.connect(_config(backend: RttBackendSelection.externalJlink));
+    await service.connect(_config(backend: ProbeBackendSelection.externalJlink));
     await service.startRttViewer();
     final stopping = service.stopActivity();
     await Future<void>.delayed(Duration.zero);
 
-    expect(service.state, RttConnectionState.reconnecting);
+    expect(service.state, ProbeConnectionState.reconnecting);
     expect(service.isReconnecting, isTrue);
     expect(service.activityOwner, ProbeActivityOwner.rttViewer);
 
     stopGate.complete();
     await stopping;
 
-    expect(service.state, RttConnectionState.connected);
+    expect(service.state, ProbeConnectionState.connected);
     expect(service.activityOwner, ProbeActivityOwner.none);
-    expect(owners.owner, ConnectionOwner.rtt);
+    expect(owners.owner, ConnectionOwner.probe);
     await service.disconnect();
     service.dispose();
   });
 }
 
-RttConnectionConfig _config({
-  RttBackendSelection backend = RttBackendSelection.automatic,
-  RttProbeKind kind = RttProbeKind.jlink,
+ProbeConnectionConfig _config({
+  ProbeBackendSelection backend = ProbeBackendSelection.automatic,
+  ProbeKind kind = ProbeKind.jlink,
   bool openOcd = false,
-}) => RttConnectionConfig(
+}) => ProbeConnectionConfig(
   backend: backend,
   probeKind: kind,
   target: 'TEST',
@@ -434,9 +434,9 @@ RttConnectionConfig _config({
 
 class _FakeBackend
     implements
-        RttBackend,
-        RttBackendVersionProvider,
-        RttBackendFailureProvider,
+        ProbeBackend,
+        ProbeBackendVersionProvider,
+        ProbeBackendFailureProvider,
         RttActivityBackend,
         RttControlBlockConfigurable,
         ProbePlotBackend {
@@ -489,26 +489,26 @@ class _FakeBackend
   @override
   String? get lastFailure => _lastFailure;
   @override
-  Set<RttBackendCapability> get capabilities => {
-    RttBackendCapability.independentActivity,
-    RttBackendCapability.downChannel0,
-    RttBackendCapability.memorySampling,
+  Set<ProbeBackendCapability> get capabilities => {
+    ProbeBackendCapability.independentActivity,
+    ProbeBackendCapability.downChannel0,
+    ProbeBackendCapability.memorySampling,
   };
   @override
   Stream<ProbeSampleChunk> get sampleStream => _samples.stream;
   @override
   bool get supportsAutomaticControlBlock => true;
   @override
-  Future<bool> isAvailable(RttProbeKind kind) async => available;
+  Future<bool> isAvailable(ProbeKind kind) async => available;
   @override
-  Future<String?> detectVersion(RttProbeKind kind) async => version;
+  Future<String?> detectVersion(ProbeKind kind) async => version;
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
 
   @override
-  Future<void> connect(RttConnectionConfig config) async {
+  Future<void> connect(ProbeConnectionConfig config) async {
     connectCount++;
     if (connectError case final error?) throw error;
     await connectGate?.future;

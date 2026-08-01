@@ -16,7 +16,7 @@ import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 
@@ -91,7 +91,7 @@ Future<void> _writeLegacyV2PlotBin(
 
 void main() {
   group('PlotViewModel', () {
-    late SerialService serialService;
+    late DataConnectionService connectionService;
     late PlotViewModel vm;
 
     setUp(() async {
@@ -130,8 +130,8 @@ void main() {
       settings.xMax = 1000;
       settings.yMin = 0;
       settings.yMax = 32768;
-      serialService = SerialService();
-      vm = PlotViewModel(serialService);
+      connectionService = DataConnectionService();
+      vm = PlotViewModel(connectionService);
     });
 
     tearDown(() {
@@ -1194,7 +1194,7 @@ void main() {
       expect(progress, isNotEmpty);
       expect(progress.last.current, progress.last.total);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       final binError = await imported.importFromBin(binPath);
       expect(binError, isNull);
@@ -1222,7 +1222,7 @@ void main() {
       expect(await vm.exportToBin(binPath), exportedPath);
       expect(File(exportedPath).existsSync(), isTrue);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(exportedPath), isNull);
       expect(imported.observations, hasLength(1));
@@ -1267,7 +1267,7 @@ void main() {
         await vm.exportToBin(outBinPath, startIndex: 2, endIndex: 3),
         outBinPath,
       );
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(outBinPath), isNull);
       expect(imported.dataPoints, hasLength(2));
@@ -1347,7 +1347,7 @@ void main() {
         isTrue,
       );
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromCsv(path), isNull);
       expect(
@@ -1381,7 +1381,7 @@ void main() {
       final path = '${dir.path}/selected.bin';
       expect(await vm.exportToBin(path, channelIndices: [1, 16]), path);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(path), isNull);
       expect(imported.dataPoints[0].values, [2, 3]);
@@ -1420,7 +1420,7 @@ void main() {
         (await File(csvPath).readAsLines()).first.split(','),
         hasLength(21),
       );
-      final csvImported = PlotViewModel(serialService);
+      final csvImported = PlotViewModel(connectionService);
       addTearDown(csvImported.dispose);
       expect(await csvImported.importFromCsv(csvPath), isNull);
       expect(csvImported.dataPoints.single.values, hasLength(16));
@@ -1440,7 +1440,7 @@ void main() {
         28,
       );
       expect(header.getUint16(10, Endian.little), 20);
-      final binImported = PlotViewModel(serialService);
+      final binImported = PlotViewModel(connectionService);
       addTearDown(binImported.dispose);
       expect(await binImported.importFromBin(binPath), isNull);
       expect(binImported.dataPoints.single.values, hasLength(16));
@@ -1555,7 +1555,7 @@ void main() {
       final binPath = '${dir.path}/plot.bin';
       expect(await vm.exportToBin(binPath), binPath);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
 
@@ -1582,7 +1582,7 @@ void main() {
       final binPath = '${dir.path}/plot.bin';
       expect(await vm.exportToBin(binPath), binPath);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
 
@@ -1600,7 +1600,7 @@ void main() {
       expect(AppSettings().zobowChannelIds[0], 0x00000095);
       expect(AppSettings().zobowChannelTypes[1], DataType.uint16);
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
       restored.setParserType(ParserType.zobow);
 
@@ -1616,7 +1616,7 @@ void main() {
         AddressChannelPreset(name: '主轴角度', address: 0x00000095),
       );
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
       restored.setParserType(ParserType.zobow);
 
@@ -1656,7 +1656,7 @@ void main() {
       expect(AppSettings().fixedFrameChannelTypes[0], DataType.int16);
       expect(AppSettings().fixedFrameChannelTypes[1], DataType.float);
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
 
       expect(restored.parserConfig.fixedFrameChannelTypes[0], DataType.int16);
@@ -1731,7 +1731,7 @@ void main() {
 
       final binPath = '${dir.path}/legacy.bin';
       expect(await vm.exportToBin(binPath), binPath);
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
       expect(imported.channels[0].alias, isEmpty);
@@ -2107,7 +2107,7 @@ void main() {
       final binPath = '${dir.path}/constant.bin';
       expect(await vm.exportToBin(binPath), binPath);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
       for (int i = 0; i < 7; i++) {
@@ -2414,7 +2414,7 @@ void main() {
         ),
       );
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
 
       expect(restored.rChannelAddresses[0], '16');
@@ -2597,13 +2597,13 @@ void main() {
 
     test('开始绘图前检测陈旧串口状态并断开连接', () async {
       vm.setUseRandomSource(false);
-      serialService.isConnected = true;
+      connectionService.isConnected = true;
       vm.setParserType(ParserType.zobow);
 
       await vm.startPlotting();
 
       expect(vm.isPlotting, false);
-      expect(serialService.isConnected, false);
+      expect(connectionService.isConnected, false);
       expect(vm.lastStatusMessage, contains('检测到串口已断开'));
     });
 

@@ -17,11 +17,11 @@ import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/crash_dump_service.dart';
 import '../../services/native_serial_reader.dart';
-import '../../services/rtt_service.dart';
-import '../../services/rtt_backend.dart';
+import '../../services/probe_connection_service.dart';
+import '../../services/probe_backend.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
-import '../../services/serial_service.dart';
+import '../../services/data_connection_service.dart';
 import '../../services/shell_receive_queue.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
@@ -374,7 +374,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   final _rttPyocdPythonPathController = TextEditingController(
     text: AppSettings().rttPyocdPythonPath,
   );
-  Future<Map<String, RttBackendAvailability>>? _rttBackendAvailability;
+  Future<Map<String, ProbeBackendAvailability>>? _rttBackendAvailability;
   bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
   bool _disableNotifications = AppSettings().disableNotifications;
   UpdateChannel _updateChannel = UpdateChannel.fromString(
@@ -878,12 +878,12 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   ) {
     final settings = AppSettings();
     _rttBackendAvailability ??=
-        context.read<RttService>().checkBackendAvailability();
+        context.read<ProbeConnectionService>().checkBackendAvailability();
 
     void refreshAvailability() {
       setDialogState(() {
         _rttBackendAvailability =
-            context.read<RttService>().checkBackendAvailability();
+            context.read<ProbeConnectionService>().checkBackendAvailability();
       });
     }
 
@@ -929,7 +929,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           onSubmitted: (_) => refreshAvailability(),
         ),
         const SizedBox(height: 12),
-        FutureBuilder<Map<String, RttBackendAvailability>>(
+        FutureBuilder<Map<String, ProbeBackendAvailability>>(
           future: _rttBackendAvailability,
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Text('正在检测探针后端...');
@@ -1213,16 +1213,15 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     value: networkConnectionsEnabled,
                     onChanged:
-                        SerialService().isNetworkConnection &&
-                                SerialService().isConnectionBusy
+                        DataConnectionService().isNetworkConnection &&
+                                DataConnectionService().isConnectionBusy
                             ? null
                             : (value) {
                               setDialogState(
                                 () => networkConnectionsEnabled = value,
                               );
-                              SerialService().setNetworkConnectionsEnabled(
-                                value,
-                              );
+                              DataConnectionService()
+                                  .setNetworkConnectionsEnabled(value);
                             },
                   ),
                   SwitchListTile(
@@ -1242,7 +1241,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     value: separateSerialProfiles,
                     onChanged:
-                        SerialService().isConnectionBusy
+                        DataConnectionService().isConnectionBusy
                             ? null
                             : (value) {
                               final settings =
@@ -1251,7 +1250,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               setDialogState(
                                 () => separateSerialProfiles = value,
                               );
-                              SerialService().selectSerialProfile(
+                              DataConnectionService().selectSerialProfile(
                                 'rawData',
                                 forceReload: true,
                               );
@@ -1288,7 +1287,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         () => plotReceiveAggregationEnabled = value,
                       );
                       context
-                          .read<SerialService>()
+                          .read<DataConnectionService>()
                           .setPlotReceiveAggregationEnabled(value);
                     },
                   ),
@@ -1302,8 +1301,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       ),
                       builder: (context, _) {
                         final plotViewModel = context.read<PlotViewModel>();
-                        final serialService = context.read<SerialService>();
-                        final rttService = context.read<RttService?>();
+                        final connectionService =
+                            context.read<DataConnectionService>();
+                        final probeConnectionService =
+                            context.read<ProbeConnectionService?>();
                         final rttViewModel = context.read<RttViewModel?>();
                         final plotUsage = plotViewModel.plotRetentionUsage;
                         return _buildMemoryLimitsSection(
@@ -1313,14 +1314,15 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           plotHistoryUsedBytes: plotUsage.usedBytes,
                           processRssBytes: ProcessInfo.currentRss,
                           rawRetentionUsedBytes:
-                              serialService.rawRetentionUsage.usedBytes,
+                              connectionService.rawRetentionUsage.usedBytes,
                           rawTextCacheUsedBytes:
-                              serialService.rawTextDisplayCacheBytes,
+                              connectionService.rawTextDisplayCacheBytes,
                           shellQueueUsedBytes:
-                              serialService.shellPendingReceiveBytes,
+                              connectionService.shellPendingReceiveBytes,
                           ymodemQueueUsedBytes:
-                              serialService.ymodemService.incomingBytes,
-                          rttQueueUsedBytes: rttService?.queuedBytes ?? 0,
+                              connectionService.ymodemService.incomingBytes,
+                          rttQueueUsedBytes:
+                              probeConnectionService?.queuedBytes ?? 0,
                           rttRawHistoryUsedBytes:
                               rttViewModel?.rawHistoryBytes ?? 0,
                           onApplyPlotHistoryLimit: () {

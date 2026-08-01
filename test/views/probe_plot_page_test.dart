@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/probe_plot_config.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/rtt_service.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
 import 'package:vscope_serial/viewmodels/probe_plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/probe_plot_page.dart';
 import 'package:vscope_serial/views/widgets/common_widgets.dart';
@@ -40,7 +40,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: ConnectionOwnerService(),
       backends: [],
     );
@@ -162,7 +162,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: ConnectionOwnerService(),
       backends: [],
     );
@@ -209,7 +209,7 @@ void main() {
   testWidgets('RTT 数据配置集中控制块、通道和格式，右侧仅保留绘图设置', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = RttService(
+    final service = ProbeConnectionService(
       connectionOwners: ConnectionOwnerService(),
       backends: const [],
     );

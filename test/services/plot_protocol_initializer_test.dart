@@ -7,13 +7,13 @@ import 'package:vscope_serial/data/protocol/plot_protocol_codec.dart';
 import 'package:vscope_serial/data/protocol/send_protocol.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/plot_protocol_initializer.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 
 void main() {
   group('PlotProtocolInitializer', () {
     test('数据连接未建立时返回结构化失败结果', () async {
-      final service = SerialService.forTesting(
+      final service = DataConnectionService.forTesting(
         transportFactory: _RecordingTransport.new,
       );
       addTearDown(service.dispose);
@@ -29,7 +29,7 @@ void main() {
 
     test('众邦设备初始化通过统一串口链路发送协议帧', () async {
       final transport = _RecordingTransport();
-      final service = SerialService.forTesting(
+      final service = DataConnectionService.forTesting(
         transportFactory: () => transport,
       )..config = SerialConfig(port: 'COM7');
       addTearDown(service.dispose);
@@ -49,7 +49,7 @@ void main() {
 
     test('r协议配置错误不会写入串口', () async {
       final transport = _RecordingTransport();
-      final service = SerialService.forTesting(
+      final service = DataConnectionService.forTesting(
         transportFactory: () => transport,
       )..config = SerialConfig(port: 'COM7');
       addTearDown(service.dispose);

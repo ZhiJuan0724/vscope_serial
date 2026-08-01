@@ -4,7 +4,7 @@ import 'dart:async';
 ///
 /// 具体的端口打开、关闭和健康检查仍由调用方实现；本类只保证这些异步操作
 /// 不会重叠，并让较早连接请求可以通过 [isCurrent] 识别自己已经失效。
-class SerialConnectionCoordinator {
+class DataConnectionCoordinator {
   Future<void> _tail = Future<void>.value();
   Future<void>? _connectFuture;
   int? _connectFutureGeneration;

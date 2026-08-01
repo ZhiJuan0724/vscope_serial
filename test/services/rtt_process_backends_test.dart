@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vscope_serial/data/models/rtt_config.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
 import 'package:vscope_serial/services/rtt_process_backends.dart';
 import 'package:vscope_serial/services/windows_file_version.dart';
 
@@ -36,7 +36,7 @@ void main() {
       },
     );
 
-    expect(await backend.detectVersion(RttProbeKind.jlink), 'v7.52d');
+    expect(await backend.detectVersion(ProbeKind.jlink), 'v7.52d');
     expect(requestedPath, File(Platform.resolvedExecutable).absolute.path);
     await backend.dispose();
   });
@@ -100,14 +100,14 @@ void main() {
   test('J-Link RTT 配置串区分 Auto、地址和范围', () {
     expect(
       buildJlinkRttConfigString(
-        const RttConnectionConfig(probeKind: RttProbeKind.jlink, target: 'T'),
+        const ProbeConnectionConfig(probeKind: ProbeKind.jlink, target: 'T'),
       ),
       isNull,
     );
     expect(
       buildJlinkRttConfigString(
-        const RttConnectionConfig(
-          probeKind: RttProbeKind.jlink,
+        const ProbeConnectionConfig(
+          probeKind: ProbeKind.jlink,
           target: 'T',
           controlBlockMode: RttControlBlockMode.address,
           controlBlockAddress: 0x20001000,
@@ -117,8 +117,8 @@ void main() {
     );
     expect(
       buildJlinkRttConfigString(
-        const RttConnectionConfig(
-          probeKind: RttProbeKind.jlink,
+        const ProbeConnectionConfig(
+          probeKind: ProbeKind.jlink,
           target: 'T',
           controlBlockMode: RttControlBlockMode.range,
           controlBlockRangeStart: 0x20000000,
@@ -132,8 +132,8 @@ void main() {
   test('J-Link RTT 启动时保持目标核运行', () async {
     final backend = ExternalJLinkBackend(configuredPath: () => '');
     final arguments = await backend.buildArguments(
-      const RttConnectionConfig(
-        probeKind: RttProbeKind.jlink,
+      const ProbeConnectionConfig(
+        probeKind: ProbeKind.jlink,
         target: 'TEST_DEVICE',
         pollingIntervalMs: 77,
       ),
@@ -182,10 +182,10 @@ void main() {
   test('OpenOCD 连接阶段只初始化目标，不配置或启动 RTT', () async {
     final backend = ExternalOpenOcdBackend(configuredPath: () => '');
     final arguments = await backend.buildArguments(
-      const RttConnectionConfig(
-        probeKind: RttProbeKind.cmsisDap,
+      const ProbeConnectionConfig(
+        probeKind: ProbeKind.cmsisDap,
         target: '',
-        wireProtocol: RttWireProtocol.swd,
+        wireProtocol: ProbeWireProtocol.swd,
         clockKhz: 2000,
         controlBlockMode: RttControlBlockMode.range,
         controlBlockRangeStart: 0x20000000,
@@ -238,7 +238,7 @@ void main() {
 
     await expectLater(
       backend.connect(
-        const RttConnectionConfig(probeKind: RttProbeKind.cmsisDap, target: ''),
+        const ProbeConnectionConfig(probeKind: ProbeKind.cmsisDap, target: ''),
       ),
       throwsA(
         isA<StateError>().having(
@@ -268,7 +268,7 @@ void main() {
     final backend = _DeferredTransportBackend();
     addTearDown(backend.dispose);
     await backend.connect(
-      const RttConnectionConfig(probeKind: RttProbeKind.cmsisDap, target: ''),
+      const ProbeConnectionConfig(probeKind: ProbeKind.cmsisDap, target: ''),
     );
     final server = await ServerSocket.bind(
       InternetAddress.loopbackIPv4,
@@ -289,7 +289,7 @@ void main() {
   });
 }
 
-class _ImmediateFailureBackend extends TcpProcessRttBackend {
+class _ImmediateFailureBackend extends TcpProcessProbeBackend {
   @override
   String get id => 'immediate-failure';
 
@@ -306,14 +306,14 @@ class _ImmediateFailureBackend extends TcpProcessRttBackend {
   Duration get startupTimeout => const Duration(seconds: 5);
 
   @override
-  Future<String?> executablePath(RttProbeKind kind) async =>
+  Future<String?> executablePath(ProbeKind kind) async =>
       Platform.isWindows
           ? (Platform.environment['ComSpec'] ?? r'C:\Windows\System32\cmd.exe')
           : '/bin/sh';
 
   @override
   Future<List<String>> buildArguments(
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
     int port,
   ) async =>
       Platform.isWindows
@@ -330,13 +330,13 @@ class _ImmediateFailureBackend extends TcpProcessRttBackend {
       line.contains('NO_PROBE_MARKER') ? '未检测到调试探针' : null;
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
 
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
 }
 
-class _DeferredTransportBackend extends TcpProcessRttBackend {
+class _DeferredTransportBackend extends TcpProcessProbeBackend {
   @override
   String get id => 'deferred-transport';
   @override
@@ -351,14 +351,14 @@ class _DeferredTransportBackend extends TcpProcessRttBackend {
   Duration get startupStabilityDuration => const Duration(milliseconds: 50);
 
   @override
-  Future<String?> executablePath(RttProbeKind kind) async =>
+  Future<String?> executablePath(ProbeKind kind) async =>
       Platform.isWindows
           ? (Platform.environment['ComSpec'] ?? r'C:\Windows\System32\cmd.exe')
           : '/bin/sh';
 
   @override
   Future<List<String>> buildArguments(
-    RttConnectionConfig config,
+    ProbeConnectionConfig config,
     int port,
   ) async =>
       Platform.isWindows
@@ -366,7 +366,7 @@ class _DeferredTransportBackend extends TcpProcessRttBackend {
           : ['-c', 'sleep 10'];
 
   @override
-  Future<List<RttProbeInfo>> listProbes(RttProbeKind kind) async => const [];
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override
-  Future<List<RttTargetInfo>> listTargets(RttProbeKind kind) async => const [];
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
 }

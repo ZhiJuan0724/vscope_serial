@@ -1,19 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 /// 测试 PlotViewModel 在高频数据下的接收速率
 void main() {
   group('PlotViewModel 高频接收测试', () {
-    late SerialService serialService;
+    late DataConnectionService connectionService;
     late PlotViewModel vm;
 
     setUp(() async {
       await AppLogger().init();
-      serialService = SerialService();
-      vm = PlotViewModel(serialService);
+      connectionService = DataConnectionService();
+      vm = PlotViewModel(connectionService);
       vm.setParserType(ParserType.fireWater);
     });
 

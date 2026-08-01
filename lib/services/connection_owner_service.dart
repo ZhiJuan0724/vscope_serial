@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 
-/// 当前占用应用硬件连接入口的传输类型。
+/// 当前占用应用连接入口的会话类型。
 ///
-/// `serial`为兼容旧调用保留名称，实际代表串口/TCP/UDP数据连接；数据连接
-/// 内部仍由 `SerialActivityOwner` 区分数据收发、Shell和绘图。
-enum ConnectionOwner { none, serial, rtt }
+/// 数据连接涵盖串口、TCP和UDP；探针连接涵盖RTT Viewer、RTT绘图和HSS。
+enum ConnectionOwner { none, data, probe }
 
 /// 应用级硬件连接所有权。
 class ConnectionOwnerService extends ChangeNotifier {

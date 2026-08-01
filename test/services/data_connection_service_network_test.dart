@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/data_connection_config.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 
 void main() {
@@ -14,7 +14,7 @@ void main() {
   test('TCP数据复用数据收发的接收、发送和活动所有权', () async {
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
     final peerFuture = server.first;
-    final service = SerialService.forTesting(
+    final service = DataConnectionService.forTesting(
       transportFactory: _UnusedSerialTransport.new,
     );
 
@@ -54,7 +54,7 @@ void main() {
 
     await peer.close();
     await _waitUntil(() => !service.isConnected);
-    expect(service.activityOwner, SerialActivityOwner.none);
+    expect(service.activityOwner, DataActivityOwner.none);
     await service.shutdown();
     service.dispose();
     await server.close();

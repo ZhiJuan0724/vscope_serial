@@ -13,7 +13,7 @@ import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
@@ -21,7 +21,7 @@ import 'package:vscope_serial/views/widgets/common_widgets.dart';
 import 'package:vscope_serial/views/widgets/plot_status_bar.dart';
 
 void main() {
-  final serialService = SerialService();
+  final connectionService = DataConnectionService();
 
   setUp(() {
     final settings = AppSettings();
@@ -48,10 +48,10 @@ void main() {
     settings.channelPresetBindings = [];
   });
 
-  tearDownAll(serialService.dispose);
+  tearDownAll(connectionService.dispose);
 
   testWidgets('绘图状态栏在窄窗口中单行截断长文本', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     for (var i = 0; i < 32; i++) {
       vm.ingestParsedResultForTest(
         ParseResult.ok([i.toDouble()], bytesConsumed: 4),
@@ -85,7 +85,7 @@ void main() {
   });
 
   testWidgets('高级设置可切换大范围绘图质量', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -142,7 +142,7 @@ void main() {
   });
 
   testWidgets('Delta X/Y 按钮右键可配置线条且 Y 提供吸附开关', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -193,7 +193,7 @@ void main() {
   });
 
   testWidgets('图例按最长通道名称扩展以优先显示完整名称', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     const longName = '主电机控制器输出电流反馈滤波后的完整通道名称';
     vm.setChannelAlias(0, longName);
     vm.ingestParsedResultForTest(ParseResult.ok(const [1.0], bytesConsumed: 4));
@@ -227,7 +227,7 @@ void main() {
   });
 
   testWidgets('800px 绘图工具栏将右侧工具折叠到更多菜单且不溢出', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     await tester.binding.setSurfaceSize(const Size(800, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -255,7 +255,7 @@ void main() {
   });
 
   testWidgets('导出窗口同时选择范围和普通数学通道', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
     expect(
       vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
@@ -302,7 +302,7 @@ void main() {
   });
 
   testWidgets('普通通道设置可输入显示参数并与列表共用偏置开关', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -369,7 +369,7 @@ void main() {
   });
 
   testWidgets('发送协议配置只在显式选择r协议时可打开', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -416,7 +416,7 @@ void main() {
   });
 
   testWidgets('通道显示开关使用眼睛图标并可切换显示状态', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -442,7 +442,7 @@ void main() {
   });
 
   testWidgets('长通道名称提供悬浮完整文本', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     const longName = '这是一个很长的通道名称';
     vm.setChannelAlias(0, longName);
 
@@ -463,7 +463,7 @@ void main() {
   });
 
   testWidgets('通道列表名称编辑支持统一的64字符上限', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     const longName = '主电机控制器输出电流反馈滤波后的完整通道名称与工程标识';
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -499,7 +499,7 @@ void main() {
   });
 
   testWidgets('JustFloat配合R协议选择预设后立即刷新名称和地址', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.setParserType(ParserType.justFloat);
     vm.updateParserConfig(ParserConfig.justFloatDefault());
     vm.setSendProtocolType(SendProtocolType.rProtocol);
@@ -532,7 +532,7 @@ void main() {
   });
 
   testWidgets('通道列表空白处右键显示重置全部通道', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 1000));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -562,7 +562,7 @@ void main() {
   });
 
   testWidgets('偏置通道右键可打开绑定偏置设置', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.setChannelOffsetEnabled(0, true);
     vm.setChannelOffsetEnabled(1, true);
 
@@ -602,7 +602,7 @@ void main() {
   });
 
   testWidgets('未开启偏置的通道右键不显示绑定偏置', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -632,7 +632,7 @@ void main() {
   });
 
   testWidgets('表头显示图标在全部通道隐藏后才变为闭眼', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -661,7 +661,7 @@ void main() {
   });
 
   testWidgets('实时值按钮可打开最新值浮窗', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -717,7 +717,7 @@ void main() {
   });
 
   testWidgets('绘图运行时禁用数据导入和导出', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 4));
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -765,7 +765,7 @@ void main() {
   });
 
   testWidgets('绘图运行时锁定随机源开关、协议及配置入口', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.setParserType(ParserType.fireWater);
     vm.setSendProtocolType(SendProtocolType.rProtocol);
 
@@ -857,7 +857,7 @@ void main() {
   });
 
   testWidgets('无数据时使用统一浅色空态，收到数据后应用暗色背景', (tester) async {
-    final vm = PlotViewModel(serialService);
+    final vm = PlotViewModel(connectionService);
     vm.setPlotBackground('dark');
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));

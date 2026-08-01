@@ -3,7 +3,7 @@ import '../../core/constants/plot_configuration.dart';
 /// 数据源配置模型
 class DataSourceConfig {
   /// 使用串口数据源
-  bool useSerial;
+  bool useConnection;
 
   /// 使用内部随机数据源
   bool useRandom;
@@ -24,7 +24,7 @@ class DataSourceConfig {
   double randomFrequencyHz;
 
   DataSourceConfig({
-    this.useSerial = true,
+    this.useConnection = true,
     this.useRandom = false,
     this.randomChannelCount = 4,
     this.randomMinValue = PlotConfiguration.randomSourceDefaultMin,
@@ -37,7 +37,7 @@ class DataSourceConfig {
            .clamp(1.0, 100000.0);
 
   DataSourceConfig copyWith({
-    bool? useSerial,
+    bool? useConnection,
     bool? useRandom,
     int? randomChannelCount,
     double? randomMinValue,
@@ -46,7 +46,7 @@ class DataSourceConfig {
     double? randomFrequencyHz,
   }) {
     return DataSourceConfig(
-      useSerial: useSerial ?? this.useSerial,
+      useConnection: useConnection ?? this.useConnection,
       useRandom: useRandom ?? this.useRandom,
       randomChannelCount: randomChannelCount ?? this.randomChannelCount,
       randomMinValue: randomMinValue ?? this.randomMinValue,
@@ -57,5 +57,5 @@ class DataSourceConfig {
   }
 
   /// 是否有有效数据源
-  bool get hasActiveSource => useSerial || useRandom;
+  bool get hasActiveSource => useConnection || useRandom;
 }

@@ -15,7 +15,7 @@ import '../../core/utils/crc.dart';
 import '../../data/models/retention_usage.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
 import '../../services/app_notifications.dart';
-import '../../services/serial_service.dart';
+import '../../services/data_connection_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/hex_input_formatter.dart';
@@ -402,7 +402,7 @@ class _RawDataPageState extends State<RawDataPage> {
 
   @override
   Widget build(BuildContext context) {
-    final service = Provider.of<SerialService>(context, listen: false);
+    final service = Provider.of<DataConnectionService>(context, listen: false);
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => RawDataViewModel(service)),
@@ -1432,9 +1432,11 @@ class _RawDataPageState extends State<RawDataPage> {
                         );
                         if (autoLineBreakIntervalMs == null ||
                             autoLineBreakIntervalMs <
-                                SerialService.minAutoLineBreakIntervalMs ||
+                                DataConnectionService
+                                    .minAutoLineBreakIntervalMs ||
                             autoLineBreakIntervalMs >
-                                SerialService.maxAutoLineBreakIntervalMs) {
+                                DataConnectionService
+                                    .maxAutoLineBreakIntervalMs) {
                           _showSnackBar(
                             context,
                             AppStrings.raw.autoLineBreakTimeInvalid,
@@ -1443,9 +1445,9 @@ class _RawDataPageState extends State<RawDataPage> {
                         }
                         if (displayLineLimit == null ||
                             displayLineLimit <
-                                SerialService.minDisplayLineLimit ||
+                                DataConnectionService.minDisplayLineLimit ||
                             displayLineLimit >
-                                SerialService.maxDisplayLineLimit) {
+                                DataConnectionService.maxDisplayLineLimit) {
                           _showSnackBar(
                             context,
                             AppStrings.raw.displayLineLimitInvalid,

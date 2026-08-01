@@ -4,14 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/constants/rtt_configuration.dart';
-import '../../data/models/rtt_config.dart';
+import '../../data/models/probe_connection_config.dart';
 import '../../services/app_settings.dart';
-import '../../services/rtt_service.dart';
+import '../../services/probe_connection_service.dart';
 import '../widgets/common_widgets.dart';
 
 Future<void> showRttControlBlockDialog(
   BuildContext context, {
-  required RttService service,
+  required ProbeConnectionService service,
   required String title,
 }) {
   return showDialog<void>(
@@ -23,7 +23,7 @@ Future<void> showRttControlBlockDialog(
 class _RttControlBlockDialog extends StatefulWidget {
   const _RttControlBlockDialog({required this.service, required this.title});
 
-  final RttService service;
+  final ProbeConnectionService service;
   final String title;
 
   @override
