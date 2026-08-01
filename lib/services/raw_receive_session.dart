@@ -76,7 +76,6 @@ class RawReceiveSession {
   int get displayLineLimit => _displayLineLimit;
   int get textDisplayCacheBytes => _receivedTextBytes;
   bool get hasRawData => _rawBytes.isNotEmpty;
-  Uint8List get rawBytes => _rawBytes.toBytes();
 
   int get _retentionLimitBytes =>
       debugRetentionLimitBytes ?? rawRetentionLimitBytes;

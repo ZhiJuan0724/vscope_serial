@@ -329,7 +329,6 @@ class SerialService extends ChangeNotifier {
     _shellPendingReceiveBytes = value < 0 ? 0 : value;
   }
 
-  Uint8List get rawBytes => _rawSession.rawBytes;
   bool get hasRawData => _rawSession.hasRawData;
   Map<String, String> get dataStats => _rawSession.dataStats;
 

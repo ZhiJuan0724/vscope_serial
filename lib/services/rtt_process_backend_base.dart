@@ -130,7 +130,7 @@ abstract class TcpProcessRttBackend
     final arguments = await buildArguments(config, port);
     final launchMessage = '启动 $displayName: $executable ${arguments.join(' ')}';
     AppLogger().info(launchMessage, category: 'RTT');
-    _diagnosticController.add(launchMessage);
+    emitBackendDiagnostic(launchMessage);
     final process = await Process.start(
       executable,
       arguments,
@@ -151,7 +151,7 @@ abstract class TcpProcessRttBackend
           if (!_fatalDisconnectHandled) {
             final message = '$displayName 已退出，代码 $code';
             AppLogger().warning(message, category: 'RTT');
-            _diagnosticController.add(message);
+            emitBackendDiagnostic(message);
             if (!_disconnecting) {
               _lastFailure ??=
                   _lastDiagnostic == null
@@ -215,7 +215,7 @@ abstract class TcpProcessRttBackend
           error: error,
           stackTrace: stackTrace,
         );
-        _diagnosticController.add(message);
+        emitBackendDiagnostic(message);
         if (!_disconnecting) _lastFailure = message;
         _markDisconnected();
       },
@@ -294,14 +294,14 @@ abstract class TcpProcessRttBackend
         _lastDiagnostic = message;
         _lastFailure = fatalFailure;
         AppLogger().warning('$fatalFailure（原始信息：$message）', category: 'RTT');
-        _diagnosticController.add(fatalFailure);
+        emitBackendDiagnostic(fatalFailure);
         _markDisconnected();
         _process?.kill();
         continue;
       }
       _lastDiagnostic = message;
       AppLogger().info('$displayName: $message', category: 'RTT');
-      _diagnosticController.add(message);
+      emitBackendDiagnostic(message);
       onDiagnosticLine(message);
       final failure = parseFailureDiagnostic(message);
       if (failure != null && !_disconnecting) {
@@ -389,6 +389,7 @@ abstract class TcpProcessRttBackend
   Future<void> disconnect() async {
     _disconnecting = true;
     _connected = false;
+    final diagnosticForwarding = _diagnosticForwarding;
     final subscription = _socketSubscription;
     _socketSubscription = null;
     await subscription?.cancel();
@@ -403,6 +404,16 @@ abstract class TcpProcessRttBackend
         await process.exitCode.timeout(const Duration(seconds: 2));
       } on TimeoutException {
         process.kill(ProcessSignal.sigkill);
+      }
+    }
+    // 进程退出不代表 stdout/stderr 的管道尾部已被 Dart 消费完。
+    // 在 dispose 关闭广播控制器前等待转发循环收尾，避免尾行输出
+    // 写入已关闭控制器。超时时仍由 isClosed 防护保证安全退出。
+    if (diagnosticForwarding != null) {
+      try {
+        await diagnosticForwarding.timeout(const Duration(milliseconds: 500));
+      } on TimeoutException {
+        // 某些外部工具的管道关闭通知可能延迟，不阻塞断开流程。
       }
     }
     _diagnosticForwarding = null;

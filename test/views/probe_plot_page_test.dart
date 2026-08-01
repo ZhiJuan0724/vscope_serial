@@ -283,6 +283,36 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
     expect(viewModel.floatingPanelOpacity, 0.75);
+
+    final followField = find.byKey(
+      const ValueKey('probe-follow-position-field'),
+    );
+    await tester.ensureVisible(followField);
+    await tester.enterText(followField, '80');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.followPositionRatio, 0.8);
+
+    final memoryField = find.byKey(
+      const ValueKey('probe-history-memory-limit-field'),
+    );
+    await tester.ensureVisible(memoryField);
+    await tester.enterText(memoryField, '1');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(
+      viewModel.historyMemoryLimitMiB,
+      ProbePlotViewModel.minHistoryMemoryLimitMiB,
+    );
+
+    final pointLimitField = find.byKey(
+      const ValueKey('probe-window-point-limit-field'),
+    );
+    await tester.ensureVisible(pointLimitField);
+    await tester.enterText(pointLimitField, '1');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.windowPointLimit, ProbePlotViewModel.minWindowPointLimit);
     await tester.tap(find.text(AppStrings.common.close));
     await tester.pumpAndSettle();
     expect(

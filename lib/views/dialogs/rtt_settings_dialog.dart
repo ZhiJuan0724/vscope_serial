@@ -58,7 +58,12 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
       title: Text(AppStrings.rtt.settings),
       content: SettingsNavigationView(
         scrollController: _scrollController,
-        items: [SettingsNavigationItem(label: '显示', anchorKey: _displayKey)],
+        items: [
+          SettingsNavigationItem(
+            label: AppStrings.common.settingsDisplay,
+            anchorKey: _displayKey,
+          ),
+        ],
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

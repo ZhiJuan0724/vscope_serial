@@ -109,10 +109,10 @@ class DataSourceManager {
     }
     _subscriptions.clear();
 
-    await _serialSource?.stop();
+    await _serialSource?.dispose();
     _serialSource = null;
 
-    await _randomSource?.stop();
+    await _randomSource?.dispose();
     _randomSource = null;
   }
 

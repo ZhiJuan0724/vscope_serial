@@ -26,6 +26,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     _subscription = service.probePlotData.listen(_handleRttData);
     _sampleSubscription = service.probeSamples.listen(appendHssSample);
     _wasConnected = service.isConnected;
+    _serviceStateSignature = _currentServiceStateSignature();
     if (_wasConnected) {
       scheduleMicrotask(_refreshRttChannelsAfterConnect);
     }
@@ -85,6 +86,9 @@ class ProbePlotViewModel extends ChangeNotifier {
   bool retentionLimitReached = false;
   int _exactPointsEstimatedBytes = 0;
   int revision = 0;
+  int dataRevision = 0;
+  int viewportRevision = 0;
+  int channelConfigRevision = 0;
   int overlayRevision = 0;
   int pointCount = 0;
   double actualRate = 0;
@@ -106,7 +110,12 @@ class ProbePlotViewModel extends ChangeNotifier {
   bool observationPlacementActive = false;
   PlotObservation? observationPreview;
   Timer? _frameNotificationTimer;
+  final ValueNotifier<int> _renderNotifier = ValueNotifier<int>(0);
+  Object? _serviceStateSignature;
   bool _disposed = false;
+
+  /// 只驱动绘图区的高频刷新，避免采样时重建工具栏和通道列表。
+  ValueNotifier<int> get renderListenable => _renderNotifier;
 
   List<PlotDataPoint> get points =>
       _pointsSnapshot ??= List.unmodifiable(_exactPoints);
@@ -227,6 +236,7 @@ class ProbePlotViewModel extends ChangeNotifier {
             channels[index].alias = hssVariables[index].name;
           }
         }
+        channelConfigRevision++;
         clear();
         await service.startHss(hssVariables, frequencyHz: hssFrequencyHz);
         return;
@@ -253,6 +263,7 @@ class ProbePlotViewModel extends ChangeNotifier {
           channels[index].alias = 'Value ${index + 1}';
         }
       }
+      channelConfigRevision++;
       clear();
       await service.startRttProbePlot(rttChannelName);
     } finally {
@@ -353,6 +364,7 @@ class ProbePlotViewModel extends ChangeNotifier {
               ? hssVariables[index].name
               : 'Value ${index + 1}';
     }
+    channelConfigRevision++;
     revision++;
   }
 
@@ -425,10 +437,13 @@ class ProbePlotViewModel extends ChangeNotifier {
   }
 
   void _handleServiceChanged() {
+    final previousSignature = _serviceStateSignature;
     final connected = service.isConnected;
+    var channelStateChanged = false;
     if (!connected && _wasConnected) {
       rttChannels = const [];
       _rttChannelIndex = null;
+      channelStateChanged = true;
       // RTT 通道枚举属于当前连接，断开后必须失效；但活动通道数量同时用于
       // 渲染已经采集的历史数据。保留它，避免断开探针后曲线消失而光标仍能
       // 查询到底层数据。重新连接后的枚举或配置会再次更新该数量。
@@ -438,8 +453,22 @@ class ProbePlotViewModel extends ChangeNotifier {
       unawaited(_refreshRttChannelsAfterConnect());
     }
     _wasConnected = connected;
-    notifyListeners();
+    final nextSignature = _currentServiceStateSignature();
+    _serviceStateSignature = nextSignature;
+    // 后端诊断文本也会触发 RttService 通知，但它与探针绘图页面无关。
+    // 这里只响应连接、能力和活动状态变化，避免实时诊断造成整页重建。
+    if (channelStateChanged || previousSignature != nextSignature) {
+      notifyListeners();
+    }
   }
+
+  Object _currentServiceStateSignature() => (
+    service.isConnected,
+    service.isConnecting,
+    service.supportsProbePlot,
+    service.activeBackendId,
+    service.activityOwner,
+  );
 
   Future<void> _refreshRttChannelsAfterConnect() async {
     if (!service.isConnected || mode != ProbePlotMode.rtt) {
@@ -506,16 +535,23 @@ class ProbePlotViewModel extends ChangeNotifier {
       final xMin = plotX - width * followPositionRatio;
       viewport = viewport.copyWith(xMin: xMin, xMax: xMin + width);
     }
+    dataRevision++;
+    if (follow || _autoFitY) viewportRevision++;
+    final firstPoint = pointCount == 1;
     final now = DateTime.now();
     final elapsed = now.difference(_lastRateTime);
+    var rateChanged = false;
     if (elapsed.inMilliseconds >= 500) {
       actualRate =
           (pointCount - _lastRateCount) * 1000 / elapsed.inMilliseconds;
       _lastRateCount = pointCount;
       _lastRateTime = now;
+      rateChanged = true;
     }
     revision++;
     _notifyOnNextFrame();
+    // 点数和速率只需低频刷新状态栏；首点需要立即撤下空数据占位。
+    if (firstPoint || rateChanged) notifyListeners();
   }
 
   int _estimatePointBytes(PlotDataPoint point) {
@@ -577,6 +613,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     yCursor1 = null;
     yCursor2 = null;
     _rttParser?.reset();
+    dataRevision++;
     revision++;
     overlayRevision++;
     notifyListeners();
@@ -584,6 +621,7 @@ class ProbePlotViewModel extends ChangeNotifier {
 
   void toggleChannel(int index) {
     channels[index].visible = !channels[index].visible;
+    channelConfigRevision++;
     revision++;
     notifyListeners();
   }
@@ -592,6 +630,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     final normalized = name.trim();
     if (normalized.isEmpty || index < 0 || index >= channels.length) return;
     channels[index].alias = normalized;
+    channelConfigRevision++;
     revision++;
     notifyListeners();
   }
@@ -603,6 +642,7 @@ class ProbePlotViewModel extends ChangeNotifier {
       final width = viewport.xRange;
       final xMin = latestX - width * followPositionRatio;
       viewport = viewport.copyWith(xMin: xMin, xMax: xMin + width);
+      viewportRevision++;
     }
     notifyListeners();
   }
@@ -616,6 +656,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     }
     _pointsSnapshot = null;
     _saveDisplaySettings();
+    dataRevision++;
     revision++;
     notifyListeners();
   }
@@ -725,6 +766,7 @@ class ProbePlotViewModel extends ChangeNotifier {
       follow = false;
     }
     if (yChanged) _autoFitY = false;
+    viewportRevision++;
     revision++;
     notifyListeners();
   }
@@ -977,6 +1019,7 @@ class ProbePlotViewModel extends ChangeNotifier {
       xMin: index - halfRange,
       xMax: index + halfRange,
     );
+    viewportRevision++;
     revision++;
     notifyListeners();
   }
@@ -1011,7 +1054,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     if (_disposed || _frameNotificationTimer != null) return;
     _frameNotificationTimer = Timer(const Duration(milliseconds: 16), () {
       _frameNotificationTimer = null;
-      if (!_disposed) notifyListeners();
+      if (!_disposed) _renderNotifier.value++;
     });
   }
 
@@ -1023,6 +1066,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     service.removeListener(_handleServiceChanged);
     unawaited(_subscription.cancel());
     unawaited(_sampleSubscription.cancel());
+    _renderNotifier.dispose();
     super.dispose();
   }
 }

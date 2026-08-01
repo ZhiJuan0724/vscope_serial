@@ -997,21 +997,24 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               scrollController: _advancedSettingsScrollController,
               items: [
                 SettingsNavigationItem(
-                  label: '通知',
+                  label: AppStrings.common.settingsNotifications,
                   anchorKey: notificationSectionKey,
                 ),
                 SettingsNavigationItem(
-                  label: '诊断',
+                  label: AppStrings.common.settingsDiagnostics,
                   anchorKey: diagnosticsSectionKey,
                 ),
                 SettingsNavigationItem(
-                  label: '快捷键',
+                  label: AppStrings.common.settingsShortcuts,
                   anchorKey: shortcutsSectionKey,
                 ),
-                SettingsNavigationItem(label: '页面', anchorKey: pageSectionKey),
+                SettingsNavigationItem(
+                  label: AppStrings.common.settingsPages,
+                  anchorKey: pageSectionKey,
+                ),
                 if (rttEnabled)
                   SettingsNavigationItem(
-                    label: '探针后端',
+                    label: AppStrings.common.settingsProbeBackend,
                     anchorKey: probeBackendSectionKey,
                   ),
                 SettingsNavigationItem(
@@ -1023,11 +1026,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   anchorKey: memorySectionKey,
                 ),
                 SettingsNavigationItem(
-                  label: '版本回退',
+                  label: AppStrings.common.settingsVersionRollback,
                   anchorKey: rollbackSectionKey,
                 ),
                 SettingsNavigationItem(
-                  label: '重置设置',
+                  label: AppStrings.common.settingsReset,
                   anchorKey: resetSectionKey,
                 ),
               ],

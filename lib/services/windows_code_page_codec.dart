@@ -67,16 +67,9 @@ String decodeWindowsCodePage(Uint8List data, int codePage) {
   final input = calloc<Uint8>(data.length);
   try {
     input.asTypedList(data.length).setAll(0, data);
-    final length = _multiByteToWideChar(
-      codePage,
-      0,
-      input,
-      data.length,
-      nullptr,
-      0,
-    );
-    if (length <= 0) throw FormatException('代码页 $codePage 解码失败');
-    final output = calloc<Uint16>(length);
+    // 单字节或多字节代码页解码后，UTF-16 code unit 数不会超过输入字节数。
+    // 直接按安全上限分配，省去一次同步 Win32 长度查询。
+    final output = calloc<Uint16>(data.length);
     try {
       final written = _multiByteToWideChar(
         codePage,
@@ -84,7 +77,7 @@ String decodeWindowsCodePage(Uint8List data, int codePage) {
         input,
         data.length,
         output,
-        length,
+        data.length,
       );
       if (written <= 0) throw FormatException('代码页 $codePage 解码失败');
       return String.fromCharCodes(output.asTypedList(written));
@@ -103,18 +96,10 @@ Uint8List encodeWindowsCodePage(String text, int codePage) {
   final input = calloc<Uint16>(units.length);
   try {
     input.asTypedList(units.length).setAll(0, units);
-    final length = _wideCharToMultiByte(
-      codePage,
-      0,
-      input,
-      units.length,
-      nullptr,
-      0,
-      nullptr,
-      nullptr,
-    );
-    if (length <= 0) throw FormatException('代码页 $codePage 编码失败');
-    final output = calloc<Uint8>(length);
+    // 4 字节/UTF-16 code unit 覆盖 UTF-8 及当前支持的 DBCS 代码页上限，
+    // 直接转换可避免每段实时文本额外调用一次同步 Win32 API。
+    final capacity = units.length * 4;
+    final output = calloc<Uint8>(capacity);
     try {
       final written = _wideCharToMultiByte(
         codePage,
@@ -122,7 +107,7 @@ Uint8List encodeWindowsCodePage(String text, int codePage) {
         input,
         units.length,
         output,
-        length,
+        capacity,
         nullptr,
         nullptr,
       );

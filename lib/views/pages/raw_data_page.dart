@@ -1302,15 +1302,15 @@ class _RawDataPageState extends State<RawDataPage> {
                     scrollController: scrollController,
                     items: [
                       SettingsNavigationItem(
-                        label: '文本编码',
+                        label: AppStrings.common.settingsTextEncoding,
                         anchorKey: encodingSectionKey,
                       ),
                       SettingsNavigationItem(
-                        label: '自动换行时间',
+                        label: AppStrings.common.settingsAutoLineBreak,
                         anchorKey: autoLineBreakTimingSectionKey,
                       ),
                       SettingsNavigationItem(
-                        label: '显示行数',
+                        label: AppStrings.common.settingsDisplayLines,
                         anchorKey: displayLimitSectionKey,
                       ),
                     ],

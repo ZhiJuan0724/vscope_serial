@@ -196,6 +196,43 @@ void main() {
     service.dispose();
   });
 
+  test('连接中断开按取消收敛且不记录连接失败', () async {
+    final connectGate = Completer<void>();
+    final backend = _FakeBackend('external-jlink', connectGate: connectGate);
+    final service = RttService(connectionOwners: owners, backends: [backend]);
+
+    final connecting = service.connect(
+      _config(backend: RttBackendSelection.externalJlink),
+    );
+    while (backend.connectCount == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    await service.disconnect();
+
+    await expectLater(connecting, throwsA(anything));
+    expect(service.state, RttConnectionState.disconnected);
+    expect(service.lastError, isNull);
+    expect(owners.owner, ConnectionOwner.none);
+    await service.shutdown();
+  });
+
+  test('shutdown 等待后端异步释放完成', () async {
+    final disposeGate = Completer<void>();
+    final backend = _FakeBackend('external-jlink', disposeGate: disposeGate);
+    final service = RttService(connectionOwners: owners, backends: [backend]);
+    var completed = false;
+
+    final shutdown = service.shutdown().then((_) => completed = true);
+    while (!backend.disposeStarted) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(completed, isFalse);
+
+    disposeGate.complete();
+    await shutdown;
+    expect(completed, isTrue);
+  });
+
   test('显式选择不能保证非侵入式访问的后端时在连接前拒绝', () async {
     final unsafe = _FakeBackend('external-jlink', nonIntrusive: false);
     final service = RttService(connectionOwners: owners, backends: [unsafe]);
@@ -410,6 +447,8 @@ class _FakeBackend
     this.connectError,
     this.version,
     this.stopGate,
+    this.connectGate,
+    this.disposeGate,
   });
 
   @override
@@ -419,8 +458,11 @@ class _FakeBackend
   final Object? connectError;
   final String? version;
   final Completer<void>? stopGate;
+  final Completer<void>? connectGate;
+  final Completer<void>? disposeGate;
   int connectCount = 0;
   int disconnectCount = 0;
+  bool disposeStarted = false;
   bool _connected = false;
   String? _lastFailure;
   final StreamController<RttDataChunk> _data =
@@ -469,6 +511,7 @@ class _FakeBackend
   Future<void> connect(RttConnectionConfig config) async {
     connectCount++;
     if (connectError case final error?) throw error;
+    await connectGate?.future;
     _lastFailure = null;
     _connected = true;
   }
@@ -476,6 +519,7 @@ class _FakeBackend
   @override
   Future<void> disconnect() async {
     disconnectCount++;
+    if (connectGate case final gate? when !gate.isCompleted) gate.complete();
     _connected = false;
   }
 
@@ -526,6 +570,8 @@ class _FakeBackend
 
   @override
   Future<void> dispose() async {
+    disposeStarted = true;
+    await disposeGate?.future;
     await _data.close();
     await _diagnostics.close();
     await _samples.close();

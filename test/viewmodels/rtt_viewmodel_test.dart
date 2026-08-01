@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -48,8 +49,7 @@ void main() {
 
   tearDown(() async {
     viewModel.dispose();
-    await service.disconnect();
-    service.dispose();
+    await service.shutdown();
     AppSettings()
       ..rttEncoding = previousEncoding
       ..rttDisplayMode = previousMode
@@ -102,6 +102,24 @@ void main() {
       '[Terminal 0] line 2',
       '[Terminal 0] partial line 3',
     ]);
+  });
+
+  test('文本导出以流式原子写入保留汇总终端的既有内容', () async {
+    backend.add(utf8.encode('第一行\n第二行\n末尾'));
+    await _settleTimers();
+    final directory = await Directory.systemTemp.createTemp('rtt-export-');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final path = '${directory.path}${Platform.pathSeparator}output.txt';
+
+    await viewModel.exportText(path);
+
+    expect(
+      await File(path).readAsString(),
+      '[Terminal 0] 第一行\r\n[Terminal 0] 第二行',
+    );
+    expect(await File('$path.part').exists(), isFalse);
   });
 
   test('暂停只冻结显示，恢复后展示暂停期间收到的数据', () async {

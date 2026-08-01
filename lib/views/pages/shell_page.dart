@@ -854,19 +854,19 @@ class _ShellPageState extends State<ShellPage> {
                       scrollController: scrollController,
                       items: [
                         SettingsNavigationItem(
-                          label: '输入与编码',
+                          label: AppStrings.common.settingsInputAndEncoding,
                           anchorKey: inputSectionKey,
                         ),
                         SettingsNavigationItem(
-                          label: '终端字体',
+                          label: AppStrings.common.settingsTerminalFont,
                           anchorKey: fontSectionKey,
                         ),
                         SettingsNavigationItem(
-                          label: '外观与光标',
+                          label: AppStrings.common.settingsAppearanceAndCursor,
                           anchorKey: appearanceSectionKey,
                         ),
                         SettingsNavigationItem(
-                          label: '历史记录',
+                          label: AppStrings.common.settingsHistory,
                           anchorKey: historySectionKey,
                         ),
                       ],

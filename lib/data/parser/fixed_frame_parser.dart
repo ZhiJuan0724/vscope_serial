@@ -45,9 +45,15 @@ class FixedFrameParser extends IDataParser {
   }
 
   List<ParseResult> _processBuffer() {
+    final frameLength = config.totalFrameLength;
+    if (frameLength <= 0) {
+      _buffer.clear();
+      AppLogger().warning('固定帧长度无效，已丢弃接收缓冲区', category: 'PARSER');
+      return const [];
+    }
     final results = <ParseResult>[];
     var readOffset = 0;
-    while (_buffer.length - readOffset >= config.totalFrameLength) {
+    while (_buffer.length - readOffset >= frameLength) {
       // 查找帧头
       final headerIndex = _findFrameHeader(readOffset);
       if (headerIndex == -1) {
@@ -60,23 +66,23 @@ class FixedFrameParser extends IDataParser {
       readOffset = headerIndex;
 
       // 检查是否有完整帧
-      if (_buffer.length - readOffset < config.totalFrameLength) {
+      if (_buffer.length - readOffset < frameLength) {
         break;
       }
 
-      final frame = Uint8List(config.totalFrameLength);
+      final frame = Uint8List(frameLength);
       for (var i = 0; i < frame.length; i++) {
         frame[i] = _buffer[readOffset + i];
       }
       results.add(_parseFrame(frame));
-      readOffset += config.totalFrameLength;
+      readOffset += frameLength;
     }
     if (readOffset > 0) {
       _buffer.removeRange(0, readOffset);
     }
 
     // 防止缓冲区无限增长
-    if (_buffer.length > config.totalFrameLength * 100) {
+    if (_buffer.length > frameLength * 100) {
       _buffer.clear();
       AppLogger().warning('固定帧协议解析缓冲区溢出，已清空', category: 'PARSER');
     }

@@ -384,12 +384,51 @@ class RttViewModel extends ChangeNotifier {
     );
   }
 
-  Future<void> exportText(String path) {
-    final content = <String>[
-      ..._lines,
-      if (_partialLine.isNotEmpty) _partialLine,
-    ].join('\r\n');
-    return const AtomicFileCommitter().writeString(path, content);
+  Future<void> exportText(String path) async {
+    const committer = AtomicFileCommitter();
+    final part = File(committer.partPath(path));
+    await part.parent.create(recursive: true);
+    if (await part.exists()) await part.delete();
+    final output = part.openWrite();
+    var closed = false;
+    var firstLine = true;
+    var bufferedCharacters = 0;
+    final buffer = StringBuffer();
+
+    Future<void> flushBuffer() async {
+      if (bufferedCharacters == 0) return;
+      output.write(buffer.toString());
+      buffer.clear();
+      bufferedCharacters = 0;
+      // 定期让出事件循环并把数据下推到文件系统，避免大历史导出时卡住界面。
+      await output.flush();
+    }
+
+    void appendLine(String line) {
+      if (!firstLine) {
+        buffer.write('\r\n');
+        bufferedCharacters += 2;
+      }
+      buffer.write(line);
+      bufferedCharacters += line.length;
+      firstLine = false;
+    }
+
+    try {
+      for (final line in _lines) {
+        appendLine(line);
+        if (bufferedCharacters >= 256 * 1024) await flushBuffer();
+      }
+      if (_partialLine.isNotEmpty) appendLine(_partialLine);
+      await flushBuffer();
+      await output.close();
+      closed = true;
+      await committer.commitPart(path);
+    } catch (_) {
+      if (!closed) await output.close();
+      if (await part.exists()) await part.delete();
+      rethrow;
+    }
   }
 
   Future<void> sendText(String value, {String lineEnding = '\r\n'}) async {

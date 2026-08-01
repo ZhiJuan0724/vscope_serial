@@ -4172,31 +4172,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   scrollController: advancedSettingsScrollController,
                   items: [
                     SettingsNavigationItem(
-                      label: '外观',
+                      label: AppStrings.common.settingsAppearance,
                       anchorKey: appearanceSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '性能',
+                      label: AppStrings.common.settingsPerformance,
                       anchorKey: performanceSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '文字',
+                      label: AppStrings.common.settingsText,
                       anchorKey: fontSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '视口',
+                      label: AppStrings.common.settingsViewport,
                       anchorKey: viewportSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '工具栏',
+                      label: AppStrings.common.settingsToolbar,
                       anchorKey: toolbarSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '交互',
+                      label: AppStrings.common.settingsInteraction,
                       anchorKey: interactionSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '数据',
+                      label: AppStrings.common.settingsData,
                       anchorKey: dataSectionKey,
                     ),
                   ],

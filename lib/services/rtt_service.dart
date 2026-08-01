@@ -18,6 +18,10 @@ bool _hasUsableAutomaticOpenOcdConfig(RttConnectionConfig config) {
       config.openOcdTargetConfig.trim().isNotEmpty;
 }
 
+class _RttConnectCancelled implements Exception {
+  const _RttConnectCancelled();
+}
+
 /// 从最近一次成功连接保存的设置创建快捷连接参数。
 ///
 /// 显式后端会约束探针类型，防止旧设置中的类型与后端不匹配。
@@ -85,10 +89,14 @@ class RttService extends ChangeNotifier {
   final ConnectionOwnerService _connectionOwners;
   final RttReceiveQueue _receiveQueue;
   late final List<RttBackend> _backends;
+  // 由可等待的 shutdown() 统一关闭；dispose() 会启动同一收敛流程。
+  // ignore: close_sinks
   final StreamController<void> _dataAvailableController =
       StreamController<void>.broadcast(sync: true);
+  // ignore: close_sinks
   final StreamController<RttDataChunk> _probePlotDataController =
       StreamController<RttDataChunk>.broadcast(sync: true);
+  // ignore: close_sinks
   final StreamController<ProbeSampleChunk> _probeSamplesController =
       StreamController<ProbeSampleChunk>.broadcast(sync: true);
   StreamSubscription<RttDataChunk>? _dataSubscription;
@@ -104,6 +112,8 @@ class RttService extends ChangeNotifier {
   int _receivedBytes = 0;
   bool _handlingUnexpectedDisconnect = false;
   bool _disposed = false;
+  int _connectionGeneration = 0;
+  Future<void>? _shutdownFuture;
 
   RttConnectionState get state => _state;
   bool get isConnected => _state == RttConnectionState.connected;
@@ -316,6 +326,7 @@ class RttService extends ChangeNotifier {
     _receivedBytes = 0;
     _receiveQueue.clear(resetDropped: true);
     _setState(RttConnectionState.connecting);
+    final generation = ++_connectionGeneration;
     try {
       final backend = await _resolveBackend(
         config.probeKind,
@@ -323,6 +334,9 @@ class RttService extends ChangeNotifier {
         requireNonIntrusiveTargetAccess: true,
         connectionConfig: config,
       );
+      if (generation != _connectionGeneration) {
+        throw const _RttConnectCancelled();
+      }
       AppLogger().info(
         '开始连接探针：类型=${config.probeKind.label}，后端=${backend.displayName}，'
         '接口=${config.wireProtocol.label}，时钟=${config.clockKhz}kHz',
@@ -335,6 +349,11 @@ class RttService extends ChangeNotifier {
       _activityOwner = ProbeActivityOwner.none;
       await _bindBackend(backend);
       await backend.connect(config);
+      if (generation != _connectionGeneration ||
+          !identical(_activeBackend, backend)) {
+        await backend.disconnect();
+        throw const _RttConnectCancelled();
+      }
       _persistConnection(config);
       _setState(RttConnectionState.connected);
       AppLogger().info(
@@ -342,7 +361,21 @@ class RttService extends ChangeNotifier {
         category: 'RTT',
       );
       _startConnectionMonitor();
+    } on _RttConnectCancelled {
+      await _unbindBackend(disconnect: true);
+      _connectionOwners.release(ConnectionOwner.rtt);
+      _setState(RttConnectionState.disconnected);
+      rethrow;
     } catch (error, stackTrace) {
+      // disconnect() 可能在 backend.connect() 尚未返回时终止底层进程，
+      // 此时后端通常抛出进程退出或 Socket 异常。连接代次已经失效就应按
+      // 用户取消处理，不能把预期的取消显示成连接失败。
+      if (generation != _connectionGeneration) {
+        await _unbindBackend(disconnect: true);
+        _connectionOwners.release(ConnectionOwner.rtt);
+        _setState(RttConnectionState.disconnected);
+        throw const _RttConnectCancelled();
+      }
       _lastError = '$error';
       AppLogger().error(
         'RTT 连接失败: $error',
@@ -648,6 +681,8 @@ class RttService extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    // 使正在解析后端或等待探针的 connect 路径立即失效。
+    _connectionGeneration++;
     final backendName = _activeBackend?.displayName;
     AppLogger().info(
       '开始断开探针${backendName == null ? '' : '：后端=$backendName'}',
@@ -748,20 +783,53 @@ class RttService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// 完整收敛连接、订阅、后端进程和内部流。
+  ///
+  /// 窗口关闭路径必须 await 此方法；[dispose] 仅作为 Flutter 同步
+  /// 生命周期的兜底入口。
+  Future<void> shutdown() => _shutdownFuture ??= _shutdown();
+
+  Future<void> _shutdown() async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> runBestEffort(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    await runBestEffort(disconnect);
+    _connectionMonitor?.cancel();
+    _connectionMonitor = null;
+    await runBestEffort(() async => _dataSubscription?.cancel());
+    await runBestEffort(() async => _diagnosticSubscription?.cancel());
+    await runBestEffort(() async => _sampleSubscription?.cancel());
+    for (final backend in _backends) {
+      await runBestEffort(backend.dispose);
+    }
+    if (!_dataAvailableController.isClosed) {
+      await runBestEffort(_dataAvailableController.close);
+    }
+    if (!_probePlotDataController.isClosed) {
+      await runBestEffort(_probePlotDataController.close);
+    }
+    if (!_probeSamplesController.isClosed) {
+      await runBestEffort(_probeSamplesController.close);
+    }
+    _connectionOwners.release(ConnectionOwner.rtt);
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;
-    _connectionMonitor?.cancel();
-    unawaited(_dataSubscription?.cancel());
-    unawaited(_diagnosticSubscription?.cancel());
-    unawaited(_sampleSubscription?.cancel());
-    for (final backend in _backends) {
-      unawaited(backend.dispose());
-    }
-    unawaited(_dataAvailableController.close());
-    unawaited(_probePlotDataController.close());
-    unawaited(_probeSamplesController.close());
-    _connectionOwners.release(ConnectionOwner.rtt);
+    unawaited(shutdown());
     super.dispose();
   }
 }

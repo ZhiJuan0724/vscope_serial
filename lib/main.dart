@@ -1217,7 +1217,7 @@ class _WindowCloseListener extends WindowListener {
     final serialService = Provider.of<SerialService>(context, listen: false);
     final rttService = Provider.of<RttService>(context, listen: false);
     await AppSettings().flushPendingSave();
-    await rttService.disconnect();
+    await rttService.shutdown();
     await serialService.shutdown();
     await windowManager.setPreventClose(false);
     await windowManager.close();

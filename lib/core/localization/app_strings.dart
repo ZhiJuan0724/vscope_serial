@@ -43,6 +43,28 @@ final class _CommonStrings {
   String get refresh => '刷新';
   String get advancedSettings => '高级设置';
   String get shellSettings => 'Shell设置';
+  String get settingsAppearance => '外观';
+  String get settingsPerformance => '性能';
+  String get settingsText => '文字';
+  String get settingsViewport => '视口';
+  String get settingsToolbar => '工具栏';
+  String get settingsInteraction => '交互';
+  String get settingsData => '数据';
+  String get settingsNotifications => '通知';
+  String get settingsDiagnostics => '诊断';
+  String get settingsShortcuts => '快捷键';
+  String get settingsPages => '页面';
+  String get settingsProbeBackend => '探针后端';
+  String get settingsVersionRollback => '版本回退';
+  String get settingsReset => '重置设置';
+  String get settingsTextEncoding => '文本编码';
+  String get settingsAutoLineBreak => '自动换行时间';
+  String get settingsDisplayLines => '显示行数';
+  String get settingsInputAndEncoding => '输入与编码';
+  String get settingsTerminalFont => '终端字体';
+  String get settingsAppearanceAndCursor => '外观与光标';
+  String get settingsHistory => '历史记录';
+  String get settingsDisplay => '显示';
 }
 
 final class _StatusStrings {

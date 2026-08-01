@@ -9,6 +9,18 @@ import 'package:vscope_serial/data/protocol/r_protocol_codec.dart';
 
 void main() {
   group('FixedFrameParser', () {
+    test('零长度非法配置不会进入无限循环', () {
+      final config =
+          ParserConfig.fixedFrameDefault()
+            ..channelCount = 0
+            ..hasFrameHeader = false
+            ..hasFrameTail = false
+            ..hasChecksum = false;
+      final parser = FixedFrameParser(config);
+
+      expect(parser.feedBatch(Uint8List.fromList([1, 2, 3])), isEmpty);
+    });
+
     test('CRC16支持位于帧尾前', () async {
       final config = _crcConfig(ChecksumPosition.beforeFrameTail);
       final parser = FixedFrameParser(config);

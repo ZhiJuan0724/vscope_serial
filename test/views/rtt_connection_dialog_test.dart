@@ -12,6 +12,58 @@ import 'package:vscope_serial/views/dialogs/rtt_connection_dialog.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('RTT 连接过程中可以取消并关闭窗口', (tester) async {
+    final settings = AppSettings();
+    final previousKind = settings.rttProbeKind;
+    final previousBackend = settings.rttBackendSelection;
+    final previousTarget = settings.rttTarget;
+    final previousAutoDetect = settings.rttAutoDetectTarget;
+    settings
+      ..rttProbeKind = RttProbeKind.jlink.value
+      ..rttBackendSelection = RttBackendSelection.externalJlink.value
+      ..rttTarget = 'TEST'
+      ..rttAutoDetectTarget = false;
+    final backend = _DelayedConnectBackend('external-jlink');
+    final service = RttService(backends: [backend]);
+    addTearDown(() async {
+      await service.shutdown();
+      settings
+        ..rttProbeKind = previousKind
+        ..rttBackendSelection = previousBackend
+        ..rttTarget = previousTarget
+        ..rttAutoDetectTarget = previousAutoDetect;
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<RttService>.value(
+        value: service,
+        child: MaterialApp(
+          home: Builder(
+            builder:
+                (context) => TextButton(
+                  onPressed:
+                      () => showDialog<void>(
+                        context: context,
+                        builder: (_) => const RttConnectionDialog(),
+                      ),
+                  child: const Text('打开'),
+                ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('连接').last);
+    await tester.pump();
+
+    expect(find.text('取消连接'), findsOneWidget);
+    await tester.tap(find.text('取消连接'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('探针连接'), findsNothing);
+  });
+
   testWidgets('RTT 连接仅手动刷新且刷新期间仍可关闭窗口', (tester) async {
     final settings = AppSettings();
     final previousKind = settings.rttProbeKind;
@@ -577,4 +629,20 @@ class _ImmediateProbeBackend extends _TargetBackend {
       kind: RttProbeKind.jlink,
     ),
   ];
+}
+
+class _DelayedConnectBackend extends _TargetBackend {
+  _DelayedConnectBackend(super.id);
+
+  final Completer<void> _connectGate = Completer<void>();
+  int disconnectCount = 0;
+
+  @override
+  Future<void> connect(RttConnectionConfig config) => _connectGate.future;
+
+  @override
+  Future<void> disconnect() async {
+    disconnectCount++;
+    if (!_connectGate.isCompleted) _connectGate.complete();
+  }
 }

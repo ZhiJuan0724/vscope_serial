@@ -30,8 +30,23 @@ void main() {
     expect(service.startRawReceiving(), isTrue);
 
     peer.add([1, 2, 3]);
-    await _waitUntil(() => service.rawBytes.length == 3);
-    expect(service.rawBytes, [1, 2, 3]);
+    await _waitUntil(() => service.rawRetentionUsage.usedBytes == 3);
+    final exportDirectory = await Directory.systemTemp.createTemp(
+      'serial-network-raw-',
+    );
+    addTearDown(() async {
+      if (await exportDirectory.exists()) {
+        await exportDirectory.delete(recursive: true);
+      }
+    });
+    final exportPath = await service.exportAsRawBytes(
+      outputDirectory: exportDirectory,
+    );
+    expect(exportPath, isNotNull);
+    final exportedBytes = await File(exportPath!).readAsBytes();
+    // BIN 导出格式会在原始数据后追加 4 字节 CRC32。
+    expect(exportedBytes.sublist(0, 3), [1, 2, 3]);
+    expect(exportedBytes.length, 7);
 
     final outbound = peer.first;
     await service.sendRawBytes(Uint8List.fromList([4, 5]));

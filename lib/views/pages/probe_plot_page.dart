@@ -416,152 +416,167 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     _buildChannelPanel(context, vm),
                     const VerticalDivider(width: 1),
                     Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final leftAxisWidth =
-                              PlotLayerPainter.calculateLeftAxisWidth(
-                                viewport: vm.viewport,
-                                canvasHeight: constraints.maxHeight,
-                                gridDensity: vm.gridDensity,
-                                plotFontSizeDelta:
-                                    vm.plotFontSizeDelta.toDouble(),
-                                plotFontBold: vm.plotFontBold,
-                              );
-                          final renderViewport = vm.viewport.copyWith(
-                            marginLeft: leftAxisWidth,
-                          );
-                          final plotPoints = vm.points;
-                          final plotSurface =
-                              vm.pointCount == 0
-                                  ? const Center(child: Text('暂无探针采样数据'))
-                                  : Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      for (final layer in [
-                                        PlotPaintLayer.background,
-                                        PlotPaintLayer.data,
-                                        PlotPaintLayer.axis,
-                                        PlotPaintLayer.overlay,
-                                      ])
-                                        CustomPaint(
-                                          painter: PlotLayerPainter(
-                                            layer: layer,
-                                            viewport: renderViewport,
-                                            data: plotPoints,
-                                            dataRevision: vm.revision,
-                                            viewportRevision: vm.revision,
-                                            channelConfigRevision: vm.revision,
-                                            overlayRevision: vm.overlayRevision,
-                                            lodIndex: vm.lodIndex,
-                                            lodQuality: vm.lodQuality,
-                                            channels: vm.channels,
-                                            activeChannelCount:
-                                                vm.activeChannelCount,
-                                            showGrid: vm.showGrid,
-                                            gridDensity: vm.gridDensity,
-                                            backgroundStyle: vm.backgroundStyle,
-                                            floatingPanelOpacity:
-                                                vm.floatingPanelOpacity,
-                                            cursor: vm.cursor,
-                                            xCursor1: vm.xCursor1,
-                                            xCursor2: vm.xCursor2,
-                                            yCursor1: vm.yCursor1,
-                                            yCursor2: vm.yCursor2,
-                                            xMeasurementLine1Color:
-                                                vm.xMeasurementLine1Color,
-                                            xMeasurementLine2Color:
-                                                vm.xMeasurementLine2Color,
-                                            yMeasurementLine1Color:
-                                                vm.yMeasurementLine1Color,
-                                            yMeasurementLine2Color:
-                                                vm.yMeasurementLine2Color,
-                                            xMeasurementLine1Opacity:
-                                                vm.xMeasurementLine1Opacity,
-                                            xMeasurementLine2Opacity:
-                                                vm.xMeasurementLine2Opacity,
-                                            yMeasurementLine1Opacity:
-                                                vm.yMeasurementLine1Opacity,
-                                            yMeasurementLine2Opacity:
-                                                vm.yMeasurementLine2Opacity,
-                                            plotFontSizeDelta:
-                                                vm.plotFontSizeDelta,
-                                            plotFontBold: vm.plotFontBold,
-                                          ),
+                      child: ValueListenableBuilder<int>(
+                        valueListenable: vm.renderListenable,
+                        builder:
+                            (context, renderRevision, child) => LayoutBuilder(
+                              builder: (context, constraints) {
+                                final leftAxisWidth =
+                                    PlotLayerPainter.calculateLeftAxisWidth(
+                                      viewport: vm.viewport,
+                                      canvasHeight: constraints.maxHeight,
+                                      gridDensity: vm.gridDensity,
+                                      plotFontSizeDelta:
+                                          vm.plotFontSizeDelta.toDouble(),
+                                      plotFontBold: vm.plotFontBold,
+                                    );
+                                final renderViewport = vm.viewport.copyWith(
+                                  marginLeft: leftAxisWidth,
+                                );
+                                final plotPoints = vm.points;
+                                final plotSurface =
+                                    vm.pointCount == 0
+                                        ? const Center(child: Text('暂无探针采样数据'))
+                                        : Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            for (final layer in [
+                                              PlotPaintLayer.background,
+                                              PlotPaintLayer.data,
+                                              PlotPaintLayer.axis,
+                                              PlotPaintLayer.overlay,
+                                            ])
+                                              CustomPaint(
+                                                painter: PlotLayerPainter(
+                                                  layer: layer,
+                                                  viewport: renderViewport,
+                                                  data: plotPoints,
+                                                  dataRevision: vm.dataRevision,
+                                                  viewportRevision:
+                                                      vm.viewportRevision,
+                                                  channelConfigRevision:
+                                                      vm.channelConfigRevision,
+                                                  overlayRevision:
+                                                      vm.overlayRevision,
+                                                  lodIndex: vm.lodIndex,
+                                                  lodQuality: vm.lodQuality,
+                                                  channels: vm.channels,
+                                                  activeChannelCount:
+                                                      vm.activeChannelCount,
+                                                  showGrid: vm.showGrid,
+                                                  gridDensity: vm.gridDensity,
+                                                  backgroundStyle:
+                                                      vm.backgroundStyle,
+                                                  floatingPanelOpacity:
+                                                      vm.floatingPanelOpacity,
+                                                  cursor: vm.cursor,
+                                                  xCursor1: vm.xCursor1,
+                                                  xCursor2: vm.xCursor2,
+                                                  yCursor1: vm.yCursor1,
+                                                  yCursor2: vm.yCursor2,
+                                                  xMeasurementLine1Color:
+                                                      vm.xMeasurementLine1Color,
+                                                  xMeasurementLine2Color:
+                                                      vm.xMeasurementLine2Color,
+                                                  yMeasurementLine1Color:
+                                                      vm.yMeasurementLine1Color,
+                                                  yMeasurementLine2Color:
+                                                      vm.yMeasurementLine2Color,
+                                                  xMeasurementLine1Opacity:
+                                                      vm.xMeasurementLine1Opacity,
+                                                  xMeasurementLine2Opacity:
+                                                      vm.xMeasurementLine2Opacity,
+                                                  yMeasurementLine1Opacity:
+                                                      vm.yMeasurementLine1Opacity,
+                                                  yMeasurementLine2Opacity:
+                                                      vm.yMeasurementLine2Opacity,
+                                                  plotFontSizeDelta:
+                                                      vm.plotFontSizeDelta,
+                                                  plotFontBold: vm.plotFontBold,
+                                                ),
+                                              ),
+                                          ],
+                                        );
+                                return Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    PlotGestureHandler(
+                                      viewport: renderViewport,
+                                      channels: vm.channels,
+                                      activeChannelCount: vm.activeChannelCount,
+                                      data: plotPoints,
+                                      vCursorEnabled: vm.vCursorEnabled,
+                                      refreshFps: 60,
+                                      plotFontSizeDelta: vm.plotFontSizeDelta,
+                                      observations: vm.observations,
+                                      onObservationDrag: vm.updateObservation,
+                                      onObservationDelete: vm.removeObservation,
+                                      observationPlacementActive:
+                                          vm.observationPlacementActive,
+                                      onObservationPlacementHover:
+                                          vm.updateObservationPlacement,
+                                      onObservationPlacementCommit:
+                                          vm.commitObservationPlacement,
+                                      onViewportChanged: vm.updateViewport,
+                                      onCursorChanged: vm.updateCursor,
+                                      xCursor1: vm.xCursor1,
+                                      xCursor2: vm.xCursor2,
+                                      yCursor1: vm.yCursor1,
+                                      yCursor2: vm.yCursor2,
+                                      yMeasurementSnapEnabled:
+                                          vm.yMeasurementSnapEnabled,
+                                      onXCursor1Drag:
+                                          vm.xMeasurementEnabled
+                                              ? vm.setXCursor1
+                                              : null,
+                                      onXCursor2Drag:
+                                          vm.xMeasurementEnabled
+                                              ? vm.setXCursor2
+                                              : null,
+                                      onYCursor1Drag:
+                                          vm.yMeasurementEnabled
+                                              ? vm.setYCursor1
+                                              : null,
+                                      onYCursor2Drag:
+                                          vm.yMeasurementEnabled
+                                              ? vm.setYCursor2
+                                              : null,
+                                      child: plotSurface,
+                                    ),
+                                    Positioned.fill(
+                                      child: IgnorePointer(
+                                        child: LayoutBuilder(
+                                          builder:
+                                              (
+                                                context,
+                                                overlayConstraints,
+                                              ) => Stack(
+                                                children:
+                                                    _buildObservationWidgets(
+                                                      context,
+                                                      vm,
+                                                      renderViewport,
+                                                      Size(
+                                                        overlayConstraints
+                                                            .maxWidth,
+                                                        overlayConstraints
+                                                            .maxHeight,
+                                                      ),
+                                                    ),
+                                              ),
                                         ),
-                                    ],
-                                  );
-                          return Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              PlotGestureHandler(
-                                viewport: renderViewport,
-                                channels: vm.channels,
-                                activeChannelCount: vm.activeChannelCount,
-                                data: plotPoints,
-                                vCursorEnabled: vm.vCursorEnabled,
-                                refreshFps: 60,
-                                plotFontSizeDelta: vm.plotFontSizeDelta,
-                                observations: vm.observations,
-                                onObservationDrag: vm.updateObservation,
-                                onObservationDelete: vm.removeObservation,
-                                observationPlacementActive:
-                                    vm.observationPlacementActive,
-                                onObservationPlacementHover:
-                                    vm.updateObservationPlacement,
-                                onObservationPlacementCommit:
-                                    vm.commitObservationPlacement,
-                                onViewportChanged: vm.updateViewport,
-                                onCursorChanged: vm.updateCursor,
-                                xCursor1: vm.xCursor1,
-                                xCursor2: vm.xCursor2,
-                                yCursor1: vm.yCursor1,
-                                yCursor2: vm.yCursor2,
-                                yMeasurementSnapEnabled:
-                                    vm.yMeasurementSnapEnabled,
-                                onXCursor1Drag:
-                                    vm.xMeasurementEnabled
-                                        ? vm.setXCursor1
-                                        : null,
-                                onXCursor2Drag:
-                                    vm.xMeasurementEnabled
-                                        ? vm.setXCursor2
-                                        : null,
-                                onYCursor1Drag:
-                                    vm.yMeasurementEnabled
-                                        ? vm.setYCursor1
-                                        : null,
-                                onYCursor2Drag:
-                                    vm.yMeasurementEnabled
-                                        ? vm.setYCursor2
-                                        : null,
-                                child: plotSurface,
-                              ),
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: LayoutBuilder(
-                                    builder:
-                                        (context, overlayConstraints) => Stack(
-                                          children: _buildObservationWidgets(
-                                            context,
-                                            vm,
-                                            renderViewport,
-                                            Size(
-                                              overlayConstraints.maxWidth,
-                                              overlayConstraints.maxHeight,
-                                            ),
-                                          ),
-                                        ),
-                                  ),
-                                ),
-                              ),
-                              if (vm.measurementText != null)
-                                _buildMeasurementBox(context, vm),
-                              if (_legendVisible) _buildLegendBox(context, vm),
-                              if (_liveValuesVisible)
-                                _buildLiveValuesBox(context, vm),
-                            ],
-                          );
-                        },
+                                      ),
+                                    ),
+                                    if (vm.measurementText != null)
+                                      _buildMeasurementBox(context, vm),
+                                    if (_legendVisible)
+                                      _buildLegendBox(context, vm),
+                                    if (_liveValuesVisible)
+                                      _buildLiveValuesBox(context, vm),
+                                  ],
+                                );
+                              },
+                            ),
                       ),
                     ),
                   ],
@@ -1430,27 +1445,27 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                   scrollController: settingsScrollController,
                   items: [
                     SettingsNavigationItem(
-                      label: '外观',
+                      label: AppStrings.common.settingsAppearance,
                       anchorKey: appearanceSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '性能',
+                      label: AppStrings.common.settingsPerformance,
                       anchorKey: performanceSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '文字',
+                      label: AppStrings.common.settingsText,
                       anchorKey: fontSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '视口',
+                      label: AppStrings.common.settingsViewport,
                       anchorKey: viewportSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '交互',
+                      label: AppStrings.common.settingsInteraction,
                       anchorKey: interactionSectionKey,
                     ),
                     SettingsNavigationItem(
-                      label: '数据',
+                      label: AppStrings.common.settingsData,
                       anchorKey: dataSectionKey,
                     ),
                   ],

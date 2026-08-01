@@ -44,6 +44,7 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
   List<RttProbeInfo> _probes = const [];
   bool _refreshing = false;
   bool _connecting = false;
+  bool _cancellingConnection = false;
   int _refreshGeneration = 0;
   int _backendPreviewGeneration = 0;
   String? _expectedBackend;
@@ -351,9 +352,25 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       await context.read<RttService>().connect(_draftConfig());
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
-      if (mounted) setState(() => _error = _displayRttError(error));
+      if (mounted && !_cancellingConnection) {
+        setState(() => _error = _displayRttError(error));
+      }
     } finally {
       if (mounted) setState(() => _connecting = false);
+    }
+  }
+
+  Future<void> _cancelConnection() async {
+    if (!_connecting || _cancellingConnection) return;
+    setState(() => _cancellingConnection = true);
+    final service = context.read<RttService>();
+    // 连接窗口本身不应被慢速驱动枚举或外部进程退出阻塞；先响应用户关闭，
+    // 服务层继续等待后端完整收敛，并以连接代次阻止旧请求重新变为已连接。
+    Navigator.of(context).pop();
+    try {
+      await service.disconnect();
+    } catch (error) {
+      AppNotifications.show('取消连接失败：${_displayRttError(error)}');
     }
   }
 
@@ -725,8 +742,13 @@ class _RttConnectionDialogState extends State<RttConnectionDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _connecting ? null : () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          onPressed:
+              _connecting
+                  ? (_cancellingConnection ? null : _cancelConnection)
+                  : () => Navigator.of(context).pop(),
+          child: Text(
+            _connecting ? (_cancellingConnection ? '正在取消...' : '取消连接') : '关闭',
+          ),
         ),
         if (service.isConnected)
           ElevatedButton.icon(
