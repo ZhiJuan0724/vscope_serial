@@ -247,13 +247,43 @@ void main() {
 
     await tester.tap(find.byTooltip('探针绘图设置'));
     await tester.pumpAndSettle();
+    expect(find.byType(SettingsNavigationView), findsOneWidget);
+    expect(
+      tester.widget<AlertDialog>(find.byType(AlertDialog)).shape,
+      kAdvancedSettingsDialogShape,
+    );
+    for (final category in ['外观', '性能', '文字', '视口', '交互', '数据']) {
+      expect(find.text(category), findsOneWidget);
+    }
     expect(find.text('精确窗口点数上限'), findsOneWidget);
-    expect(find.text('历史内存上限'), findsOneWidget);
-    expect(find.text('绘图质量'), findsWidgets);
-    expect(find.text('悬浮窗不透明度'), findsOneWidget);
+    expect(find.text(AppStrings.plot.plotHistoryMemoryLimit), findsOneWidget);
+    expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('probe-plot-lod-quality-selector')),
+      findsOneWidget,
+    );
+    expect(find.text(AppStrings.plot.floatingPanelOpacity), findsOneWidget);
     expect(find.text('跟随位置'), findsOneWidget);
-    expect(find.text('观察先跟随鼠标再点击固定'), findsOneWidget);
-    await tester.tap(find.text('取消'));
+    expect(find.text(AppStrings.plot.observationClickToPlace), findsOneWidget);
+    for (final key in [
+      'probe-floating-panel-opacity-field',
+      'probe-follow-position-field',
+      'probe-history-memory-limit-field',
+      'probe-window-point-limit-field',
+    ]) {
+      expect(
+        tester.getSize(find.byKey(ValueKey(key))).height,
+        kSecondaryDialogControlHeight,
+      );
+    }
+    await tester.enterText(
+      find.byKey(const ValueKey('probe-floating-panel-opacity-field')),
+      '75',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.floatingPanelOpacity, 0.75);
+    await tester.tap(find.text(AppStrings.common.close));
     await tester.pumpAndSettle();
     expect(
       find.descendant(

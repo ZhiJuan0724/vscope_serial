@@ -1355,274 +1355,511 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     final followController = TextEditingController(
       text: (vm.followPositionRatio * 100).round().toString(),
     );
-    var quality = vm.lodQuality;
-    var grid = vm.showGrid;
-    var density = vm.gridDensity;
-    var background = vm.backgroundStyle;
-    var fontDelta = vm.plotFontSizeDelta;
-    var fontBold = vm.plotFontBold;
-    var clickToPlace = vm.observationClickToPlace;
+    final settingsScrollController = ScrollController();
+    final appearanceSectionKey = GlobalKey();
+    final performanceSectionKey = GlobalKey();
+    final fontSectionKey = GlobalKey();
+    final viewportSectionKey = GlobalKey();
+    final interactionSectionKey = GlobalKey();
+    final dataSectionKey = GlobalKey();
+
+    void applyWindowPointLimit(StateSetter setDialogState) {
+      final value = int.tryParse(windowController.text.trim());
+      if (value != null) vm.setWindowPointLimit(value);
+      windowController.text = vm.windowPointLimit.toString();
+      setDialogState(() {});
+    }
+
+    void applyHistoryMemoryLimit(StateSetter setDialogState) {
+      final value = int.tryParse(memoryController.text.trim());
+      if (value != null) vm.setHistoryMemoryLimitMiB(value);
+      memoryController.text = vm.historyMemoryLimitMiB.toString();
+      setDialogState(() {});
+    }
+
+    void applyFloatingPanelOpacity(StateSetter setDialogState) {
+      final percent = int.tryParse(opacityController.text.trim());
+      if (percent != null) vm.setFloatingPanelOpacity(percent / 100);
+      opacityController.text =
+          (vm.floatingPanelOpacity * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    void applyFollowPosition(StateSetter setDialogState) {
+      final percent = int.tryParse(followController.text.trim());
+      if (percent != null) vm.setFollowPositionRatio(percent / 100);
+      followController.text = (vm.followPositionRatio * 100).round().toString();
+      setDialogState(() {});
+    }
+
+    Widget buildChoiceButton({
+      required String label,
+      required bool selected,
+      required VoidCallback? onPressed,
+    }) {
+      return Expanded(
+        child: TextButton(
+          onPressed: onPressed,
+          style: TextButton.styleFrom(
+            backgroundColor:
+                selected ? Colors.blue.withValues(alpha: 0.2) : null,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            minimumSize: const Size(0, 32),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: selected ? Colors.blue : null,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
+      );
+    }
 
     await showDialog<void>(
       context: context,
       builder:
-          (dialogContext) => StatefulBuilder(
-            builder:
-                (context, setDialogState) => AlertDialog(
-                  title: const Text('探针绘图设置'),
-                  content: SizedBox(
-                    width: 460,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+          (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
+            title: Text(AppStrings.plot.advancedSettings),
+            content: StatefulBuilder(
+              builder: (context, setDialogState) {
+                return SettingsNavigationView(
+                  scrollController: settingsScrollController,
+                  items: [
+                    SettingsNavigationItem(
+                      label: '外观',
+                      anchorKey: appearanceSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: '性能',
+                      anchorKey: performanceSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: '文字',
+                      anchorKey: fontSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: '视口',
+                      anchorKey: viewportSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: '交互',
+                      anchorKey: interactionSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: '数据',
+                      anchorKey: dataSectionKey,
+                    ),
+                  ],
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        key: appearanceSectionKey,
+                        AppStrings.plot.plotBackground,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
                         children: [
-                          _ProbeSettingRow(
-                            label: '精确窗口点数上限',
-                            child: SizedBox(
-                              width: 128,
-                              child: TextField(
-                                controller: windowController,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: '点',
-                                ),
+                          buildChoiceButton(
+                            label: AppStrings.plot.plotBackgroundDark,
+                            selected:
+                                vm.backgroundStyle == PlotBackgroundStyle.dark,
+                            onPressed: () {
+                              vm.setBackgroundStyle(PlotBackgroundStyle.dark);
+                              setDialogState(() {});
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          buildChoiceButton(
+                            label: AppStrings.plot.plotBackgroundLight,
+                            selected:
+                                vm.backgroundStyle == PlotBackgroundStyle.light,
+                            onPressed: () {
+                              vm.setBackgroundStyle(PlotBackgroundStyle.light);
+                              setDialogState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text(
+                            AppStrings.plot.showGrid,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const Spacer(),
+                          Switch(
+                            value: vm.showGrid,
+                            onChanged: (value) {
+                              vm.setShowGrid(value);
+                              setDialogState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                      if (vm.showGrid) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          AppStrings.plot.gridDensity,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            for (final option in GridDensity.values) ...[
+                              if (option != GridDensity.values.first)
+                                const SizedBox(width: 8),
+                              buildChoiceButton(
+                                label: switch (option) {
+                                  GridDensity.sparse =>
+                                    AppStrings.plot.densitySparse,
+                                  GridDensity.normal =>
+                                    AppStrings.plot.densityNormal,
+                                  GridDensity.dense =>
+                                    AppStrings.plot.densityDense,
+                                },
+                                selected: vm.gridDensity == option,
+                                onPressed: () {
+                                  vm.setGridDensity(option);
+                                  setDialogState(() {});
+                                },
                               ),
-                            ),
+                            ],
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text(
+                            AppStrings.plot.floatingPanelOpacity,
+                            style: const TextStyle(fontSize: 14),
                           ),
-                          _ProbeSettingRow(
-                            label: '历史内存上限',
-                            child: SizedBox(
-                              width: 128,
-                              child: TextField(
-                                controller: memoryController,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: 'MiB',
-                                ),
+                          const Spacer(),
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              key: const ValueKey(
+                                'probe-floating-panel-opacity-field',
                               ),
-                            ),
-                          ),
-                          _ProbeSettingRow(
-                            label: '绘图质量',
-                            child: NoAnimDropdown<PlotLodQuality>(
-                              value: quality,
-                              hint: '绘图质量',
-                              items: const [
-                                DropdownMenuItem(
-                                  value: PlotLodQuality.performance,
-                                  child: Text('性能优先'),
-                                ),
-                                DropdownMenuItem(
-                                  value: PlotLodQuality.balanced,
-                                  child: Text('均衡'),
-                                ),
-                                DropdownMenuItem(
-                                  value: PlotLodQuality.quality,
-                                  child: Text('质量优先'),
-                                ),
+                              controller: opacityController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
                               ],
-                              onChanged:
-                                  (value) => setDialogState(
-                                    () => quality = value ?? quality,
-                                  ),
-                            ),
-                          ),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            title: const Text('显示网格'),
-                            value: grid,
-                            onChanged:
-                                (value) => setDialogState(() => grid = value),
-                          ),
-                          _ProbeSettingRow(
-                            label: '网格密度',
-                            child: NoAnimDropdown<GridDensity>(
-                              value: density,
-                              hint: '网格密度',
-                              items: const [
-                                DropdownMenuItem(
-                                  value: GridDensity.sparse,
-                                  child: Text('稀疏'),
-                                ),
-                                DropdownMenuItem(
-                                  value: GridDensity.normal,
-                                  child: Text('普通'),
-                                ),
-                                DropdownMenuItem(
-                                  value: GridDensity.dense,
-                                  child: Text('密集'),
-                                ),
-                              ],
-                              onChanged:
-                                  grid
-                                      ? (value) => setDialogState(
-                                        () => density = value ?? density,
-                                      )
-                                      : null,
-                            ),
-                          ),
-                          _ProbeSettingRow(
-                            label: '绘图背景',
-                            child: NoAnimDropdown<PlotBackgroundStyle>(
-                              value: background,
-                              hint: '绘图背景',
-                              items: const [
-                                DropdownMenuItem(
-                                  value: PlotBackgroundStyle.light,
-                                  child: Text('浅色'),
-                                ),
-                                DropdownMenuItem(
-                                  value: PlotBackgroundStyle.dark,
-                                  child: Text('深色'),
-                                ),
-                              ],
-                              onChanged:
-                                  (value) => setDialogState(
-                                    () => background = value ?? background,
-                                  ),
-                            ),
-                          ),
-                          _ProbeSettingRow(
-                            label: '悬浮窗不透明度',
-                            child: SizedBox(
-                              width: 92,
-                              child: TextField(
-                                controller: opacityController,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: '%',
-                                ),
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: '%',
                               ),
+                              onSubmitted:
+                                  (_) =>
+                                      applyFloatingPanelOpacity(setDialogState),
                             ),
                           ),
-                          _ProbeSettingRow(
-                            label: '绘图字体大小',
-                            child: NoAnimDropdown<int>(
-                              value: fontDelta,
-                              hint: '字体大小',
-                              items: [
-                                for (var value = -3; value <= 6; value++)
-                                  DropdownMenuItem(
-                                    value: value,
-                                    child: Text(
-                                      value == 0
-                                          ? '默认'
-                                          : value > 0
-                                          ? '+$value'
-                                          : '$value',
-                                    ),
-                                  ),
-                              ],
-                              onChanged:
-                                  (value) => setDialogState(
-                                    () => fontDelta = value ?? fontDelta,
-                                  ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed:
+                                () => applyFloatingPanelOpacity(setDialogState),
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
+                      const Divider(),
+                      Text(
+                        key: performanceSectionKey,
+                        AppStrings.plot.lodQuality,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      SegmentedButton<PlotLodQuality>(
+                        key: const ValueKey('probe-plot-lod-quality-selector'),
+                        expandedInsets: EdgeInsets.zero,
+                        segments: [
+                          ButtonSegment(
+                            value: PlotLodQuality.performance,
+                            label: Text(AppStrings.plot.lodQualityPerformance),
+                          ),
+                          ButtonSegment(
+                            value: PlotLodQuality.balanced,
+                            label: Text(AppStrings.plot.lodQualityBalanced),
+                          ),
+                          ButtonSegment(
+                            value: PlotLodQuality.quality,
+                            label: Text(AppStrings.plot.lodQualityQuality),
+                          ),
+                        ],
+                        selected: {vm.lodQuality},
+                        onSelectionChanged: (values) {
+                          vm.setLodQuality(values.first);
+                          setDialogState(() {});
+                        },
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.lodQualityHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      Text(
+                        key: fontSectionKey,
+                        AppStrings.plot.plotFontSize,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Text(
+                            vm.plotFontSizeDelta == 0
+                                ? AppStrings.plot.defaultValue
+                                : vm.plotFontSizeDelta > 0
+                                ? '+${vm.plotFontSizeDelta}'
+                                : '${vm.plotFontSizeDelta}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            title: const Text('绘图字体粗体'),
-                            value: fontBold,
-                            onChanged:
-                                (value) =>
-                                    setDialogState(() => fontBold = value),
-                          ),
-                          _ProbeSettingRow(
-                            label: '跟随位置',
-                            child: SizedBox(
-                              width: 92,
-                              child: TextField(
-                                controller: followController,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                ],
-                                decoration: secondaryDialogFieldDecoration(
-                                  suffixText: '%',
-                                ),
-                              ),
-                            ),
-                          ),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            title: const Text('观察先跟随鼠标再点击固定'),
-                            value: clickToPlace,
-                            onChanged:
-                                (value) =>
-                                    setDialogState(() => clickToPlace = value),
-                          ),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              '当前估算占用：${_formatBytes(vm.estimatedHistoryBytes)}；'
-                              '达到历史内存上限时自动停止采集并保留已有图像。',
-                              style: Theme.of(context).textTheme.bodySmall,
+                          const Spacer(),
+                          Text(
+                            AppStrings.plot.fontPreview,
+                            style: TextStyle(
+                              fontSize: _plotFontSize(vm, 14),
+                              fontFamily: 'SarasaUiSC',
+                              fontWeight:
+                                  vm.plotFontBold
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                         ],
                       ),
-                    ),
+                      Slider(
+                        value: vm.plotFontSizeDelta.toDouble(),
+                        min: -3,
+                        max: 6,
+                        divisions: 9,
+                        label:
+                            vm.plotFontSizeDelta == 0
+                                ? AppStrings.plot.defaultValue
+                                : vm.plotFontSizeDelta > 0
+                                ? '+${vm.plotFontSizeDelta}'
+                                : '${vm.plotFontSizeDelta}',
+                        onChanged: (value) {
+                          vm.setPlotFontSizeDelta(value.round());
+                          setDialogState(() {});
+                        },
+                      ),
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(AppStrings.plot.plotFontBold),
+                        value: vm.plotFontBold,
+                        onChanged: (value) {
+                          vm.setPlotFontBold(value);
+                          setDialogState(() {});
+                        },
+                      ),
+                      Text(
+                        AppStrings.plot.plotFontSizeHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      Text(
+                        key: viewportSectionKey,
+                        AppStrings.plot.followPosition,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              key: const ValueKey(
+                                'probe-follow-position-field',
+                              ),
+                              controller: followController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: '%',
+                              ),
+                              onSubmitted:
+                                  (_) => applyFollowPosition(setDialogState),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed:
+                                () => applyFollowPosition(setDialogState),
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.followPositionHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      Row(
+                        key: interactionSectionKey,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  AppStrings.plot.observationClickToPlace,
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  AppStrings.plot.observationClickToPlaceHelp,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: vm.observationClickToPlace,
+                            onChanged: (value) {
+                              vm.setObservationClickToPlace(value);
+                              setDialogState(() {});
+                            },
+                          ),
+                        ],
+                      ),
+                      const Divider(),
+                      Text(
+                        key: dataSectionKey,
+                        AppStrings.plot.plotHistoryMemoryLimit,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              key: const ValueKey(
+                                'probe-history-memory-limit-field',
+                              ),
+                              controller: memoryController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: 'MiB',
+                              ),
+                              onSubmitted:
+                                  (_) =>
+                                      applyHistoryMemoryLimit(setDialogState),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed:
+                                () => applyHistoryMemoryLimit(setDialogState),
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '范围：${ProbePlotViewModel.minHistoryMemoryLimitMiB}~'
+                        '${ProbePlotViewModel.maxHistoryMemoryLimitMiB} MiB；'
+                        '当前估算占用 ${_formatBytes(vm.estimatedHistoryBytes)}。'
+                        '达到上限时停止采集并保留已有图像。',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      const Text('精确窗口点数上限', style: TextStyle(fontSize: 14)),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: kSecondaryDialogFieldWidth,
+                            child: TextField(
+                              key: const ValueKey(
+                                'probe-window-point-limit-field',
+                              ),
+                              controller: windowController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
+                              decoration: secondaryDialogFieldDecoration(
+                                suffixText: '点',
+                              ),
+                              onSubmitted:
+                                  (_) => applyWindowPointLimit(setDialogState),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed:
+                                () => applyWindowPointLimit(setDialogState),
+                            child: Text(AppStrings.common.apply),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '范围：${ProbePlotViewModel.minWindowPointLimit}~'
+                        '${ProbePlotViewModel.maxWindowPointLimit} 点；'
+                        '仅限制主图保留的精确点窗口，LOD 历史继续保留。',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: Text(AppStrings.common.cancel),
-                    ),
-                    FilledButton(
-                      onPressed: () {
-                        vm.setWindowPointLimit(
-                          int.tryParse(windowController.text) ??
-                              vm.windowPointLimit,
-                        );
-                        vm.setHistoryMemoryLimitMiB(
-                          int.tryParse(memoryController.text) ??
-                              vm.historyMemoryLimitMiB,
-                        );
-                        vm.setLodQuality(quality);
-                        vm.setShowGrid(grid);
-                        vm.setGridDensity(density);
-                        vm.setBackgroundStyle(background);
-                        vm.setFloatingPanelOpacity(
-                          (int.tryParse(opacityController.text) ?? 90).clamp(
-                                0,
-                                100,
-                              ) /
-                              100,
-                        );
-                        vm.setPlotFontSizeDelta(fontDelta);
-                        vm.setPlotFontBold(fontBold);
-                        vm.setFollowPositionRatio(
-                          (int.tryParse(followController.text) ?? 90).clamp(
-                                50,
-                                95,
-                              ) /
-                              100,
-                        );
-                        vm.setObservationClickToPlace(clickToPlace);
-                        Navigator.of(dialogContext).pop();
-                      },
-                      child: Text(AppStrings.common.save),
-                    ),
-                  ],
-                ),
+                );
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(AppStrings.common.close),
+              ),
+            ],
           ),
     );
     windowController.dispose();
     memoryController.dispose();
     opacityController.dispose();
     followController.dispose();
+    settingsScrollController.dispose();
   }
 }
 
@@ -2327,28 +2564,6 @@ class _HssLabeledControl extends StatelessWidget {
         const SizedBox(height: 4),
         child,
       ],
-    );
-  }
-}
-
-/// 探针绘图设置中统一的“名称 + 控件”行，避免输入框和下拉框尺寸不一致。
-class _ProbeSettingRow extends StatelessWidget {
-  const _ProbeSettingRow({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Expanded(child: Text(label)),
-          const SizedBox(width: 16),
-          SizedBox(width: 170, child: child),
-        ],
-      ),
     );
   }
 }
