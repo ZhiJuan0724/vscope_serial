@@ -183,13 +183,13 @@ jobs:
           if (-not (Test-Path $updater)) {
             throw "Missing vscope_updater.exe in release bundle"
           }
-          $openOcd = "build/windows/x64/runner/Release/runtime/openocd/bin/openocd.exe"
-          if (-not (Test-Path $openOcd)) {
-            throw "Missing bundled OpenOCD runtime"
+          $openOcdArchive = "build/windows/x64/runner/Release/runtime/openocd/openocd-runtime.zip"
+          if (-not (Test-Path $openOcdArchive)) {
+            throw "Missing bundled OpenOCD archive"
           }
-          $openOcdScripts = "build/windows/x64/runner/Release/runtime/openocd/openocd/scripts"
-          if (-not (Test-Path $openOcdScripts)) {
-            throw "Missing bundled OpenOCD scripts"
+          $openOcdManifest = "build/windows/x64/runner/Release/runtime/openocd/openocd-runtime.json"
+          if (-not (Test-Path $openOcdManifest)) {
+            throw "Missing bundled OpenOCD manifest"
           }
 
       - name: Package Windows bundle

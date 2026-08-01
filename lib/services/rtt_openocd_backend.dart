@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import '../data/models/probe_plot_config.dart';
 import '../data/models/probe_connection_config.dart';
+import 'bundled_openocd_runtime.dart';
 import 'elf_symbol_reader.dart';
 import 'probe_backend.dart';
 import 'rtt_process_backend_base.dart';
@@ -570,12 +572,12 @@ Future<String?> findOpenOcdConfigDirectory(
   String category,
 ) async {
   final executable = await findOpenOcdExecutable(configuredPath);
-  return _findOpenOcdConfigDirectoryForExecutable(executable, category);
+  return findOpenOcdConfigDirectoryForExecutable(executable, category);
 }
 
 Future<String?> findBundledOpenOcdConfigDirectory(String category) async {
   final executable = await findBundledOpenOcdExecutable();
-  return _findOpenOcdConfigDirectoryForExecutable(executable, category);
+  return findOpenOcdConfigDirectoryForExecutable(executable, category);
 }
 
 Future<String?> findExternalOpenOcdConfigDirectory(
@@ -583,10 +585,12 @@ Future<String?> findExternalOpenOcdConfigDirectory(
   String category,
 ) async {
   final executable = await findExternalOpenOcdExecutable(configuredPath);
-  return _findOpenOcdConfigDirectoryForExecutable(executable, category);
+  return findOpenOcdConfigDirectoryForExecutable(executable, category);
 }
 
-Future<String?> _findOpenOcdConfigDirectoryForExecutable(
+/// 从实际 OpenOCD 可执行文件反查 interface 或 target 配置目录。
+@visibleForTesting
+Future<String?> findOpenOcdConfigDirectoryForExecutable(
   String? executable,
   String category,
 ) async {
@@ -626,6 +630,8 @@ Future<String?> findOpenOcdExecutable(String configuredPath) async {
 }
 
 Future<String?> findBundledOpenOcdExecutable() async {
+  final prepared = await BundledOpenOcdRuntime().ensureReady();
+  if (prepared != null) return prepared;
   final separator = Platform.pathSeparator;
   final executableDirectory = File(Platform.resolvedExecutable).parent.path;
   for (final candidate in [

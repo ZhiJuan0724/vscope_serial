@@ -50,6 +50,7 @@
 - 显式选择 J-Link 时切换为 J-Link 探针；选择 OpenOCD/pyOCD 时切换为 CMSIS-DAP；自动模式才允许自由选择探针类型。
 - CMSIS-DAP 自动顺序：外置 OpenOCD → 内置 OpenOCD → 外置 pyOCD。只在工具不可用或 OpenOCD 配置不完整时尝试下一项；目标连接失败、探针占用或目标错误不得静默切换。
 - J-Link 停止 RTT 时终止后端并自动重建空闲连接，期间显示“停止中”和“探针重连中”；OpenOCD 停止活动后保留空闲连接。
+- 内置 OpenOCD 以单一 ZIP 和带 SHA-256 的清单随包发布；首次使用时显示不可取消的准备窗口，在程序目录下按 OpenOCD 版本和归档哈希原子解压。配置文件选择必须从实际解压后的可执行文件定位 `interface/target`。
 
 ### 3.3 pyOCD 受限 Worker
 

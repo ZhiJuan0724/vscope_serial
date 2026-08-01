@@ -7,7 +7,11 @@
 ### 恶性bug (0)
 
 ### 紧急功能或一般bug (1)
+
 ### 功能优化 (2)
 
 ### 支持的新功能或不必须的优化 (3)
-
+1.支持TCP的shell
+2.支持SSH的shell shell界面可以选择普通或者SSH类似探针绘图的HSS|RTT 连接后修改之间显式断开 SSH使用完全独立的连接路径?(是否收益更高)
+3.新增Modbus调试页面 调试-RTU -ASCII -TCP
+4.新增Flash页面 功能类似Segger的J-Flash 支持烧写或去读芯片

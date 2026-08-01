@@ -27,7 +27,9 @@ class _RttConnectCancelled implements Exception {
 /// 显式后端会约束探针类型，防止旧设置中的类型与后端不匹配。
 ProbeConnectionConfig savedProbeConnectionConfig([AppSettings? source]) {
   final settings = source ?? AppSettings();
-  final backend = ProbeBackendSelection.fromString(settings.rttBackendSelection);
+  final backend = ProbeBackendSelection.fromString(
+    settings.rttBackendSelection,
+  );
   final savedKind = ProbeKind.fromString(settings.rttProbeKind);
   final kind = switch (backend) {
     ProbeBackendSelection.externalJlink => ProbeKind.jlink,
@@ -260,7 +262,8 @@ class ProbeConnectionService extends ChangeNotifier {
   }
 
   /// 检测设置页展示的三个后端，不触发探针连接。
-  Future<Map<String, ProbeBackendAvailability>> checkBackendAvailability() async {
+  Future<Map<String, ProbeBackendAvailability>>
+  checkBackendAvailability() async {
     final result = <String, ProbeBackendAvailability>{};
     for (final backend in _backends) {
       final kind = switch (backend.id) {

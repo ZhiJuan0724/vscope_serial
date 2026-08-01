@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -36,6 +37,16 @@ RUNTIME_FILES = (
     "openocd.exe",
     "libftdi1.dll",
     "libusb-1.0.dll",
+)
+RUNTIME_ARCHIVE = "openocd-runtime.zip"
+RUNTIME_MANIFEST = "openocd-runtime.json"
+RUNTIME_MANIFEST_SCHEMA = 1
+REQUIRED_ARCHIVE_PATHS = (
+    "bin/openocd.exe",
+    "bin/libftdi1.dll",
+    "bin/libusb-1.0.dll",
+    "openocd/scripts/interface/",
+    "openocd/scripts/target/",
 )
 
 
@@ -98,24 +109,66 @@ def prepare_runtime(source: Path, bundle: Path) -> Path:
     destination = bundle / "runtime" / "openocd"
     if destination.exists():
         shutil.rmtree(destination)
+    destination.mkdir(parents=True)
 
-    bin_dir = destination / "bin"
-    bin_dir.mkdir(parents=True)
-    for name in RUNTIME_FILES:
-        shutil.copy2(source / "bin" / name, bin_dir / name)
-
-    shutil.copytree(
-        source / "openocd" / "scripts",
-        destination / "openocd" / "scripts",
+    entries: list[tuple[Path, str]] = [
+        (source / "bin" / name, f"bin/{name}")
+        for name in RUNTIME_FILES
+    ]
+    scripts = source / "openocd" / "scripts"
+    entries.extend(
+        (path, path.relative_to(source).as_posix())
+        for path in scripts.rglob("*")
+        if path.is_file()
     )
     readme = source / "README.md"
     if readme.is_file():
-        shutil.copy2(readme, destination / "README.md")
+        entries.append((readme, "README.md"))
     licenses = source / "distro-info" / "licenses"
     if licenses.is_dir():
-        shutil.copytree(licenses, destination / "licenses")
+        entries.extend(
+            (path, f"licenses/{path.relative_to(licenses).as_posix()}")
+            for path in licenses.rglob("*")
+            if path.is_file()
+        )
 
-    print(f"[OK] 已内置轻量 OpenOCD：{destination}")
+    archive = destination / RUNTIME_ARCHIVE
+    with zipfile.ZipFile(
+        archive,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+    ) as package:
+        for path, archive_path in sorted(entries, key=lambda item: item[1]):
+            package.write(path, archive_path)
+
+    with zipfile.ZipFile(destination / RUNTIME_ARCHIVE) as package:
+        names = set(package.namelist())
+        missing = [
+            path
+            for path in REQUIRED_ARCHIVE_PATHS
+            if not any(name == path.rstrip("/") or name.startswith(path) for name in names)
+        ]
+        if missing:
+            raise RuntimeError("OpenOCD 运行时压缩包不完整：" + "，".join(missing))
+
+    archive = destination / RUNTIME_ARCHIVE
+    manifest = {
+        "schemaVersion": RUNTIME_MANIFEST_SCHEMA,
+        "version": OPENOCD_VERSION,
+        "archive": RUNTIME_ARCHIVE,
+        "size": archive.stat().st_size,
+        "sha256": _sha256(archive),
+    }
+    (destination / RUNTIME_MANIFEST).write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    print(
+        f"[OK] 已打包轻量 OpenOCD：{archive} "
+        f"({archive.stat().st_size / 1024 / 1024:.2f} MiB)"
+    )
     return destination
 
 

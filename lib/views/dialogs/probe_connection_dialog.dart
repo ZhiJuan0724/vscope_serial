@@ -145,11 +145,13 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       _expectedBackendError = null;
     });
     try {
-      final name = await context.read<ProbeConnectionService>().expectedBackendName(
-        kind,
-        backend: backend,
-        connectionConfig: _draftConfig(),
-      );
+      final name = await context
+          .read<ProbeConnectionService>()
+          .expectedBackendName(
+            kind,
+            backend: backend,
+            connectionConfig: _draftConfig(),
+          );
       if (!mounted ||
           generation != _backendPreviewGeneration ||
           kind != _kind ||
@@ -247,44 +249,48 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     required String category,
     required TextEditingController controller,
   }) async {
-    final configuredPath = AppSettings().rttOpenocdExecutablePath;
-    final directoryResolver = widget.openOcdConfigDirectoryResolver;
-    var initialDirectory =
-        directoryResolver != null
-            ? await directoryResolver(configuredPath, category)
-            : _backend == ProbeBackendSelection.bundledOpenocd
-            ? await findBundledOpenOcdConfigDirectory(category)
-            : _backend == ProbeBackendSelection.automatic
-            ? await findOpenOcdConfigDirectory(configuredPath, category)
-            : await findExternalOpenOcdConfigDirectory(
-              configuredPath,
-              category,
-            );
-    if (initialDirectory == null) {
-      final currentFile = File(controller.text.trim());
-      if (currentFile.isAbsolute && await currentFile.parent.exists()) {
-        initialDirectory = currentFile.parent.absolute.path;
+    try {
+      final configuredPath = AppSettings().rttOpenocdExecutablePath;
+      final directoryResolver = widget.openOcdConfigDirectoryResolver;
+      var initialDirectory =
+          directoryResolver != null
+              ? await directoryResolver(configuredPath, category)
+              : _backend == ProbeBackendSelection.bundledOpenocd
+              ? await findBundledOpenOcdConfigDirectory(category)
+              : _backend == ProbeBackendSelection.automatic
+              ? await findOpenOcdConfigDirectory(configuredPath, category)
+              : await findExternalOpenOcdConfigDirectory(
+                configuredPath,
+                category,
+              );
+      if (initialDirectory == null) {
+        final currentFile = File(controller.text.trim());
+        if (currentFile.isAbsolute && await currentFile.parent.exists()) {
+          initialDirectory = currentFile.parent.absolute.path;
+        }
       }
+      if (!mounted) return;
+      final picker = widget.openOcdConfigFilePicker;
+      final path =
+          picker != null
+              ? await picker(dialogTitle, initialDirectory)
+              : (await FilePicker.pickFiles(
+                dialogTitle: dialogTitle,
+                initialDirectory: initialDirectory,
+                type: FileType.custom,
+                allowedExtensions: const ['cfg'],
+                allowMultiple: false,
+                lockParentWindow: true,
+              ))?.files.single.path;
+      if (!mounted || path == null || path.trim().isEmpty) return;
+      setState(() {
+        controller.text = path;
+        _error = null;
+      });
+      unawaited(_updateExpectedBackend());
+    } catch (error) {
+      if (mounted) setState(() => _error = _displayRttError(error));
     }
-    if (!mounted) return;
-    final picker = widget.openOcdConfigFilePicker;
-    final path =
-        picker != null
-            ? await picker(dialogTitle, initialDirectory)
-            : (await FilePicker.pickFiles(
-              dialogTitle: dialogTitle,
-              initialDirectory: initialDirectory,
-              type: FileType.custom,
-              allowedExtensions: const ['cfg'],
-              allowMultiple: false,
-              lockParentWindow: true,
-            ))?.files.single.path;
-    if (!mounted || path == null || path.trim().isEmpty) return;
-    setState(() {
-      controller.text = path;
-      _error = null;
-    });
-    unawaited(_updateExpectedBackend());
   }
 
   Widget _buildOpenOcdConfigField({
@@ -414,13 +420,15 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                               _refreshGeneration++;
                               _refreshing = false;
                               _backend = value;
-                              if (value == ProbeBackendSelection.externalJlink) {
+                              if (value ==
+                                  ProbeBackendSelection.externalJlink) {
                                 _kind = ProbeKind.jlink;
                               } else if (value ==
                                       ProbeBackendSelection.bundledOpenocd ||
                                   value ==
                                       ProbeBackendSelection.externalOpenocd ||
-                                  value == ProbeBackendSelection.externalPyocd) {
+                                  value ==
+                                      ProbeBackendSelection.externalPyocd) {
                                 _kind = ProbeKind.cmsisDap;
                               }
                               _probeId = '';
@@ -466,7 +474,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                       _backend,
                                       value,
                                     )) {
-                                      _backend = ProbeBackendSelection.automatic;
+                                      _backend =
+                                          ProbeBackendSelection.automatic;
                                     }
                                     _probeId = '';
                                     _probes = const [];

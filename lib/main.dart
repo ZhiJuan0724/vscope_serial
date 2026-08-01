@@ -18,6 +18,7 @@ import 'data/models/main_page_policy.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
+import 'services/bundled_openocd_runtime.dart';
 import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
 import 'services/native_serial_reader.dart';
@@ -38,6 +39,7 @@ import 'views/pages/raw_data_page.dart';
 import 'views/pages/rtt_page.dart';
 import 'views/pages/shell_page.dart';
 import 'views/widgets/app_icon.dart';
+import 'views/widgets/openocd_runtime_preparation_overlay.dart';
 import 'views/widgets/status_bar.dart';
 
 void main() async {
@@ -131,6 +133,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: connectionService),
+        ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(connectionService),
@@ -153,6 +156,13 @@ class MyApp extends StatelessWidget {
         scaffoldMessengerKey: AppNotifications.scaffoldMessengerKey,
         theme: AppTheme.buildLightTheme(),
         home: const MainFrame(),
+        builder:
+            (context, child) => Stack(
+              children: [
+                if (child != null) child,
+                const OpenOcdRuntimePreparationOverlay(),
+              ],
+            ),
       ),
     );
   }

@@ -146,7 +146,10 @@ void main() {
       ..rttViewerPollingIntervalMs = 25
       ..probeRttPollingIntervalMs = 40;
     final backend = _FakeBackend('external-openocd');
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
     addTearDown(() async {
       settings
         ..rttViewerPollingIntervalMs = previousViewerInterval
@@ -172,7 +175,10 @@ void main() {
 
   test('CMSIS-DAP 自动模式在 OpenOCD 配置不完整时拒绝连接', () async {
     final openocd = _FakeBackend('external-openocd');
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [openocd]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [openocd],
+    );
 
     await expectLater(
       service.connect(_config(kind: ProbeKind.cmsisDap)),
@@ -188,7 +194,10 @@ void main() {
       'external-jlink',
       connectError: StateError('目标错误'),
     );
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [external]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [external],
+    );
     await expectLater(service.connect(_config()), throwsStateError);
 
     expect(external.connectCount, 1);
@@ -199,7 +208,10 @@ void main() {
   test('连接中断开按取消收敛且不记录连接失败', () async {
     final connectGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', connectGate: connectGate);
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
 
     final connecting = service.connect(
       _config(backend: ProbeBackendSelection.externalJlink),
@@ -219,7 +231,10 @@ void main() {
   test('shutdown 等待后端异步释放完成', () async {
     final disposeGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', disposeGate: disposeGate);
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
     var completed = false;
 
     final shutdown = service.shutdown().then((_) => completed = true);
@@ -235,7 +250,10 @@ void main() {
 
   test('显式选择不能保证非侵入式访问的后端时在连接前拒绝', () async {
     final unsafe = _FakeBackend('external-jlink', nonIntrusive: false);
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [unsafe]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [unsafe],
+    );
 
     await expectLater(
       service.connect(_config(backend: ProbeBackendSelection.externalJlink)),
@@ -289,7 +307,10 @@ void main() {
 
   test('运行中后端断线会停止活动、清理连接并释放占用', () async {
     final external = _FakeBackend('external-jlink');
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [external]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [external],
+    );
     await service.connect(_config());
     await service.startRttViewer();
 
@@ -341,7 +362,9 @@ void main() {
       receiveQueue: RttReceiveQueue(maxBytes: 4),
       backends: [external, _FakeBackend('external-openocd', available: false)],
     );
-    await service.connect(_config(backend: ProbeBackendSelection.externalJlink));
+    await service.connect(
+      _config(backend: ProbeBackendSelection.externalJlink),
+    );
     await service.startRttViewer();
 
     external.addData([1, 2, 3, 4, 5]);
@@ -395,9 +418,14 @@ void main() {
   test('J-Link 停止时进入重连状态，完成后恢复空闲连接', () async {
     final stopGate = Completer<void>();
     final backend = _FakeBackend('external-jlink', stopGate: stopGate);
-    final service = ProbeConnectionService(connectionOwners: owners, backends: [backend]);
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
 
-    await service.connect(_config(backend: ProbeBackendSelection.externalJlink));
+    await service.connect(
+      _config(backend: ProbeBackendSelection.externalJlink),
+    );
     await service.startRttViewer();
     final stopping = service.stopActivity();
     await Future<void>.delayed(Duration.zero);

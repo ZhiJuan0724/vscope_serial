@@ -433,7 +433,9 @@ void main() {
         ..rttOpenocdTargetConfig = previousTargetConfig;
     });
 
-    final service = ProbeConnectionService(backends: [_TargetBackend('external-openocd')]);
+    final service = ProbeConnectionService(
+      backends: [_TargetBackend('external-openocd')],
+    );
     addTearDown(service.dispose);
     const interfacePath = r'C:\OpenOCD\scripts\interface\cmsis-dap.cfg';
     const targetPath = r'C:\OpenOCD\scripts\target\stm32f4x.cfg';
@@ -623,11 +625,7 @@ class _ImmediateProbeBackend extends _TargetBackend {
 
   @override
   Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [
-    ProbeInfo(
-      id: 'JLINK-A',
-      name: 'J-Link Probe A',
-      kind: ProbeKind.jlink,
-    ),
+    ProbeInfo(id: 'JLINK-A', name: 'J-Link Probe A', kind: ProbeKind.jlink),
   ];
 }
 

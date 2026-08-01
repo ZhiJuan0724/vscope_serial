@@ -53,7 +53,9 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
     service.selectSerialProfile(widget.pageId, notify: false);
     // 打开弹窗时自动刷新串口列表
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(context.read<DataConnectionService>().refreshConnectionStatus());
+      unawaited(
+        context.read<DataConnectionService>().refreshConnectionStatus(),
+      );
     });
   }
 

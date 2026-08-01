@@ -60,7 +60,7 @@ python tools/generate_update_assets.py `
 
 ## `prepare_openocd_runtime.py`
 
-为 bundle 准备固定版本的 xPack OpenOCD。默认下载项目锁定版本并校验 SHA-256，只复制运行所需的程序、DLL、scripts 和许可证。
+为 bundle 准备固定版本的 xPack OpenOCD。默认下载项目锁定版本并校验 SHA-256，将所需程序、DLL、scripts 和许可证压缩为单个 `openocd-runtime.zip`，同时生成包含版本、大小和 SHA-256 的 `openocd-runtime.json`。
 
 ```powershell
 python tools/prepare_openocd_runtime.py `
@@ -71,6 +71,8 @@ python tools/prepare_openocd_runtime.py `
 
 - `--source`：使用已解压的本地 xPack OpenOCD 根目录，不执行下载。
 - `--cache`：指定下载缓存目录。
+
+应用首次使用内置 OpenOCD 时，会校验清单并解压到发布目录的 `runtime/openocd/extracted/<OpenOCD版本-归档哈希>/`。解压使用临时目录和原子切换，不依赖外部 7-Zip。
 
 更新 OpenOCD 版本时必须同时更新版本号、下载地址、SHA-256、运行文件清单和第三方许可说明，并验证本地与 CI 打包。
 

@@ -174,7 +174,7 @@ flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METR
 | `analyze_crash_dump.ps1` | 检查 Windows minidump、日志和 PDB 是否完整匹配，调用 CDB 生成中文分析报告 |
 | `build_release.py` | 清理旧产物，执行检查、测试和全新 Windows Release 构建，打包运行时、许可证、更新资产、便携包和符号包 |
 | `generate_update_assets.py` | 从 Release bundle 生成便携 ZIP、`app-files.json` 和带大小/SHA-256 的更新清单 |
-| `prepare_openocd_runtime.py` | 下载并校验固定版本的 xPack OpenOCD，提取最小运行时、脚本和许可证 |
+| `prepare_openocd_runtime.py` | 下载并校验固定版本的 xPack OpenOCD，将最小运行时、脚本和许可证打包为单一 ZIP 和校验清单 |
 
 具体参数和操作流程见 [tools/README.md](tools/README.md)，本文不重复。新增或修改工具时必须同步更新该文档。
 
@@ -199,7 +199,7 @@ python tools/build_release.py --version 1.0.7-beta.5
 
 - 清理旧发布目录和 Windows 构建树。
 - 执行检查、测试和 Windows Release 构建。
-- 复制应用、原生 DLL、VC++ 运行时和内置 OpenOCD。
+- 复制应用、原生 DLL、VC++ 运行时，并生成内置 OpenOCD 压缩运行时和校验清单。
 - 收集第三方许可证并生成 `THIRD_PARTY_NOTICES`。
 - 生成更新资产和便携 ZIP。
 - 排除 `.lib`、`.exp`、`.pdb` 等中间文件；PDB 单独归档为匹配版本的符号包。

@@ -150,7 +150,11 @@ class ProbeInfo {
 }
 
 class ProbeTargetInfo {
-  const ProbeTargetInfo({required this.name, this.vendor = '', this.source = ''});
+  const ProbeTargetInfo({
+    required this.name,
+    this.vendor = '',
+    this.source = '',
+  });
 
   final String name;
   final String vendor;
