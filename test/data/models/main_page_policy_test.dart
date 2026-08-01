@@ -46,7 +46,7 @@ void main() {
         'shell',
         DataConnectionType.tcpClient,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       MainPagePolicy.supportsDataConnection('plot', DataConnectionType.udp),
