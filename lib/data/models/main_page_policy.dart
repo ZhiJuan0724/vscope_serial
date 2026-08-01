@@ -9,6 +9,7 @@ abstract final class MainPagePolicy {
     'rtt',
     'probePlot',
     'modbus',
+    'flash',
   ];
 
   static bool supportsDataConnection(String pageId, DataConnectionType type) =>

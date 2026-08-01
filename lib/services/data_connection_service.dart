@@ -172,7 +172,8 @@ class DataConnectionService extends ChangeNotifier {
     final port = config.port;
     return port != null &&
         port.isNotEmpty &&
-        _connectionOwners.owner != ConnectionOwner.probe &&
+        (_connectionOwners.owner == ConnectionOwner.none ||
+            _connectionOwners.owner == ConnectionOwner.data) &&
         !isRefreshingPorts &&
         !isPortUnavailable(port);
   }

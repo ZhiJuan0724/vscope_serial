@@ -100,6 +100,17 @@ flowchart LR
 
 页面入口按连接类型限制：串口可进入数据收发、Shell、绘图和Modbus；TCP客户端可进入数据收发、Shell、绘图和Modbus；UDP可进入数据收发和绘图；TCP服务端只进入数据收发。SSH使用独立加密会话，但仍与数据连接和探针连接共享全局连接所有权。
 
+Flash编程使用单独的高权限流向，不经过探针监控服务：
+
+```mermaid
+flowchart LR
+    flashPage["Flash 页面 / 二次确认"] --> flashService["FlashProgrammingService / programming 所有权"]
+    flashService --> jlinkBackend["独立 J-Link Commander 进程"] --> target["目标芯片"]
+    flashService --> openocdBackend["独立 OpenOCD 进程 / Tcl"] --> target
+```
+
+`FlashProgrammingService`存在期间只能停留在Flash页面；RTT Viewer、RTT绘图和HSS仍只使用独立的非侵入式探针会话。
+
 随机源不建立外部连接，只模拟绘图接收数据：
 
 ```mermaid
