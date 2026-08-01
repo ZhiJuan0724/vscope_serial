@@ -59,5 +59,16 @@ void main() {
       ),
       isFalse,
     );
+    expect(
+      MainPagePolicy.supportsDataConnection(
+        'modbus',
+        DataConnectionType.tcpClient,
+      ),
+      isTrue,
+    );
+    expect(
+      MainPagePolicy.supportsDataConnection('modbus', DataConnectionType.udp),
+      isFalse,
+    );
   });
 }

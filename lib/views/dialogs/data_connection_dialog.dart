@@ -96,11 +96,16 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                     ),
                     items:
                         [
-                              DataConnectionType.serial,
-                              DataConnectionType.tcpClient,
+                              if (widget.pageId != 'modbus' ||
+                                  AppSettings().modbusMode != 'tcp')
+                                DataConnectionType.serial,
+                              if (widget.pageId != 'modbus' ||
+                                  AppSettings().modbusMode == 'tcp')
+                                DataConnectionType.tcpClient,
                               if (widget.pageId == 'rawData')
                                 DataConnectionType.tcpServer,
-                              if (widget.pageId != 'shell')
+                              if (widget.pageId != 'shell' &&
+                                  widget.pageId != 'modbus')
                                 DataConnectionType.udp,
                             ]
                             .map(

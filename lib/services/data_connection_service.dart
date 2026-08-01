@@ -32,7 +32,7 @@ enum SendDisplaySource { user, plot }
 ///
 /// 同一时刻只能有一个页面消费串口数据，避免数据收发、Shell 与绘图
 /// 在切换页面后继续并行运行或争抢同一批字节。
-enum DataActivityOwner { none, rawData, shell, plot }
+enum DataActivityOwner { none, rawData, shell, plot, modbus }
 
 typedef ExportProgressCallback = void Function(double progress);
 
@@ -218,6 +218,12 @@ class DataConnectionService extends ChangeNotifier {
   // 数据流
   final _dataController = StreamController<DataPacket>.broadcast();
   Stream<DataPacket> get dataStream => _dataController.stream;
+
+  /// Modbus 使用独立字节流，避免协议解析器与绘图或终端争抢同一批数据。
+  final _modbusDataController = StreamController<DataPacket>.broadcast();
+  Stream<DataPacket> get modbusDataStream => _modbusDataController.stream;
+  final _disconnectController = StreamController<void>.broadcast();
+  Stream<void> get disconnectStream => _disconnectController.stream;
 
   late final ShellSession _shellSession = ShellSession(
     sendBytes: sendRawBytes,
@@ -883,6 +889,7 @@ class DataConnectionService extends ChangeNotifier {
     _dataSubscription = null;
     _errorSubscription = null;
     isConnected = false;
+    _disconnectController.add(null);
     _connectionOwners.release(ConnectionOwner.data);
     _releaseAllActivities();
     _notifyListenersSoon();
@@ -944,6 +951,11 @@ class DataConnectionService extends ChangeNotifier {
 
     if (owner == DataActivityOwner.plot) {
       _dataController.add(packet);
+      return;
+    }
+
+    if (owner == DataActivityOwner.modbus) {
+      _modbusDataController.add(packet);
       return;
     }
 
@@ -1583,17 +1595,20 @@ class DataConnectionService extends ChangeNotifier {
     _portChangeDebounce?.cancel();
     _portChangeDebounce = null;
     unawaited(
-      _connectionCoordinator.shutdown(() async {
-        await _cleanupPortLocked();
-        await _portMonitorSubscription?.cancel();
-        _portMonitorSubscription = null;
-        _portMonitor?.dispose();
-        _portMonitor = null;
-      }),
+      _connectionCoordinator
+          .shutdown(() async {
+            await _cleanupPortLocked();
+            await _portMonitorSubscription?.cancel();
+            _portMonitorSubscription = null;
+            _portMonitor?.dispose();
+            _portMonitor = null;
+          })
+          .whenComplete(_disconnectController.close),
     );
     isConnected = false;
     unawaited(_shellSession.dispose());
     _dataController.close();
+    _modbusDataController.close();
     super.dispose();
   }
 }
