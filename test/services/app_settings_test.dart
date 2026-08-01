@@ -89,8 +89,6 @@ void main() {
             ..crashDumpEnabled = false
             ..rawDataDisplayLineLimit = 500
             ..rawDataAutoLineBreakIntervalMs = 250
-            ..rawDataShellMode = true
-            ..rawDataShellEnabled = true
             ..rawDataShellInputMode = 'key'
             ..rawDataTerminalFontSize = 20
             ..rawDataTerminalFontFamily = 'Courier New'
@@ -102,7 +100,6 @@ void main() {
             ..shellScrollbackLines = 50000
             ..ymodemSaveDirectoryPolicy = 'custom'
             ..rawMultiSendProfileId = 'multi-send'
-            ..rttPageEnabled = true
             ..rttBackendSelection = 'external-openocd'
             ..rttJlinkExecutablePath = 'jlink.exe'
             ..rttOpenocdExecutablePath = 'openocd.exe'
@@ -211,8 +208,6 @@ void main() {
       expect(settings.crashDumpEnabled, isTrue);
       expect(settings.rawDataDisplayLineLimit, 100000);
       expect(settings.rawDataAutoLineBreakIntervalMs, 100);
-      expect(settings.rawDataShellMode, isFalse);
-      expect(settings.rawDataShellEnabled, isFalse);
       expect(settings.rawDataShellInputMode, 'line');
       expect(settings.rawDataTerminalFontSize, 13);
       expect(settings.rawDataTerminalFontFamily, 'Consolas');
@@ -224,7 +219,6 @@ void main() {
       expect(settings.shellScrollbackLines, 10000);
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
       expect(settings.rawMultiSendProfileId, isEmpty);
-      expect(settings.rttPageEnabled, isFalse);
       expect(settings.rttBackendSelection, 'automatic');
       expect(settings.rttJlinkExecutablePath, isEmpty);
       expect(settings.rttOpenocdExecutablePath, isEmpty);
@@ -405,7 +399,6 @@ void main() {
 
     test('RTT 设置可保存并从严格校验的快照恢复', () async {
       settings
-        ..rttPageEnabled = true
         ..rttBackendSelection = 'bundled-openocd'
         ..rttOpenocdExecutablePath = 'openocd.exe'
         ..rttPyocdPythonPath = 'python.exe'
@@ -429,7 +422,6 @@ void main() {
       await settings.save();
       await settings.debugInitializeAt(settingsPath);
 
-      expect(settings.rttPageEnabled, isTrue);
       expect(settings.rttBackendSelection, 'bundled-openocd');
       expect(settings.rttOpenocdExecutablePath, 'openocd.exe');
       expect(settings.rttPyocdPythonPath, 'python.exe');
@@ -491,6 +483,35 @@ void main() {
 
       expect(settings.visibleMainPages, ['plot', 'rtt']);
       expect(settings.mainTabOrder, ['plot', 'rtt']);
+    });
+
+    test('旧版页面开关只用于迁移且保存后不再输出遗留字段', () async {
+      await File(settingsPath).writeAsString(
+        jsonEncode({
+          'rawDataShellMode': true,
+          'rawDataShellEnabled': true,
+          'rttPageEnabled': true,
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.visibleMainPages, [
+        'rawData',
+        'shell',
+        'plot',
+        'rtt',
+        'probePlot',
+      ]);
+      final migrated =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      final navigation =
+          (migrated['global'] as Map<String, dynamic>)['navigation']
+              as Map<String, dynamic>;
+      expect(navigation.containsKey('shellPageEnabled'), isFalse);
+      expect(navigation.containsKey('probePagesEnabled'), isFalse);
+      expect((migrated['rawData'] as Map).containsKey('legacyShell'), isFalse);
     });
 
     test('嵌套格式可严格校验并完整恢复不同功能的同名设置', () async {

@@ -19,7 +19,7 @@ class PlotProtocolInitializationResult {
 
 /// 绘图启动前协议命令的发送边界。
 ///
-/// ViewModel 提供不可变配置快照；本类负责协议编码、串口写入、日志及错误
+/// ViewModel 提供不可变配置快照；本类负责协议编码、数据连接写入、日志及错误
 /// 归一化。通用 [SerialService] 不感知 ZobowDevice 或 r 协议。
 class PlotProtocolInitializer {
   PlotProtocolInitializer(this._serialService);
@@ -30,7 +30,7 @@ class PlotProtocolInitializer {
     TConfig extends SendProtocolInitializationConfig
   >({required SendProtocol<TConfig> protocol, required TConfig config}) async {
     if (!_serialService.isConnected) {
-      final message = '${protocol.initializationName}初始化失败：串口未连接，无法发送初始化数据。';
+      final message = '${protocol.initializationName}初始化失败：数据连接未建立，无法发送初始化数据。';
       AppLogger().debug(message, category: 'PLOT');
       return PlotProtocolInitializationResult.failure(message);
     }
@@ -61,8 +61,8 @@ class PlotProtocolInitializer {
       return PlotProtocolInitializationResult.failure(message);
     } on StateError catch (error) {
       final message =
-          '${protocol.initializationName}初始化失败：串口发送失败，${error.message}。'
-          '已停止绘图并断开串口，请检查设备连接后重试。';
+          '${protocol.initializationName}初始化失败：数据连接发送失败，${error.message}。'
+          '已停止绘图并断开数据连接，请检查设备连接后重试。';
       AppLogger().error(
         '${protocol.initializationName}初始化数据发送失败: $error',
         category: 'PLOT',
@@ -71,7 +71,7 @@ class PlotProtocolInitializer {
     } catch (error) {
       final message =
           '${protocol.initializationName}初始化失败：初始化数据发送异常，$error。'
-          '已停止绘图，请检查串口连接和通道地址配置。';
+          '已停止绘图，请检查数据连接和通道地址配置。';
       AppLogger().error(
         '${protocol.initializationName}初始化数据发送失败: $error',
         category: 'PLOT',

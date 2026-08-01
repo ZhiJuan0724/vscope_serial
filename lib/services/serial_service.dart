@@ -339,7 +339,6 @@ class SerialService extends ChangeNotifier {
 
   // 显示选项
   bool autoScroll = true;
-  bool rawDataShellEnabled = false;
   RawShellInputMode rawShellInputMode = RawShellInputMode.line;
   double rawDataTerminalFontSize = 13.0;
   String rawDataTerminalFontFamily = 'Consolas';
@@ -393,7 +392,6 @@ class SerialService extends ChangeNotifier {
     _rawSession.setAutoLineBreakIntervalMs(
       settings.rawDataAutoLineBreakIntervalMs,
     );
-    rawDataShellEnabled = settings.rawDataShellEnabled;
     rawShellInputMode = RawShellInputMode.fromString(
       settings.rawDataShellInputMode,
     );
@@ -677,7 +675,7 @@ class SerialService extends ChangeNotifier {
     }
     if (!_connectionOwners.tryAcquire(ConnectionOwner.serial)) {
       isConnecting = false;
-      AppNotifications.show('RTT 已连接，请先手动断开 RTT');
+      AppNotifications.show('探针已连接，请先手动断开探针连接');
       _notifyListenersSoon();
       return;
     }
@@ -1243,20 +1241,6 @@ class SerialService extends ChangeNotifier {
     unawaited(settings.save());
     AppLogger().info('接收区最多显示 $displayLineLimit 行', category: 'DATA');
   }
-
-  void setRawDataShellEnabled(bool value) {
-    if (rawDataShellEnabled == value) return;
-    rawDataShellEnabled = value;
-    final settings = AppSettings();
-    settings.rawDataShellEnabled = value;
-    settings.rawDataShellMode = false;
-    unawaited(settings.save());
-    AppLogger().info('Shell页面${value ? '显示' : '隐藏'}', category: 'DATA');
-    _notifyListenersSoon();
-  }
-
-  /// 设置独立 Shell 标签是否显示；保留旧字段名以兼容已有配置文件。
-  void setShellEnabled(bool value) => setRawDataShellEnabled(value);
 
   void setRawShellInputMode(RawShellInputMode value) {
     if (rawShellInputMode == value) return;

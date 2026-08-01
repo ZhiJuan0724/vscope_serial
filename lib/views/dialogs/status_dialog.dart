@@ -10,7 +10,7 @@ import '../../services/app_settings.dart';
 import '../../services/serial_service.dart';
 import '../widgets/common_widgets.dart';
 
-/// 打开串口连接配置窗口，供状态栏和主窗口快捷键共用。
+/// 打开数据连接配置窗口，供状态栏和主窗口快捷键共用。
 Future<void> showSerialConnectionDialog(
   BuildContext context, {
   String pageId = 'rawData',
@@ -21,8 +21,7 @@ Future<void> showSerialConnectionDialog(
   );
 }
 
-/// 状态栏点击弹出的连接修改对话框
-/// 串口连接配置和端口刷新窗口。
+/// 状态栏点击弹出的数据连接配置窗口。
 ///
 /// 默认只显示 COM 号；用户主动勾选详细信息后才在后台查询设备友好名称。
 class StatusDialog extends StatefulWidget {
@@ -77,7 +76,7 @@ class _StatusDialogState extends State<StatusDialog> {
             }.toList();
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          title: Text(AppStrings.serial.connectionTitle),
+          title: const Text('连接配置'),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(
             key: const ValueKey('serial-dialog-content'),

@@ -265,12 +265,6 @@ class AppSettings {
   /// 数据收发自动换行时间，单位毫秒。
   int rawDataAutoLineBreakIntervalMs = 100;
 
-  /// 旧版数据收发页面 Shell 模式开关，仅用于读取历史配置。
-  bool rawDataShellMode = false;
-
-  /// 是否显示独立 Shell 页面标签。
-  bool rawDataShellEnabled = false;
-
   /// Shell 输入模式：line / key。
   String rawDataShellInputMode = 'line';
 
@@ -308,9 +302,6 @@ class AppSettings {
   String rawMultiSendProfileId = '';
 
   // ========== RTT 设置 ==========
-  /// 是否显示 RTT Viewer 与探针绘图页面；默认隐藏。
-  bool rttPageEnabled = false;
-
   /// 上次在探针连接窗口选择的后端。
   String rttBackendSelection = 'automatic';
   String rttJlinkExecutablePath = '';
@@ -484,8 +475,6 @@ class AppSettings {
 
     rawDataDisplayLineLimit = 100000;
     rawDataAutoLineBreakIntervalMs = 100;
-    rawDataShellMode = false;
-    rawDataShellEnabled = false;
     rawDataShellInputMode = 'line';
     rawDataTerminalFontSize = 13.0;
     rawDataTerminalFontFamily = 'Consolas';
@@ -498,7 +487,6 @@ class AppSettings {
     ymodemSaveDirectoryPolicy = 'exports';
     rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
-    rttPageEnabled = false;
     rttBackendSelection = 'automatic';
     rttJlinkExecutablePath = '';
     rttOpenocdExecutablePath = '';
@@ -828,12 +816,6 @@ class AppSettings {
           ((json['rawDataAutoLineBreakIntervalMs'] as num?)?.toInt() ?? 100)
               .clamp(1, 10000)
               .toInt();
-      rawDataShellMode = json['rawDataShellMode'] as bool? ?? false;
-      rawDataShellEnabled =
-          json['shellEnabled'] as bool? ??
-          json['rawDataShellEnabled'] as bool? ??
-          false;
-      if (!rawDataShellEnabled) rawDataShellMode = false;
       rawDataShellInputMode =
           (json['rawDataShellInputMode'] as String?) == 'key' ? 'key' : 'line';
       rawDataTerminalFontSize =
@@ -868,7 +850,6 @@ class AppSettings {
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
-      rttPageEnabled = json['rttPageEnabled'] as bool? ?? false;
       rttBackendSelection = switch (json['rttBackendSelection'] as String?) {
         'external-jlink' => 'external-jlink',
         'bundled-openocd' => 'bundled-openocd',
@@ -1300,8 +1281,6 @@ class AppSettings {
     'crashDumpEnabled': crashDumpEnabled,
     'rawDataDisplayLineLimit': rawDataDisplayLineLimit,
     'rawDataAutoLineBreakIntervalMs': rawDataAutoLineBreakIntervalMs,
-    'rawDataShellMode': rawDataShellMode,
-    'rawDataShellEnabled': rawDataShellEnabled,
     'rawDataShellInputMode': rawDataShellInputMode,
     'rawDataTerminalFontSize': rawDataTerminalFontSize,
     'rawDataTerminalFontFamily': rawDataTerminalFontFamily,
@@ -1314,7 +1293,6 @@ class AppSettings {
     'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
     'rawDataEncoding': rawDataEncoding,
     'rawMultiSendProfileId': rawMultiSendProfileId,
-    'rttPageEnabled': rttPageEnabled,
     'rttBackendSelection': rttBackendSelection,
     'rttJlinkExecutablePath': rttJlinkExecutablePath,
     'rttOpenocdExecutablePath': rttOpenocdExecutablePath,

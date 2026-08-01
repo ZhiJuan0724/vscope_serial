@@ -12,7 +12,7 @@ import 'package:vscope_serial/services/serial_transport.dart';
 
 void main() {
   group('PlotProtocolInitializer', () {
-    test('串口未连接时返回结构化失败结果', () async {
+    test('数据连接未建立时返回结构化失败结果', () async {
       final service = SerialService.forTesting(
         transportFactory: _RecordingTransport.new,
       );
@@ -24,7 +24,7 @@ void main() {
       );
 
       expect(result.succeeded, isFalse);
-      expect(result.failureMessage, contains('串口未连接'));
+      expect(result.failureMessage, contains('数据连接未建立'));
     });
 
     test('众邦设备初始化通过统一串口链路发送协议帧', () async {

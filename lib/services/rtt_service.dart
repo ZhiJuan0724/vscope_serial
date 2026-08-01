@@ -146,7 +146,6 @@ class RttService extends ChangeNotifier {
   int get receivedBytes => _receivedBytes;
   int get queuedBytes => _receiveQueue.queuedBytes;
   int get droppedBytes => _receiveQueue.droppedBytes;
-  bool get pageEnabled => AppSettings().rttPageEnabled;
   Stream<void> get dataAvailable => _dataAvailableController.stream;
   Stream<RttDataChunk> get probePlotData => _probePlotDataController.stream;
   Stream<ProbeSampleChunk> get probeSamples => _probeSamplesController.stream;
@@ -165,13 +164,6 @@ class RttService extends ChangeNotifier {
     if (kind != RttProbeKind.cmsisDap) return true;
     return settings.rttOpenocdInterfaceConfig.trim().isEmpty ||
         settings.rttOpenocdTargetConfig.trim().isEmpty;
-  }
-
-  void setPageEnabled(bool value) {
-    if (isConnected || AppSettings().rttPageEnabled == value) return;
-    AppSettings().rttPageEnabled = value;
-    unawaited(AppSettings().save());
-    _notify();
   }
 
   Future<List<RttProbeInfo>> listProbes(
@@ -319,7 +311,7 @@ class RttService extends ChangeNotifier {
   Future<void> connect(RttConnectionConfig config) async {
     if (isConnected || isConnecting) return;
     if (!_connectionOwners.tryAcquire(ConnectionOwner.rtt)) {
-      throw StateError('串口已连接，请先手动断开串口');
+      throw StateError('数据连接已占用连接入口，请先手动断开数据连接');
     }
     _lastError = null;
     _handlingUnexpectedDisconnect = false;

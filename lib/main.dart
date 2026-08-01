@@ -181,7 +181,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             ? savedPage
             : settings.visibleMainPages.first;
     WidgetsBinding.instance.addObserver(this);
-    // 注册窗口关闭处理：关闭前先断开串口。
+    // 注册窗口关闭处理：关闭前收敛数据连接与探针连接。
     _setupWindowCloseHandler();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_handleStartupNotices());
@@ -506,10 +506,6 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     settings
       ..visibleMainPages = visibleOrder
       ..mainTabOrder = visibleOrder;
-    // 同步遗留字段，便于旧版本读取同一份配置后仍能显示对应入口。
-    settings.rawDataShellEnabled = pages.contains('shell');
-    settings.rttPageEnabled =
-        pages.contains('rtt') || pages.contains('probePlot');
     unawaited(settings.save());
   }
 
@@ -1203,7 +1199,7 @@ class _SelectedTabShape extends ShapeBorder {
   ShapeBorder scale(double t) => this;
 }
 
-/// 窗口关闭监听器：允许窗口关闭前先断开串口。
+/// 窗口关闭监听器：允许窗口关闭前先收敛全部连接。
 class _WindowCloseListener extends WindowListener {
   final BuildContext context;
   bool _isClosing = false;

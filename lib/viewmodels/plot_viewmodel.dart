@@ -1483,7 +1483,7 @@ class PlotViewModel extends BaseViewModel {
   /// 提示场景：
   /// - 未连接串口且未使用随机源 → 提示先连接串口或启用随机源
   /// - 串口连接中 → 提示正在连接
-  /// - 串口已连接但未开始绘图 → 提示点击开始按钮
+  /// - 数据连接已建立但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
     if (_plotRetentionLimitReached && !_isPlotting && !_isStopping) {
@@ -1996,7 +1996,7 @@ class PlotViewModel extends BaseViewModel {
   /// 开始绘图
   ///
   /// 流程：
-  /// 1. 检查数据源可用性（串口已连接或随机源已启用）
+  /// 1. 检查数据源可用性（数据连接已建立或随机源已启用）
   /// 2. 清空旧数据，重置视口和光标位置
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
@@ -2072,7 +2072,8 @@ class PlotViewModel extends BaseViewModel {
   Future<bool> _preparePlotSessionStart(int generation) async {
     AppLogger().info(
       '用户请求开始绘图：接收协议=${_parserType.label}，发送协议=${effectiveSendProtocolType.label}，'
-      '串口连接=${serialService.isConnected}，随机源=$_useRandomSource，'
+      '数据连接=${serialService.isConnected}，类型=${serialService.activeConnectionType.label}，'
+      '随机源=$_useRandomSource，'
       '随机频率=${_sourceConfig.randomFrequencyHz.toInt()}Hz，丢弃前置包=$_discardInitialPacketCount',
       category: 'PLOT',
     );
@@ -2081,7 +2082,7 @@ class PlotViewModel extends BaseViewModel {
       final connected = await serialService.refreshConnectionStatus();
       if (!_isPlotSessionCurrent(generation)) return false;
       if (!connected && !_useRandomSource) {
-        const message = '检测到串口已断开，无法绘图；请重新连接串口';
+        const message = '检测到数据连接已断开，无法绘图；请重新建立连接';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
         return false;
@@ -2097,15 +2098,15 @@ class PlotViewModel extends BaseViewModel {
       _sendProtocolType = SendProtocolType.none;
       _sendProtocolConfig.type = SendProtocolType.none;
       _saveSettings();
-      showStatusMessage('随机源未连接串口，发送协议已自动切换为无');
+      showStatusMessage('随机源未建立数据连接，发送协议已自动切换为无');
     }
 
-    // 检查是否有数据源，尝试自动连接串口
+    // 检查是否有数据源，并按页面配置尝试建立数据连接。
     if (!serialService.isConnected && !_useRandomSource) {
       await _autoConnectData();
       if (!_isPlotSessionCurrent(generation)) return false;
       if (!serialService.isConnected) {
-        const message = '串口未连接，无法绘图；请连接串口或启用随机源';
+        const message = '数据连接未建立，无法绘图；请建立连接或启用随机源';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
         return false;

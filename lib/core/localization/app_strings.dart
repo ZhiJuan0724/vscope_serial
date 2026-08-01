@@ -80,7 +80,7 @@ final class _StatusStrings {
 final class _SerialStrings {
   const _SerialStrings();
 
-  String get connectionTitle => '串口连接';
+  String get connectionTitle => '连接配置';
   String get showPortDetails => '显示详细信息';
   String get selectPortHint => '选择串口';
   String get port => '串口';
