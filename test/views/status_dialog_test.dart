@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/serial_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
@@ -117,6 +118,49 @@ void main() {
       find.widgetWithText(ElevatedButton, AppStrings.serial.connect),
     );
     expect(connectButton.onPressed, isNull);
+  });
+
+  testWidgets('网络开关开启后按页面限制可选连接类型', (tester) async {
+    final settings = AppSettings()..networkConnectionsEnabled = true;
+    addTearDown(() {
+      settings
+        ..networkConnectionsEnabled = false
+        ..dataPageConnectionTypes = {}
+        ..networkPageProfiles = {};
+    });
+    await tester.binding.setSurfaceSize(const Size(900, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(body: StatusDialog(pageId: 'rawData')),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('串口').first);
+    await tester.pumpAndSettle();
+    expect(find.text('TCP 服务端'), findsOneWidget);
+    expect(find.text('UDP'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SerialService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(body: StatusDialog(pageId: 'plot')),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('串口').first);
+    await tester.pumpAndSettle();
+    expect(find.text('TCP 服务端'), findsNothing);
+    expect(find.text('TCP 客户端'), findsOneWidget);
+    expect(find.text('UDP'), findsOneWidget);
   });
 }
 

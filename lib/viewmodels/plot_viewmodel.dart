@@ -17,6 +17,7 @@ import '../core/utils/plot_value_formatter.dart';
 import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/data_source_config.dart';
+import '../data/models/data_connection_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
@@ -1489,7 +1490,7 @@ class PlotViewModel extends BaseViewModel {
       return _plotRetentionStopReason ?? '绘图历史已达到容量上限，请清空后继续';
     }
     if (serialService.isConnecting) {
-      return '正在连接串口...';
+      return '正在连接${serialService.activeConnectionType.label}...';
     }
     if (_isStarting) {
       return '正在启动绘图...';
@@ -1497,7 +1498,11 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       final sources = <String>[];
       if (serialService.isConnected) {
-        sources.add('串口 ${serialService.config.port ?? ''}'.trim());
+        sources.add(
+          '${serialService.activeConnectionType.label} '
+                  '${serialService.connectionDescription}'
+              .trim(),
+        );
       }
       if (_useRandomSource && _parserType == ParserType.fireWater) {
         sources.add('随机源 ${randomFrequency.toStringAsFixed(0)}Hz');
@@ -1509,18 +1514,18 @@ class PlotViewModel extends BaseViewModel {
     }
     if (_useRandomSource && _parserType != ParserType.fireWater) {
       if (!serialService.isConnected) {
-        return '随机源仅支持 FireWater；当前解析器需要连接串口后绘图';
+        return '随机源仅支持 FireWater；当前解析器需要连接数据源后绘图';
       }
-      return '随机源已保留；当前解析器仅使用串口数据';
+      return '随机源已保留；当前解析器仅使用外部连接数据';
     }
     if (!serialService.isConnected && !_useRandomSource) {
-      return '串口未连接，无法从串口绘图；可连接串口或启用随机源';
+      return '数据源未连接，无法绘图；可建立连接或启用随机源';
     }
     if (!serialService.isConnected && _useRandomSource) {
       return '随机源已启用，点击开始绘图';
     }
     if (serialService.isConnected) {
-      return '串口已连接，点击开始按钮开始绘图';
+      return '${serialService.activeConnectionType.label}已连接，点击开始按钮开始绘图';
     }
     return '';
   }
@@ -2097,7 +2102,7 @@ class PlotViewModel extends BaseViewModel {
 
     // 检查是否有数据源，尝试自动连接串口
     if (!serialService.isConnected && !_useRandomSource) {
-      await _autoConnectSerial();
+      await _autoConnectData();
       if (!_isPlotSessionCurrent(generation)) return false;
       if (!serialService.isConnected) {
         const message = '串口未连接，无法绘图；请连接串口或启用随机源';
@@ -2208,7 +2213,10 @@ class PlotViewModel extends BaseViewModel {
 
     // 历史端口直接尝试打开，不依赖枚举结果。部分 USB 串口驱动枚举可能很慢，
     // 但已保存端口的 CreateFile 可以在后台 isolate 中快速确认是否可用。
-    final lastPort = settings.lastPort;
+    final lastPort =
+        settings.separateSerialProfiles
+            ? serialService.config.port
+            : settings.lastPort;
     if (lastPort != null && lastPort.isNotEmpty) {
       AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
       serialService.config = serialService.config.copyWith(port: lastPort);
@@ -2243,6 +2251,24 @@ class PlotViewModel extends BaseViewModel {
     }
 
     AppLogger().warning('自动连接串口失败', category: 'PLOT');
+  }
+
+  Future<void> _autoConnectData() async {
+    final settings = AppSettings();
+    final type = settings.connectionTypeForPage('plot');
+    serialService.selectSerialProfile('plot');
+    if (type == DataConnectionType.serial) {
+      await _autoConnectSerial();
+      return;
+    }
+    showStatusMessage(
+      '正在连接${type.label}...',
+      duration: const Duration(seconds: 2),
+    );
+    await serialService.connectNetwork(
+      settings.networkConfigForPage('plot').copyWith(type: type),
+      pageId: 'plot',
+    );
   }
 
   @visibleForTesting

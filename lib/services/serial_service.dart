@@ -8,12 +8,14 @@ import 'package:flutter/material.dart';
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
 import '../data/models/data_packet.dart';
+import '../data/models/data_connection_config.dart';
 import '../data/models/retention_usage.dart';
 import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'connection_owner_service.dart';
 import 'native_serial_reader.dart';
+import 'network_transport.dart';
 import 'raw_receive_session.dart';
 import 'serial_connection_coordinator.dart';
 import 'serial_port_catalog.dart';
@@ -160,6 +162,10 @@ class SerialService extends ChangeNotifier {
 
   // 串口相关
   SerialConfig config = SerialConfig();
+  String _serialProfilePage = 'rawData';
+  DataConnectionType activeConnectionType = DataConnectionType.serial;
+  NetworkConnectionConfig? activeNetworkConfig;
+  String? activeConnectionPage;
   bool isConnected = false;
   bool isConnecting = false;
   final ConnectionOwnerService _connectionOwners = ConnectionOwnerService();
@@ -189,6 +195,26 @@ class SerialService extends ChangeNotifier {
   final SerialTransport Function() _transportFactory;
   SerialTransport? _transport;
   StreamSubscription? _nativeSubscription;
+  NetworkTransport? _networkTransport;
+  // ignore: cancel_subscriptions
+  StreamSubscription<Uint8List>? _networkSubscription;
+  // ignore: cancel_subscriptions
+  StreamSubscription<Object>? _networkErrorSubscription;
+
+  bool get isNetworkConnection =>
+      activeConnectionType != DataConnectionType.serial;
+  bool get isTcpServer => activeConnectionType == DataConnectionType.tcpServer;
+  bool get isConnectionBusy => isConnected || isConnecting;
+  bool get networkCanSend => _networkTransport?.canSend ?? false;
+  String get connectionDescription {
+    if (!isNetworkConnection) return config.port ?? '';
+    final network = activeNetworkConfig;
+    if (network == null) return activeConnectionType.label;
+    return switch (activeConnectionType) {
+      DataConnectionType.tcpServer => '${network.host}:${network.port}',
+      _ => '${network.host}:${network.port}',
+    };
+  }
 
   /// 仅测试使用：模拟原生串口打开缓慢或失败。
   Future<bool> Function(String port, int baudRate)? debugPortOpener;
@@ -362,7 +388,7 @@ class SerialService extends ChangeNotifier {
   /// 从 AppSettings 加载配置
   void loadSettings() {
     final settings = AppSettings();
-    config = settings.saveToSerialConfig();
+    config = settings.serialConfigForPage(_serialProfilePage);
     useRandomSource = settings.useRandomSource;
     _rawSession.setDisplayLineLimit(settings.rawDataDisplayLineLimit);
     _rawSession.setAutoLineBreakIntervalMs(
@@ -404,7 +430,7 @@ class SerialService extends ChangeNotifier {
   /// 保存配置到 AppSettings
   void _saveSettings() {
     final settings = AppSettings();
-    settings.loadFromSerialConfig(config);
+    settings.saveSerialConfigForPage(_serialProfilePage, config);
     settings.useRandomSource = useRandomSource;
     settings.save();
   }
@@ -534,6 +560,7 @@ class SerialService extends ChangeNotifier {
   ///
   /// 健康连接不触发端口枚举。只有句柄异常后才刷新一次目录并决定是否重连。
   Future<bool> refreshConnectionStatus({bool reconnectOnce = true}) async {
+    if (isNetworkConnection) return isConnected;
     return _connectionCoordinator.enqueue(
       () => _refreshConnectionStatusLocked(reconnectOnce: reconnectOnce),
     );
@@ -606,6 +633,29 @@ class SerialService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 更新网络连接入口并立即刷新状态栏等共享界面。
+  void setNetworkConnectionsEnabled(bool enabled) {
+    final settings = AppSettings();
+    if (settings.networkConnectionsEnabled == enabled) return;
+    settings.networkConnectionsEnabled = enabled;
+    unawaited(settings.save());
+    notifyListeners();
+  }
+
+  /// 在未连接时切换当前页面对应的串口配置。
+  void selectSerialProfile(
+    String pageId, {
+    bool notify = true,
+    bool forceReload = false,
+  }) {
+    if (isConnectionBusy) return;
+    _serialProfilePage = pageId;
+    if (forceReload || AppSettings().separateSerialProfiles) {
+      config = AppSettings().serialConfigForPage(pageId);
+    }
+    if (notify) notifyListeners();
+  }
+
   Future<void> connect() {
     return _connectionCoordinator.connect(
       onStart: () {
@@ -632,6 +682,10 @@ class SerialService extends ChangeNotifier {
       _notifyListenersSoon();
       return;
     }
+
+    activeConnectionType = DataConnectionType.serial;
+    activeNetworkConfig = null;
+    activeConnectionPage = _serialProfilePage;
 
     isConnecting = true;
     _notifyListenersSoon();
@@ -773,6 +827,80 @@ class SerialService extends ChangeNotifier {
     return _connectionCoordinator.disconnect(_disconnectLocked);
   }
 
+  /// 连接TCP客户端、TCP单客户端服务端或UDP固定远端。
+  Future<void> connectNetwork(
+    NetworkConnectionConfig networkConfig, {
+    required String pageId,
+  }) {
+    if (networkConfig.type == DataConnectionType.serial) {
+      throw ArgumentError('网络连接不能使用串口类型');
+    }
+    if (networkConfig.type == DataConnectionType.tcpServer &&
+        pageId != 'rawData') {
+      throw StateError('TCP服务端仅支持数据收发页面');
+    }
+    return _connectionCoordinator.connect(
+      onStart: () {
+        isConnecting = true;
+        _notifyListenersSoon();
+      },
+      operation:
+          (generation) =>
+              _connectNetworkLocked(generation, networkConfig, pageId),
+    );
+  }
+
+  Future<void> _connectNetworkLocked(
+    int generation,
+    NetworkConnectionConfig networkConfig,
+    String pageId,
+  ) async {
+    if (isConnected) return;
+    if (!_connectionOwners.tryAcquire(ConnectionOwner.serial)) {
+      isConnecting = false;
+      AppNotifications.show('探针已连接，请先手动断开探针');
+      _notifyListenersSoon();
+      return;
+    }
+    isConnecting = true;
+    activeConnectionType = networkConfig.type;
+    activeNetworkConfig = networkConfig;
+    activeConnectionPage = pageId;
+    _notifyListenersSoon();
+    try {
+      final transport = createNetworkTransport(networkConfig.type);
+      await transport.open(networkConfig);
+      if (!_connectionCoordinator.isCurrent(generation)) {
+        await transport.close();
+        throw const _ConnectionCancelled();
+      }
+      _networkTransport = transport;
+      _networkSubscription = transport.dataStream.listen(_onNetworkData);
+      _networkErrorSubscription = transport.errorStream.listen(
+        (error) => _handleNetworkDisconnected(error.toString()),
+      );
+      isConnected = true;
+      AppLogger().info(
+        '${networkConfig.type.label}已连接: ${networkConfig.host}:${networkConfig.port}',
+        category: 'NETWORK',
+      );
+    } on _ConnectionCancelled {
+      await _cleanupPortLocked();
+    } catch (error, stackTrace) {
+      AppLogger().error(
+        '网络连接失败: $error',
+        category: 'NETWORK',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      await _cleanupPortLocked();
+      AppNotifications.show('网络连接失败：$error');
+    } finally {
+      isConnecting = false;
+      _notifyListenersSoon();
+    }
+  }
+
   Future<void> _disconnectLocked() async {
     await _cleanupPortLocked();
     AppLogger().info('串口已断开', category: 'SERIAL');
@@ -791,14 +919,23 @@ class SerialService extends ChangeNotifier {
     final subscription = _nativeSubscription;
     _nativeSubscription = null;
     final transport = _transport;
+    final networkTransport = _networkTransport;
+    final networkSubscription = _networkSubscription;
+    final networkErrorSubscription = _networkErrorSubscription;
     _setPlotReceiveAggregation(transport, enabled: false);
     _transport = null;
+    _networkTransport = null;
+    _networkSubscription = null;
+    _networkErrorSubscription = null;
     isConnected = false;
     _connectionOwners.release(ConnectionOwner.serial);
     _releaseAllActivities();
     _notifyListenersSoon();
     await subscription?.cancel();
+    await networkSubscription?.cancel();
+    await networkErrorSubscription?.cancel();
     await transport?.close();
+    await networkTransport?.close();
     AppLogger().debug('串口清理完成', category: 'SERIAL');
   }
 
@@ -864,6 +1001,19 @@ class SerialService extends ChangeNotifier {
       _recordReceiveLog(data.length);
       _shellDataController.add(data);
     }
+  }
+
+  void _onNetworkData(Uint8List data) {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    _onNativeDataReceived(
+      NativeSerialData(data: data, monotonicUs: now, wallClockUs: now),
+    );
+  }
+
+  void _handleNetworkDisconnected(String message) {
+    AppLogger().warning(message, category: 'NETWORK');
+    unawaited(_connectionCoordinator.disconnectFromIo(_cleanupPortLocked));
+    AppNotifications.show('网络连接已断开');
   }
 
   /// 测试独立 Shell 的接收调度，不绕过活动所有权约束。
@@ -1382,10 +1532,31 @@ class SerialService extends ChangeNotifier {
 
   Future<void> _writeBytes(Uint8List data) async {
     if (!isConnected) {
-      AppLogger().warning('串口未连接，无法发送数据', category: 'SERIAL');
-      throw StateError('串口未连接');
+      AppLogger().warning('数据连接未建立，无法发送数据', category: 'DATA');
+      throw StateError('数据连接未建立');
     }
-    if (_transport != null) {
+    if (_networkTransport != null) {
+      int sent;
+      try {
+        sent = await _networkTransport!.write(data);
+      } catch (error) {
+        if (isTcpServer) {
+          throw StateError('TCP客户端已断开，发送失败');
+        }
+        _handleNetworkDisconnected('网络发送异常: $error');
+        throw StateError('网络连接已断开，发送失败');
+      }
+      if (sent != data.length) {
+        if (isTcpServer) {
+          throw StateError(networkCanSend ? 'TCP发送不完整' : 'TCP服务端尚无客户端连接');
+        }
+        _handleNetworkDisconnected(
+          '网络发送失败: expected=${data.length}, sent=$sent',
+        );
+        throw StateError('网络连接已断开，发送失败');
+      }
+      _recordSendLog(sent);
+    } else if (_transport != null) {
       final sent = await _transport!.write(data);
       if (sent != data.length) {
         _handleIoDisconnected(

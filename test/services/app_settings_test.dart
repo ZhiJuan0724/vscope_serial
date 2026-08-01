@@ -145,13 +145,7 @@ void main() {
       expect(settings.plotFontSizeDelta, 0);
       expect(settings.plotFontBold, isFalse);
       expect(settings.lastMainPage, 'rawData');
-      expect(settings.mainTabOrder, [
-        'rawData',
-        'shell',
-        'plot',
-        'rtt',
-        'probePlot',
-      ]);
+      expect(settings.mainTabOrder, ['rawData', 'plot']);
       expect(settings.maxVisiblePoints, 1000000);
       expect(settings.plotHistoryMemoryLimitGiB, 2);
       expect(settings.discardInitialPacketCount, 0);
@@ -483,6 +477,20 @@ void main() {
             as Map<String, dynamic>)['address'],
         0x20001000,
       );
+    });
+
+    test('旧版标签顺序加载后移除已关闭页面', () async {
+      await File(settingsPath).writeAsString(
+        jsonEncode({
+          'mainTabOrder': ['shell', 'plot', 'rawData', 'rtt', 'probePlot'],
+          'visibleMainPages': ['plot', 'rtt'],
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.visibleMainPages, ['plot', 'rtt']);
+      expect(settings.mainTabOrder, ['plot', 'rtt']);
     });
 
     test('嵌套格式可严格校验并完整恢复不同功能的同名设置', () async {

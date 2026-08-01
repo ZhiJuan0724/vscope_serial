@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 
 /// 当前占用应用硬件连接入口的传输类型。
 ///
-/// 串口内部仍由 `SerialActivityOwner` 区分数据收发、Shell 和绘图；这里仅
-/// 负责阻止串口与 RTT 探针同时连接，避免两个页面显示互相矛盾的连接状态。
+/// `serial`为兼容旧调用保留名称，实际代表串口/TCP/UDP数据连接；数据连接
+/// 内部仍由 `SerialActivityOwner` 区分数据收发、Shell和绘图。
 enum ConnectionOwner { none, serial, rtt }
 
 /// 应用级硬件连接所有权。

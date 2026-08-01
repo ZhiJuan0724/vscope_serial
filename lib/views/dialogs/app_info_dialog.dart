@@ -15,7 +15,6 @@ import '../../core/utils/app_logger.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
-import '../../services/connection_owner_service.dart';
 import '../../services/crash_dump_service.dart';
 import '../../services/native_serial_reader.dart';
 import '../../services/rtt_service.dart';
@@ -833,7 +832,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           subtitle: AppStrings.appInfo.rttRawHistoryMemoryLimitSummary,
           usedBytes: rttRawHistoryUsedBytes,
           limitBytes: RttConfiguration.rawHistoryLimitBytes,
-          showDivider: false,
         ),
       ],
     );
@@ -973,8 +971,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
     var crashDumpEnabled = AppSettings().crashDumpEnabled;
     var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
-    var shellEnabled = AppSettings().rawDataShellEnabled;
-    var rttEnabled = AppSettings().rttPageEnabled;
+    var networkConnectionsEnabled = AppSettings().networkConnectionsEnabled;
+    var separateSerialProfiles = AppSettings().separateSerialProfiles;
+    // 探针后端属于连接能力设置，即使当前未显示探针页面也允许预先配置。
+    const rttEnabled = true;
     var plotReceiveAggregationEnabled =
         AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
@@ -1086,7 +1086,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       settings.save();
                     },
                   ),
-                  const Divider(height: 16),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
@@ -1198,49 +1197,62 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     title: Text(
-                      AppStrings.rtt.showPage,
+                      '启用网络连接',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     subtitle: Text(
-                      AppStrings.rtt.showPageHelp,
+                      '允许数据收发和绘图使用 TCP/UDP；Shell 不受影响。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    value: rttEnabled,
+                    value: networkConnectionsEnabled,
                     onChanged:
-                        ConnectionOwnerService().owner == ConnectionOwner.rtt
+                        SerialService().isNetworkConnection &&
+                                SerialService().isConnectionBusy
                             ? null
                             : (value) {
-                              setDialogState(() => rttEnabled = value);
-                              context.read<RttService>().setPageEnabled(value);
+                              setDialogState(
+                                () => networkConnectionsEnabled = value,
+                              );
+                              SerialService().setNetworkConnectionsEnabled(
+                                value,
+                              );
                             },
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     title: Text(
-                      AppStrings.raw.enableShellEntry,
+                      '按页面独立保存串口参数',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     subtitle: Text(
-                      AppStrings.raw.enableShellEntryHelp,
+                      '关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    value: shellEnabled,
+                    value: separateSerialProfiles,
                     onChanged:
-                        SerialService().activityOwner ==
-                                SerialActivityOwner.shell
+                        SerialService().isConnectionBusy
                             ? null
                             : (value) {
-                              setDialogState(() => shellEnabled = value);
-                              SerialService().setShellEnabled(value);
+                              final settings =
+                                  AppSettings()
+                                    ..setSeparateSerialProfiles(value);
+                              setDialogState(
+                                () => separateSerialProfiles = value,
+                              );
+                              SerialService().selectSerialProfile(
+                                'rawData',
+                                forceReload: true,
+                              );
+                              unawaited(settings.save());
                             },
                   ),
                   const Divider(height: 16),
@@ -1349,8 +1361,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             crashDumpEnabled = AppSettings().crashDumpEnabled;
                             connectionShortcutsEnabled =
                                 AppSettings().connectionShortcutsEnabled;
-                            shellEnabled = AppSettings().rawDataShellEnabled;
-                            rttEnabled = AppSettings().rttPageEnabled;
+                            networkConnectionsEnabled =
+                                AppSettings().networkConnectionsEnabled;
+                            separateSerialProfiles =
+                                AppSettings().separateSerialProfiles;
                             plotReceiveAggregationEnabled =
                                 AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =
@@ -1648,7 +1662,6 @@ class _MemoryLimitRow extends StatelessWidget {
     required this.usedBytes,
     required this.limitBytes,
     this.trailing,
-    this.showDivider = true,
   });
 
   final String title;
@@ -1656,7 +1669,6 @@ class _MemoryLimitRow extends StatelessWidget {
   final int usedBytes;
   final int limitBytes;
   final Widget? trailing;
-  final bool showDivider;
 
   @override
   Widget build(BuildContext context) {
@@ -1702,7 +1714,6 @@ class _MemoryLimitRow extends StatelessWidget {
             ],
           ),
         ),
-        if (showDivider) const Divider(height: 1),
       ],
     );
   }

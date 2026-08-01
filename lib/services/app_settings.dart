@@ -8,6 +8,7 @@ import '../data/models/channel_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
+import '../data/models/data_connection_config.dart';
 import 'settings_repository.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
@@ -58,6 +59,18 @@ class AppSettings {
   /// DTR 流控开关
   bool dtr = false;
 
+  /// 是否按数据收发、Shell和绘图分别保存串口连接参数。
+  bool separateSerialProfiles = false;
+  Map<String, SerialConfig> serialPageProfiles = {};
+
+  /// 网络入口默认关闭；两个支持页面分别保存连接类型和网络参数。
+  bool networkConnectionsEnabled = false;
+  Map<String, NetworkConnectionConfig> networkPageProfiles = {};
+  Map<String, String> dataPageConnectionTypes = {};
+
+  /// 当前实际显示的主页面。新安装默认只显示数据收发和绘图。
+  List<String> visibleMainPages = const ['rawData', 'plot'];
+
   // ========== 绘图设置 ==========
   /// UI 刷新帧率 (fps)，范围 30~60
   int refreshFps = 60;
@@ -71,14 +84,8 @@ class AppSettings {
   /// 主窗口上次停留的页面。
   String lastMainPage = 'rawData';
 
-  /// 主窗口标签顺序；隐藏页面仍保留在顺序中，重新开启后恢复原位置。
-  List<String> mainTabOrder = const [
-    'rawData',
-    'shell',
-    'plot',
-    'rtt',
-    'probePlot',
-  ];
+  /// 当前开启页面的标签顺序；关闭页面不保留在此列表中。
+  List<String> mainTabOrder = const ['rawData', 'plot'];
 
   /// 绘图可导航范围上限（持久化键保持兼容）。
   int maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
@@ -384,12 +391,18 @@ class AppSettings {
     parity = 0;
     rts = false;
     dtr = false;
+    separateSerialProfiles = false;
+    serialPageProfiles = {};
+    networkConnectionsEnabled = false;
+    networkPageProfiles = {};
+    dataPageConnectionTypes = {};
+    visibleMainPages = const ['rawData', 'plot'];
 
     refreshFps = 60;
     plotFontSizeDelta = 0;
     plotFontBold = false;
     lastMainPage = 'rawData';
-    mainTabOrder = const ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
+    mainTabOrder = const ['rawData', 'plot'];
     maxVisiblePoints = PlotConfiguration.defaultVisiblePointCount;
     plotHistoryMemoryLimitGiB = PlotConfiguration.defaultHistoryMemoryLimitGiB;
     discardInitialPacketCount = 0;
@@ -562,6 +575,18 @@ class AppSettings {
       parity = json['parity'] as int? ?? 0;
       rts = json['rts'] as bool? ?? false;
       dtr = json['dtr'] as bool? ?? false;
+      separateSerialProfiles = json['separateSerialProfiles'] as bool? ?? false;
+      final globalSerial = saveToSerialConfig();
+      serialPageProfiles = _decodeSerialProfiles(
+        json['serialPageProfiles'],
+        globalSerial,
+      );
+      networkConnectionsEnabled =
+          json['networkConnectionsEnabled'] as bool? ?? false;
+      networkPageProfiles = _decodeNetworkProfiles(json['networkPageProfiles']);
+      dataPageConnectionTypes = _decodeConnectionTypes(
+        json['dataPageConnectionTypes'],
+      );
 
       // 绘图设置
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
@@ -576,16 +601,37 @@ class AppSettings {
         _ => 'rawData',
       };
       const defaultTabOrder = ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
+      final storedVisiblePages =
+          (json['visibleMainPages'] as List?)
+              ?.whereType<String>()
+              .where(defaultTabOrder.contains)
+              .toSet()
+              .toList();
+      if (storedVisiblePages != null && storedVisiblePages.isNotEmpty) {
+        visibleMainPages = storedVisiblePages;
+      } else if (json.containsKey('rawDataShellEnabled') ||
+          json.containsKey('rttPageEnabled')) {
+        visibleMainPages = [
+          'rawData',
+          if (json['rawDataShellEnabled'] == true) 'shell',
+          'plot',
+          if (json['rttPageEnabled'] == true) ...['rtt', 'probePlot'],
+        ];
+      } else {
+        visibleMainPages = const ['rawData', 'plot'];
+      }
       final storedTabOrder =
           (json['mainTabOrder'] as List?)
               ?.whereType<String>()
               .where(defaultTabOrder.contains)
+              .where(visibleMainPages.contains)
               .toSet()
               .toList() ??
           const <String>[];
+      // 旧版顺序会包含已关闭页面，加载时只保留当前开启页面。
       mainTabOrder = [
         ...storedTabOrder,
-        ...defaultTabOrder.where((id) => !storedTabOrder.contains(id)),
+        ...visibleMainPages.where((id) => !storedTabOrder.contains(id)),
       ];
       final storedMaxVisiblePoints =
           (json['maxVisiblePoints'] as num?)?.toInt() ??
@@ -1163,6 +1209,17 @@ class AppSettings {
     'parity': parity,
     'rts': rts,
     'dtr': dtr,
+    'separateSerialProfiles': separateSerialProfiles,
+    'serialPageProfiles': {
+      for (final entry in serialPageProfiles.entries)
+        entry.key: entry.value.toJson(),
+    },
+    'networkConnectionsEnabled': networkConnectionsEnabled,
+    'networkPageProfiles': {
+      for (final entry in networkPageProfiles.entries)
+        entry.key: entry.value.toJson(),
+    },
+    'dataPageConnectionTypes': dataPageConnectionTypes,
 
     // 绘图设置
     'refreshFps': refreshFps,
@@ -1170,6 +1227,7 @@ class AppSettings {
     'plotFontBold': plotFontBold,
     'lastMainPage': lastMainPage,
     'mainTabOrder': mainTabOrder,
+    'visibleMainPages': visibleMainPages,
     'maxVisiblePoints': maxVisiblePoints,
     'plotHistoryMemoryLimitGiB': plotHistoryMemoryLimitGiB,
     'discardInitialPacketCount': discardInitialPacketCount,
@@ -1320,6 +1378,12 @@ class AppSettings {
     'parity': ['serial', 'connection', 'parity'],
     'rts': ['serial', 'connection', 'rts'],
     'dtr': ['serial', 'connection', 'dtr'],
+    'separateSerialProfiles': ['serial', 'profiles', 'separateByPage'],
+    'serialPageProfiles': ['serial', 'profiles', 'pages'],
+    'networkConnectionsEnabled': ['global', 'features', 'networkConnections'],
+    'networkPageProfiles': ['network', 'pageProfiles'],
+    'dataPageConnectionTypes': ['network', 'selectedTypeByPage'],
+    'visibleMainPages': ['global', 'navigation', 'visiblePages'],
 
     // 数据收发
     'rawDataDisplayLineLimit': ['rawData', 'display', 'lineLimit'],
@@ -1778,6 +1842,89 @@ class AppSettings {
   static String _normalizeTerminalFontFamily(Object? value) {
     final text = value is String ? value.trim() : '';
     return text.isEmpty ? 'Consolas' : text;
+  }
+
+  static Map<String, SerialConfig> _decodeSerialProfiles(
+    Object? value,
+    SerialConfig fallback,
+  ) {
+    final source = value is Map ? value : const <Object?, Object?>{};
+    return {
+      for (final page in const ['rawData', 'shell', 'plot'])
+        if (source.containsKey(page))
+          page: SerialConfig.fromJson(source[page], fallback: fallback),
+    };
+  }
+
+  static Map<String, NetworkConnectionConfig> _decodeNetworkProfiles(
+    Object? value,
+  ) {
+    final source = value is Map ? value : const <Object?, Object?>{};
+    return {
+      for (final page in const ['rawData', 'plot'])
+        if (source.containsKey(page))
+          page: NetworkConnectionConfig.fromJson(source[page]),
+    };
+  }
+
+  static Map<String, String> _decodeConnectionTypes(Object? value) {
+    final source = value is Map ? value : const <Object?, Object?>{};
+    return {
+      for (final page in const ['rawData', 'plot'])
+        if (source[page] is String) page: source[page] as String,
+    };
+  }
+
+  DataConnectionType connectionTypeForPage(String pageId) {
+    if (pageId == 'shell') return DataConnectionType.serial;
+    final type = DataConnectionType.fromString(dataPageConnectionTypes[pageId]);
+    if (!networkConnectionsEnabled && type != DataConnectionType.serial) {
+      return DataConnectionType.serial;
+    }
+    if (pageId == 'plot' && type == DataConnectionType.tcpServer) {
+      return DataConnectionType.serial;
+    }
+    return type;
+  }
+
+  void saveConnectionTypeForPage(String pageId, DataConnectionType type) {
+    dataPageConnectionTypes = {...dataPageConnectionTypes, pageId: type.value};
+  }
+
+  /// 返回页面当前应使用的串口参数；默认模式仍读取旧的全局配置。
+  SerialConfig serialConfigForPage(String pageId) {
+    final global = saveToSerialConfig();
+    if (!separateSerialProfiles) return global;
+    return serialPageProfiles[pageId]?.copyWith() ?? global;
+  }
+
+  void saveSerialConfigForPage(String pageId, SerialConfig config) {
+    if (!separateSerialProfiles) {
+      loadFromSerialConfig(config);
+      return;
+    }
+    serialPageProfiles = {...serialPageProfiles, pageId: config.copyWith()};
+  }
+
+  /// 首次开启时复制全局参数；已有页面参数不会被覆盖。
+  void setSeparateSerialProfiles(bool enabled) {
+    if (separateSerialProfiles == enabled) return;
+    if (enabled) {
+      final global = saveToSerialConfig();
+      serialPageProfiles = {
+        for (final page in const ['rawData', 'shell', 'plot'])
+          page: serialPageProfiles[page]?.copyWith() ?? global.copyWith(),
+      };
+    }
+    separateSerialProfiles = enabled;
+  }
+
+  NetworkConnectionConfig networkConfigForPage(String pageId) =>
+      networkPageProfiles[pageId] ??
+      const NetworkConnectionConfig(type: DataConnectionType.tcpClient);
+
+  void saveNetworkConfigForPage(String pageId, NetworkConnectionConfig config) {
+    networkPageProfiles = {...networkPageProfiles, pageId: config};
   }
 
   /// 从 [SerialConfig] 加载串口设置

@@ -44,4 +44,28 @@ class SerialConfig {
       dtr: dtr ?? this.dtr,
     );
   }
+
+  Map<String, Object?> toJson() => {
+    'port': port,
+    'baudRate': baudRate,
+    'dataBits': dataBits,
+    'stopBits': stopBits,
+    'parity': parity,
+    'rts': rts,
+    'dtr': dtr,
+  };
+
+  static SerialConfig fromJson(Object? value, {SerialConfig? fallback}) {
+    final base = fallback ?? SerialConfig();
+    final json = value is Map ? value : const <Object?, Object?>{};
+    return SerialConfig(
+      port: json['port'] as String? ?? base.port,
+      baudRate: (json['baudRate'] as num?)?.toInt() ?? base.baudRate,
+      dataBits: (json['dataBits'] as num?)?.toInt() ?? base.dataBits,
+      stopBits: (json['stopBits'] as num?)?.toInt() ?? base.stopBits,
+      parity: (json['parity'] as num?)?.toInt() ?? base.parity,
+      rts: json['rts'] as bool? ?? base.rts,
+      dtr: json['dtr'] as bool? ?? base.dtr,
+    );
+  }
 }

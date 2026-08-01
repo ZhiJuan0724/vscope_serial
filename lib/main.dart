@@ -13,6 +13,8 @@ import 'core/localization/app_strings.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/app_logger.dart';
 import 'data/models/rtt_config.dart';
+import 'data/models/data_connection_config.dart';
+import 'data/models/main_page_policy.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
 import 'services/app_settings.dart';
@@ -164,6 +166,8 @@ class MainFrame extends StatefulWidget {
 class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
   String _currentTabId = 'rawData';
   final ScrollController _tabScrollController = ScrollController();
+  final LayerLink _addPageMenuLink = LayerLink();
+  OverlayEntry? _tabMenuOverlay;
   _WindowCloseListener? _windowCloseListener;
   bool _connectionShortcutBusy = false;
 
@@ -172,12 +176,10 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     super.initState();
     final savedPage = AppSettings().lastMainPage;
     final settings = AppSettings();
-    _currentTabId = switch (savedPage) {
-      'shell' when !settings.rawDataShellEnabled => 'rawData',
-      'rtt' when !settings.rttPageEnabled => 'rawData',
-      'probePlot' when !settings.rttPageEnabled => 'rawData',
-      _ => savedPage,
-    };
+    _currentTabId =
+        settings.visibleMainPages.contains(savedPage)
+            ? savedPage
+            : settings.visibleMainPages.first;
     WidgetsBinding.instance.addObserver(this);
     // 注册窗口关闭处理：关闭前先断开串口。
     _setupWindowCloseHandler();
@@ -316,11 +318,124 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _hideTabMenu();
     final listener = _windowCloseListener;
     if (listener != null) windowManager.removeListener(listener);
     _tabScrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _hideTabMenu() {
+    _tabMenuOverlay?.remove();
+    _tabMenuOverlay = null;
+  }
+
+  void _showTabContextMenu(Offset position, String tabId) {
+    _hideTabMenu();
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final capturedThemes = InheritedTheme.capture(
+      from: context,
+      to: overlay.context,
+    );
+    final screen = MediaQuery.sizeOf(context);
+    const width = 132.0;
+    const height = 38.0;
+    final left = position.dx.clamp(4.0, screen.width - width - 4.0);
+    final top = position.dy.clamp(4.0, screen.height - height - 4.0);
+    _tabMenuOverlay = OverlayEntry(
+      builder:
+          (overlayContext) => capturedThemes.wrap(
+            Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _hideTabMenu,
+                    onSecondaryTap: _hideTabMenu,
+                  ),
+                ),
+                Positioned(
+                  left: left,
+                  top: top,
+                  width: width,
+                  child: _FastTabMenu(
+                    items: [
+                      _FastTabMenuItemData(
+                        icon: Icons.close,
+                        label: '关闭页面',
+                        onTap: () {
+                          _hideTabMenu();
+                          _closeTab(tabId);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    overlay.insert(_tabMenuOverlay!);
+  }
+
+  void _toggleAddPageMenu() {
+    if (_tabMenuOverlay != null) {
+      _hideTabMenu();
+      return;
+    }
+    final missing = [
+      for (final entry in _pageCatalog.entries)
+        if (!AppSettings().visibleMainPages.contains(entry.key)) entry,
+    ];
+    if (missing.isEmpty) return;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final capturedThemes = InheritedTheme.capture(
+      from: context,
+      to: overlay.context,
+    );
+    _tabMenuOverlay = OverlayEntry(
+      builder:
+          (overlayContext) => capturedThemes.wrap(
+            Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _hideTabMenu,
+                    onSecondaryTap: _hideTabMenu,
+                  ),
+                ),
+                CompositedTransformFollower(
+                  link: _addPageMenuLink,
+                  showWhenUnlinked: false,
+                  targetAnchor: Alignment.bottomRight,
+                  followerAnchor: Alignment.topRight,
+                  offset: const Offset(0, 2),
+                  child: SizedBox(
+                    width: 170,
+                    child: _FastTabMenu(
+                      items: [
+                        for (final entry in missing)
+                          _FastTabMenuItemData(
+                            icon: entry.value.icon,
+                            label: entry.value.label,
+                            onTap: () {
+                              _hideTabMenu();
+                              _addTab(entry.key);
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+    );
+    overlay.insert(_tabMenuOverlay!);
   }
 
   @override
@@ -339,38 +454,113 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             icon: Icons.data_object,
             page: const RawDataPage(),
           ),
-          if (AppSettings().rawDataShellEnabled)
-            'shell': (
-              id: 'shell',
-              label: AppStrings.nav.shell,
-              icon: Icons.terminal,
-              page: const ShellPage(),
-            ),
+          'shell': (
+            id: 'shell',
+            label: AppStrings.nav.shell,
+            icon: Icons.terminal,
+            page: const ShellPage(),
+          ),
           'plot': (
             id: 'plot',
             label: AppStrings.nav.plot,
             icon: Icons.show_chart,
             page: const PlotPage(),
           ),
-          if (AppSettings().rttPageEnabled)
-            'rtt': (
-              id: 'rtt',
-              label: AppStrings.nav.rtt,
-              icon: Icons.developer_board,
-              page: const RttPage(),
-            ),
-          if (AppSettings().rttPageEnabled)
-            'probePlot': (
-              id: 'probePlot',
-              label: '探针绘图',
-              icon: Icons.monitor_heart_outlined,
-              page: const ProbePlotPage(),
-            ),
+          'rtt': (
+            id: 'rtt',
+            label: AppStrings.nav.rtt,
+            icon: Icons.developer_board,
+            page: const RttPage(),
+          ),
+          'probePlot': (
+            id: 'probePlot',
+            label: '探针绘图',
+            icon: Icons.monitor_heart_outlined,
+            page: const ProbePlotPage(),
+          ),
         };
     return [
       for (final id in AppSettings().mainTabOrder)
-        if (available[id] case final tab?) tab,
+        if (AppSettings().visibleMainPages.contains(id))
+          if (available[id] case final tab?) tab,
     ];
+  }
+
+  Map<String, ({String label, IconData icon})> get _pageCatalog => {
+    'rawData': (label: AppStrings.nav.rawData, icon: Icons.data_object),
+    'shell': (label: AppStrings.nav.shell, icon: Icons.terminal),
+    'plot': (label: AppStrings.nav.plot, icon: Icons.show_chart),
+    'rtt': (label: AppStrings.nav.rtt, icon: Icons.developer_board),
+    'probePlot': (label: '探针绘图', icon: Icons.monitor_heart_outlined),
+  };
+
+  void _persistVisiblePages(List<String> pages) {
+    final settings = AppSettings();
+    final pageSet = pages.toSet();
+    final visibleOrder = [
+      for (final id in settings.mainTabOrder)
+        if (pageSet.contains(id)) id,
+      for (final id in pages)
+        if (!settings.mainTabOrder.contains(id)) id,
+    ];
+    settings
+      ..visibleMainPages = visibleOrder
+      ..mainTabOrder = visibleOrder;
+    // 同步遗留字段，便于旧版本读取同一份配置后仍能显示对应入口。
+    settings.rawDataShellEnabled = pages.contains('shell');
+    settings.rttPageEnabled =
+        pages.contains('rtt') || pages.contains('probePlot');
+    unawaited(settings.save());
+  }
+
+  void _addTab(String id) {
+    final settings = AppSettings();
+    final current = settings.visibleMainPages;
+    final next = MainPagePolicy.addPage(current, id);
+    if (identical(current, next)) return;
+    // 用户重新添加的页面始终出现在当前标签末尾；
+    // 之后仍可拖动调整，拖动结果继续持久化。
+    settings.mainTabOrder = MainPagePolicy.appendPageOrder(
+      settings.mainTabOrder,
+      id,
+    );
+    _persistVisiblePages(next);
+    setState(() {});
+  }
+
+  bool _pagesLocked(
+    SerialService serialService,
+    RttService rttService,
+    ConnectionOwnerService owners,
+  ) =>
+      owners.owner != ConnectionOwner.none ||
+      serialService.isConnecting ||
+      rttService.isConnecting ||
+      rttService.isReconnecting;
+
+  void _closeTab(String id) {
+    final pages = AppSettings().visibleMainPages;
+    if (pages.length <= 1) {
+      AppNotifications.show('至少保留一个页面');
+      return;
+    }
+    final displayedPages = _tabs.map((tab) => tab.id).toList();
+    final index = displayedPages.indexOf(id);
+    final next = MainPagePolicy.closePage(pages, id, connectionBusy: false);
+    final nextDisplayed = displayedPages.where((page) => page != id).toList();
+    if (_currentTabId == id) {
+      _currentTabId = nextDisplayed[index.clamp(0, nextDisplayed.length - 1)];
+      AppSettings().lastMainPage = _currentTabId;
+    }
+    _persistVisiblePages(next);
+    setState(() {});
+  }
+
+  bool _tabSupportsConnection(String tabId, SerialService service) {
+    return MainPagePolicy.supportsDataConnection(
+      tabId,
+      service.activeConnectionType,
+    );
   }
 
   void _reorderTabs(int oldIndex, int newIndex) {
@@ -379,16 +569,11 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final reorderedVisibleIds = visibleTabs.map((tab) => tab.id).toList();
     final movedId = reorderedVisibleIds.removeAt(oldIndex);
     reorderedVisibleIds.insert(newIndex, movedId);
-    var visibleIndex = 0;
-    final visibleSet = reorderedVisibleIds.toSet();
-    final order = [
-      for (final id in AppSettings().mainTabOrder)
-        if (visibleSet.contains(id))
-          reorderedVisibleIds[visibleIndex++]
-        else
-          id,
-    ];
-    setState(() => AppSettings().mainTabOrder = order);
+    setState(() {
+      AppSettings()
+        ..mainTabOrder = reorderedVisibleIds
+        ..visibleMainPages = reorderedVisibleIds;
+    });
     unawaited(AppSettings().save());
   }
 
@@ -423,6 +608,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     });
     final settings = AppSettings();
     settings.lastMainPage = id;
+    if (id == 'rawData' || id == 'shell' || id == 'plot') {
+      SerialService().selectSerialProfile(id);
+    }
     unawaited(settings.save());
   }
 
@@ -454,7 +642,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       unawaited(
         _usesProbeConnection
             ? showRttConnectionDialog(context)
-            : showSerialConnectionDialog(context),
+            : showSerialConnectionDialog(context, pageId: _currentTabId),
       );
       return;
     }
@@ -487,17 +675,28 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   Future<void> _runSerialConnectionShortcut(LogicalKeyboardKey key) async {
     final service = context.read<SerialService>();
+    service.selectSerialProfile(_currentTabId);
+    final settings = AppSettings();
+    final type = settings.connectionTypeForPage(_currentTabId);
     if (key == LogicalKeyboardKey.f2) {
       if (service.isConnected) {
-        AppNotifications.show('快捷连接：串口已连接');
+        AppNotifications.show('快捷连接：${service.activeConnectionType.label}已连接');
         return;
       }
-      if (!service.canConnectSelectedPort) {
+      if (type == DataConnectionType.serial &&
+          !service.canConnectSelectedPort) {
         AppNotifications.show('快捷连接：请选择当前可用的串口');
         return;
       }
-      AppNotifications.show('快捷连接：正在连接串口');
-      await service.connect();
+      AppNotifications.show('快捷连接：正在连接${type.label}');
+      if (type == DataConnectionType.serial) {
+        await service.connect();
+      } else {
+        await service.connectNetwork(
+          settings.networkConfigForPage(_currentTabId).copyWith(type: type),
+          pageId: _currentTabId,
+        );
+      }
       return;
     }
     if (key == LogicalKeyboardKey.f3) {
@@ -505,16 +704,39 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
         AppNotifications.show('快捷断开：串口当前未连接');
         return;
       }
-      AppNotifications.show('快捷断开：正在断开串口');
+      AppNotifications.show('快捷断开：正在断开连接');
       await service.disconnect();
       return;
     }
-    AppNotifications.show('快捷重连：正在断开并重新连接串口');
+    if (!service.isConnected && !service.isConnecting) {
+      AppNotifications.show('快捷重连：当前未连接，正在连接${type.label}');
+      if (type == DataConnectionType.serial) {
+        if (!service.canConnectSelectedPort) {
+          throw StateError('请选择当前可用的串口');
+        }
+        await service.connect();
+      } else {
+        await service.connectNetwork(
+          settings.networkConfigForPage(_currentTabId).copyWith(type: type),
+          pageId: _currentTabId,
+        );
+      }
+      return;
+    }
+    final reconnectType = service.activeConnectionType;
+    final reconnectNetwork = service.activeNetworkConfig;
+    final reconnectPage = service.activeConnectionPage ?? _currentTabId;
+    AppNotifications.show('快捷重连：正在断开并重新连接');
     await service.disconnect();
-    if (!service.canConnectSelectedPort) {
+    if (reconnectType == DataConnectionType.serial &&
+        !service.canConnectSelectedPort) {
       throw StateError('请选择当前可用的串口');
     }
-    await service.connect();
+    if (reconnectType == DataConnectionType.serial) {
+      await service.connect();
+    } else if (reconnectNetwork != null) {
+      await service.connectNetwork(reconnectNetwork, pageId: reconnectPage);
+    }
   }
 
   Future<void> _runProbeConnectionShortcut(LogicalKeyboardKey key) async {
@@ -550,7 +772,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final rttService = Provider.of<RttService>(context);
     final tabs = _tabs;
     if (!tabs.any((tab) => tab.id == _currentTabId)) {
-      _currentTabId = 'rawData';
+      _currentTabId = tabs.first.id;
     }
     final currentIndex = tabs.indexWhere((tab) => tab.id == _currentTabId);
     _ensureSelectedTabVisible(currentIndex);
@@ -578,101 +800,184 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   child: Padding(
                     padding: const EdgeInsets.only(top: 5),
-                    child: Listener(
-                      onPointerSignal: _handleTabPointerSignal,
-                      child: ReorderableListView.builder(
-                        scrollController: _tabScrollController,
-                        scrollDirection: Axis.horizontal,
-                        buildDefaultDragHandles: false,
-                        onReorderItem: _reorderTabs,
-                        itemCount: tabs.length,
-                        itemBuilder: (context, index) {
-                          final tab = tabs[index];
-                          final isSelected = index == currentIndex;
-                          final ownerTab = switch (serialService
-                              .activityOwner) {
-                            SerialActivityOwner.rawData => 'rawData',
-                            SerialActivityOwner.shell => 'shell',
-                            SerialActivityOwner.plot => 'plot',
-                            SerialActivityOwner.none => null,
-                          };
-                          final canSwitch = switch (connectionOwner.owner) {
-                            ConnectionOwner.rtt => switch (rttService
-                                .activityOwner) {
-                              ProbeActivityOwner.rttViewer => tab.id == 'rtt',
-                              ProbeActivityOwner.probePlot =>
-                                tab.id == 'probePlot',
-                              ProbeActivityOwner.none =>
-                                tab.id == 'rtt' || tab.id == 'probePlot',
-                            },
-                            _ => ownerTab == null || tab.id == ownerTab,
-                          };
-                          final colorScheme = Theme.of(context).colorScheme;
-                          final foreground =
-                              isSelected
-                                  ? colorScheme.primary
-                                  : canSwitch
-                                  ? colorScheme.onSurfaceVariant
-                                  : colorScheme.onSurfaceVariant.withValues(
-                                    alpha: 0.3,
-                                  );
-                          return ReorderableDelayedDragStartListener(
-                            key: ValueKey(tab.id),
-                            index: index,
-                            child: SizedBox(
-                              width: 180,
-                              height: 35,
-                              child: Material(
-                                color:
-                                    isSelected
-                                        ? Theme.of(
-                                          context,
-                                        ).scaffoldBackgroundColor
-                                        : Colors.transparent,
-                                surfaceTintColor: Colors.transparent,
-                                shape:
-                                    isSelected
-                                        ? const _SelectedTabShape()
-                                        : const RoundedRectangleBorder(),
-                                clipBehavior:
-                                    isSelected ? Clip.antiAlias : Clip.none,
-                                child: InkWell(
-                                  customBorder:
-                                      isSelected
-                                          ? const _SelectedTabShape()
-                                          : const RoundedRectangleBorder(),
-                                  onTap:
-                                      canSwitch
-                                          ? () => _selectTab(tab.id)
-                                          : null,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        tab.icon,
-                                        size: 16,
-                                        color: foreground,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        tab.label,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight:
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final showAddButton =
+                                  tabs.length < _pageCatalog.length;
+                              const addButtonWidth = 50.0;
+                              final maxTabStripWidth = (constraints.maxWidth -
+                                      (showAddButton ? addButtonWidth : 0))
+                                  .clamp(0.0, double.infinity);
+                              final tabStripWidth =
+                                  (tabs.length * 180.0)
+                                      .clamp(0.0, maxTabStripWidth)
+                                      .toDouble();
+                              return Row(
+                                children: [
+                                  SizedBox(
+                                    width: tabStripWidth,
+                                    child: Listener(
+                                      onPointerSignal: _handleTabPointerSignal,
+                                      child: ReorderableListView.builder(
+                                        scrollController: _tabScrollController,
+                                        scrollDirection: Axis.horizontal,
+                                        buildDefaultDragHandles: false,
+                                        onReorderItem: _reorderTabs,
+                                        itemCount: tabs.length,
+                                        itemBuilder: (context, index) {
+                                          final tab = tabs[index];
+                                          final isSelected =
+                                              index == currentIndex;
+                                          final ownerTab = switch (serialService
+                                              .activityOwner) {
+                                            SerialActivityOwner.rawData =>
+                                              'rawData',
+                                            SerialActivityOwner.shell =>
+                                              'shell',
+                                            SerialActivityOwner.plot => 'plot',
+                                            SerialActivityOwner.none => null,
+                                          };
+                                          final canSwitch = switch (connectionOwner
+                                              .owner) {
+                                            ConnectionOwner.rtt =>
+                                              switch (rttService
+                                                  .activityOwner) {
+                                                ProbeActivityOwner.rttViewer =>
+                                                  tab.id == 'rtt',
+                                                ProbeActivityOwner.probePlot =>
+                                                  tab.id == 'probePlot',
+                                                ProbeActivityOwner.none =>
+                                                  tab.id == 'rtt' ||
+                                                      tab.id == 'probePlot',
+                                              },
+                                            ConnectionOwner.serial =>
+                                              ownerTab != null
+                                                  ? tab.id == ownerTab
+                                                  : _tabSupportsConnection(
+                                                    tab.id,
+                                                    serialService,
+                                                  ),
+                                            ConnectionOwner.none =>
+                                              !serialService.isConnecting ||
+                                                  tab.id ==
+                                                      serialService
+                                                          .activeConnectionPage,
+                                          };
+                                          final closeLocked = _pagesLocked(
+                                            serialService,
+                                            rttService,
+                                            connectionOwner,
+                                          );
+                                          final colorScheme =
+                                              Theme.of(context).colorScheme;
+                                          final foreground =
                                               isSelected
-                                                  ? FontWeight.bold
-                                                  : FontWeight.normal,
-                                          color: foreground,
-                                        ),
+                                                  ? colorScheme.primary
+                                                  : canSwitch
+                                                  ? colorScheme.onSurfaceVariant
+                                                  : colorScheme.onSurfaceVariant
+                                                      .withValues(alpha: 0.3);
+                                          return ReorderableDelayedDragStartListener(
+                                            key: ValueKey(tab.id),
+                                            index: index,
+                                            child: SizedBox(
+                                              width: 180,
+                                              height: 35,
+                                              child: Material(
+                                                // Material 默认会在形状变化时做插值动画，
+                                                // 会使新选中页签短暂以矩形闪现。所有
+                                                // 页签固定使用同一轮廓，只即时切换颜色。
+                                                animationDuration:
+                                                    Duration.zero,
+                                                color:
+                                                    isSelected
+                                                        ? Theme.of(
+                                                          context,
+                                                        ).scaffoldBackgroundColor
+                                                        : colorScheme.onSurface
+                                                            .withValues(
+                                                              alpha: 0.035,
+                                                            ),
+                                                surfaceTintColor:
+                                                    Colors.transparent,
+                                                shape:
+                                                    const _SelectedTabShape(),
+                                                clipBehavior: Clip.antiAlias,
+                                                child: InkWell(
+                                                  customBorder:
+                                                      const _SelectedTabShape(),
+                                                  onTap:
+                                                      canSwitch
+                                                          ? () =>
+                                                              _selectTab(tab.id)
+                                                          : null,
+                                                  onSecondaryTapDown: (
+                                                    details,
+                                                  ) {
+                                                    if (closeLocked) {
+                                                      AppNotifications.show(
+                                                        '连接期间不能关闭页面',
+                                                      );
+                                                      return;
+                                                    }
+                                                    _showTabContextMenu(
+                                                      details.globalPosition,
+                                                      tab.id,
+                                                    );
+                                                  },
+                                                  child: Row(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Icon(
+                                                        tab.icon,
+                                                        size: 16,
+                                                        color: foreground,
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      Text(
+                                                        tab.label,
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          fontWeight:
+                                                              isSelected
+                                                                  ? FontWeight
+                                                                      .bold
+                                                                  : FontWeight
+                                                                      .normal,
+                                                          color: foreground,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                                  if (showAddButton)
+                                    CompositedTransformTarget(
+                                      link: _addPageMenuLink,
+                                      child: _TabAddButton(
+                                        key: const ValueKey(
+                                          'add-main-page-button',
+                                        ),
+                                        onTap: _toggleAddPageMenu,
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -687,6 +992,150 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
               // 底部共享状态栏
               StatusBar(currentPageId: _currentTabId),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FastTabMenuItemData {
+  const _FastTabMenuItemData({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+}
+
+/// 标签栏专用即时菜单：无过渡动画，并使用轻量边框和极小阴影。
+class _FastTabMenu extends StatelessWidget {
+  const _FastTabMenu({required this.items});
+
+  final List<_FastTabMenuItemData> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: colors.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 2.5,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: Material(
+          color: Colors.transparent,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final item in items)
+                InkWell(
+                  onTap: item.onTap,
+                  hoverColor: colors.primary.withValues(alpha: 0.08),
+                  child: SizedBox(
+                    height: 34,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Row(
+                        children: [
+                          Icon(
+                            item.icon,
+                            size: 15,
+                            color: colors.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              item.label,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                color: colors.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabAddButton extends StatefulWidget {
+  const _TabAddButton({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  State<_TabAddButton> createState() => _TabAddButtonState();
+}
+
+class _TabAddButtonState extends State<_TabAddButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: '添加页面',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) {
+          if (_hovered) setState(() => _hovered = false);
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: SizedBox(
+            width: 50,
+            height: 35,
+            child: Row(
+              children: [
+                Container(
+                  key: const ValueKey('add-main-page-divider'),
+                  width: 1,
+                  height: 20,
+                  color: colors.outlineVariant,
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        _hovered
+                            ? colors.primary.withValues(alpha: 0.10)
+                            : colors.onSurface.withValues(alpha: 0.06),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.add,
+                    size: 18,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

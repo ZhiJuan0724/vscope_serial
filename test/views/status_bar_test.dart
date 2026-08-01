@@ -17,6 +17,10 @@ void main() {
     final serialService = SerialService();
     final plotViewModel = PlotViewModel(serialService);
     final rttService = RttService();
+    final previousNetworkEnabled = AppSettings().networkConnectionsEnabled;
+    addTearDown(() {
+      AppSettings().networkConnectionsEnabled = previousNetworkEnabled;
+    });
 
     Widget app(String pageId) => MultiProvider(
       providers: [
@@ -31,6 +35,10 @@ void main() {
 
     await tester.pumpWidget(app('rawData'));
     expect(find.text('串口未连接'), findsOneWidget);
+
+    serialService.setNetworkConnectionsEnabled(true);
+    await tester.pump();
+    expect(find.text('串口/网络未连接'), findsOneWidget);
 
     await tester.pumpWidget(app('rtt'));
     expect(find.text('探针未连接'), findsOneWidget);

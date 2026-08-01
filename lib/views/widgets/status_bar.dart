@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../../core/localization/app_strings.dart';
 import '../../data/models/parser_config.dart';
+import '../../data/models/data_connection_config.dart';
+import '../../services/app_settings.dart';
 import '../../services/serial_service.dart';
 import '../../services/rtt_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
@@ -17,9 +19,12 @@ String connectionStatusLabel({
   required bool connected,
   required bool connecting,
   bool reconnecting = false,
+  String? dataConnectionName,
 }) {
   final connectionName =
-      isProbe ? AppStrings.rtt.probe : AppStrings.serial.port;
+      isProbe
+          ? AppStrings.rtt.probe
+          : dataConnectionName ?? AppStrings.serial.port;
   final connectionState =
       reconnecting
           ? '重连中...'
@@ -82,7 +87,10 @@ class StatusBar extends StatelessWidget {
                 () =>
                     isRttPage
                         ? showRttConnectionDialog(context)
-                        : showSerialConnectionDialog(context),
+                        : showSerialConnectionDialog(
+                          context,
+                          pageId: currentPageId,
+                        ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -106,6 +114,13 @@ class StatusBar extends StatelessWidget {
                     connected: connected,
                     connecting: connecting,
                     reconnecting: rttService?.isReconnecting ?? false,
+                    dataConnectionName:
+                        !isRttPage &&
+                                !connected &&
+                                !connecting &&
+                                AppSettings().networkConnectionsEnabled
+                            ? '串口/网络'
+                            : service.activeConnectionType.label,
                   ),
                   style: const TextStyle(fontSize: 12),
                 ),
@@ -121,10 +136,10 @@ class StatusBar extends StatelessWidget {
                     ),
                   ),
                 ],
-                if (!isRttPage && connected && service.config.port != null) ...[
+                if (!isRttPage && connected) ...[
                   const SizedBox(width: 4),
                   Text(
-                    '(${service.config.port})',
+                    '(${service.activeConnectionType == DataConnectionType.serial ? service.config.port : service.connectionDescription})',
                     style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
