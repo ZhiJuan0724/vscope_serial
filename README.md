@@ -16,6 +16,7 @@ SerialTools 是面向 Windows 的串口收发与波形分析工具，支持实�
 - CSV、BIN、旧版 DAT 数据导入及流式导出；大数据使用 LOD 绘制。
 - 可选 Shell 页面，支持串口/TCP普通终端、SSH、ANSI、命令行/逐键输入、命令历史和串口YMODEM。
 - 可选 Modbus 主站页面，支持 RTU、ASCII、TCP、常用读写功能码和周期轮询。
+- 可选 Flash 编程页面，使用独立高权限会话完成J-Link或OpenOCD擦除、烧写、校验与读取。
 - 可选 RTT Viewer 与探针绘图，支持 J-Link、CMSIS-DAP、RTT Up/Down、HSS 和 ELF 符号选择。
 - 稳定版/Beta 更新通道、更新包校验和本地版本回退。
 
@@ -98,6 +99,15 @@ RTT Viewer 默认隐藏，可在高级设置的“页面”中开启；启用后
 - RTT Viewer：虚拟终端 0～15、All Terminals、RTT Down 0、暂停、时间戳、文本/HEX、导出。
 - 探针绘图：RTT Up 通道、运行态 HSS、J-Scope 格式识别及 ELF/AXF/OUT 数据符号选择。
 - 后端：外部 J-Link、外置 OpenOCD、随发布包提供的内置 OpenOCD，以及用户 Python 环境中的 pyOCD `0.45.x`。
+
+## Flash 编程
+
+Flash页面默认隐藏，必须从“+”显式添加。它与RTT Viewer及探针绘图的非侵入式监控会话完全分离，并独占全局硬件连接：
+
+- 支持外部J-Link、外置OpenOCD和内置OpenOCD；自动模式仅在连接前选择工具，成功后不会因操作失败切换后端。
+- 支持ELF、HEX、BIN烧写；BIN必须填写基地址。默认擦除、烧写、校验并复位运行，也可选择完成后保持停止。
+- 支持全片/地址范围擦除，以及按地址和长度读取为BIN；擦除成功后保持停止，读取后恢复操作前运行状态。
+- 操作期间禁止普通断开、切页、关闭页面和退出。强制终止不会自动发送reset或resume，目标状态会标记为未知。
 - CMSIS-DAP 自动顺序：外置 OpenOCD → 内置 OpenOCD → 外置 pyOCD；连接失败不会静默切换后端。
 - RTT 控制块支持 Auto、指定地址或指定范围；OpenOCD 使用指定地址或范围。
 

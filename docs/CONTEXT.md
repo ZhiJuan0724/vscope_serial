@@ -26,7 +26,7 @@
 ### 2.2 活动与连接所有权
 
 - 数据收发、Shell、绘图和Modbus通过 `DataActivityOwner` 互斥占用数据接收活动；绘图可复用串口、TCP客户端或UDP数据流。
-- 串口/TCP/UDP数据连接和探针由 `ConnectionOwnerService` 互斥管理；全局只允许一个实际连接或监听会话。
+- 串口/TCP/UDP数据连接、探针监控和Flash编程由 `ConnectionOwnerService` 互斥管理；全局只允许一个实际连接或监听会话。
 - RTT Viewer 与探针绘图可共享空闲探针连接，但任一数据活动开始后必须锁定当前探针页面。
 - 数据连接发送共用单一有序写队列；Shell、粘贴和 YMODEM 仅在串口会话中使用该队列，禁止并发打乱字节。
 
@@ -42,9 +42,17 @@
 
 - RTT Viewer、RTT 绘图和 HSS 必须严格非侵入：枚举、连接、读取、写入、停止和断开均不得 halt、reset、resume、step 或改变目标执行状态；“操作后恢复运行”也不允许。
 - 监控会话不得执行烧录、擦除、核心寄存器访问、断点、观察点或 Vector Catch。
-- 无法证明满足约束的路径必须在接触目标前拒绝。未来编程或调试功能必须使用独立会话、独立命令和明确安全提示，并与监控活动互斥。
+- 无法证明满足约束的路径必须在接触目标前拒绝。Flash编程使用独立`FlashProgrammingService`、独立后端进程和`ConnectionOwner.programming`，不得复用监控后端；其他调试功能同样必须另建会话、命令和安全提示。
 
-### 3.2 后端选择
+### 3.2 Flash高权限边界
+
+- Flash页面默认隐藏，连接前必须明确提示可能复位、停核、擦除和改写目标；配置不得从RTT连接配置隐式导入。
+- 后端仅包括外部J-Link、外置OpenOCD和内置OpenOCD。自动选择只在连接前按探针类型和工具可用性决定；连接成功后必须锁定后端。
+- 操作期间禁止普通断开、切页、关闭页面和退出。强制终止或后端异常后状态为未知，不得自动发送reset/resume补救命令。
+- 默认烧写执行擦除、写入、校验并复位运行；擦除成功后保持停止。读取先记录运行状态，必要时暂停，完成后恢复原状态。
+- 工具输出只保留有上限的页面缓存，不写高频普通日志。命令参数必须通过`Process.start`参数列表和各工具自身的路径引用传入，不得拼接Shell命令。
+
+### 3.3 后端选择
 
 - 后端包括自动、外部 J-Link、外置 OpenOCD、内置 OpenOCD、外置 pyOCD；下拉项不因探针类型隐藏。
 - 显式选择 J-Link 时切换为 J-Link 探针；选择 OpenOCD/pyOCD 时切换为 CMSIS-DAP；自动模式才允许自由选择探针类型。
@@ -52,7 +60,7 @@
 - J-Link 停止 RTT 时终止后端并自动重建空闲连接，期间显示“停止中”和“探针重连中”；OpenOCD 停止活动后保留空闲连接。
 - 内置 OpenOCD 以单一 ZIP 和带 SHA-256 的清单随包发布；首次使用时显示不可取消的准备窗口，在程序目录下按 OpenOCD 版本和归档哈希原子解压。配置文件选择必须从实际解压后的可执行文件定位 `interface/target`。
 
-### 3.3 pyOCD 受限 Worker
+### 3.4 pyOCD 受限 Worker
 
 - 外置 pyOCD 使用用户指定、可 `import pyocd` 的 Python，当前仅接受 pyOCD `0.45.x`；应用不内置 Python/pyOCD。
 - Worker 位于 `assets/runtime/pyocd_worker.py`，使用版本化帧协议和固定 `nonIntrusiveMonitor` 配置。
@@ -60,7 +68,7 @@
 - 禁止调用完整 `Session.open/close`、`Board.init`、`Target.init/disconnect` 或 Cortex-M Core 初始化。协议可预留高权限配置名，但当前不得实现或复用。
 - CMSIS-DAP 支持自动、仅 v1、仅 v2；显式模式必须直接调用对应 USB 后端。用户刷新设备时可轻量读取 USB 名称和 VID/PID，再定向连接。
 
-### 3.4 RTT/HSS 数据活动
+### 3.5 RTT/HSS 数据活动
 
 - 探针连接与数据活动分离。RTT 控制块定位在 RTT Viewer 或探针绘图各自的数据配置中设置，未连接时也可编辑。
 - 定位支持 Auto、指定地址和指定范围；OpenOCD 不提供 Auto。扫描失败必须明确提示，不得忽略参数。

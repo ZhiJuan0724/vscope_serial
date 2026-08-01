@@ -23,6 +23,7 @@ import 'services/app_settings.dart';
 import 'services/bundled_openocd_runtime.dart';
 import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
+import 'services/flash_programming_service.dart';
 import 'services/modbus_client_service.dart';
 import 'services/native_serial_reader.dart';
 import 'services/probe_connection_service.dart';
@@ -34,12 +35,14 @@ import 'views/dialogs/app_info_dialog.dart';
 import 'views/dialogs/probe_connection_dialog.dart';
 import 'views/dialogs/ssh_connection_dialog.dart';
 import 'views/dialogs/data_connection_dialog.dart';
+import 'views/dialogs/flash_connection_dialog.dart';
 import 'viewmodels/plot_viewmodel.dart';
 import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/modbus_page.dart';
+import 'views/pages/flash_programming_page.dart';
 import 'views/pages/probe_plot_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/pages/rtt_page.dart';
@@ -155,6 +158,7 @@ class MyApp extends StatelessWidget {
               ),
         ),
         ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
+        ChangeNotifierProvider(create: (_) => FlashProgrammingService()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
           create: (context) => PlotViewModel(connectionService),
@@ -518,6 +522,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             icon: Icons.swap_horiz,
             page: const ModbusPage(),
           ),
+          'flash': (
+            id: 'flash',
+            label: 'Flash',
+            icon: Icons.memory,
+            page: const FlashProgrammingPage(),
+          ),
         };
     return [
       for (final id in AppSettings().mainTabOrder)
@@ -533,6 +543,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     'rtt': (label: AppStrings.nav.rtt, icon: Icons.developer_board),
     'probePlot': (label: '探针绘图', icon: Icons.monitor_heart_outlined),
     'modbus': (label: 'Modbus', icon: Icons.swap_horiz),
+    'flash': (label: 'Flash', icon: Icons.memory),
   };
 
   void _persistVisiblePages(List<String> pages) {
@@ -680,12 +691,16 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       ShellConnectionMode.fromString(AppSettings().shellConnectionMode) ==
           ShellConnectionMode.ssh;
 
+  bool get _usesFlashProgramming => _currentTabId == 'flash';
+
   void _handleConnectionShortcut(LogicalKeyboardKey key) {
     if (!AppSettings().connectionShortcutsEnabled) return;
     if (key == LogicalKeyboardKey.f1) {
       unawaited(
         _usesProbeConnection
             ? showProbeConnectionDialog(context)
+            : _usesFlashProgramming
+            ? showFlashConnectionDialog(context)
             : _usesSshConnection
             ? showSshConnectionDialog(context)
             : showDataConnectionDialog(context, pageId: _currentTabId),
@@ -704,6 +719,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     try {
       if (_usesProbeConnection) {
         await _runProbeConnectionShortcut(key);
+      } else if (_usesFlashProgramming) {
+        await _runFlashConnectionShortcut(key);
       } else if (_usesSshConnection) {
         await _runSshConnectionShortcut(key);
       } else {
@@ -816,6 +833,21 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     AppNotifications.show('快捷重连：正在断开并重新连接探针');
     await service.disconnect();
     await service.connect(savedProbeConnectionConfig());
+  }
+
+  Future<void> _runFlashConnectionShortcut(LogicalKeyboardKey key) async {
+    final service = context.read<FlashProgrammingService>();
+    if (key == LogicalKeyboardKey.f3) {
+      if (!service.hasSession) {
+        AppNotifications.show('快捷断开：Flash编程会话未连接');
+        return;
+      }
+      if (service.isBusy) throw StateError('Flash操作期间不能普通断开');
+      AppNotifications.show('快捷断开：正在断开Flash编程会话');
+      await service.disconnect();
+      return;
+    }
+    AppNotifications.show('Flash高权限会话必须在页面中确认安全提示后显式连接');
   }
 
   Future<void> _runSshConnectionShortcut(LogicalKeyboardKey key) async {
@@ -953,6 +985,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                     tab.id,
                                                     connectionService,
                                                   ),
+                                            ConnectionOwner.programming =>
+                                              tab.id == 'flash',
                                             ConnectionOwner.none =>
                                               !connectionService.isConnecting ||
                                                   tab.id ==
@@ -1320,12 +1354,22 @@ class _WindowCloseListener extends WindowListener {
       context,
       listen: false,
     );
+    final flashProgrammingService = Provider.of<FlashProgrammingService>(
+      context,
+      listen: false,
+    );
+    if (flashProgrammingService.isBusy) {
+      AppNotifications.show('Flash操作正在进行，完成或强制终止前不能退出应用');
+      _isClosing = false;
+      return;
+    }
     final modbusService = Provider.of<ModbusClientService>(
       context,
       listen: false,
     );
     await AppSettings().flushPendingSave();
     await modbusService.stop();
+    await flashProgrammingService.shutdown();
     await probeConnectionService.shutdown();
     await sshConnectionService.shutdown();
     await connectionService.shutdown();

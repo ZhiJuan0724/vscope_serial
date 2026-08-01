@@ -6,10 +6,12 @@ import '../../data/models/parser_config.dart';
 import '../../data/models/data_connection_config.dart';
 import '../../services/app_settings.dart';
 import '../../services/data_connection_service.dart';
+import '../../services/flash_programming_service.dart';
 import '../../services/probe_connection_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../dialogs/app_info_dialog.dart';
 import '../dialogs/data_connection_dialog.dart';
+import '../dialogs/flash_connection_dialog.dart';
 import '../dialogs/probe_connection_dialog.dart';
 
 /// 根据当前页面连接类型生成无歧义的状态文案。
@@ -57,6 +59,17 @@ class StatusBar extends StatelessWidget {
                 ),
           );
         }
+        if (currentPageId == 'flash') {
+          return Consumer<FlashProgrammingService>(
+            builder:
+                (context, flashService, _) => _buildStatus(
+                  context,
+                  service,
+                  plotVm,
+                  flashProgrammingService: flashService,
+                ),
+          );
+        }
         return _buildStatus(context, service, plotVm);
       },
     );
@@ -67,12 +80,22 @@ class StatusBar extends StatelessWidget {
     DataConnectionService service,
     PlotViewModel plotVm, {
     ProbeConnectionService? probeConnectionService,
+    FlashProgrammingService? flashProgrammingService,
   }) {
     final isRttPage = probeConnectionService != null;
+    final isFlashPage = flashProgrammingService != null;
     final connected =
-        isRttPage ? probeConnectionService.isConnected : service.isConnected;
+        isRttPage
+            ? probeConnectionService.isConnected
+            : isFlashPage
+            ? flashProgrammingService.isConnected
+            : service.isConnected;
     final connecting =
-        isRttPage ? probeConnectionService.isConnecting : service.isConnecting;
+        isRttPage
+            ? probeConnectionService.isConnecting
+            : isFlashPage
+            ? flashProgrammingService.isConnecting
+            : service.isConnecting;
     return Container(
       height: 26,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -88,6 +111,8 @@ class StatusBar extends StatelessWidget {
                 () =>
                     isRttPage
                         ? showProbeConnectionDialog(context)
+                        : isFlashPage
+                        ? showFlashConnectionDialog(context)
                         : showDataConnectionDialog(
                           context,
                           pageId: currentPageId,
@@ -117,7 +142,9 @@ class StatusBar extends StatelessWidget {
                     reconnecting:
                         probeConnectionService?.isReconnecting ?? false,
                     dataConnectionName:
-                        !isRttPage &&
+                        isFlashPage
+                            ? 'Flash编程会话'
+                            : !isRttPage &&
                                 !connected &&
                                 !connecting &&
                                 AppSettings().networkConnectionsEnabled
@@ -141,7 +168,11 @@ class StatusBar extends StatelessWidget {
                 if (!isRttPage && connected) ...[
                   const SizedBox(width: 4),
                   Text(
-                    '(${service.activeConnectionType == DataConnectionType.serial ? service.config.port : service.connectionDescription})',
+                    '(${isFlashPage
+                        ? flashProgrammingService.activeBackendName
+                        : service.activeConnectionType == DataConnectionType.serial
+                        ? service.config.port
+                        : service.connectionDescription})',
                     style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -149,6 +180,7 @@ class StatusBar extends StatelessWidget {
                   ),
                 ],
                 if (!isRttPage &&
+                    !isFlashPage &&
                     plotVm.useRandomSource &&
                     plotVm.parserType == ParserType.fireWater) ...[
                   const SizedBox(width: 8),

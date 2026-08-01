@@ -2,8 +2,9 @@ import 'package:flutter/foundation.dart';
 
 /// 当前占用应用连接入口的会话类型。
 ///
-/// 数据连接涵盖串口、TCP和UDP；探针连接涵盖RTT Viewer、RTT绘图和HSS。
-enum ConnectionOwner { none, data, probe }
+/// 数据连接涵盖串口、TCP和UDP；探针连接涵盖RTT Viewer、RTT绘图和HSS；
+/// Flash编程使用独立的高权限所有者。
+enum ConnectionOwner { none, data, probe, programming }
 
 /// 应用级硬件连接所有权。
 class ConnectionOwnerService extends ChangeNotifier {

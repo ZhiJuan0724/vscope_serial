@@ -9,6 +9,7 @@ import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
 import '../data/models/data_connection_config.dart';
+import '../data/models/flash_programming_models.dart';
 import '../data/models/modbus_models.dart';
 import '../data/models/ssh_connection_config.dart';
 import 'settings_repository.dart';
@@ -74,6 +75,9 @@ class AppSettings {
   String modbusMode = ModbusMode.rtu.value;
   int modbusTimeoutMs = 1000;
   List<ModbusPollingTask> modbusPollingTasks = const [];
+
+  /// Flash编程配置完全独立于RTT探针配置。
+  FlashConnectionConfig flashConnectionConfig = const FlashConnectionConfig();
 
   /// 当前实际显示的主页面。新安装默认只显示数据收发和绘图。
   List<String> visibleMainPages = const ['rawData', 'plot'];
@@ -402,6 +406,7 @@ class AppSettings {
     modbusMode = ModbusMode.rtu.value;
     modbusTimeoutMs = 1000;
     modbusPollingTasks = const [];
+    flashConnectionConfig = const FlashConnectionConfig();
     visibleMainPages = const ['rawData', 'plot'];
 
     refreshFps = 60;
@@ -602,6 +607,9 @@ class AppSettings {
         for (final value in (json['modbusPollingTasks'] as List? ?? const []))
           if (ModbusPollingTask.fromJson(value) case final task?) task,
       ];
+      flashConnectionConfig = FlashConnectionConfig.fromJson(
+        json['flashConnectionConfig'],
+      );
 
       // 绘图设置
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
@@ -614,6 +622,7 @@ class AppSettings {
         'rtt' => 'rtt',
         'probePlot' => 'probePlot',
         'modbus' => 'modbus',
+        'flash' => 'flash',
         _ => 'rawData',
       };
       const defaultTabOrder = [
@@ -623,6 +632,7 @@ class AppSettings {
         'rtt',
         'probePlot',
         'modbus',
+        'flash',
       ];
       final storedVisiblePages =
           (json['visibleMainPages'] as List?)
@@ -1255,6 +1265,7 @@ class AppSettings {
     'modbusPollingTasks': [
       for (final task in modbusPollingTasks) task.toJson(),
     ],
+    'flashConnectionConfig': flashConnectionConfig.toJson(),
 
     // 绘图设置
     'refreshFps': refreshFps,
@@ -1427,6 +1438,9 @@ class AppSettings {
     'modbusMode': ['modbus', 'connection', 'mode'],
     'modbusTimeoutMs': ['modbus', 'protocol', 'timeoutMs'],
     'modbusPollingTasks': ['modbus', 'polling', 'tasks'],
+
+    // Flash编程
+    'flashConnectionConfig': ['flash', 'connection'],
 
     // 数据收发
     'rawDataDisplayLineLimit': ['rawData', 'display', 'lineLimit'],
