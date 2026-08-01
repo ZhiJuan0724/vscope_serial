@@ -9,6 +9,7 @@ import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
 import '../data/models/data_connection_config.dart';
+import '../data/models/modbus_models.dart';
 import '../data/models/ssh_connection_config.dart';
 import 'settings_repository.dart';
 
@@ -60,7 +61,7 @@ class AppSettings {
   /// DTR 流控开关
   bool dtr = false;
 
-  /// 是否按数据收发、Shell和绘图分别保存串口连接参数。
+  /// 是否按数据收发、Shell、绘图和Modbus分别保存串口连接参数。
   bool separateSerialProfiles = false;
   Map<String, SerialConfig> serialPageProfiles = {};
 
@@ -68,6 +69,11 @@ class AppSettings {
   bool networkConnectionsEnabled = false;
   Map<String, NetworkConnectionConfig> networkPageProfiles = {};
   Map<String, String> dataPageConnectionTypes = {};
+
+  /// Modbus页面协议参数和轮询任务。
+  String modbusMode = ModbusMode.rtu.value;
+  int modbusTimeoutMs = 1000;
+  List<ModbusPollingTask> modbusPollingTasks = const [];
 
   /// 当前实际显示的主页面。新安装默认只显示数据收发和绘图。
   List<String> visibleMainPages = const ['rawData', 'plot'];
@@ -393,6 +399,9 @@ class AppSettings {
     networkConnectionsEnabled = false;
     networkPageProfiles = {};
     dataPageConnectionTypes = {};
+    modbusMode = ModbusMode.rtu.value;
+    modbusTimeoutMs = 1000;
+    modbusPollingTasks = const [];
     visibleMainPages = const ['rawData', 'plot'];
 
     refreshFps = 60;
@@ -584,6 +593,15 @@ class AppSettings {
       dataPageConnectionTypes = _decodeConnectionTypes(
         json['dataPageConnectionTypes'],
       );
+      modbusMode = ModbusMode.fromString(json['modbusMode'] as String?).value;
+      modbusTimeoutMs =
+          ((json['modbusTimeoutMs'] as num?)?.toInt() ?? 1000)
+              .clamp(100, 60000)
+              .toInt();
+      modbusPollingTasks = [
+        for (final value in (json['modbusPollingTasks'] as List? ?? const []))
+          if (ModbusPollingTask.fromJson(value) case final task?) task,
+      ];
 
       // 绘图设置
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
@@ -595,9 +613,17 @@ class AppSettings {
         'shell' => 'shell',
         'rtt' => 'rtt',
         'probePlot' => 'probePlot',
+        'modbus' => 'modbus',
         _ => 'rawData',
       };
-      const defaultTabOrder = ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
+      const defaultTabOrder = [
+        'rawData',
+        'shell',
+        'plot',
+        'rtt',
+        'probePlot',
+        'modbus',
+      ];
       final storedVisiblePages =
           (json['visibleMainPages'] as List?)
               ?.whereType<String>()
@@ -1224,6 +1250,11 @@ class AppSettings {
         entry.key: entry.value.toJson(),
     },
     'dataPageConnectionTypes': dataPageConnectionTypes,
+    'modbusMode': modbusMode,
+    'modbusTimeoutMs': modbusTimeoutMs,
+    'modbusPollingTasks': [
+      for (final task in modbusPollingTasks) task.toJson(),
+    ],
 
     // 绘图设置
     'refreshFps': refreshFps,
@@ -1391,6 +1422,11 @@ class AppSettings {
     'networkPageProfiles': ['network', 'pageProfiles'],
     'dataPageConnectionTypes': ['network', 'selectedTypeByPage'],
     'visibleMainPages': ['global', 'navigation', 'visiblePages'],
+
+    // Modbus
+    'modbusMode': ['modbus', 'connection', 'mode'],
+    'modbusTimeoutMs': ['modbus', 'protocol', 'timeoutMs'],
+    'modbusPollingTasks': ['modbus', 'polling', 'tasks'],
 
     // 数据收发
     'rawDataDisplayLineLimit': ['rawData', 'display', 'lineLimit'],
@@ -1860,7 +1896,7 @@ class AppSettings {
   ) {
     final source = value is Map ? value : const <Object?, Object?>{};
     return {
-      for (final page in const ['rawData', 'shell', 'plot'])
+      for (final page in const ['rawData', 'shell', 'plot', 'modbus'])
         if (source.containsKey(page))
           page: SerialConfig.fromJson(source[page], fallback: fallback),
     };
@@ -1871,7 +1907,7 @@ class AppSettings {
   ) {
     final source = value is Map ? value : const <Object?, Object?>{};
     return {
-      for (final page in const ['rawData', 'plot'])
+      for (final page in const ['rawData', 'shell', 'plot', 'modbus'])
         if (source.containsKey(page))
           page: NetworkConnectionConfig.fromJson(source[page]),
     };
@@ -1880,7 +1916,7 @@ class AppSettings {
   static Map<String, String> _decodeConnectionTypes(Object? value) {
     final source = value is Map ? value : const <Object?, Object?>{};
     return {
-      for (final page in const ['rawData', 'plot'])
+      for (final page in const ['rawData', 'shell', 'plot', 'modbus'])
         if (source[page] is String) page: source[page] as String,
     };
   }
@@ -1894,6 +1930,11 @@ class AppSettings {
       return DataConnectionType.serial;
     }
     if (pageId == 'shell' &&
+        type != DataConnectionType.serial &&
+        type != DataConnectionType.tcpClient) {
+      return DataConnectionType.serial;
+    }
+    if (pageId == 'modbus' &&
         type != DataConnectionType.serial &&
         type != DataConnectionType.tcpClient) {
       return DataConnectionType.serial;
@@ -1926,7 +1967,7 @@ class AppSettings {
     if (enabled) {
       final global = saveToSerialConfig();
       serialPageProfiles = {
-        for (final page in const ['rawData', 'shell', 'plot'])
+        for (final page in const ['rawData', 'shell', 'plot', 'modbus'])
           page: serialPageProfiles[page]?.copyWith() ?? global.copyWith(),
       };
     }

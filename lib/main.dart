@@ -15,6 +15,7 @@ import 'core/utils/app_logger.dart';
 import 'data/models/probe_connection_config.dart';
 import 'data/models/data_connection_config.dart';
 import 'data/models/main_page_policy.dart';
+import 'data/models/modbus_models.dart';
 import 'data/models/ssh_connection_config.dart';
 import 'services/app_notifications.dart';
 import 'services/app_info.dart';
@@ -22,6 +23,7 @@ import 'services/app_settings.dart';
 import 'services/bundled_openocd_runtime.dart';
 import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
+import 'services/modbus_client_service.dart';
 import 'services/native_serial_reader.dart';
 import 'services/probe_connection_service.dart';
 import 'services/ssh_connection_service.dart';
@@ -37,6 +39,7 @@ import 'viewmodels/probe_plot_viewmodel.dart';
 import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
+import 'views/pages/modbus_page.dart';
 import 'views/pages/probe_plot_page.dart';
 import 'views/pages/raw_data_page.dart';
 import 'views/pages/rtt_page.dart';
@@ -138,6 +141,19 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: ConnectionOwnerService()),
         ChangeNotifierProvider.value(value: connectionService),
         ChangeNotifierProvider.value(value: sshService),
+        ChangeNotifierProvider(
+          create:
+              (_) => ModbusClientService(
+                DataConnectionModbusLink(connectionService),
+                initialMode: ModbusMode.fromString(AppSettings().modbusMode),
+                timeoutMs: AppSettings().modbusTimeoutMs,
+                initialTasks: AppSettings().modbusPollingTasks,
+                onTasksChanged: (tasks) {
+                  AppSettings().modbusPollingTasks = List.of(tasks);
+                  unawaited(AppSettings().save());
+                },
+              ),
+        ),
         ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
@@ -496,6 +512,12 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             icon: Icons.monitor_heart_outlined,
             page: const ProbePlotPage(),
           ),
+          'modbus': (
+            id: 'modbus',
+            label: 'Modbus',
+            icon: Icons.swap_horiz,
+            page: const ModbusPage(),
+          ),
         };
     return [
       for (final id in AppSettings().mainTabOrder)
@@ -510,6 +532,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     'plot': (label: AppStrings.nav.plot, icon: Icons.show_chart),
     'rtt': (label: AppStrings.nav.rtt, icon: Icons.developer_board),
     'probePlot': (label: '探针绘图', icon: Icons.monitor_heart_outlined),
+    'modbus': (label: 'Modbus', icon: Icons.swap_horiz),
   };
 
   void _persistVisiblePages(List<String> pages) {
@@ -624,7 +647,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     });
     final settings = AppSettings();
     settings.lastMainPage = id;
-    if (id == 'rawData' || id == 'shell' || id == 'plot') {
+    if (id == 'rawData' || id == 'shell' || id == 'plot' || id == 'modbus') {
       DataConnectionService().selectSerialProfile(id);
     }
     unawaited(settings.save());
@@ -730,6 +753,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
         return;
       }
       AppNotifications.show('快捷断开：正在断开连接');
+      if (_currentTabId == 'modbus') {
+        await context.read<ModbusClientService>().stop();
+      }
       await service.disconnect();
       return;
     }
@@ -752,6 +778,9 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
     final reconnectNetwork = service.activeNetworkConfig;
     final reconnectPage = service.activeConnectionPage ?? _currentTabId;
     AppNotifications.show('快捷重连：正在断开并重新连接');
+    if (_currentTabId == 'modbus') {
+      await context.read<ModbusClientService>().stop();
+    }
     await service.disconnect();
     if (reconnectType == DataConnectionType.serial &&
         !service.canConnectSelectedPort) {
@@ -895,6 +924,8 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
                                                   'shell',
                                                 DataActivityOwner.plot =>
                                                   'plot',
+                                                DataActivityOwner.modbus =>
+                                                  'modbus',
                                                 DataActivityOwner.none => null,
                                               };
                                           final canSwitch = switch (connectionOwner
@@ -1289,7 +1320,12 @@ class _WindowCloseListener extends WindowListener {
       context,
       listen: false,
     );
+    final modbusService = Provider.of<ModbusClientService>(
+      context,
+      listen: false,
+    );
     await AppSettings().flushPendingSave();
+    await modbusService.stop();
     await probeConnectionService.shutdown();
     await sshConnectionService.shutdown();
     await connectionService.shutdown();

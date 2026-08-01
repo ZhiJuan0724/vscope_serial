@@ -2,14 +2,27 @@ import 'data_connection_config.dart';
 
 /// 主页面可见性和数据连接兼容性的纯状态规则。
 abstract final class MainPagePolicy {
-  static const allPages = ['rawData', 'shell', 'plot', 'rtt', 'probePlot'];
+  static const allPages = [
+    'rawData',
+    'shell',
+    'plot',
+    'rtt',
+    'probePlot',
+    'modbus',
+  ];
 
   static bool supportsDataConnection(String pageId, DataConnectionType type) =>
       switch (type) {
         DataConnectionType.serial =>
-          pageId == 'rawData' || pageId == 'shell' || pageId == 'plot',
+          pageId == 'rawData' ||
+              pageId == 'shell' ||
+              pageId == 'plot' ||
+              pageId == 'modbus',
         DataConnectionType.tcpClient =>
-          pageId == 'rawData' || pageId == 'shell' || pageId == 'plot',
+          pageId == 'rawData' ||
+              pageId == 'shell' ||
+              pageId == 'plot' ||
+              pageId == 'modbus',
         DataConnectionType.udp => pageId == 'rawData' || pageId == 'plot',
         DataConnectionType.tcpServer => pageId == 'rawData',
       };
