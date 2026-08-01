@@ -123,7 +123,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('扩展面板在窗口扩宽前离屏布局且主区域宽度保持不变', (tester) async {
+  testWidgets('扩展面板在窗口扩宽完成后才挂载且主区域宽度保持不变', (tester) async {
     const windowChannel = MethodChannel('window_manager');
     const screenChannel = MethodChannel(
       'dev.leanflutter.plugins/screen_retriever',
@@ -209,7 +209,7 @@ void main() {
 
     expect(expansionRequested.isCompleted, isTrue);
     expect(tester.getSize(mainContent).width, 1000);
-    expect(tester.getTopLeft(panel).dx, 1000);
+    expect(panel, findsNothing);
 
     allowExpansion.complete();
     for (var i = 0; i < 70; i++) {
@@ -218,6 +218,7 @@ void main() {
 
     expect(bounds['width'], 1380);
     expect(tester.getSize(mainContent).width, 1000);
+    expect(panel, findsOneWidget);
     expect(tester.getTopLeft(panel).dx, 1000);
 
     await tester.tap(find.byKey(const ValueKey('multi-send-toggle')));

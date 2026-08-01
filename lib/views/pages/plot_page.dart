@@ -4349,7 +4349,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           color: Colors.grey,
                         ),
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       // 刷新帧率是对质量档位的进一步性能约束，因此放在质量选择之后。
                       Text(
                         AppStrings.plot.refreshFps,
@@ -4571,7 +4571,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                         ],
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -4602,7 +4602,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                         ],
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
@@ -4665,7 +4665,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                         ],
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       // 吸附点高亮
                       Row(
                         children: [
@@ -4798,7 +4798,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                         ],
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       Text(
                         AppStrings.plot.plotHistoryMemoryLimit,
                         style: const TextStyle(fontSize: 14),
@@ -4854,7 +4854,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           color: Colors.grey,
                         ),
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       Text(
                         AppStrings.plot.plotWindowLimit,
                         style: const TextStyle(fontSize: 14),
@@ -4918,7 +4918,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           color: Colors.grey,
                         ),
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       Text(
                         AppStrings.plot.droppedPackets,
                         style: const TextStyle(fontSize: 14),

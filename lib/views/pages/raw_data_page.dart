@@ -109,6 +109,13 @@ class _RawDataPageState extends State<RawDataPage> {
   bool get _multiSendVisible =>
       _multiSendPanelState != _MultiSendPanelState.closed;
 
+  /// 扩展内容只在原生窗口和 Flutter 布局均到位后挂载。
+  ///
+  /// opening/closing 期间保留空白过渡区，避免面板先在旧宽度内
+  /// 挤压主内容，随后又跳到新窗口区域。
+  bool get _multiSendPanelMounted =>
+      _multiSendPanelState == _MultiSendPanelState.open;
+
   bool get _multiSendTransitioning =>
       _multiSendPanelState == _MultiSendPanelState.opening ||
       _multiSendPanelState == _MultiSendPanelState.closing;
@@ -548,7 +555,7 @@ class _RawDataPageState extends State<RawDataPage> {
                         ),
                       ),
                     ),
-                    if (_multiSendVisible)
+                    if (_multiSendPanelMounted)
                       Positioned(
                         left: contentWidth,
                         top: 0,

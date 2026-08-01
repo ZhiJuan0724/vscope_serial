@@ -91,7 +91,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                 ),
               ),
             ),
-            const Divider(height: 24),
+            const SizedBox(height: 16),
             const Text('终端字体', style: TextStyle(fontSize: 14)),
             const SizedBox(height: 4),
             Align(

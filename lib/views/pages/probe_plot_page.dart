@@ -1801,7 +1801,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           color: Colors.grey,
                         ),
                       ),
-                      const Divider(),
+                      const SizedBox(height: 12),
                       const Text('精确窗口点数上限', style: TextStyle(fontSize: 14)),
                       const SizedBox(height: 8),
                       Row(

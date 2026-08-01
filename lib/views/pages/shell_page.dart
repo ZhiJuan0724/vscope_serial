@@ -965,7 +965,7 @@ class _ShellPageState extends State<ShellPage> {
                                   ).colorScheme.onSurfaceVariant,
                             ),
                           ),
-                          const Divider(height: 24),
+                          const SizedBox(height: 8),
                           SwitchListTile.adaptive(
                             contentPadding: EdgeInsets.zero,
                             title: const Text('命令行本地回显'),
