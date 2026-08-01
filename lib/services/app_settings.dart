@@ -9,6 +9,7 @@ import '../data/models/math_channel_config.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/serial_config.dart';
 import '../data/models/data_connection_config.dart';
+import '../data/models/ssh_connection_config.dart';
 import 'settings_repository.dart';
 
 /// 应用设置 - 全局单例，负责配置的持久化
@@ -292,6 +293,11 @@ class AppSettings {
   /// Shell 终端保留的最大历史行数。
   int shellScrollbackLines = 10000;
 
+  /// Shell 使用普通串口/TCP，或独立 SSH 会话。
+  String shellConnectionMode = ShellConnectionMode.normal.value;
+  SshConnectionConfig sshConnectionConfig = const SshConnectionConfig();
+  Map<String, SshKnownHost> sshKnownHosts = {};
+
   /// YMODEM 接收文件保存策略，当前固定为 exports。
   String ymodemSaveDirectoryPolicy = 'exports';
 
@@ -484,6 +490,9 @@ class AppSettings {
     shellLineEnding = '\r\n';
     shellLocalEcho = true;
     shellScrollbackLines = 10000;
+    shellConnectionMode = ShellConnectionMode.normal.value;
+    sshConnectionConfig = const SshConnectionConfig();
+    sshKnownHosts = {};
     ymodemSaveDirectoryPolicy = 'exports';
     rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
@@ -847,6 +856,20 @@ class AppSettings {
           ((json['shellScrollbackLines'] as num?)?.toInt() ?? 10000)
               .clamp(1000, 100000)
               .toInt();
+      shellConnectionMode =
+          ShellConnectionMode.fromString(
+            json['shellConnectionMode'] as String?,
+          ).value;
+      sshConnectionConfig = SshConnectionConfig.fromJson(
+        json['sshConnectionConfig'],
+      );
+      final knownHostsJson = json['sshKnownHosts'];
+      sshKnownHosts = {
+        if (knownHostsJson is Map)
+          for (final entry in knownHostsJson.entries)
+            if (SshKnownHost.fromJson(entry.value) case final host?)
+              '${entry.key}': host,
+      };
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
@@ -1290,6 +1313,12 @@ class AppSettings {
     'shellLineEnding': shellLineEnding,
     'shellLocalEcho': shellLocalEcho,
     'shellScrollbackLines': shellScrollbackLines,
+    'shellConnectionMode': shellConnectionMode,
+    'sshConnectionConfig': sshConnectionConfig.toJson(),
+    'sshKnownHosts': {
+      for (final entry in sshKnownHosts.entries)
+        entry.key: entry.value.toJson(),
+    },
     'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
     'rawDataEncoding': rawDataEncoding,
     'rawMultiSendProfileId': rawMultiSendProfileId,
@@ -1384,6 +1413,9 @@ class AppSettings {
     'shellLineEnding': ['shell', 'terminal', 'lineEnding'],
     'shellLocalEcho': ['shell', 'terminal', 'localEcho'],
     'shellScrollbackLines': ['shell', 'terminal', 'scrollbackLines'],
+    'shellConnectionMode': ['shell', 'connection', 'mode'],
+    'sshConnectionConfig': ['shell', 'ssh', 'connection'],
+    'sshKnownHosts': ['shell', 'ssh', 'knownHosts'],
     'ymodemSaveDirectoryPolicy': [
       'shell',
       'fileTransfer',
@@ -1854,12 +1886,16 @@ class AppSettings {
   }
 
   DataConnectionType connectionTypeForPage(String pageId) {
-    if (pageId == 'shell') return DataConnectionType.serial;
     final type = DataConnectionType.fromString(dataPageConnectionTypes[pageId]);
     if (!networkConnectionsEnabled && type != DataConnectionType.serial) {
       return DataConnectionType.serial;
     }
     if (pageId == 'plot' && type == DataConnectionType.tcpServer) {
+      return DataConnectionType.serial;
+    }
+    if (pageId == 'shell' &&
+        type != DataConnectionType.serial &&
+        type != DataConnectionType.tcpClient) {
       return DataConnectionType.serial;
     }
     return type;
