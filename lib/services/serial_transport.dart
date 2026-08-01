@@ -3,22 +3,23 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
+import '../data/models/data_packet.dart';
+import 'data_transport_session.dart';
 import 'native_serial_reader.dart';
 
 /// 单个串口 open/close 生命周期的可替换 transport。
 ///
 /// DataConnectionService 负责操作排序和 generation 隔离；transport 只拥有本次
 /// 打开的句柄、读取流和写队列，便于用 fake 精确验证竞态。
-abstract interface class SerialTransport {
-  Stream<NativeSerialData> get dataStream;
-  bool get isOpen;
-
+abstract interface class SerialTransport implements DataTransportSession {
   Future<bool> open(String port, int baudRate);
   bool setConfig(int dataBits, int stopBits, int parity);
   void setRts(bool value);
   void setDtr(bool value);
   bool startReading({required int timeoutMs});
+  @override
   Future<int> write(Uint8List data);
+  @override
   Future<void> close();
 }
 
@@ -34,10 +35,25 @@ class NativeSerialTransport
   final NativeSerialReader _reader = NativeSerialReader();
 
   @override
-  Stream<NativeSerialData> get dataStream => _reader.dataStream;
+  Stream<DataPacket> get dataStream => _reader.dataStream.map(
+    (event) => DataPacket(
+      data: event.data,
+      timestamp: DateTime.fromMicrosecondsSinceEpoch(event.wallClockUs),
+      monotonicUs: event.monotonicUs,
+    ),
+  );
+
+  @override
+  Stream<Object> get errorStream => const Stream<Object>.empty();
 
   @override
   bool get isOpen => _reader.isOpen;
+
+  @override
+  bool get canSend => isOpen;
+
+  @override
+  String get description => '串口';
 
   @override
   Future<bool> open(String port, int baudRate) async {

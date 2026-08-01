@@ -2,10 +2,10 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/data/models/data_packet.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/data/protocol/plot_protocol_codec.dart';
 import 'package:vscope_serial/data/protocol/send_protocol.dart';
-import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/plot_protocol_initializer.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
@@ -69,13 +69,22 @@ void main() {
 }
 
 class _RecordingTransport implements SerialTransport {
-  final StreamController<NativeSerialData> _controller =
-      StreamController<NativeSerialData>.broadcast();
+  final StreamController<DataPacket> _controller =
+      StreamController<DataPacket>.broadcast();
   final List<Uint8List> writes = [];
   bool _isOpen = false;
 
   @override
-  Stream<NativeSerialData> get dataStream => _controller.stream;
+  Stream<DataPacket> get dataStream => _controller.stream;
+
+  @override
+  Stream<Object> get errorStream => const Stream.empty();
+
+  @override
+  bool get canSend => _isOpen;
+
+  @override
+  String get description => '记录串口';
 
   @override
   bool get isOpen => _isOpen;

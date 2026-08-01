@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/data/models/data_packet.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 
@@ -15,8 +15,9 @@ void main() {
       () async {
         final open = Completer<bool>();
         final first = _FakeTransport(openResult: open.future);
-        final service = DataConnectionService.forTesting(transportFactory: () => first)
-          ..config = SerialConfig(port: 'COM7');
+        final service = DataConnectionService.forTesting(
+          transportFactory: () => first,
+        )..config = SerialConfig(port: 'COM7');
 
         final connecting = service.connect();
         expect(service.isConnecting, isTrue);
@@ -108,6 +109,29 @@ void main() {
     );
 
     test(
+      'errors from an old generation cannot disconnect the new session',
+      () async {
+        final first = _FakeTransport();
+        final second = _FakeTransport();
+        final transports = <_FakeTransport>[first, second];
+        final service = DataConnectionService.forTesting(
+          transportFactory: () => transports.removeAt(0),
+        )..config = SerialConfig(port: 'COM7');
+
+        await service.connect();
+        await service.disconnect();
+        await service.connect();
+        first.emitError(StateError('stale transport error'));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(service.isConnected, isTrue);
+        expect(second.closeCount, 0);
+        await service.shutdown();
+        service.dispose();
+      },
+    );
+
+    test(
       'repeated write disconnect signals close the active transport once',
       () async {
         final transport = _FakeTransport(writeResult: 0);
@@ -175,8 +199,9 @@ class _FakeTransport implements SerialTransport {
   final List<String>? events;
   final Future<bool>? openResult;
   final int? writeResult;
-  final StreamController<NativeSerialData> _controller =
-      StreamController<NativeSerialData>.broadcast();
+  final StreamController<DataPacket> _controller =
+      StreamController<DataPacket>.broadcast();
+  final StreamController<Object> _errors = StreamController<Object>.broadcast();
 
   bool _isOpen = false;
   int closeCount = 0;
@@ -189,7 +214,16 @@ class _FakeTransport implements SerialTransport {
   });
 
   @override
-  Stream<NativeSerialData> get dataStream => _controller.stream;
+  Stream<DataPacket> get dataStream => _controller.stream;
+
+  @override
+  Stream<Object> get errorStream => _errors.stream;
+
+  @override
+  bool get canSend => _isOpen;
+
+  @override
+  String get description => name;
 
   @override
   bool get isOpen => _isOpen;
@@ -212,13 +246,15 @@ class _FakeTransport implements SerialTransport {
 
   void emit(List<int> bytes) {
     _controller.add(
-      NativeSerialData(
+      DataPacket(
         data: Uint8List.fromList(bytes),
         monotonicUs: DateTime.now().microsecondsSinceEpoch,
-        wallClockUs: DateTime.now().microsecondsSinceEpoch,
+        timestamp: DateTime.now(),
       ),
     );
   }
+
+  void emitError(Object error) => _errors.add(error);
 
   @override
   bool setConfig(int dataBits, int stopBits, int parity) => true;

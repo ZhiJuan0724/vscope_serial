@@ -20,7 +20,7 @@ void main() {
     final peer = await accepted;
     final received = transport.dataStream.first;
     peer.add([1, 2, 3]);
-    expect(await received, Uint8List.fromList([1, 2, 3]));
+    expect((await received).data, Uint8List.fromList([1, 2, 3]));
 
     final peerReceived = peer.first;
     expect(await transport.write(Uint8List.fromList([4, 5])), 2);
@@ -103,7 +103,7 @@ void main() {
     final packet = await outboundPacket.future;
     expect(packet.data, [7]);
     expected.send([8], InternetAddress.loopbackIPv4, localPort);
-    expect(await received, [8]);
+    expect((await received).data, [8]);
 
     await expectedSubscription.cancel();
     await transport.close();

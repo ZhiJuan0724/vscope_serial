@@ -3,30 +3,28 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../data/models/data_connection_config.dart';
+import '../data/models/data_packet.dart';
+import 'data_transport_session.dart';
 
 /// TCP/UDP连接的最小双向传输接口。
-abstract class NetworkTransport {
-  Stream<Uint8List> get dataStream;
-  Stream<Object> get errorStream;
-  bool get canSend;
-  String get description;
+abstract class NetworkTransport implements DataTransportSession {
   Future<void> open(NetworkConnectionConfig config);
-  Future<int> write(Uint8List data);
-  Future<void> close();
 }
 
 class TcpClientNetworkTransport implements NetworkTransport {
-  final _data = StreamController<Uint8List>.broadcast();
+  final _data = StreamController<DataPacket>.broadcast();
   final _errors = StreamController<Object>.broadcast();
   Socket? _socket;
   StreamSubscription<Uint8List>? _subscription;
 
   @override
-  Stream<Uint8List> get dataStream => _data.stream;
+  Stream<DataPacket> get dataStream => _data.stream;
   @override
   Stream<Object> get errorStream => _errors.stream;
   @override
   bool get canSend => _socket != null;
+  @override
+  bool get isOpen => _socket != null;
   @override
   String get description => _socket?.remoteAddress.address ?? 'TCP';
 
@@ -42,7 +40,7 @@ class TcpClientNetworkTransport implements NetworkTransport {
     socket.setOption(SocketOption.tcpNoDelay, true);
     _socket = socket;
     _subscription = socket.listen(
-      (bytes) => _data.add(Uint8List.fromList(bytes)),
+      (bytes) => _data.add(DataPacket(data: Uint8List.fromList(bytes))),
       onError: _errors.add,
       onDone: () => _errors.add(StateError('TCP远端已断开')),
       cancelOnError: true,
@@ -71,7 +69,7 @@ class TcpClientNetworkTransport implements NetworkTransport {
 }
 
 class TcpServerNetworkTransport implements NetworkTransport {
-  final _data = StreamController<Uint8List>.broadcast();
+  final _data = StreamController<DataPacket>.broadcast();
   final _errors = StreamController<Object>.broadcast();
   ServerSocket? _server;
   Socket? _client;
@@ -79,11 +77,13 @@ class TcpServerNetworkTransport implements NetworkTransport {
   StreamSubscription<Uint8List>? _clientSubscription;
 
   @override
-  Stream<Uint8List> get dataStream => _data.stream;
+  Stream<DataPacket> get dataStream => _data.stream;
   @override
   Stream<Object> get errorStream => _errors.stream;
   @override
   bool get canSend => _client != null;
+  @override
+  bool get isOpen => _server != null;
   @override
   String get description => _client == null ? 'TCP监听中' : 'TCP客户端已连接';
 
@@ -102,7 +102,7 @@ class TcpServerNetworkTransport implements NetworkTransport {
     socket.setOption(SocketOption.tcpNoDelay, true);
     _client = socket;
     _clientSubscription = socket.listen(
-      (bytes) => _data.add(Uint8List.fromList(bytes)),
+      (bytes) => _data.add(DataPacket(data: Uint8List.fromList(bytes))),
       onError: (Object _) {
         if (identical(_client, socket)) _client = null;
         socket.destroy();
@@ -140,18 +140,20 @@ class TcpServerNetworkTransport implements NetworkTransport {
 }
 
 class UdpNetworkTransport implements NetworkTransport {
-  final _data = StreamController<Uint8List>.broadcast();
+  final _data = StreamController<DataPacket>.broadcast();
   final _errors = StreamController<Object>.broadcast();
   RawDatagramSocket? _socket;
   InternetAddress? _remoteAddress;
   int? _remotePort;
 
   @override
-  Stream<Uint8List> get dataStream => _data.stream;
+  Stream<DataPacket> get dataStream => _data.stream;
   @override
   Stream<Object> get errorStream => _errors.stream;
   @override
   bool get canSend => _socket != null;
+  @override
+  bool get isOpen => _socket != null;
   @override
   String get description => 'UDP';
 
@@ -177,7 +179,7 @@ class UdpNetworkTransport implements NetworkTransport {
         final datagram = packet!;
         if (datagram.address.address == _remoteAddress!.address &&
             datagram.port == _remotePort) {
-          _data.add(Uint8List.fromList(datagram.data));
+          _data.add(DataPacket(data: Uint8List.fromList(datagram.data)));
         }
       }
     }, onError: _errors.add);

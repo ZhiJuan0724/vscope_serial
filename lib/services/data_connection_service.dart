@@ -14,6 +14,7 @@ import '../data/models/serial_config.dart';
 import 'app_notifications.dart';
 import 'app_settings.dart';
 import 'connection_owner_service.dart';
+import 'data_transport_session.dart';
 import 'native_serial_reader.dart';
 import 'network_transport.dart';
 import 'raw_receive_session.dart';
@@ -124,9 +125,11 @@ enum RawShellCursorMode {
 /// 连接生命周期、原始接收缓存和后台写队列分别由专属组件管理；此类负责把它们
 /// 组合为页面可用状态，并确保数据收发、Shell、绘图只会有一个接收活动所有者。
 class DataConnectionService extends ChangeNotifier {
-  static final DataConnectionService _instance = DataConnectionService._internal();
+  static final DataConnectionService _instance =
+      DataConnectionService._internal();
   factory DataConnectionService() => _instance;
-  DataConnectionService._internal() : this._withTransport(NativeSerialTransport.new);
+  DataConnectionService._internal()
+    : this._withTransport(NativeSerialTransport.new);
 
   @visibleForTesting
   DataConnectionService.forTesting({
@@ -193,19 +196,18 @@ class DataConnectionService extends ChangeNotifier {
   bool _isRefreshingPortDetails = false;
 
   final SerialTransport Function() _transportFactory;
-  SerialTransport? _transport;
-  StreamSubscription? _nativeSubscription;
-  NetworkTransport? _networkTransport;
+  DataTransportSession? _activeSession;
   // ignore: cancel_subscriptions
-  StreamSubscription<Uint8List>? _networkSubscription;
+  StreamSubscription<DataPacket>? _dataSubscription;
   // ignore: cancel_subscriptions
-  StreamSubscription<Object>? _networkErrorSubscription;
+  StreamSubscription<Object>? _errorSubscription;
 
   bool get isNetworkConnection =>
       activeConnectionType != DataConnectionType.serial;
   bool get isTcpServer => activeConnectionType == DataConnectionType.tcpServer;
   bool get isConnectionBusy => isConnected || isConnecting;
-  bool get networkCanSend => _networkTransport?.canSend ?? false;
+  bool get networkCanSend =>
+      isNetworkConnection && (_activeSession?.canSend ?? false);
   String get connectionDescription {
     if (!isNetworkConnection) return config.port ?? '';
     final network = activeNetworkConfig;
@@ -573,7 +575,8 @@ class DataConnectionService extends ChangeNotifier {
     }
 
     final healthChecker = debugConnectionHealthChecker;
-    final nativePortOpen = debugNativePortOpen ?? _transport?.isOpen == true;
+    final nativePortOpen =
+        debugNativePortOpen ?? _activeSession?.isOpen == true;
     var healthy = false;
     if (nativePortOpen) {
       try {
@@ -783,27 +786,15 @@ class DataConnectionService extends ChangeNotifier {
 
     AppLogger().trace('NativeSerialReader 打开成功', category: 'SERIAL');
 
-    // 监听数据流
-    _transport = transport;
+    // 串口配置完成后，按统一数据会话挂接接收和错误流。
+    _activeSession = transport;
     _syncPlotReceiveAggregation();
-    _nativeSubscription = transport.dataStream.listen(
-      (nativeData) {
-        if (_connectionCoordinator.isCurrent(generation) &&
-            identical(transport, _transport)) {
-          _onNativeDataReceived(nativeData);
-        }
-      },
-      onError:
-          (error) => AppLogger().error('原生读取错误: $error', category: 'SERIAL'),
-    );
+    _bindActiveSession(transport, generation);
     AppLogger().debug('原生数据流订阅已建立', category: 'SERIAL');
 
     // 启动读取（timeoutMs=10 表示 10ms 超时，避免阻塞）
     if (!transport.startReading(timeoutMs: 10)) {
-      await _nativeSubscription?.cancel();
-      _nativeSubscription = null;
-      await transport.close();
-      _transport = null;
+      await _cleanupPortLocked();
       throw Exception('failed to start native serial read thread');
     }
 
@@ -871,11 +862,8 @@ class DataConnectionService extends ChangeNotifier {
         await transport.close();
         throw const _ConnectionCancelled();
       }
-      _networkTransport = transport;
-      _networkSubscription = transport.dataStream.listen(_onNetworkData);
-      _networkErrorSubscription = transport.errorStream.listen(
-        (error) => _handleNetworkDisconnected(error.toString()),
-      );
+      _activeSession = transport;
+      _bindActiveSession(transport, generation);
       isConnected = true;
       AppLogger().info(
         '${networkConfig.type.label}已连接: ${networkConfig.host}:${networkConfig.port}',
@@ -899,41 +887,41 @@ class DataConnectionService extends ChangeNotifier {
   }
 
   Future<void> _disconnectLocked() async {
+    final disconnectedType = activeConnectionType;
     await _cleanupPortLocked();
-    AppLogger().info('串口已断开', category: 'SERIAL');
+    AppLogger().info(
+      '${disconnectedType.label}已断开',
+      category:
+          disconnectedType == DataConnectionType.serial ? 'SERIAL' : 'NETWORK',
+    );
     _notifyListenersSoon();
   }
 
   Future<void> _cleanupPortLocked() async {
     AppLogger().debug(
-      '串口清理开始: connected=$isConnected, '
-      'hasTransport=${_transport != null}, '
-      'hasSubscription=${_nativeSubscription != null}',
-      category: 'SERIAL',
+      '数据连接清理开始: connected=$isConnected, '
+      'type=${activeConnectionType.label}, '
+      'hasSession=${_activeSession != null}, '
+      'hasSubscription=${_dataSubscription != null}',
+      category: 'CONNECTION',
     );
     _flushReceiveLog();
     _flushSendLog();
-    final subscription = _nativeSubscription;
-    _nativeSubscription = null;
-    final transport = _transport;
-    final networkTransport = _networkTransport;
-    final networkSubscription = _networkSubscription;
-    final networkErrorSubscription = _networkErrorSubscription;
-    _setPlotReceiveAggregation(transport, enabled: false);
-    _transport = null;
-    _networkTransport = null;
-    _networkSubscription = null;
-    _networkErrorSubscription = null;
+    final session = _activeSession;
+    final dataSubscription = _dataSubscription;
+    final errorSubscription = _errorSubscription;
+    _setPlotReceiveAggregation(session, enabled: false);
+    _activeSession = null;
+    _dataSubscription = null;
+    _errorSubscription = null;
     isConnected = false;
     _connectionOwners.release(ConnectionOwner.data);
     _releaseAllActivities();
     _notifyListenersSoon();
-    await subscription?.cancel();
-    await networkSubscription?.cancel();
-    await networkErrorSubscription?.cancel();
-    await transport?.close();
-    await networkTransport?.close();
-    AppLogger().debug('串口清理完成', category: 'SERIAL');
+    await dataSubscription?.cancel();
+    await errorSubscription?.cancel();
+    await session?.close();
+    AppLogger().debug('数据连接清理完成', category: 'CONNECTION');
   }
 
   /// 应用退出专用：立即取消当前连接意图，再等待所有串口操作有序收敛。
@@ -947,24 +935,47 @@ class DataConnectionService extends ChangeNotifier {
     });
   }
 
-  /// 原生串口数据接收回调
-  void _onNativeDataReceived(NativeSerialData nativeData) {
-    final data = nativeData.data;
+  void _bindActiveSession(DataTransportSession session, int generation) {
+    bool isCurrent() =>
+        _connectionCoordinator.isCurrent(generation) &&
+        identical(session, _activeSession);
+    _dataSubscription = session.dataStream.listen(
+      (packet) {
+        if (isCurrent()) _onDataReceived(packet);
+      },
+      onError: (Object error) {
+        if (isCurrent()) _handleActiveSessionError(error);
+      },
+    );
+    _errorSubscription = session.errorStream.listen((error) {
+      if (isCurrent()) _handleActiveSessionError(error);
+    });
+  }
+
+  void _handleActiveSessionError(Object error) {
+    if (isNetworkConnection) {
+      _handleNetworkDisconnected(error.toString());
+      return;
+    }
+    AppLogger().error('原生读取错误: $error', category: 'SERIAL');
+  }
+
+  /// 当前串口、TCP或UDP会话的数据接收回调。
+  void _onDataReceived(DataPacket packet) {
+    final data = packet.data;
     final owner = _activityOwner;
     final shouldReceiveYmodem =
         isConnected &&
         owner == DataActivityOwner.shell &&
         ymodemService.isActive;
-    final shouldReceiveRaw =
-        isConnected && owner == DataActivityOwner.rawData;
-    final shouldReceiveShell =
-        isConnected && owner == DataActivityOwner.shell;
+    final shouldReceiveRaw = isConnected && owner == DataActivityOwner.rawData;
+    final shouldReceiveShell = isConnected && owner == DataActivityOwner.shell;
     if (owner == DataActivityOwner.none) {
       return;
     }
 
     if (owner == DataActivityOwner.plot) {
-      _dataController.add(DataPacket(data: data));
+      _dataController.add(packet);
       return;
     }
 
@@ -983,14 +994,10 @@ class DataConnectionService extends ChangeNotifier {
       if (accepted.isEmpty) return;
 
       // 单调时间用于分包，墙钟时间只负责用户可见的时间戳。
-      final receiveTime = DateTime.fromMicrosecondsSinceEpoch(
-        nativeData.wallClockUs,
-      );
-
       _rawSession.feedReceivedData(
         accepted,
-        receiveTime,
-        monotonicUs: nativeData.monotonicUs,
+        packet.timestamp,
+        monotonicUs: packet.monotonicUs,
       );
     }
 
@@ -998,13 +1005,6 @@ class DataConnectionService extends ChangeNotifier {
       _recordReceiveLog(data.length);
       _shellDataController.add(data);
     }
-  }
-
-  void _onNetworkData(Uint8List data) {
-    final now = DateTime.now().microsecondsSinceEpoch;
-    _onNativeDataReceived(
-      NativeSerialData(data: data, monotonicUs: now, wallClockUs: now),
-    );
   }
 
   void _handleNetworkDisconnected(String message) {
@@ -1385,11 +1385,11 @@ class DataConnectionService extends ChangeNotifier {
 
   Uint8List? prepareSendData(String text) {
     if (!isConnected) {
-      AppLogger().error('串口未连接', category: 'SERIAL');
+      AppLogger().error('数据连接未建立', category: 'DATA');
       return null;
     }
-    if (_transport == null) {
-      AppLogger().error('串口未连接', category: 'SERIAL');
+    if (_activeSession == null) {
+      AppLogger().error('数据连接会话不可用', category: 'DATA');
       return null;
     }
 
@@ -1401,7 +1401,7 @@ class DataConnectionService extends ChangeNotifier {
 
   /// 多条发送条目使用独立的有效载荷规则：不追加普通发送区的行尾或 CRC。
   Uint8List? prepareMultiSendData(String text, {required bool isHex}) {
-    if (!isConnected || _transport == null || text.isEmpty) return null;
+    if (!isConnected || _activeSession == null || text.isEmpty) return null;
     try {
       if (!isHex) return _encodeTextWithEncoding(text, textEncoding);
       final hex = text.replaceAll(RegExp(r'\s+'), '');
@@ -1518,18 +1518,25 @@ class DataConnectionService extends ChangeNotifier {
       AppLogger().warning('数据连接未建立，无法发送数据', category: 'DATA');
       throw StateError('数据连接未建立');
     }
-    if (_networkTransport != null) {
-      int sent;
-      try {
-        sent = await _networkTransport!.write(data);
-      } catch (error) {
-        if (isTcpServer) {
-          throw StateError('TCP客户端已断开，发送失败');
-        }
+    final session = _activeSession;
+    if (session == null) {
+      _handleIoDisconnected('发送失败，数据连接会话不可用');
+      throw StateError('数据连接已断开，发送失败');
+    }
+    int sent;
+    try {
+      sent = await session.write(data);
+    } catch (error) {
+      if (isNetworkConnection) {
+        if (isTcpServer) throw StateError('TCP客户端已断开，发送失败');
         _handleNetworkDisconnected('网络发送异常: $error');
         throw StateError('网络连接已断开，发送失败');
       }
-      if (sent != data.length) {
+      _handleIoDisconnected('串口发送异常: $error');
+      throw StateError('串口已断开连接，发送失败');
+    }
+    if (sent != data.length) {
+      if (isNetworkConnection) {
         if (isTcpServer) {
           throw StateError(networkCanSend ? 'TCP发送不完整' : 'TCP服务端尚无客户端连接');
         }
@@ -1538,20 +1545,12 @@ class DataConnectionService extends ChangeNotifier {
         );
         throw StateError('网络连接已断开，发送失败');
       }
-      _recordSendLog(sent);
-    } else if (_transport != null) {
-      final sent = await _transport!.write(data);
-      if (sent != data.length) {
-        _handleIoDisconnected(
-          '发送失败，串口可能已断开: expected=${data.length}, sent=$sent',
-        );
-        throw StateError('串口已断开连接，发送失败');
-      }
-      _recordSendLog(sent);
-    } else {
-      _handleIoDisconnected('发送失败，串口读取器不可用');
+      _handleIoDisconnected(
+        '发送失败，串口可能已断开: expected=${data.length}, sent=$sent',
+      );
       throw StateError('串口已断开连接，发送失败');
     }
+    _recordSendLog(sent);
   }
 
   Future<File?> receiveYmodemFile() async {
@@ -1573,8 +1572,8 @@ class DataConnectionService extends ChangeNotifier {
     config = config.copyWith(rts: value);
     _saveSettings();
     if (isConnected) {
-      if (_transport != null) {
-        _transport!.setRts(value);
+      if (_activeSession case final SerialTransport transport) {
+        transport.setRts(value);
       }
     }
     AppLogger().info('RTS: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -1585,8 +1584,8 @@ class DataConnectionService extends ChangeNotifier {
     config = config.copyWith(dtr: value);
     _saveSettings();
     if (isConnected) {
-      if (_transport != null) {
-        _transport!.setDtr(value);
+      if (_activeSession case final SerialTransport transport) {
+        transport.setDtr(value);
       }
     }
     AppLogger().info('DTR: ${value ? 'ON' : 'OFF'}', category: 'SERIAL');
@@ -1691,7 +1690,7 @@ class DataConnectionService extends ChangeNotifier {
   void _releaseActivity(DataActivityOwner owner) {
     if (_activityOwner != owner) return;
     if (owner == DataActivityOwner.plot) {
-      _setPlotReceiveAggregation(_transport, enabled: false);
+      _setPlotReceiveAggregation(_activeSession, enabled: false);
     }
     if (owner == DataActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
@@ -1703,7 +1702,7 @@ class DataConnectionService extends ChangeNotifier {
   }
 
   void _releaseAllActivities() {
-    _setPlotReceiveAggregation(_transport, enabled: false);
+    _setPlotReceiveAggregation(_activeSession, enabled: false);
     if (_activityOwner == DataActivityOwner.rawData) {
       _rawSession.flushAutoLineBreak();
       _rawSession.flushTextDecoder();
@@ -1717,7 +1716,7 @@ class DataConnectionService extends ChangeNotifier {
   /// 仅 Windows 原生 transport 支持该优化；其它实现保持原有逐块交付。
   void _syncPlotReceiveAggregation() {
     _setPlotReceiveAggregation(
-      _transport,
+      _activeSession,
       enabled:
           _activityOwner == DataActivityOwner.plot &&
           AppSettings().plotReceiveAggregationEnabled,
@@ -1725,7 +1724,7 @@ class DataConnectionService extends ChangeNotifier {
   }
 
   void _setPlotReceiveAggregation(
-    SerialTransport? transport, {
+    DataTransportSession? transport, {
     required bool enabled,
   }) {
     if (transport case final PlotReceiveAggregationTransport aggregator) {

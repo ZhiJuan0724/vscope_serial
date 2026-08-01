@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/data_connection_config.dart';
+import 'package:vscope_serial/data/models/data_packet.dart';
 import 'package:vscope_serial/services/connection_owner_service.dart';
-import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 
@@ -73,7 +73,13 @@ Future<void> _waitUntil(bool Function() condition) async {
 
 class _UnusedSerialTransport implements SerialTransport {
   @override
-  Stream<NativeSerialData> get dataStream => const Stream.empty();
+  Stream<DataPacket> get dataStream => const Stream.empty();
+  @override
+  Stream<Object> get errorStream => const Stream.empty();
+  @override
+  bool get canSend => false;
+  @override
+  String get description => '未使用';
   @override
   bool get isOpen => false;
   @override

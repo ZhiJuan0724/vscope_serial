@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/data/models/data_packet.dart';
 import 'package:vscope_serial/data/models/serial_config.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
+import 'package:vscope_serial/services/native_serial_reader.dart';
 import 'package:vscope_serial/services/serial_transport.dart';
 import 'package:vscope_serial/views/dialogs/data_connection_dialog.dart';
 
@@ -166,7 +167,16 @@ void main() {
 
 class _DataConnectionDialogTransport implements SerialTransport {
   @override
-  Stream<NativeSerialData> get dataStream => const Stream.empty();
+  Stream<DataPacket> get dataStream => const Stream.empty();
+
+  @override
+  Stream<Object> get errorStream => const Stream.empty();
+
+  @override
+  bool get canSend => false;
+
+  @override
+  String get description => '测试串口';
 
   @override
   bool get isOpen => false;
