@@ -37,6 +37,10 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+      - name: Check UI consistency
+        shell: pwsh
+        run: ./tools/check_ui_consistency.ps1
+
       - name: Run tests
         run: flutter test
 

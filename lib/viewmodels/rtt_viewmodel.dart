@@ -12,6 +12,7 @@ import '../services/probe_connection_service.dart';
 import '../services/shell_stream_decoder.dart';
 import '../services/rtt_virtual_terminal_router.dart';
 import '../services/terminal_control_filter.dart';
+import 'settings_drafts.dart';
 
 /// RTT Viewer 的多终端显示、重建与双向发送状态。
 class RttViewModel extends ChangeNotifier {
@@ -335,6 +336,59 @@ class RttViewModel extends ChangeNotifier {
       terminal.trim(_historyLineLimit);
     }
     notifyListeners();
+  }
+
+  /// 一次提交 RTT Viewer 显示设置，并最多重建一次历史文本。
+  Future<void> applyTerminalSettings(RttTerminalSettingsDraft draft) async {
+    if (!shellTextEncodings.contains(draft.encoding)) {
+      throw ArgumentError.value(draft.encoding, '文本编码');
+    }
+    if (draft.fontSize < 10 || draft.fontSize > 24) {
+      throw ArgumentError.value(draft.fontSize, '终端字号');
+    }
+    if (draft.historyLineLimit < RttConfiguration.minHistoryLines ||
+        draft.historyLineLimit > RttConfiguration.maxHistoryLines) {
+      throw ArgumentError.value(draft.historyLineLimit, '历史行数');
+    }
+    final settings = AppSettings();
+    final previous = (
+      encoding: settings.rttEncoding,
+      fontFamily: settings.rttFontFamily,
+      fontSize: settings.rttFontSize,
+      history: settings.rttHistoryLineLimit,
+    );
+    settings
+      ..rttEncoding = draft.encoding
+      ..rttFontFamily = draft.fontFamily
+      ..rttFontSize = draft.fontSize
+      ..rttHistoryLineLimit = draft.historyLineLimit;
+    try {
+      await settings.save();
+    } catch (_) {
+      settings
+        ..rttEncoding = previous.encoding
+        ..rttFontFamily = previous.fontFamily
+        ..rttFontSize = previous.fontSize
+        ..rttHistoryLineLimit = previous.history;
+      rethrow;
+    }
+
+    final rebuild = _encoding != draft.encoding;
+    _encoding = draft.encoding;
+    _fontFamily = draft.fontFamily;
+    _fontSize = draft.fontSize;
+    _historyLineLimit = draft.historyLineLimit;
+    if (_lines.length > _historyLineLimit) {
+      _lines.removeRange(0, _lines.length - _historyLineLimit);
+    }
+    for (final terminal in _terminals) {
+      terminal.trim(_historyLineLimit);
+    }
+    if (rebuild) {
+      _rebuildFromRawHistory();
+    } else {
+      notifyListeners();
+    }
   }
 
   void _rebuildFromRawHistory() {

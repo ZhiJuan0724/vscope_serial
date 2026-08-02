@@ -394,9 +394,11 @@ class DataConnectionService extends ChangeNotifier {
 
   /// 修改绘图专用高频接收合并开关并立即同步当前原生读取线程。
   void setPlotReceiveAggregationEnabled(bool enabled) {
-    if (AppSettings().plotReceiveAggregationEnabled == enabled) return;
-    final settings = AppSettings()..plotReceiveAggregationEnabled = enabled;
-    unawaited(settings.save());
+    final settings = AppSettings();
+    if (settings.plotReceiveAggregationEnabled != enabled) {
+      settings.plotReceiveAggregationEnabled = enabled;
+      unawaited(settings.save());
+    }
     _syncPlotReceiveAggregation();
     _notifyListenersSoon();
   }
@@ -611,9 +613,10 @@ class DataConnectionService extends ChangeNotifier {
   /// 更新网络连接入口并立即刷新状态栏等共享界面。
   void setNetworkConnectionsEnabled(bool enabled) {
     final settings = AppSettings();
-    if (settings.networkConnectionsEnabled == enabled) return;
-    settings.networkConnectionsEnabled = enabled;
-    unawaited(settings.save());
+    if (settings.networkConnectionsEnabled != enabled) {
+      settings.networkConnectionsEnabled = enabled;
+      unawaited(settings.save());
+    }
     notifyListeners();
   }
 
@@ -1246,6 +1249,68 @@ class DataConnectionService extends ChangeNotifier {
 
   void setRawShellCursorMode(RawShellCursorMode value) =>
       _shellSession.setCursorMode(value);
+
+  Future<void> applyShellTerminalSettings({
+    required String encoding,
+    required String lineEnding,
+    required bool localEcho,
+    required int scrollbackLines,
+    required double fontSize,
+    required String fontFamily,
+    required RawShellThemeMode themeMode,
+    required RawShellCursorMode cursorMode,
+    required bool sshKeepAliveEnabled,
+  }) => _shellSession.applyTerminalSettings(
+    encoding: encoding,
+    lineEnding: lineEnding,
+    localEcho: localEcho,
+    scrollbackLines: scrollbackLines,
+    fontSize: fontSize,
+    fontFamily: fontFamily,
+    themeMode: themeMode,
+    cursorMode: cursorMode,
+    sshKeepAliveEnabled: sshKeepAliveEnabled,
+  );
+
+  /// 一次提交数据收发显示设置，避免三个字段分别保存和通知。
+  Future<void> applyRawDisplaySettings({
+    required String encoding,
+    required int autoLineBreakIntervalMs,
+    required int displayLineLimit,
+  }) async {
+    if (autoLineBreakIntervalMs < minAutoLineBreakIntervalMs ||
+        autoLineBreakIntervalMs > maxAutoLineBreakIntervalMs) {
+      throw ArgumentError.value(autoLineBreakIntervalMs, '自动换行时间');
+    }
+    if (displayLineLimit < minDisplayLineLimit ||
+        displayLineLimit > maxDisplayLineLimit) {
+      throw ArgumentError.value(displayLineLimit, '显示行数');
+    }
+    final settings = AppSettings();
+    final previous = (
+      encoding: settings.rawDataEncoding,
+      autoLineBreak: settings.rawDataAutoLineBreakIntervalMs,
+      displayLimit: settings.rawDataDisplayLineLimit,
+    );
+    settings
+      ..rawDataEncoding = encoding
+      ..rawDataAutoLineBreakIntervalMs = autoLineBreakIntervalMs
+      ..rawDataDisplayLineLimit = displayLineLimit;
+    try {
+      await settings.save();
+    } catch (_) {
+      settings
+        ..rawDataEncoding = previous.encoding
+        ..rawDataAutoLineBreakIntervalMs = previous.autoLineBreak
+        ..rawDataDisplayLineLimit = previous.displayLimit;
+      rethrow;
+    }
+    _rawSession
+      ..setTextEncoding(encoding)
+      ..setAutoLineBreakIntervalMs(autoLineBreakIntervalMs)
+      ..setDisplayLineLimit(displayLineLimit);
+    _notifyListenersSoon();
+  }
 
   void setReceiveHex(bool value) {
     if (!_rawSession.setReceiveHex(value)) return;

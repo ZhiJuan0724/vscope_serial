@@ -43,6 +43,7 @@ import 'base_viewmodel.dart';
 import 'plot_history_store.dart';
 import 'plot_math_engine.dart';
 import 'plot_observation_assembler.dart';
+import 'settings_drafts.dart';
 import 'plot_session_controller.dart';
 import 'plot_statistics_calculator.dart';
 import 'plot_trigger_runtime.dart';
@@ -754,7 +755,9 @@ class PlotViewModel extends BaseViewModel {
   }
 
   /// 保存绘图配置到 AppSettings
-  void _saveSettings() {
+  void _saveSettings() => unawaited(_saveSettingsAsync());
+
+  Future<void> _saveSettingsAsync() async {
     final settings = AppSettings();
     settings.refreshFps = _refreshFps;
     settings.plotFontSizeDelta = _plotFontSizeDelta;
@@ -841,7 +844,7 @@ class PlotViewModel extends BaseViewModel {
     settings.xMax = viewport.xMax;
     settings.yMin = viewport.yMin;
     settings.yMax = viewport.yMax;
-    settings.save();
+    await settings.save();
   }
 
   // ========== 状态读取接口 ==========

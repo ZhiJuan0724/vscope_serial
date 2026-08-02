@@ -1780,15 +1780,12 @@ Future<Color?> _showChannelCustomColorPicker(
                     ],
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppDialogTextField(
                     controller: hexController,
-                    decoration: secondaryDialogFieldDecoration(
-                      labelText: AppStrings.plot.hexColor,
-                      hintText: AppStrings.plot.hexColorHint,
-                    ).copyWith(
-                      errorText:
-                          hasError ? AppStrings.plot.colorInputInvalid : null,
-                    ),
+                    labelText: AppStrings.plot.hexColor,
+                    hintText: AppStrings.plot.hexColorHint,
+                    errorText:
+                        hasError ? AppStrings.plot.colorInputInvalid : null,
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(
                         RegExp(r'[#0-9a-fA-F]'),
@@ -2032,15 +2029,18 @@ class _ColorNumberField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      decoration: secondaryDialogFieldDecoration(labelText: label),
-      keyboardType: TextInputType.number,
-      inputFormatters: [
-        FilteringTextInputFormatter.digitsOnly,
-        LengthLimitingTextInputFormatter(3),
-      ],
-      onChanged: (_) => onChanged(),
+    return AppLabeledField(
+      label: label,
+      child: TextField(
+        controller: controller,
+        decoration: secondaryDialogFieldDecoration(),
+        keyboardType: TextInputType.number,
+        inputFormatters: [
+          FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(3),
+        ],
+        onChanged: (_) => onChanged(),
+      ),
     );
   }
 }

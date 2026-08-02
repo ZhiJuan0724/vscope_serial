@@ -265,6 +265,8 @@ void main() {
     expect(find.text(AppStrings.plot.floatingPanelOpacity), findsOneWidget);
     expect(find.text('跟随位置'), findsOneWidget);
     expect(find.text(AppStrings.plot.observationClickToPlace), findsOneWidget);
+    final initialOpacity = viewModel.floatingPanelOpacity;
+    final initialFollowPosition = viewModel.followPositionRatio;
     for (final key in [
       'probe-floating-panel-opacity-field',
       'probe-follow-position-field',
@@ -282,7 +284,7 @@ void main() {
     );
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    expect(viewModel.floatingPanelOpacity, 0.75);
+    expect(viewModel.floatingPanelOpacity, initialOpacity);
 
     final followField = find.byKey(
       const ValueKey('probe-follow-position-field'),
@@ -291,30 +293,40 @@ void main() {
     await tester.enterText(followField, '80');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    expect(viewModel.followPositionRatio, 0.8);
+    expect(viewModel.followPositionRatio, initialFollowPosition);
 
     final memoryField = find.byKey(
       const ValueKey('probe-history-memory-limit-field'),
     );
     await tester.ensureVisible(memoryField);
-    await tester.enterText(memoryField, '1');
+    await tester.enterText(
+      memoryField,
+      '${ProbePlotViewModel.minHistoryMemoryLimitMiB}',
+    );
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    expect(
-      viewModel.historyMemoryLimitMiB,
-      ProbePlotViewModel.minHistoryMemoryLimitMiB,
-    );
+    expect(viewModel.historyMemoryLimitMiB, 256);
 
     final pointLimitField = find.byKey(
       const ValueKey('probe-window-point-limit-field'),
     );
     await tester.ensureVisible(pointLimitField);
-    await tester.enterText(pointLimitField, '1');
+    await tester.enterText(
+      pointLimitField,
+      '${ProbePlotViewModel.minWindowPointLimit}',
+    );
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    expect(viewModel.windowPointLimit, ProbePlotViewModel.minWindowPointLimit);
-    await tester.tap(find.text(AppStrings.common.close));
+    expect(viewModel.windowPointLimit, 100000);
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
+    expect(viewModel.floatingPanelOpacity, 0.75);
+    expect(viewModel.followPositionRatio, 0.8);
+    expect(
+      viewModel.historyMemoryLimitMiB,
+      ProbePlotViewModel.minHistoryMemoryLimitMiB,
+    );
+    expect(viewModel.windowPointLimit, ProbePlotViewModel.minWindowPointLimit);
     expect(
       find.descendant(
         of: find.byTooltip('探针绘图设置'),

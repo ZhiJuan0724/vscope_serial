@@ -39,11 +39,15 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
   bool _savePassword = false;
   bool _busy = false;
   String? _error;
+  Timer? _configSaveTimer;
+  Future<void> _pendingConfigSave = Future<void>.value();
+  late SshConnectionConfig _lastValidConfig;
 
   @override
   void initState() {
     super.initState();
     final config = AppSettings().sshConnectionConfig;
+    _lastValidConfig = config;
     _host = TextEditingController(text: config.host);
     _port = TextEditingController(text: '${config.port}');
     _username = TextEditingController(text: config.username);
@@ -58,10 +62,16 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
         _error = '无法读取已保存的 SSH 密码：$error';
       }
     }
+    for (final controller in [_host, _port, _username, _privateKey]) {
+      controller.addListener(_scheduleConfigSave);
+    }
   }
 
   @override
   void dispose() {
+    _configSaveTimer?.cancel();
+    final config = _buildConfig();
+    if (config != null) unawaited(_queueConfigSave(config));
     _host.dispose();
     _port.dispose();
     _username.dispose();
@@ -71,19 +81,15 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     super.dispose();
   }
 
-  SshConnectionConfig? _readConfig() {
+  SshConnectionConfig? _buildConfig() {
     final port = int.tryParse(_port.text.trim());
     if (_host.text.trim().isEmpty ||
         _username.text.trim().isEmpty ||
         port == null ||
         port < 1 ||
-        port > 65535) {
-      setState(() => _error = '请填写有效的主机、端口和用户名');
-      return null;
-    }
-    if (_authenticationMode == SshAuthenticationMode.privateKey &&
-        _privateKey.text.trim().isEmpty) {
-      setState(() => _error = '请选择 SSH 私钥文件');
+        port > 65535 ||
+        (_authenticationMode == SshAuthenticationMode.privateKey &&
+            _privateKey.text.trim().isEmpty)) {
       return null;
     }
     return SshConnectionConfig(
@@ -99,31 +105,59 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     );
   }
 
+  void _scheduleConfigSave() {
+    _configSaveTimer?.cancel();
+    _configSaveTimer = Timer(const Duration(milliseconds: 300), () {
+      final config = _buildConfig();
+      if (config != null) unawaited(_queueConfigSave(config));
+    });
+  }
+
+  Future<void> _persistConfig(SshConnectionConfig config) async {
+    final previous = _lastValidConfig;
+    final identityChanged =
+        previous.endpointKey != config.endpointKey ||
+        previous.username.trim().toLowerCase() !=
+            config.username.trim().toLowerCase();
+    final settings = AppSettings()..sshConnectionConfig = config;
+    await settings.save();
+    if (previous.savePassword && (identityChanged || !config.savePassword)) {
+      widget.passwordStore.delete(previous);
+    }
+    _lastValidConfig = config;
+  }
+
+  Future<void> _queueConfigSave(SshConnectionConfig config) {
+    _pendingConfigSave = _pendingConfigSave.then(
+      (_) => _persistConfig(config),
+      onError: (_) => _persistConfig(config),
+    );
+    return _pendingConfigSave;
+  }
+
+  Future<SshConnectionConfig?> _flushConfigSave({bool showError = true}) async {
+    _configSaveTimer?.cancel();
+    final config = _buildConfig();
+    if (config == null) {
+      if (showError && mounted) {
+        setState(() => _error = '请填写有效的主机、端口、用户名和认证参数');
+      }
+      return null;
+    }
+    try {
+      await _queueConfigSave(config);
+      return config;
+    } catch (error) {
+      if (mounted) setState(() => _error = '保存 SSH 配置失败：$error');
+      return null;
+    }
+  }
+
   Future<void> _connect() async {
-    final config = _readConfig();
+    final config = await _flushConfigSave();
     if (config == null) return;
     if (config.savePassword && _password.text.isEmpty) {
       setState(() => _error = '密码为空，无法保存密码');
-      return;
-    }
-    final settings = AppSettings();
-    final previousConfig = settings.sshConnectionConfig;
-    try {
-      final identityChanged =
-          previousConfig.endpointKey != config.endpointKey ||
-          previousConfig.username.trim().toLowerCase() !=
-              config.username.trim().toLowerCase();
-      if (previousConfig.savePassword &&
-          (identityChanged || !config.savePassword)) {
-        widget.passwordStore.delete(previousConfig);
-      }
-      if (config.savePassword) {
-        widget.passwordStore.write(config, _password.text);
-      }
-      settings.sshConnectionConfig = config;
-      await settings.save();
-    } catch (error) {
-      if (mounted) setState(() => _error = '保存 SSH 凭据失败：$error');
       return;
     }
     if (!mounted) return;
@@ -144,12 +178,20 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     });
     try {
       await _connectWithTrust(service, config, secrets);
+      if (config.savePassword) {
+        widget.passwordStore.write(config, _password.text);
+      }
       if (mounted && service.isConnected) Navigator.pop(context);
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _close() async {
+    await _flushConfigSave(showError: false);
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _disconnect() async {
@@ -255,13 +297,10 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
               const SizedBox(height: 12),
               _field(_username, '用户名', enabled: !locked),
               const SizedBox(height: 12),
-              NoAnimDropdown<SshAuthenticationMode>(
+              AppDialogDropdown<SshAuthenticationMode>(
                 value: _authenticationMode,
                 hint: '认证方式',
-                decoration: const InputDecoration(
-                  labelText: '认证方式',
-                  border: OutlineInputBorder(),
-                ),
+                labelText: '认证方式',
                 items:
                     SshAuthenticationMode.values
                         .map(
@@ -277,34 +316,32 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                         : (value) {
                           if (value != null) {
                             setState(() => _authenticationMode = value);
+                            _scheduleConfigSave();
                           }
                         },
               ),
               const SizedBox(height: 12),
               if (_authenticationMode == SshAuthenticationMode.password)
-                TextField(
+                AppDialogTextField(
                   controller: _password,
                   enabled: !locked,
                   obscureText: _obscurePassword,
-                  decoration: InputDecoration(
-                    labelText: '密码',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      splashRadius: 14,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      onPressed:
-                          () => setState(
-                            () => _obscurePassword = !_obscurePassword,
-                          ),
-                      icon: Icon(
-                        _obscurePassword
-                            ? Icons.visibility
-                            : Icons.visibility_off,
-                      ),
+                  labelText: '密码',
+                  suffixIcon: IconButton(
+                    splashRadius: 14,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    onPressed:
+                        () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility
+                          : Icons.visibility_off,
                     ),
                   ),
                 ),
@@ -322,9 +359,12 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                         onChanged:
                             locked
                                 ? null
-                                : (value) => setState(
-                                  () => _savePassword = value ?? false,
-                                ),
+                                : (value) {
+                                  setState(
+                                    () => _savePassword = value ?? false,
+                                  );
+                                  _scheduleConfigSave();
+                                },
                       ),
                       const SizedBox(width: 4),
                       const Text('保存密码（使用 Windows 凭据管理器）'),
@@ -332,41 +372,35 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                   ),
                 ),
               ] else ...[
-                TextField(
+                AppDialogTextField(
                   controller: _privateKey,
                   enabled: !locked,
-                  decoration: InputDecoration(
-                    labelText: 'PEM 私钥文件',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      tooltip: '选择私钥文件',
-                      onPressed:
-                          locked
-                              ? null
-                              : () async {
-                                final result = await FilePicker.pickFiles(
-                                  dialogTitle: '选择 SSH 私钥文件',
-                                  type: FileType.any,
-                                  lockParentWindow: true,
-                                );
-                                final path = result?.files.single.path;
-                                if (path != null && mounted) {
-                                  setState(() => _privateKey.text = path);
-                                }
-                              },
-                      icon: const Icon(Icons.folder_open),
-                    ),
+                  labelText: 'PEM 私钥文件',
+                  suffixIcon: IconButton(
+                    tooltip: '选择私钥文件',
+                    onPressed:
+                        locked
+                            ? null
+                            : () async {
+                              final result = await FilePicker.pickFiles(
+                                dialogTitle: '选择 SSH 私钥文件',
+                                type: FileType.any,
+                                lockParentWindow: true,
+                              );
+                              final path = result?.files.single.path;
+                              if (path != null && mounted) {
+                                setState(() => _privateKey.text = path);
+                              }
+                            },
+                    icon: const Icon(Icons.folder_open),
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                AppDialogTextField(
                   controller: _passphrase,
                   enabled: !locked,
                   obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: '私钥口令（可选，不会保存）',
-                    border: OutlineInputBorder(),
-                  ),
+                  labelText: '私钥口令（可选，不会保存）',
                 ),
               ],
               if (_error != null) ...[
@@ -387,7 +421,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _busy ? null : () => Navigator.pop(context),
+          onPressed: _busy ? null : () => unawaited(_close()),
           child: const Text('关闭'),
         ),
         if (service.isConnected || service.isDisconnecting)
@@ -426,12 +460,12 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     TextEditingController controller,
     String label, {
     required bool enabled,
-  }) => TextField(
-    controller: controller,
-    enabled: enabled,
-    decoration: InputDecoration(
-      labelText: label,
-      border: const OutlineInputBorder(),
+  }) => AppLabeledField(
+    label: label,
+    child: TextField(
+      controller: controller,
+      enabled: enabled,
+      decoration: const InputDecoration(border: OutlineInputBorder()),
     ),
   );
 }

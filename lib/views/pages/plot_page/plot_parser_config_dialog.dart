@@ -285,12 +285,10 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             },
           ),
           if (_config.hasFrameHeader)
-            TextField(
+            AppDialogTextField(
               controller: _fixedFrameHeaderController,
-              decoration: secondaryDialogFieldDecoration(
-                labelText: AppStrings.plot.frameHeaderBytes,
-                hintText: AppStrings.plot.frameHeaderExample,
-              ),
+              labelText: AppStrings.plot.frameHeaderBytes,
+              hintText: AppStrings.plot.frameHeaderExample,
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);
@@ -446,12 +444,10 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             },
           ),
           if (_config.hasFrameTail)
-            TextField(
+            AppDialogTextField(
               controller: _fixedFrameTailController,
-              decoration: secondaryDialogFieldDecoration(
-                labelText: AppStrings.plot.frameTailBytes,
-                hintText: AppStrings.plot.frameTailExample,
-              ),
+              labelText: AppStrings.plot.frameTailBytes,
+              hintText: AppStrings.plot.frameTailExample,
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);

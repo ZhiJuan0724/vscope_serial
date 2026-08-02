@@ -183,12 +183,10 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
             title: const Text('设置BIN基地址'),
             content: SizedBox(
               width: 360,
-              child: TextField(
+              child: AppDialogTextField(
                 controller: controller,
                 autofocus: true,
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: '基地址（32位）',
-                ),
+                labelText: '基地址（32位）',
               ),
             ),
             actions: [
@@ -416,96 +414,81 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     );
     var groupBits = _hexGroupBits;
     var autoExpand = _autoExpandHexRows;
-    final confirmed = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
       builder:
           (dialogContext) => StatefulBuilder(
             builder:
-                (context, setDialogState) => AlertDialog(
-                  shape: kAdvancedSettingsDialogShape,
+                (context, setDialogState) => AppSettingsDialog(
                   title: const Text('HEX显示设置'),
-                  content: SizedBox(
-                    width: 390,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        TextField(
-                          controller: bytesController,
-                          decoration: secondaryDialogFieldDecoration(
-                            labelText: '每行字节数',
-                          ).copyWith(helperText: '支持十进制或0x开头的十六进制，默认0x10'),
-                        ),
-                        const SizedBox(height: 14),
-                        NoAnimDropdown<int>(
-                          value: groupBits,
-                          hint: '选择合并位宽',
-                          decoration: secondaryDialogFieldDecoration(
-                            labelText: '合并显示',
+                  size: AppDialogSize.medium,
+                  hasUnsavedChanges:
+                      () =>
+                          bytesController.text !=
+                              '0x${_bytesPerRow.toRadixString(16).toUpperCase()}' ||
+                          groupBits != _hexGroupBits ||
+                          autoExpand != _autoExpandHexRows,
+                  onSave: () async {
+                    final text = bytesController.text.trim().toLowerCase();
+                    final bytes = int.tryParse(
+                      text.startsWith('0x') ? text.substring(2) : text,
+                      radix: text.startsWith('0x') ? 16 : 10,
+                    );
+                    final groupBytes = groupBits ~/ 8;
+                    if (bytes == null ||
+                        bytes < groupBytes ||
+                        bytes > 0x100 ||
+                        bytes % groupBytes != 0) {
+                      throw const FormatException(
+                        '每行字节数必须为合并字节数的整数倍，范围1～0x100',
+                      );
+                    }
+                    setState(() {
+                      _bytesPerRow = bytes;
+                      _hexGroupBits = groupBits;
+                      _autoExpandHexRows = autoExpand;
+                    });
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AppDialogTextField(
+                        controller: bytesController,
+                        labelText: '每行字节数',
+                        helperText: '支持十进制或0x开头的十六进制，默认0x10',
+                      ),
+                      const SizedBox(height: 14),
+                      AppDialogDropdown<int>(
+                        value: groupBits,
+                        hint: '选择合并位宽',
+                        labelText: '合并显示',
+                        items: const [
+                          DropdownMenuItem(value: 8, child: Text('8位：FF')),
+                          DropdownMenuItem(value: 16, child: Text('16位：FFFF')),
+                          DropdownMenuItem(
+                            value: 32,
+                            child: Text('32位：FFFFFFFF'),
                           ),
-                          items: const [
-                            DropdownMenuItem(value: 8, child: Text('8位：FF')),
-                            DropdownMenuItem(
-                              value: 16,
-                              child: Text('16位：FFFF'),
+                        ],
+                        onChanged:
+                            (value) => setDialogState(
+                              () => groupBits = value ?? groupBits,
                             ),
-                            DropdownMenuItem(
-                              value: 32,
-                              child: Text('32位：FFFFFFFF'),
+                      ),
+                      AppCheckboxRow(
+                        value: autoExpand,
+                        title: const Text('宽度足够时自动扩展为每行0x20字节'),
+                        onChanged:
+                            (value) => setDialogState(
+                              () => autoExpand = value ?? true,
                             ),
-                          ],
-                          onChanged:
-                              (value) => setDialogState(
-                                () => groupBits = value ?? groupBits,
-                              ),
-                        ),
-                        CheckboxListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          value: autoExpand,
-                          controlAffinity: ListTileControlAffinity.leading,
-                          title: const Text('宽度足够时自动扩展为每行0x20字节'),
-                          onChanged:
-                              (value) => setDialogState(
-                                () => autoExpand = value ?? true,
-                              ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('取消'),
-                    ),
-                    DialogPrimaryActionButton(
-                      onPressed: () => Navigator.pop(dialogContext, true),
-                      label: '确定',
-                    ),
-                  ],
                 ),
           ),
     );
-    if (confirmed == true && mounted) {
-      final text = bytesController.text.trim().toLowerCase();
-      final bytes = int.tryParse(
-        text.startsWith('0x') ? text.substring(2) : text,
-        radix: text.startsWith('0x') ? 16 : 10,
-      );
-      final groupBytes = groupBits ~/ 8;
-      if (bytes == null ||
-          bytes < groupBytes ||
-          bytes > 0x100 ||
-          bytes % groupBytes != 0) {
-        AppNotifications.show('每行字节数必须为合并字节数的整数倍，范围1～0x100');
-      } else {
-        setState(() {
-          _bytesPerRow = bytes;
-          _hexGroupBits = groupBits;
-          _autoExpandHexRows = autoExpand;
-        });
-      }
-    }
-    bytesController.dispose();
+    disposeAfterDialogTransition(bytesController.dispose);
   }
 
   Future<void> _forceTerminate() async {
@@ -627,10 +610,10 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     padding: const EdgeInsets.all(14),
     children: [
       _sectionTitle('烧写'),
-      NoAnimDropdown<String>(
+      AppDialogDropdown<String>(
         value: programDocument?.id,
         hint: '选择HEX显示中的数据',
-        decoration: secondaryDialogFieldDecoration(labelText: '烧写数据'),
+        labelText: '烧写数据',
         items: [
           for (var index = 0; index < _documents.length; index++)
             DropdownMenuItem(
@@ -897,10 +880,14 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     ),
   );
 
-  Widget _input(TextEditingController controller, String label) => TextField(
-    controller: controller,
-    decoration: secondaryDialogFieldDecoration(labelText: label),
-  );
+  Widget _input(TextEditingController controller, String label) =>
+      AppLabeledField(
+        label: label,
+        child: TextField(
+          controller: controller,
+          decoration: secondaryDialogFieldDecoration(),
+        ),
+      );
 
   Widget _optionCheckbox(
     String label,

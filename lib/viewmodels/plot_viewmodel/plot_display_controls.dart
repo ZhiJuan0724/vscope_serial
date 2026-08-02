@@ -1,6 +1,161 @@
 part of '../plot_viewmodel.dart';
 
 extension PlotViewModelDisplayControls on PlotViewModel {
+  /// 原子提交串口绘图设置草稿；保存失败时恢复提交前运行态。
+  Future<void> applyPlotSettings(PlotUiSettingsDraft draft) async {
+    final settings = AppSettings();
+    final oldSettings = (
+      refresh: settings.refreshFps,
+      fontSize: settings.plotFontSizeDelta,
+      fontBold: settings.plotFontBold,
+      window: settings.maxVisiblePoints,
+      history: settings.plotHistoryMemoryLimitGiB,
+      discard: settings.discardInitialPacketCount,
+      snap: settings.snapHighlightEnabled,
+      snapDiameter: settings.snapHighlightDiameter,
+      snapColor: settings.snapHighlightColorMode,
+      stats: settings.statsToolbarEnabled,
+      trigger: settings.triggerToolbarEnabled,
+      preview: settings.previewToolbarEnabled,
+      quality: settings.plotLodQuality,
+      keep: settings.keepPlotOnRestart,
+      showGrid: settings.showGrid,
+      gridDensity: settings.gridDensity,
+      background: settings.plotBackground,
+      opacity: settings.floatingPanelOpacity,
+      observation: settings.observationClickToPlace,
+      follow: settings.followPositionRatio,
+      yFit: settings.yFitDisplayRatio,
+    );
+    final oldValues = (
+      showGrid: _showGrid,
+      gridDensity: _gridDensity,
+      background: _plotBackground,
+      opacity: _floatingPanelOpacity,
+      fontSize: _plotFontSizeDelta,
+      fontBold: _plotFontBold,
+      follow: _followPositionRatio,
+      yFit: _yFitDisplayRatio,
+      observation: _observationClickToPlace,
+      quality: _lodQuality,
+      window: _maxVisiblePoints,
+      history: _plotRetentionLimitBytes,
+      refresh: _refreshFps,
+      keep: _keepPlotOnRestart,
+      discard: _discardInitialPacketCount,
+      preview: _previewToolbarEnabled,
+      trigger: _triggerToolbarEnabled,
+      stats: _statsToolbarEnabled,
+      snap: _snapHighlightEnabled,
+      snapDiameter: _snapHighlightDiameter,
+      snapColor: _snapHighlightColorMode,
+    );
+    _showGrid = draft.showGrid;
+    _gridDensity = draft.gridDensity as String;
+    _plotBackground = draft.background as String;
+    _floatingPanelOpacity = draft.floatingPanelOpacity.clamp(0.0, 1.0);
+    _plotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6);
+    _plotFontBold = draft.fontBold;
+    _followPositionRatio = draft.followPositionRatio.clamp(0.5, 0.95);
+    _yFitDisplayRatio = (draft.yFitDisplayRatio ?? _yFitDisplayRatio).clamp(
+      0.5,
+      0.95,
+    );
+    _observationClickToPlace = draft.observationClickToPlace;
+    _lodQuality = draft.quality as PlotLodQuality;
+    _maxVisiblePoints = draft.windowPointLimit.clamp(
+      PlotViewModel.minVisiblePoints,
+      PlotViewModel.maxVisiblePointsLimit,
+    );
+    _plotRetentionLimitBytes =
+        draft.historyLimit.clamp(
+          PlotConfiguration.minHistoryMemoryLimitGiB,
+          PlotConfiguration.maxHistoryMemoryLimitGiB,
+        ) *
+        PlotConfiguration.bytesPerGiB;
+    _refreshFps = (draft.refreshFps ?? _refreshFps).clamp(30, 60);
+    _keepPlotOnRestart = draft.keepPlotOnRestart ?? _keepPlotOnRestart;
+    _discardInitialPacketCount = (draft.discardInitialPacketCount ??
+            _discardInitialPacketCount)
+        .clamp(0, PlotViewModel.maxDiscardInitialPacketCount);
+    _previewToolbarEnabled =
+        draft.previewToolbarEnabled ?? _previewToolbarEnabled;
+    _triggerToolbarEnabled =
+        draft.triggerToolbarEnabled ?? _triggerToolbarEnabled;
+    _statsToolbarEnabled = draft.statsToolbarEnabled ?? _statsToolbarEnabled;
+    _snapHighlightEnabled = draft.snapHighlightEnabled ?? _snapHighlightEnabled;
+    _snapHighlightDiameter = (draft.snapHighlightDiameter ??
+            _snapHighlightDiameter)
+        .clamp(6.0, 12.0);
+    _snapHighlightColorMode =
+        draft.snapHighlightColorMode ?? _snapHighlightColorMode;
+    try {
+      await _saveSettingsAsync();
+    } catch (_) {
+      settings
+        ..refreshFps = oldSettings.refresh
+        ..plotFontSizeDelta = oldSettings.fontSize
+        ..plotFontBold = oldSettings.fontBold
+        ..maxVisiblePoints = oldSettings.window
+        ..plotHistoryMemoryLimitGiB = oldSettings.history
+        ..discardInitialPacketCount = oldSettings.discard
+        ..snapHighlightEnabled = oldSettings.snap
+        ..snapHighlightDiameter = oldSettings.snapDiameter
+        ..snapHighlightColorMode = oldSettings.snapColor
+        ..statsToolbarEnabled = oldSettings.stats
+        ..triggerToolbarEnabled = oldSettings.trigger
+        ..previewToolbarEnabled = oldSettings.preview
+        ..plotLodQuality = oldSettings.quality
+        ..keepPlotOnRestart = oldSettings.keep
+        ..showGrid = oldSettings.showGrid
+        ..gridDensity = oldSettings.gridDensity
+        ..plotBackground = oldSettings.background
+        ..floatingPanelOpacity = oldSettings.opacity
+        ..observationClickToPlace = oldSettings.observation
+        ..followPositionRatio = oldSettings.follow
+        ..yFitDisplayRatio = oldSettings.yFit;
+      _showGrid = oldValues.showGrid;
+      _gridDensity = oldValues.gridDensity;
+      _plotBackground = oldValues.background;
+      _floatingPanelOpacity = oldValues.opacity;
+      _plotFontSizeDelta = oldValues.fontSize;
+      _plotFontBold = oldValues.fontBold;
+      _followPositionRatio = oldValues.follow;
+      _yFitDisplayRatio = oldValues.yFit;
+      _observationClickToPlace = oldValues.observation;
+      _lodQuality = oldValues.quality;
+      _maxVisiblePoints = oldValues.window;
+      _plotRetentionLimitBytes = oldValues.history;
+      _refreshFps = oldValues.refresh;
+      _keepPlotOnRestart = oldValues.keep;
+      _discardInitialPacketCount = oldValues.discard;
+      _previewToolbarEnabled = oldValues.preview;
+      _triggerToolbarEnabled = oldValues.trigger;
+      _statsToolbarEnabled = oldValues.stats;
+      _snapHighlightEnabled = oldValues.snap;
+      _snapHighlightDiameter = oldValues.snapDiameter;
+      _snapHighlightColorMode = oldValues.snapColor;
+      rethrow;
+    }
+    _applyPlotBackgroundPalette();
+    _refreshSnapHighlightColors();
+    _markChannelConfigChanged();
+    _markOverlayChanged();
+    if (!_observationClickToPlace) {
+      _observationPlacementActive = false;
+      _observationPreview = null;
+    }
+    if (!_triggerToolbarEnabled && _triggerConfig.enabled) {
+      _triggerConfig.enabled = false;
+      _resetTriggerRuntimeState();
+    }
+    if (_historyPointCount > 0) {
+      _setViewport(_limitXRange(viewport).copy());
+      _loadWindowForViewport(force: true);
+    }
+    unawaited(Future.microtask(notifyListeners));
+  }
+
   // ========== 显示控制 ==========
   /// 设置网格显示开关
   void setShowGrid(bool show) {
@@ -170,6 +325,18 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _resetPlotRetentionState();
     _updatePlotRetentionWarning();
     Future.microtask(() => notifyListeners());
+  }
+
+  /// AppSettings 已完成事务保存后，仅同步绘图运行态，避免重复写设置文件。
+  void syncPlotRetentionLimitFromSettings(int value) {
+    final nextGiB = value.clamp(
+      PlotConfiguration.minHistoryMemoryLimitGiB,
+      PlotConfiguration.maxHistoryMemoryLimitGiB,
+    );
+    _plotRetentionLimitBytes = nextGiB * PlotConfiguration.bytesPerGiB;
+    _resetPlotRetentionState();
+    _updatePlotRetentionWarning();
+    Future.microtask(notifyListeners);
   }
 
   void setFollowPositionRatio(double value) {

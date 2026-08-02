@@ -11,6 +11,7 @@
 | `generate_update_assets.py` | 生成便携 ZIP、应用文件清单和更新清单 |
 | `prepare_openocd_runtime.py` | 准备固定版本的最小 OpenOCD 运行时 |
 | `analyze_crash_dump.ps1` | 检查并分析 Windows 原生崩溃转储 |
+| `check_ui_consistency.ps1` | 检查统一控件迁移基线，阻止新增原生动画下拉和弹窗内联样式 |
 
 ## `build_debug.py`
 

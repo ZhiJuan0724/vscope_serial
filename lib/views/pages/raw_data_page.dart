@@ -17,6 +17,7 @@ import '../../viewmodels/multi_send_viewmodel.dart';
 import '../../services/app_notifications.dart';
 import '../../services/data_connection_service.dart';
 import '../../viewmodels/raw_data_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/hex_input_formatter.dart';
 import '../widgets/multi_send_panel.dart';
@@ -1290,15 +1291,64 @@ class _RawDataPageState extends State<RawDataPage> {
     final autoLineBreakTimingSectionKey = GlobalKey();
     final displayLimitSectionKey = GlobalKey();
     var selectedEncoding = vm.textEncoding;
+    String? autoLineBreakError;
+    String? displayLineLimitError;
     showDialog<void>(
       context: context,
       builder:
           (context) => StatefulBuilder(
             builder:
-                (context, setDialogState) => AlertDialog(
-                  shape: kAdvancedSettingsDialogShape,
+                (context, setDialogState) => AppSettingsDialog(
                   title: Text(AppStrings.raw.rawSettingsTitle),
-                  content: SettingsNavigationView(
+                  size: AppDialogSize.navigation,
+                  hasUnsavedChanges:
+                      () =>
+                          selectedEncoding != vm.textEncoding ||
+                          autoLineBreakTimeController.text !=
+                              '${vm.autoLineBreakIntervalMs}' ||
+                          displayLineLimitController.text !=
+                              '${vm.displayLineLimit}',
+                  onSave: () async {
+                    final autoLineBreakIntervalMs = int.tryParse(
+                      autoLineBreakTimeController.text,
+                    );
+                    final displayLineLimit = int.tryParse(
+                      displayLineLimitController.text,
+                    );
+                    setDialogState(() {
+                      autoLineBreakError =
+                          autoLineBreakIntervalMs == null ||
+                                  autoLineBreakIntervalMs <
+                                      DataConnectionService
+                                          .minAutoLineBreakIntervalMs ||
+                                  autoLineBreakIntervalMs >
+                                      DataConnectionService
+                                          .maxAutoLineBreakIntervalMs
+                              ? AppStrings.raw.autoLineBreakTimeInvalid
+                              : null;
+                      displayLineLimitError =
+                          displayLineLimit == null ||
+                                  displayLineLimit <
+                                      DataConnectionService
+                                          .minDisplayLineLimit ||
+                                  displayLineLimit >
+                                      DataConnectionService.maxDisplayLineLimit
+                              ? AppStrings.raw.displayLineLimitInvalid
+                              : null;
+                    });
+                    if (autoLineBreakError != null ||
+                        displayLineLimitError != null) {
+                      throw const FormatException('请修正无效设置');
+                    }
+                    await vm.applyDisplaySettings(
+                      RawDisplaySettingsDraft(
+                        encoding: selectedEncoding,
+                        autoLineBreakIntervalMs: autoLineBreakIntervalMs!,
+                        displayLineLimit: displayLineLimit!,
+                      ),
+                    );
+                  },
+                  child: SettingsNavigationView(
                     scrollController: scrollController,
                     items: [
                       SettingsNavigationItem(
@@ -1367,11 +1417,16 @@ class _RawDataPageState extends State<RawDataPage> {
                             controller: autoLineBreakTimeController,
                             decoration: secondaryDialogFieldDecoration(
                               hintText: '1 ~ 10000',
-                            ),
+                            ).copyWith(errorText: autoLineBreakError),
                             keyboardType: TextInputType.number,
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
                             ],
+                            onChanged: (_) {
+                              if (autoLineBreakError != null) {
+                                setDialogState(() => autoLineBreakError = null);
+                              }
+                            },
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1397,11 +1452,18 @@ class _RawDataPageState extends State<RawDataPage> {
                             controller: displayLineLimitController,
                             decoration: secondaryDialogFieldDecoration(
                               hintText: '100 ~ 100000',
-                            ),
+                            ).copyWith(errorText: displayLineLimitError),
                             keyboardType: TextInputType.number,
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
                             ],
+                            onChanged: (_) {
+                              if (displayLineLimitError != null) {
+                                setDialogState(
+                                  () => displayLineLimitError = null,
+                                );
+                              }
+                            },
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -1417,75 +1479,14 @@ class _RawDataPageState extends State<RawDataPage> {
                       ],
                     ),
                   ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(AppStrings.common.cancel),
-                    ),
-                    DialogPrimaryActionButton(
-                      onPressed: () {
-                        final autoLineBreakIntervalMs = int.tryParse(
-                          autoLineBreakTimeController.text,
-                        );
-                        final displayLineLimit = int.tryParse(
-                          displayLineLimitController.text,
-                        );
-                        if (autoLineBreakIntervalMs == null ||
-                            autoLineBreakIntervalMs <
-                                DataConnectionService
-                                    .minAutoLineBreakIntervalMs ||
-                            autoLineBreakIntervalMs >
-                                DataConnectionService
-                                    .maxAutoLineBreakIntervalMs) {
-                          _showSnackBar(
-                            context,
-                            AppStrings.raw.autoLineBreakTimeInvalid,
-                          );
-                          return;
-                        }
-                        if (displayLineLimit == null ||
-                            displayLineLimit <
-                                DataConnectionService.minDisplayLineLimit ||
-                            displayLineLimit >
-                                DataConnectionService.maxDisplayLineLimit) {
-                          _showSnackBar(
-                            context,
-                            AppStrings.raw.displayLineLimitInvalid,
-                          );
-                          return;
-                        }
-
-                        final changed =
-                            autoLineBreakIntervalMs !=
-                                vm.autoLineBreakIntervalMs ||
-                            displayLineLimit != vm.displayLineLimit ||
-                            selectedEncoding != vm.textEncoding;
-                        if (changed) {
-                          vm.setTextEncoding(selectedEncoding);
-                          vm.setAutoLineBreakIntervalMs(
-                            autoLineBreakIntervalMs,
-                          );
-                          vm.setDisplayLineLimit(displayLineLimit);
-                        }
-                        Navigator.of(context).pop();
-                        if (changed) {
-                          _showSnackBar(
-                            context,
-                            AppStrings.raw.advancedSettingsSaved(
-                              displayLineLimit,
-                            ),
-                          );
-                        }
-                      },
-                      label: AppStrings.common.confirm,
-                    ),
-                  ],
                 ),
           ),
     ).whenComplete(() {
-      autoLineBreakTimeController.dispose();
-      displayLineLimitController.dispose();
-      scrollController.dispose();
+      disposeAfterDialogTransition(() {
+        autoLineBreakTimeController.dispose();
+        displayLineLimitController.dispose();
+        scrollController.dispose();
+      });
     });
   }
 }

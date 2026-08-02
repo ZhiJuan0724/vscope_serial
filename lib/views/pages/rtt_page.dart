@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants/rtt_configuration.dart';
 import '../../data/models/probe_connection_config.dart';
 import '../../core/localization/app_strings.dart';
+import '../../core/utils/byte_size_formatter.dart';
 import '../../services/app_notifications.dart';
 import '../../viewmodels/rtt_viewmodel.dart';
 import '../dialogs/rtt_settings_dialog.dart';
@@ -453,10 +454,10 @@ class _RttPageState extends State<RttPage> {
                   vm.allTerminalsSelected
                       ? 'All Terminals'
                       : 'Terminal ${vm.selectedTerminal}',
-                  '接收 ${_formatBytes(service.receivedBytes)}',
+                  '接收 ${formatByteSize(service.receivedBytes)}',
                   if (service.droppedBytes > 0)
-                    '丢弃 ${_formatBytes(service.droppedBytes)}',
-                  if (vm.paused) '暂停新增 ${_formatBytes(vm.pausedBytes)}',
+                    '丢弃 ${formatByteSize(service.droppedBytes)}',
+                  if (vm.paused) '暂停新增 ${formatByteSize(vm.pausedBytes)}',
                   if (!service.isConnected && service.lastError != null)
                     service.lastError!,
                 ].join('  '),
@@ -746,15 +747,15 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
+            AppDialogTextField(
               key: const ValueKey('rtt-terminal-label-field'),
               controller: _labelController,
               autofocus: true,
-              decoration: secondaryDialogFieldDecoration(
-                labelText: '方括号内文字',
-                hintText: '例如 电机状态',
-                suffixText: ']',
-              ).copyWith(errorText: _errorText, prefixText: '['),
+              labelText: '方括号内文字',
+              hintText: '例如 电机状态',
+              suffixText: ']',
+              prefixText: '[',
+              errorText: _errorText,
               onChanged: (_) {
                 if (_errorText != null) setState(() => _errorText = null);
               },
@@ -866,9 +867,9 @@ class _RttInputBar extends StatelessWidget {
             const SizedBox(width: 8),
             SizedBox(
               width: 104,
-              child: DropdownButtonFormField<String>(
-                initialValue: lineEnding,
-                isDense: true,
+              child: AppDropdown<String>(
+                value: lineEnding,
+                hint: '行尾',
                 decoration: const InputDecoration(isDense: true),
                 items: const [
                   DropdownMenuItem(value: '', child: Text('无')),
@@ -900,10 +901,4 @@ class _RttInputBar extends StatelessWidget {
 String _ensureExtension(String path, String extension) {
   final suffix = '.$extension';
   return path.toLowerCase().endsWith(suffix) ? path : '$path$suffix';
-}
-
-String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
-  return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MiB';
 }

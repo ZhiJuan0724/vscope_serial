@@ -125,15 +125,21 @@ void main() {
             .getSize(find.byKey(const ValueKey('rtt-probe-kind-field')))
             .height;
     expect(
-      tester.getSize(find.byKey(const ValueKey('rtt-target-field'))).height,
+      tester
+          .getSize(find.byKey(const ValueKey('rtt-target-field-container')))
+          .height,
       probeHeight,
     );
     expect(
-      tester.getSize(find.byKey(const ValueKey('rtt-clock-field'))).height,
+      tester
+          .getSize(find.byKey(const ValueKey('rtt-clock-field-container')))
+          .height,
       probeHeight,
     );
     expect(
-      tester.getSize(find.byKey(const ValueKey('rtt-target-field'))).width,
+      tester
+          .getSize(find.byKey(const ValueKey('rtt-target-field-container')))
+          .width,
       lessThan(400),
     );
     expect(find.byTooltip('检索支持的芯片'), findsOneWidget);

@@ -11,6 +11,7 @@ import '../services/shell_stream_decoder.dart';
 import '../services/ssh_connection_service.dart';
 import '../services/ymodem_service.dart';
 import 'base_viewmodel.dart';
+import 'settings_drafts.dart';
 
 /// 独立 Shell 页面的状态与串口操作入口。
 class ShellViewModel extends BaseViewModel {
@@ -123,6 +124,26 @@ class ShellViewModel extends BaseViewModel {
       connectionService.setRawShellCursorMode(value);
   void setScrollbackLines(int value) =>
       connectionService.setShellScrollbackLines(value);
+
+  Future<void> applyTerminalSettings(ShellTerminalSettingsDraft draft) {
+    if ((sshService.isConnected ||
+            sshService.isConnecting ||
+            sshService.isDisconnecting) &&
+        draft.sshKeepAliveEnabled != AppSettings().sshKeepAliveEnabled) {
+      throw StateError('SSH 活动期间不能修改 Keepalive');
+    }
+    return connectionService.applyShellTerminalSettings(
+      encoding: draft.encoding,
+      lineEnding: draft.lineEnding,
+      localEcho: draft.localEcho,
+      scrollbackLines: draft.scrollbackLines,
+      fontSize: draft.fontSize,
+      fontFamily: draft.fontFamily,
+      themeMode: draft.themeMode,
+      cursorMode: draft.cursorMode,
+      sshKeepAliveEnabled: draft.sshKeepAliveEnabled,
+    );
+  }
 
   Future<void> sendYmodemFile(
     File file, {

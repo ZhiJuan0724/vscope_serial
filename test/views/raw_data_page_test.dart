@@ -399,7 +399,7 @@ void main() {
     expect(find.text('显示行数'), findsOneWidget);
     await tester.tap(find.text('显示行数'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('确定'));
+    await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('高级设置已保存'), findsNothing);

@@ -116,16 +116,21 @@ void main() {
     await tester.tap(find.text(AppStrings.plot.lodQualityBalanced));
     await tester.pumpAndSettle();
 
-    expect(vm.lodQuality, PlotLodQuality.balanced);
+    expect(vm.lodQuality, PlotLodQuality.performance);
     expect(tester.getSize(qualitySelector).width, initialWidth);
 
     await tester.tap(find.text(AppStrings.plot.lodQualityQuality));
     await tester.pumpAndSettle();
 
-    expect(vm.lodQuality, PlotLodQuality.quality);
+    expect(vm.lodQuality, PlotLodQuality.performance);
     expect(tester.getSize(qualitySelector).width, initialWidth);
+    await tester.tap(find.text('保存').last);
+    await tester.pumpAndSettle();
+    expect(vm.lodQuality, PlotLodQuality.quality);
 
-    await tester.tap(find.byKey(const ValueKey('settings-navigation-item-6')));
+    await tester.tap(find.byTooltip(AppStrings.plot.advancedSettings).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('数据'));
     await tester.pumpAndSettle();
     final retentionField = find.byKey(
       const ValueKey('plot-retention-limit-field'),
@@ -134,6 +139,9 @@ void main() {
     await tester.enterText(retentionField, '8');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
+    expect(vm.plotRetentionLimitGiB, isNot(8));
+    await tester.tap(find.text('保存').last);
+    await tester.pumpAndSettle();
     expect(vm.plotRetentionLimitGiB, 8);
     expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
 

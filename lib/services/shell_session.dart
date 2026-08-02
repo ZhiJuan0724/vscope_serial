@@ -155,6 +155,72 @@ class ShellSession {
     _save((settings) => settings.rawDataShellCursor = value.value);
   }
 
+  /// 原子提交设置弹窗中的完整终端草稿。
+  ///
+  /// 先持久化，成功后再替换运行态，避免部分字段保存失败却已在页面生效。
+  Future<void> applyTerminalSettings({
+    required String encoding,
+    required String lineEnding,
+    required bool localEcho,
+    required int scrollbackLines,
+    required double fontSize,
+    required String fontFamily,
+    required RawShellThemeMode themeMode,
+    required RawShellCursorMode cursorMode,
+    required bool sshKeepAliveEnabled,
+  }) async {
+    final nextScrollback = scrollbackLines.clamp(1000, 100000);
+    final nextFontSize = fontSize.clamp(10.0, 24.0);
+    final nextFontFamily =
+        fontFamily.trim().isEmpty ? 'Consolas' : fontFamily.trim();
+    final settings = AppSettings();
+    final previous = (
+      encoding: settings.shellEncoding,
+      lineEnding: settings.shellLineEnding,
+      localEcho: settings.shellLocalEcho,
+      scrollback: settings.shellScrollbackLines,
+      fontSize: settings.rawDataTerminalFontSize,
+      fontFamily: settings.rawDataTerminalFontFamily,
+      theme: settings.rawDataShellTheme,
+      cursor: settings.rawDataShellCursor,
+      sshKeepAlive: settings.sshKeepAliveEnabled,
+    );
+    settings
+      ..shellEncoding = encoding
+      ..shellLineEnding = lineEnding
+      ..shellLocalEcho = localEcho
+      ..shellScrollbackLines = nextScrollback
+      ..rawDataTerminalFontSize = nextFontSize
+      ..rawDataTerminalFontFamily = nextFontFamily
+      ..rawDataShellTheme = themeMode.value
+      ..rawDataShellCursor = cursorMode.value
+      ..sshKeepAliveEnabled = sshKeepAliveEnabled;
+    try {
+      await settings.save();
+    } catch (_) {
+      settings
+        ..shellEncoding = previous.encoding
+        ..shellLineEnding = previous.lineEnding
+        ..shellLocalEcho = previous.localEcho
+        ..shellScrollbackLines = previous.scrollback
+        ..rawDataTerminalFontSize = previous.fontSize
+        ..rawDataTerminalFontFamily = previous.fontFamily
+        ..rawDataShellTheme = previous.theme
+        ..rawDataShellCursor = previous.cursor
+        ..sshKeepAliveEnabled = previous.sshKeepAlive;
+      rethrow;
+    }
+    this.encoding = encoding;
+    this.lineEnding = lineEnding;
+    this.localEcho = localEcho;
+    this.scrollbackLines = nextScrollback;
+    this.fontSize = nextFontSize;
+    this.fontFamily = nextFontFamily;
+    this.themeMode = themeMode;
+    this.cursorMode = cursorMode;
+    _onChanged();
+  }
+
   Future<File?> receiveYmodemFile() async {
     final exeDir = File(Platform.resolvedExecutable).parent;
     return ymodemService.receiveFile(

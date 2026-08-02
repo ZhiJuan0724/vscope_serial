@@ -58,6 +58,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
   bool _checkingExpectedBackend = false;
   bool _initializedBackendPreview = false;
   String? _error;
+  Timer? _configSaveTimer;
+  Future<void> _pendingConfigSave = Future<void>.value();
 
   bool get _showsOpenOcdConfig =>
       _backend == ProbeBackendSelection.bundledOpenocd ||
@@ -78,7 +80,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       probeId: _probeId,
       usbVendorId: selectedProbe?.usbVendorId,
       usbProductId: selectedProbe?.usbProductId,
-      target: _target.trim(),
+      target: _targetController.text.trim(),
       autoDetectTarget: _autoDetect,
       wireProtocol: _wireProtocol,
       clockKhz: int.tryParse(_clockController.text.trim()) ?? 4000,
@@ -101,7 +103,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
             ? FlashProbeKind.jlink
             : FlashProbeKind.cmsisDap,
     probeId: _probeId,
-    target: _target.trim(),
+    target: _targetController.text.trim(),
     wireProtocol:
         _wireProtocol == ProbeWireProtocol.swd
             ? FlashWireProtocol.swd
@@ -170,6 +172,14 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   : settings.rttOpenocdTargetConfig
               : settings.rttOpenocdTargetConfig,
     );
+    for (final controller in [
+      _targetController,
+      _clockController,
+      _openOcdInterfaceController,
+      _openOcdTargetController,
+    ]) {
+      controller.addListener(_scheduleConfigSave);
+    }
   }
 
   @override
@@ -182,6 +192,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
 
   @override
   void dispose() {
+    _configSaveTimer?.cancel();
+    unawaited(_flushConfigSave(showError: false));
     _refreshGeneration++;
     _backendPreviewGeneration++;
     _targetController.dispose();
@@ -191,7 +203,65 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     super.dispose();
   }
 
+  void _scheduleConfigSave() {
+    _configSaveTimer?.cancel();
+    _configSaveTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => unawaited(_flushConfigSave(showError: false)),
+    );
+  }
+
+  Future<void> _persistDraftConfig(Object config) async {
+    if (config is ProbeConnectionConfig) {
+      await persistProbeConnectionConfig(config);
+      return;
+    }
+    final flashConfig = config as FlashConnectionConfig;
+    final settings = AppSettings();
+    final previous = settings.flashConnectionConfig;
+    settings.flashConnectionConfig = flashConfig;
+    try {
+      await settings.save();
+    } catch (_) {
+      settings.flashConnectionConfig = previous;
+      rethrow;
+    }
+  }
+
+  Future<bool> _flushConfigSave({bool showError = true}) async {
+    _configSaveTimer?.cancel();
+    final clock = int.tryParse(_clockController.text.trim());
+    if (clock == null || clock < 100 || clock > 50000) {
+      if (showError && mounted) {
+        setState(() => _error = '调试时钟范围为 100~50000 kHz');
+      }
+      return false;
+    }
+    final targetRequired =
+        _isProgramming
+            ? _backend == ProbeBackendSelection.externalJlink ||
+                (_backend == ProbeBackendSelection.automatic &&
+                    _kind == ProbeKind.jlink)
+            : _backend != ProbeBackendSelection.externalOpenocd &&
+                _backend != ProbeBackendSelection.bundledOpenocd &&
+                !_autoDetect;
+    if (targetRequired && _targetController.text.trim().isEmpty) return false;
+    final config = _isProgramming ? _draftFlashConfig() : _draftConfig();
+    _pendingConfigSave = _pendingConfigSave.then(
+      (_) => _persistDraftConfig(config),
+      onError: (_) => _persistDraftConfig(config),
+    );
+    try {
+      await _pendingConfigSave;
+      return true;
+    } catch (error) {
+      if (showError && mounted) setState(() => _error = '保存连接配置失败：$error');
+      return false;
+    }
+  }
+
   Future<void> _updateExpectedBackend() async {
+    _scheduleConfigSave();
     final generation = ++_backendPreviewGeneration;
     final kind = _kind;
     final backend = _backend;
@@ -361,29 +431,32 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     required TextEditingController controller,
     required bool enabled,
   }) {
-    return TextField(
-      key: ValueKey('$keyPrefix-field'),
-      controller: controller,
-      enabled: enabled,
-      onChanged: (_) => unawaited(_updateExpectedBackend()),
-      decoration: _connectionFieldDecoration(name, hintText: hintText).copyWith(
-        suffixIcon: IconButton(
-          key: ValueKey('$keyPrefix-file-button'),
-          tooltip: '选择$name文件',
-          splashRadius: 18,
-          padding: const EdgeInsets.all(8),
-          constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-          onPressed:
-              enabled
-                  ? () => unawaited(
-                    _selectOpenOcdConfigFile(
-                      dialogTitle: '选择$name文件',
-                      category: category,
-                      controller: controller,
-                    ),
-                  )
-                  : null,
-          icon: const Icon(Icons.folder_open_outlined),
+    return AppLabeledField(
+      label: name,
+      child: TextField(
+        key: ValueKey('$keyPrefix-field'),
+        controller: controller,
+        enabled: enabled,
+        onChanged: (_) => unawaited(_updateExpectedBackend()),
+        decoration: _connectionFieldDecoration(hintText: hintText).copyWith(
+          suffixIcon: IconButton(
+            key: ValueKey('$keyPrefix-file-button'),
+            tooltip: '选择$name文件',
+            splashRadius: 18,
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+            onPressed:
+                enabled
+                    ? () => unawaited(
+                      _selectOpenOcdConfigFile(
+                        dialogTitle: '选择$name文件',
+                        category: category,
+                        controller: controller,
+                      ),
+                    )
+                    : null,
+            icon: const Icon(Icons.folder_open_outlined),
+          ),
         ),
       ),
     );
@@ -418,6 +491,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       false;
 
   Future<void> _connect() async {
+    final flashService =
+        _isProgramming ? context.read<FlashProgrammingService>() : null;
+    final probeService =
+        _isProgramming ? null : context.read<ProbeConnectionService>();
     final clock = int.tryParse(_clockController.text.trim());
     if (clock == null || clock < 100 || clock > 50000) {
       setState(() => _error = '调试时钟范围为 100~50000 kHz');
@@ -448,6 +525,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
         return;
       }
     }
+    if (!await _flushConfigSave()) return;
+    if (!mounted) return;
     setState(() {
       _connecting = true;
       _error = null;
@@ -456,12 +535,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       if (_isProgramming) {
         final config = _draftFlashConfig();
         if (!await _confirmFlashConnection(config)) return;
-        AppSettings().flashConnectionConfig = config;
-        await AppSettings().save();
         if (!mounted) return;
-        await context.read<FlashProgrammingService>().connect(config);
+        await flashService!.connect(config);
       } else {
-        await context.read<ProbeConnectionService>().connect(_draftConfig());
+        await probeService!.connect(_draftConfig());
       }
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
@@ -492,6 +569,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     }
   }
 
+  Future<void> _close() async {
+    await _flushConfigSave(showError: false);
+    if (mounted) Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final probeService = context.watch<ProbeConnectionService>();
@@ -515,11 +597,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                NoAnimDropdown<ProbeBackendSelection>(
+                AppDialogDropdown<ProbeBackendSelection>(
                   key: const ValueKey('rtt-backend-field'),
                   value: _backend,
                   hint: '选择后端',
-                  decoration: _connectionFieldDecoration('探针后端'),
+                  labelText: '探针后端',
                   items:
                       ProbeBackendSelection.values
                           .where(
@@ -565,11 +647,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: NoAnimDropdown<ProbeKind>(
+                      child: AppDialogDropdown<ProbeKind>(
                         key: const ValueKey('rtt-probe-kind-field'),
                         value: _kind,
                         hint: '探针类型',
-                        decoration: _connectionFieldDecoration('探针类型'),
+                        labelText: '探针类型',
                         items:
                             ProbeKind.values
                                 .where(
@@ -609,7 +691,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: NoAnimDropdown<String>(
+                      child: AppDialogDropdown<String>(
                         key: const ValueKey('rtt-probe-field'),
                         value:
                             _probeId.isEmpty ||
@@ -617,7 +699,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                 ? _probeId
                                 : null,
                         hint: '自动选择',
-                        decoration: _connectionFieldDecoration('调试探针'),
+                        labelText: '调试探针',
                         items: [
                           const DropdownMenuItem(
                             value: '',
@@ -638,8 +720,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         onChanged:
                             isConnected
                                 ? null
-                                : (value) =>
-                                    setState(() => _probeId = value ?? ''),
+                                : (value) {
+                                  setState(() => _probeId = value ?? '');
+                                  _scheduleConfigSave();
+                                },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -711,11 +795,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 ),
                 if (_backend == ProbeBackendSelection.externalPyocd) ...[
                   const SizedBox(height: 12),
-                  NoAnimDropdown<PyOcdCmsisDapVersion>(
+                  AppDialogDropdown<PyOcdCmsisDapVersion>(
                     key: const ValueKey('rtt-pyocd-cmsis-dap-version'),
                     value: _pyOcdCmsisDapVersion,
                     hint: '选择 CMSIS-DAP 版本',
-                    decoration: _connectionFieldDecoration('CMSIS-DAP 版本'),
+                    labelText: 'CMSIS-DAP 版本',
                     items:
                         PyOcdCmsisDapVersion.values
                             .map(
@@ -738,9 +822,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                 _probes = const [];
                                 _error = null;
                               });
-                              AppSettings().rttPyocdCmsisDapVersion =
-                                  value.value;
-                              unawaited(AppSettings().save());
+                              _scheduleConfigSave();
                             },
                   ),
                 ],
@@ -781,14 +863,17 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     children: [
                       Expanded(
                         flex: 3,
-                        child: TextField(
-                          key: const ValueKey('rtt-target-field'),
-                          controller: _targetController,
-                          onChanged: (value) => _target = value,
-                          enabled: !_autoDetect && !isConnected,
-                          decoration: _connectionFieldDecoration(
-                            '目标芯片',
-                            hintText: '输入芯片型号',
+                        child: AppLabeledField(
+                          key: const ValueKey('rtt-target-field-container'),
+                          label: '目标芯片',
+                          child: TextField(
+                            key: const ValueKey('rtt-target-field'),
+                            controller: _targetController,
+                            onChanged: (value) => _target = value,
+                            enabled: !_autoDetect && !isConnected,
+                            decoration: _connectionFieldDecoration(
+                              hintText: '输入芯片型号',
+                            ),
                           ),
                         ),
                       ),
@@ -808,9 +893,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         onChanged:
                             isConnected || _isProgramming
                                 ? null
-                                : (value) => setState(
-                                  () => _autoDetect = value ?? false,
-                                ),
+                                : (value) {
+                                  setState(() => _autoDetect = value ?? false);
+                                  _scheduleConfigSave();
+                                },
                       ),
                       const Text('自动识别'),
                     ],
@@ -819,10 +905,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: NoAnimDropdown<ProbeWireProtocol>(
+                      child: AppDialogDropdown<ProbeWireProtocol>(
                         value: _wireProtocol,
                         hint: '接口',
-                        decoration: _connectionFieldDecoration('调试接口'),
+                        labelText: '调试接口',
                         items:
                             ProbeWireProtocol.values
                                 .map(
@@ -835,21 +921,28 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         onChanged:
                             isConnected
                                 ? null
-                                : (value) => setState(
-                                  () => _wireProtocol = value ?? _wireProtocol,
-                                ),
+                                : (value) {
+                                  setState(
+                                    () =>
+                                        _wireProtocol = value ?? _wireProtocol,
+                                  );
+                                  _scheduleConfigSave();
+                                },
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: TextField(
-                        key: const ValueKey('rtt-clock-field'),
-                        controller: _clockController,
-                        enabled: !isConnected,
-                        keyboardType: TextInputType.number,
-                        decoration: _connectionFieldDecoration(
-                          '调试时钟',
-                          suffixText: 'kHz',
+                      child: AppLabeledField(
+                        key: const ValueKey('rtt-clock-field-container'),
+                        label: '调试时钟',
+                        child: TextField(
+                          key: const ValueKey('rtt-clock-field'),
+                          controller: _clockController,
+                          enabled: !isConnected,
+                          keyboardType: TextInputType.number,
+                          decoration: _connectionFieldDecoration(
+                            suffixText: 'kHz',
+                          ),
                         ),
                       ),
                     ),
@@ -877,7 +970,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
           onPressed:
               _connecting
                   ? (_cancellingConnection ? null : _cancelConnection)
-                  : () => Navigator.of(context).pop(),
+                  : _close,
           child: Text(
             _connecting ? (_cancellingConnection ? '正在取消...' : '取消连接') : '关闭',
           ),
@@ -1112,15 +1205,17 @@ bool _containsOrderedCharacters(String candidate, String query) {
 }
 
 /// RTT 连接下拉框与串口连接窗口保持相同的可见高度和内容留白。
-InputDecoration _connectionFieldDecoration(
-  String labelText, {
+InputDecoration _connectionFieldDecoration({
   String? hintText,
   String? suffixText,
 }) {
   return InputDecoration(
-    labelText: labelText,
     hintText: hintText,
     suffixText: suffixText,
+    isDense: true,
+    constraints: const BoxConstraints.tightFor(
+      height: kSecondaryDialogControlHeight,
+    ),
     border: const OutlineInputBorder(),
     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
   );

@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 
 import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
+import '../../core/utils/byte_size_formatter.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/probe_plot_config.dart';
@@ -16,7 +17,10 @@ import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/j_scope_rtt_parser.dart';
 import '../../viewmodels/probe_plot_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_draggable_info_box.dart';
+import '../plot/plot_layer_stack.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
@@ -435,65 +439,51 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                 final plotSurface =
                                     vm.pointCount == 0
                                         ? const Center(child: Text('暂无探针采样数据'))
-                                        : Stack(
-                                          fit: StackFit.expand,
-                                          children: [
-                                            for (final layer in [
-                                              PlotPaintLayer.background,
-                                              PlotPaintLayer.data,
-                                              PlotPaintLayer.axis,
-                                              PlotPaintLayer.overlay,
-                                            ])
-                                              CustomPaint(
-                                                painter: PlotLayerPainter(
-                                                  layer: layer,
-                                                  viewport: renderViewport,
-                                                  data: plotPoints,
-                                                  dataRevision: vm.dataRevision,
-                                                  viewportRevision:
-                                                      vm.viewportRevision,
-                                                  channelConfigRevision:
-                                                      vm.channelConfigRevision,
-                                                  overlayRevision:
-                                                      vm.overlayRevision,
-                                                  lodIndex: vm.lodIndex,
-                                                  lodQuality: vm.lodQuality,
-                                                  channels: vm.channels,
-                                                  activeChannelCount:
-                                                      vm.activeChannelCount,
-                                                  showGrid: vm.showGrid,
-                                                  gridDensity: vm.gridDensity,
-                                                  backgroundStyle:
-                                                      vm.backgroundStyle,
-                                                  floatingPanelOpacity:
-                                                      vm.floatingPanelOpacity,
-                                                  cursor: vm.cursor,
-                                                  xCursor1: vm.xCursor1,
-                                                  xCursor2: vm.xCursor2,
-                                                  yCursor1: vm.yCursor1,
-                                                  yCursor2: vm.yCursor2,
-                                                  xMeasurementLine1Color:
-                                                      vm.xMeasurementLine1Color,
-                                                  xMeasurementLine2Color:
-                                                      vm.xMeasurementLine2Color,
-                                                  yMeasurementLine1Color:
-                                                      vm.yMeasurementLine1Color,
-                                                  yMeasurementLine2Color:
-                                                      vm.yMeasurementLine2Color,
-                                                  xMeasurementLine1Opacity:
-                                                      vm.xMeasurementLine1Opacity,
-                                                  xMeasurementLine2Opacity:
-                                                      vm.xMeasurementLine2Opacity,
-                                                  yMeasurementLine1Opacity:
-                                                      vm.yMeasurementLine1Opacity,
-                                                  yMeasurementLine2Opacity:
-                                                      vm.yMeasurementLine2Opacity,
-                                                  plotFontSizeDelta:
-                                                      vm.plotFontSizeDelta,
-                                                  plotFontBold: vm.plotFontBold,
-                                                ),
-                                              ),
-                                          ],
+                                        : PlotLayerStack(
+                                          snapshot: PlotRenderSnapshot(
+                                            viewport: renderViewport,
+                                            data: plotPoints,
+                                            dataRevision: vm.dataRevision,
+                                            viewportRevision:
+                                                vm.viewportRevision,
+                                            channelConfigRevision:
+                                                vm.channelConfigRevision,
+                                            overlayRevision: vm.overlayRevision,
+                                            lodIndex: vm.lodIndex,
+                                            lodQuality: vm.lodQuality,
+                                            channels: vm.channels,
+                                            activeChannelCount:
+                                                vm.activeChannelCount,
+                                            showGrid: vm.showGrid,
+                                            gridDensity: vm.gridDensity,
+                                            backgroundStyle: vm.backgroundStyle,
+                                            floatingPanelOpacity:
+                                                vm.floatingPanelOpacity,
+                                            cursor: vm.cursor,
+                                            xCursor1: vm.xCursor1,
+                                            xCursor2: vm.xCursor2,
+                                            yCursor1: vm.yCursor1,
+                                            yCursor2: vm.yCursor2,
+                                            xMeasurementLine1Color:
+                                                vm.xMeasurementLine1Color,
+                                            xMeasurementLine2Color:
+                                                vm.xMeasurementLine2Color,
+                                            yMeasurementLine1Color:
+                                                vm.yMeasurementLine1Color,
+                                            yMeasurementLine2Color:
+                                                vm.yMeasurementLine2Color,
+                                            xMeasurementLine1Opacity:
+                                                vm.xMeasurementLine1Opacity,
+                                            xMeasurementLine2Opacity:
+                                                vm.xMeasurementLine2Opacity,
+                                            yMeasurementLine1Opacity:
+                                                vm.yMeasurementLine1Opacity,
+                                            yMeasurementLine2Opacity:
+                                                vm.yMeasurementLine2Opacity,
+                                            plotFontSizeDelta:
+                                                vm.plotFontSizeDelta,
+                                            plotFontBold: vm.plotFontBold,
+                                          ),
                                         );
                                 return Stack(
                                   fit: StackFit.expand,
@@ -588,7 +578,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                 child: Text(
                   '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
                   '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
-                  '内存 ${_formatBytes(vm.estimatedHistoryBytes)} / '
+                  '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
                   '${vm.historyMemoryLimitMiB} MiB'
                   '${vm.retentionLimitReached ? '  已达上限' : ''}',
                   style: kPageStatusBarTextStyle,
@@ -770,12 +760,14 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
         .where((channel) => channel.visible)
         .toList(growable: false);
     if (visible.isEmpty) return const SizedBox.shrink();
-    return _ProbeDraggableInfoBox(
+    return PlotDraggableInfoBox(
       key: const ValueKey('probe-plot-legend-box'),
       initialRight: 12,
       initialTop: 12,
       borderColor: Colors.teal.withValues(alpha: 0.55),
-      opacity: vm.floatingPanelOpacity,
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: vm.floatingPanelOpacity),
       fontSizeDelta: vm.plotFontSizeDelta,
       fontBold: vm.plotFontBold,
       child: ConstrainedBox(
@@ -823,12 +815,14 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
   Widget _buildLiveValuesBox(BuildContext context, ProbePlotViewModel vm) {
     final latest = vm.latestPoint;
     if (latest == null) return const SizedBox.shrink();
-    return _ProbeDraggableInfoBox(
+    return PlotDraggableInfoBox(
       key: const ValueKey('probe-plot-live-values-box'),
       initialRight: 12,
       initialTop: _legendVisible ? 150 : 12,
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
-      opacity: vm.floatingPanelOpacity,
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: vm.floatingPanelOpacity),
       fontSizeDelta: vm.plotFontSizeDelta,
       fontBold: vm.plotFontBold,
       child: ConstrainedBox(
@@ -893,10 +887,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       builder:
           (context) => AlertDialog(
             title: const Text('重命名通道'),
-            content: TextField(
+            content: AppDialogTextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(labelText: '通道名称'),
+              labelText: '通道名称',
               onSubmitted: (value) => Navigator.pop(context, value),
             ),
             actions: [
@@ -951,25 +945,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     }
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
-    }
-    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
-    return '$bytes B';
-  }
-
   double _plotFontSize(ProbePlotViewModel vm, double base) {
     return (base + 1 + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   Widget _buildMeasurementBox(BuildContext context, ProbePlotViewModel vm) {
-    return _ProbeDraggableInfoBox(
+    return PlotDraggableInfoBox(
       key: const ValueKey('probe-plot-measurement-box'),
       initialRight: 12,
       initialTop: 12,
       borderColor: Colors.blue.withValues(alpha: 0.55),
-      opacity: vm.floatingPanelOpacity,
+      backgroundColor: Theme.of(
+        context,
+      ).colorScheme.surface.withValues(alpha: vm.floatingPanelOpacity),
       fontSizeDelta: vm.plotFontSizeDelta,
       fontBold: vm.plotFontBold,
       child: Text(
@@ -1356,6 +1344,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     BuildContext context,
     ProbePlotViewModel vm,
   ) async {
+    final draft = PlotUiSettingsDraft(
+      showGrid: vm.showGrid,
+      gridDensity: vm.gridDensity,
+      background: vm.backgroundStyle,
+      floatingPanelOpacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
+      followPositionRatio: vm.followPositionRatio,
+      observationClickToPlace: vm.observationClickToPlace,
+      quality: vm.lodQuality,
+      windowPointLimit: vm.windowPointLimit,
+      historyLimit: vm.historyMemoryLimitMiB,
+    );
     final windowController = TextEditingController(
       text: vm.windowPointLimit.toString(),
     );
@@ -1378,68 +1379,74 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
 
     void applyWindowPointLimit(StateSetter setDialogState) {
       final value = int.tryParse(windowController.text.trim());
-      if (value != null) vm.setWindowPointLimit(value);
-      windowController.text = vm.windowPointLimit.toString();
+      if (value != null) draft.windowPointLimit = value;
       setDialogState(() {});
     }
 
     void applyHistoryMemoryLimit(StateSetter setDialogState) {
       final value = int.tryParse(memoryController.text.trim());
-      if (value != null) vm.setHistoryMemoryLimitMiB(value);
-      memoryController.text = vm.historyMemoryLimitMiB.toString();
+      if (value != null) draft.historyLimit = value;
       setDialogState(() {});
     }
 
     void applyFloatingPanelOpacity(StateSetter setDialogState) {
       final percent = int.tryParse(opacityController.text.trim());
-      if (percent != null) vm.setFloatingPanelOpacity(percent / 100);
-      opacityController.text =
-          (vm.floatingPanelOpacity * 100).round().toString();
+      if (percent != null) draft.floatingPanelOpacity = percent / 100;
       setDialogState(() {});
     }
 
     void applyFollowPosition(StateSetter setDialogState) {
       final percent = int.tryParse(followController.text.trim());
-      if (percent != null) vm.setFollowPositionRatio(percent / 100);
-      followController.text = (vm.followPositionRatio * 100).round().toString();
+      if (percent != null) draft.followPositionRatio = percent / 100;
       setDialogState(() {});
-    }
-
-    Widget buildChoiceButton({
-      required String label,
-      required bool selected,
-      required VoidCallback? onPressed,
-    }) {
-      return Expanded(
-        child: TextButton(
-          onPressed: onPressed,
-          style: TextButton.styleFrom(
-            backgroundColor:
-                selected ? Colors.blue.withValues(alpha: 0.2) : null,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            minimumSize: const Size(0, 32),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: selected ? Colors.blue : null,
-              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ),
-      );
     }
 
     await showDialog<void>(
       context: context,
       builder:
-          (dialogContext) => AlertDialog(
-            shape: kAdvancedSettingsDialogShape,
-            title: Text(AppStrings.plot.advancedSettings),
-            content: StatefulBuilder(
-              builder: (context, setDialogState) {
-                return SettingsNavigationView(
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AppSettingsDialog(
+                title: Text(AppStrings.plot.advancedSettings),
+                size: AppDialogSize.navigation,
+                hasUnsavedChanges:
+                    () =>
+                        draft.showGrid != vm.showGrid ||
+                        draft.gridDensity != vm.gridDensity ||
+                        draft.background != vm.backgroundStyle ||
+                        opacityController.text !=
+                            '${(vm.floatingPanelOpacity * 100).round()}' ||
+                        draft.fontSizeDelta != vm.plotFontSizeDelta ||
+                        draft.fontBold != vm.plotFontBold ||
+                        followController.text !=
+                            '${(vm.followPositionRatio * 100).round()}' ||
+                        draft.observationClickToPlace !=
+                            vm.observationClickToPlace ||
+                        draft.quality != vm.lodQuality ||
+                        windowController.text != '${vm.windowPointLimit}' ||
+                        memoryController.text != '${vm.historyMemoryLimitMiB}',
+                onSave: () async {
+                  applyFloatingPanelOpacity(setDialogState);
+                  applyFollowPosition(setDialogState);
+                  applyHistoryMemoryLimit(setDialogState);
+                  applyWindowPointLimit(setDialogState);
+                  if (draft.floatingPanelOpacity < 0 ||
+                      draft.floatingPanelOpacity > 1 ||
+                      draft.followPositionRatio < 0.5 ||
+                      draft.followPositionRatio > 0.95 ||
+                      draft.historyLimit <
+                          ProbePlotViewModel.minHistoryMemoryLimitMiB ||
+                      draft.historyLimit >
+                          ProbePlotViewModel.maxHistoryMemoryLimitMiB ||
+                      draft.windowPointLimit <
+                          ProbePlotViewModel.minWindowPointLimit ||
+                      draft.windowPointLimit >
+                          ProbePlotViewModel.maxWindowPointLimit) {
+                    throw const FormatException('请检查绘图设置中的数值范围');
+                  }
+                  await vm.applyPlotSettings(draft);
+                },
+                child: SettingsNavigationView(
                   scrollController: settingsScrollController,
                   items: [
                     SettingsNavigationItem(
@@ -1477,28 +1484,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          buildChoiceButton(
-                            label: AppStrings.plot.plotBackgroundDark,
-                            selected:
-                                vm.backgroundStyle == PlotBackgroundStyle.dark,
-                            onPressed: () {
-                              vm.setBackgroundStyle(PlotBackgroundStyle.dark);
-                              setDialogState(() {});
-                            },
+                      AppSegmentedSelector<PlotBackgroundStyle>(
+                        value: draft.background as PlotBackgroundStyle,
+                        items: {
+                          PlotBackgroundStyle.dark: Text(
+                            AppStrings.plot.plotBackgroundDark,
                           ),
-                          const SizedBox(width: 8),
-                          buildChoiceButton(
-                            label: AppStrings.plot.plotBackgroundLight,
-                            selected:
-                                vm.backgroundStyle == PlotBackgroundStyle.light,
-                            onPressed: () {
-                              vm.setBackgroundStyle(PlotBackgroundStyle.light);
-                              setDialogState(() {});
-                            },
+                          PlotBackgroundStyle.light: Text(
+                            AppStrings.plot.plotBackgroundLight,
                           ),
-                        ],
+                        },
+                        onChanged:
+                            (value) =>
+                                setDialogState(() => draft.background = value),
                       ),
                       const SizedBox(height: 8),
                       Row(
@@ -1509,43 +1507,37 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           ),
                           const Spacer(),
                           Switch(
-                            value: vm.showGrid,
+                            value: draft.showGrid,
                             onChanged: (value) {
-                              vm.setShowGrid(value);
-                              setDialogState(() {});
+                              setDialogState(() => draft.showGrid = value);
                             },
                           ),
                         ],
                       ),
-                      if (vm.showGrid) ...[
+                      if (draft.showGrid) ...[
                         const SizedBox(height: 8),
                         Text(
                           AppStrings.plot.gridDensity,
                           style: const TextStyle(fontSize: 14),
                         ),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            for (final option in GridDensity.values) ...[
-                              if (option != GridDensity.values.first)
-                                const SizedBox(width: 8),
-                              buildChoiceButton(
-                                label: switch (option) {
-                                  GridDensity.sparse =>
-                                    AppStrings.plot.densitySparse,
-                                  GridDensity.normal =>
-                                    AppStrings.plot.densityNormal,
-                                  GridDensity.dense =>
-                                    AppStrings.plot.densityDense,
-                                },
-                                selected: vm.gridDensity == option,
-                                onPressed: () {
-                                  vm.setGridDensity(option);
-                                  setDialogState(() {});
-                                },
+                        AppSegmentedSelector<GridDensity>(
+                          value: draft.gridDensity as GridDensity,
+                          items: {
+                            GridDensity.sparse: Text(
+                              AppStrings.plot.densitySparse,
+                            ),
+                            GridDensity.normal: Text(
+                              AppStrings.plot.densityNormal,
+                            ),
+                            GridDensity.dense: Text(
+                              AppStrings.plot.densityDense,
+                            ),
+                          },
+                          onChanged:
+                              (value) => setDialogState(
+                                () => draft.gridDensity = value,
                               ),
-                            ],
-                          ],
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -1575,12 +1567,6 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                       applyFloatingPanelOpacity(setDialogState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyFloatingPanelOpacity(setDialogState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const Divider(),
@@ -1590,36 +1576,23 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 6),
-                      SegmentedButton<PlotLodQuality>(
+                      AppSegmentedSelector<PlotLodQuality>(
                         key: const ValueKey('probe-plot-lod-quality-selector'),
-                        expandedInsets: EdgeInsets.zero,
-                        segments: [
-                          ButtonSegment(
-                            value: PlotLodQuality.performance,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(
-                                AppStrings.plot.lodQualityPerformance,
-                              ),
-                            ),
+                        value: draft.quality as PlotLodQuality,
+                        items: {
+                          PlotLodQuality.performance: Text(
+                            AppStrings.plot.lodQualityPerformance,
                           ),
-                          ButtonSegment(
-                            value: PlotLodQuality.balanced,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(AppStrings.plot.lodQualityBalanced),
-                            ),
+                          PlotLodQuality.balanced: Text(
+                            AppStrings.plot.lodQualityBalanced,
                           ),
-                          ButtonSegment(
-                            value: PlotLodQuality.quality,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(AppStrings.plot.lodQualityQuality),
-                            ),
+                          PlotLodQuality.quality: Text(
+                            AppStrings.plot.lodQualityQuality,
                           ),
-                        ],
-                        selected: {vm.lodQuality},
-                        onSelectionChanged: (values) {
-                          vm.setLodQuality(values.first);
-                          setDialogState(() {});
                         },
+                        onChanged:
+                            (value) =>
+                                setDialogState(() => draft.quality = value),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -1639,11 +1612,11 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       Row(
                         children: [
                           Text(
-                            vm.plotFontSizeDelta == 0
+                            draft.fontSizeDelta == 0
                                 ? AppStrings.plot.defaultValue
-                                : vm.plotFontSizeDelta > 0
-                                ? '+${vm.plotFontSizeDelta}'
-                                : '${vm.plotFontSizeDelta}',
+                                : draft.fontSizeDelta > 0
+                                ? '+${draft.fontSizeDelta}'
+                                : '${draft.fontSizeDelta}',
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
@@ -1653,10 +1626,13 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           Text(
                             AppStrings.plot.fontPreview,
                             style: TextStyle(
-                              fontSize: _plotFontSize(vm, 14),
+                              fontSize:
+                                  (14 + draft.fontSizeDelta)
+                                      .clamp(10, 24)
+                                      .toDouble(),
                               fontFamily: 'SarasaUiSC',
                               fontWeight:
-                                  vm.plotFontBold
+                                  draft.fontBold
                                       ? FontWeight.bold
                                       : FontWeight.normal,
                               color:
@@ -1668,29 +1644,27 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         ],
                       ),
                       Slider(
-                        value: vm.plotFontSizeDelta.toDouble(),
+                        value: draft.fontSizeDelta.toDouble(),
                         min: -3,
                         max: 6,
                         divisions: 9,
                         label:
-                            vm.plotFontSizeDelta == 0
+                            draft.fontSizeDelta == 0
                                 ? AppStrings.plot.defaultValue
-                                : vm.plotFontSizeDelta > 0
-                                ? '+${vm.plotFontSizeDelta}'
-                                : '${vm.plotFontSizeDelta}',
+                                : draft.fontSizeDelta > 0
+                                ? '+${draft.fontSizeDelta}'
+                                : '${draft.fontSizeDelta}',
                         onChanged: (value) {
-                          vm.setPlotFontSizeDelta(value.round());
-                          setDialogState(() {});
+                          setDialogState(
+                            () => draft.fontSizeDelta = value.round(),
+                          );
                         },
                       ),
-                      SwitchListTile.adaptive(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
+                      AppSwitchRow(
                         title: Text(AppStrings.plot.plotFontBold),
-                        value: vm.plotFontBold,
+                        value: draft.fontBold,
                         onChanged: (value) {
-                          vm.setPlotFontBold(value);
-                          setDialogState(() {});
+                          setDialogState(() => draft.fontBold = value);
                         },
                       ),
                       Text(
@@ -1727,12 +1701,6 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                   (_) => applyFollowPosition(setDialogState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyFollowPosition(setDialogState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -1767,10 +1735,11 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             ),
                           ),
                           Switch(
-                            value: vm.observationClickToPlace,
+                            value: draft.observationClickToPlace,
                             onChanged: (value) {
-                              vm.setObservationClickToPlace(value);
-                              setDialogState(() {});
+                              setDialogState(
+                                () => draft.observationClickToPlace = value,
+                              );
                             },
                           ),
                         ],
@@ -1803,19 +1772,13 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                       applyHistoryMemoryLimit(setDialogState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyHistoryMemoryLimit(setDialogState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '范围：${ProbePlotViewModel.minHistoryMemoryLimitMiB}~'
                         '${ProbePlotViewModel.maxHistoryMemoryLimitMiB} MiB；'
-                        '当前估算占用 ${_formatBytes(vm.estimatedHistoryBytes)}。'
+                        '当前估算占用 ${formatByteSize(vm.estimatedHistoryBytes)}。'
                         '达到上限时停止采集并保留已有图像。',
                         style: const TextStyle(
                           fontSize: 11,
@@ -1845,12 +1808,6 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                   (_) => applyWindowPointLimit(setDialogState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyWindowPointLimit(setDialogState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -1865,22 +1822,18 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                     ],
                   ),
-                );
-              },
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text(AppStrings.common.close),
-              ),
-            ],
+                ),
+              );
+            },
           ),
     );
-    windowController.dispose();
-    memoryController.dispose();
-    opacityController.dispose();
-    followController.dispose();
-    settingsScrollController.dispose();
+    disposeAfterDialogTransition(() {
+      windowController.dispose();
+      memoryController.dispose();
+      opacityController.dispose();
+      followController.dispose();
+      settingsScrollController.dispose();
+    });
   }
 }
 
@@ -2014,30 +1967,31 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              NoAnimDropdown<RttControlBlockMode>(
-                key: const ValueKey('probe-rtt-control-block-mode'),
-                value: _mode,
-                hint: '控制块定位',
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: 'RTT 控制块定位',
+              AppLabeledField(
+                label: 'RTT 控制块定位',
+                child: NoAnimDropdown<RttControlBlockMode>(
+                  key: const ValueKey('probe-rtt-control-block-mode'),
+                  value: _mode,
+                  hint: '控制块定位',
+                  decoration: secondaryDialogFieldDecoration(),
+                  items:
+                      RttControlBlockMode.values
+                          .where(
+                            (value) =>
+                                _supportsAutomatic ||
+                                value != RttControlBlockMode.automatic,
+                          )
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(value.label),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: (value) {
+                    if (value != null) setState(() => _mode = value);
+                  },
                 ),
-                items:
-                    RttControlBlockMode.values
-                        .where(
-                          (value) =>
-                              _supportsAutomatic ||
-                              value != RttControlBlockMode.automatic,
-                        )
-                        .map(
-                          (value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(value.label),
-                          ),
-                        )
-                        .toList(),
-                onChanged: (value) {
-                  if (value != null) setState(() => _mode = value);
-                },
               ),
               const SizedBox(height: 6),
               Text(
@@ -2048,12 +2002,14 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               ),
               if (_mode == RttControlBlockMode.address) ...[
                 const SizedBox(height: 12),
-                TextField(
-                  key: const ValueKey('probe-rtt-control-block-address'),
-                  controller: _address,
-                  decoration: secondaryDialogFieldDecoration(
-                    labelText: 'RTT 控制块地址',
-                    hintText: '例如 0x20000410',
+                AppLabeledField(
+                  label: 'RTT 控制块地址',
+                  child: TextField(
+                    key: const ValueKey('probe-rtt-control-block-address'),
+                    controller: _address,
+                    decoration: secondaryDialogFieldDecoration(
+                      hintText: '例如 0x20000410',
+                    ),
                   ),
                 ),
               ],
@@ -2062,19 +2018,21 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
-                        controller: _rangeStart,
-                        decoration: secondaryDialogFieldDecoration(
-                          labelText: '搜索起始地址',
+                      child: AppLabeledField(
+                        label: '搜索起始地址',
+                        child: TextField(
+                          controller: _rangeStart,
+                          decoration: secondaryDialogFieldDecoration(),
                         ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: TextField(
-                        controller: _rangeEnd,
-                        decoration: secondaryDialogFieldDecoration(
-                          labelText: '搜索结束地址',
+                      child: AppLabeledField(
+                        label: '搜索结束地址',
+                        child: TextField(
+                          controller: _rangeEnd,
+                          decoration: secondaryDialogFieldDecoration(),
                         ),
                       ),
                     ),
@@ -2082,14 +2040,14 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                 ),
               ],
               const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('probe-rtt-polling-interval'),
-                controller: _pollingInterval,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: 'RTT 轮询间隔',
-                  suffixText: 'ms',
+              AppLabeledField(
+                label: 'RTT 轮询间隔',
+                child: TextField(
+                  key: const ValueKey('probe-rtt-polling-interval'),
+                  controller: _pollingInterval,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: secondaryDialogFieldDecoration(suffixText: 'ms'),
                 ),
               ),
               const SizedBox(height: 6),
@@ -2119,39 +2077,45 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                 ],
               ),
               if (channels.isNotEmpty)
-                DropdownButtonFormField<String>(
-                  initialValue: selectedExists ? _channel.text : null,
-                  decoration: secondaryDialogFieldDecoration(
-                    labelText: 'RTT Up 通道',
+                AppLabeledField(
+                  label: 'RTT Up 通道',
+                  child: AppDropdown<String>(
+                    value: selectedExists ? _channel.text : null,
+                    hint: 'RTT Up 通道',
+                    decoration: secondaryDialogFieldDecoration(),
+                    items: [
+                      for (final channel in channels)
+                        DropdownMenuItem(
+                          value: channel.name,
+                          child: Text('Up ${channel.index}  ${channel.name}'),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      _channel.text = value;
+                      if (JScopeFormat.tryParse(value) != null) {
+                        _format.text = value;
+                      }
+                    },
                   ),
-                  items: [
-                    for (final channel in channels)
-                      DropdownMenuItem(
-                        value: channel.name,
-                        child: Text('Up ${channel.index}  ${channel.name}'),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    _channel.text = value;
-                    if (JScopeFormat.tryParse(value) != null) {
-                      _format.text = value;
-                    }
-                  },
                 )
               else
-                TextField(
-                  controller: _channel,
-                  decoration: secondaryDialogFieldDecoration(
-                    labelText: 'RTT Up 通道名称',
+                AppLabeledField(
+                  label: 'RTT Up 通道名称',
+                  child: TextField(
+                    controller: _channel,
+                    decoration: secondaryDialogFieldDecoration(),
                   ),
                 ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _format,
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: 'J-Scope 数据格式',
-                ).copyWith(helperText: '通道名含 JScope_i4u4 时自动识别；普通名称请手动输入 i4u4'),
+              AppLabeledField(
+                label: 'J-Scope 数据格式',
+                child: TextField(
+                  controller: _format,
+                  decoration: secondaryDialogFieldDecoration().copyWith(
+                    helperText: '通道名含 JScope_i4u4 时自动识别；普通名称请手动输入 i4u4',
+                  ),
+                ),
               ),
               if (_error != null) ...[
                 const SizedBox(height: 10),
@@ -2234,18 +2198,14 @@ class _ProbeCursorJumpDialogState extends State<_ProbeCursorJumpDialog> {
       title: const Text('跳转到包序号 X'),
       content: SizedBox(
         width: 260,
-        child: TextField(
+        child: AppDialogTextField(
           key: const ValueKey('probe-cursor-jump-input'),
           controller: _controller,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            labelText: 'X（包序号）',
-            helperText: '范围: ${widget.minX}-${widget.maxX}',
-            errorText: _errorText,
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
+          labelText: 'X（包序号）',
+          helperText: '范围: ${widget.minX}-${widget.maxX}',
+          errorText: _errorText,
           onChanged: (_) {
             if (_errorText != null) setState(() => _errorText = null);
           },
@@ -2585,85 +2545,6 @@ class _HssLabeledControl extends StatelessWidget {
         const SizedBox(height: 4),
         child,
       ],
-    );
-  }
-}
-
-class _ProbeDraggableInfoBox extends StatefulWidget {
-  const _ProbeDraggableInfoBox({
-    super.key,
-    required this.initialRight,
-    required this.initialTop,
-    required this.borderColor,
-    required this.opacity,
-    required this.fontSizeDelta,
-    required this.fontBold,
-    required this.child,
-  });
-
-  final double initialRight;
-  final double initialTop;
-  final Color borderColor;
-  final double opacity;
-  final int fontSizeDelta;
-  final bool fontBold;
-  final Widget child;
-
-  @override
-  State<_ProbeDraggableInfoBox> createState() => _ProbeDraggableInfoBoxState();
-}
-
-class _ProbeDraggableInfoBoxState extends State<_ProbeDraggableInfoBox> {
-  double? _right;
-  double? _top;
-  Offset? _dragStart;
-  double? _dragStartRight;
-  double? _dragStartTop;
-
-  @override
-  Widget build(BuildContext context) {
-    final right = _right ?? widget.initialRight;
-    final top = _top ?? widget.initialTop;
-    return Positioned(
-      right: right,
-      top: top,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          _dragStart = details.globalPosition;
-          _dragStartRight = right;
-          _dragStartTop = top;
-        },
-        onPanUpdate: (details) {
-          final start = _dragStart;
-          if (start == null) return;
-          setState(() {
-            _right = (_dragStartRight! + start.dx - details.globalPosition.dx)
-                .clamp(0, double.infinity);
-            _top = (_dragStartTop! + details.globalPosition.dy - start.dy)
-                .clamp(0, double.infinity);
-          });
-        },
-        onPanEnd: (_) => _dragStart = null,
-        onPanCancel: () => _dragStart = null,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Theme.of(
-              context,
-            ).colorScheme.surface.withValues(alpha: widget.opacity),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: widget.borderColor),
-          ),
-          child: DefaultTextStyle.merge(
-            style: TextStyle(
-              fontSize: (13 + widget.fontSizeDelta).clamp(7, 25).toDouble(),
-              fontWeight: widget.fontBold ? FontWeight.bold : null,
-            ),
-            child: widget.child,
-          ),
-        ),
-      ),
     );
   }
 }

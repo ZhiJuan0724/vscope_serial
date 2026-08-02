@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants/terminal_fonts.dart';
+import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../services/app_settings.dart';
 import '../../services/shell_stream_decoder.dart';
 import '../../viewmodels/rtt_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../widgets/common_widgets.dart';
 
 Future<void> showRttSettingsDialog(BuildContext context) {
@@ -28,7 +30,10 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
   final GlobalKey _displayKey = GlobalKey();
   late final TextEditingController _historyController;
   late final TextEditingController _fontSizeController;
+  late String _encoding;
+  late String _fontFamily;
   String? _fontSizeError;
+  String? _historyError;
 
   @override
   void initState() {
@@ -40,6 +45,8 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
     _fontSizeController = TextEditingController(
       text: settings.rttFontSize.round().toString(),
     );
+    _encoding = settings.rttEncoding;
+    _fontFamily = settings.rttFontFamily;
   }
 
   @override
@@ -53,10 +60,45 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<RttViewModel>();
-    return AlertDialog(
-      shape: kAdvancedSettingsDialogShape,
+    return AppSettingsDialog(
       title: Text(AppStrings.rtt.settings),
-      content: SettingsNavigationView(
+      size: AppDialogSize.navigation,
+      hasUnsavedChanges: () {
+        final settings = AppSettings();
+        return _encoding != settings.rttEncoding ||
+            _fontFamily != settings.rttFontFamily ||
+            _fontSizeController.text !=
+                settings.rttFontSize.round().toString() ||
+            _historyController.text != '${settings.rttHistoryLineLimit}';
+      },
+      onSave: () async {
+        final fontSize = double.tryParse(_fontSizeController.text);
+        final history = int.tryParse(_historyController.text);
+        setState(() {
+          _fontSizeError =
+              fontSize == null || fontSize < 10 || fontSize > 24
+                  ? AppStrings.raw.terminalFontSizeInvalid
+                  : null;
+          _historyError =
+              history == null ||
+                      history < RttConfiguration.minHistoryLines ||
+                      history > RttConfiguration.maxHistoryLines
+                  ? '历史行数范围为 ${RttConfiguration.minHistoryLines}~${RttConfiguration.maxHistoryLines}'
+                  : null;
+        });
+        if (_fontSizeError != null || _historyError != null) {
+          throw const FormatException('请修正无效设置');
+        }
+        await context.read<RttViewModel>().applyTerminalSettings(
+          RttTerminalSettingsDraft(
+            encoding: _encoding,
+            fontFamily: _fontFamily,
+            fontSize: fontSize!,
+            historyLineLimit: history!,
+          ),
+        );
+      },
+      child: SettingsNavigationView(
         scrollController: _scrollController,
         items: [
           SettingsNavigationItem(
@@ -78,7 +120,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               child: SizedBox(
                 width: kSecondaryDialogWideFieldWidth,
                 child: NoAnimDropdown<String>(
-                  value: vm.encoding,
+                  value: _encoding,
                   hint: '选择文本编码',
                   decoration: secondaryDialogFieldDecoration(),
                   items:
@@ -91,7 +133,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                           )
                           .toList(),
                   onChanged: (value) {
-                    if (value != null) vm.setEncoding(value);
+                    if (value != null) setState(() => _encoding = value);
                   },
                 ),
               ),
@@ -104,7 +146,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               child: SizedBox(
                 width: kSecondaryDialogWideFieldWidth,
                 child: NoAnimDropdown<String>(
-                  value: vm.fontFamily,
+                  value: _fontFamily,
                   hint: '选择终端字体',
                   decoration: secondaryDialogFieldDecoration(),
                   items:
@@ -117,7 +159,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                           )
                           .toList(),
                   onChanged: (value) {
-                    if (value != null) vm.setFontFamily(value);
+                    if (value != null) setState(() => _fontFamily = value);
                   },
                 ),
               ),
@@ -147,7 +189,6 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                         return;
                       }
                       setState(() => _fontSizeError = null);
-                      vm.setFontSize(value);
                     },
                   ),
                 ),
@@ -169,41 +210,29 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               child: Text(
                 'SerialTools RTT  中文终端\nAa Bb 0123456789  > _',
                 style: TextStyle(
-                  fontFamily: vm.fontFamily,
-                  fontSize: vm.fontSize,
+                  fontFamily: _fontFamily,
+                  fontSize:
+                      double.tryParse(_fontSizeController.text) ?? vm.fontSize,
                   height: 1.25,
                 ),
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
+            AppDialogTextField(
               controller: _historyController,
               keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: '历史行数',
-                helperText:
-                    '范围 1000~1000000 行，当前原始历史 '
-                    '${(vm.rawHistoryBytes / 1024 / 1024).toStringAsFixed(1)} MiB',
-                suffixIcon: IconButton(
-                  tooltip: '应用',
-                  onPressed: () {
-                    final value = int.tryParse(_historyController.text);
-                    if (value != null) vm.setHistoryLineLimit(value);
-                    _historyController.text = '${vm.historyLineLimit}';
-                  },
-                  icon: const Icon(Icons.check),
-                ),
-              ),
+              labelText: '历史行数',
+              errorText: _historyError,
+              helperText:
+                  '范围 1000~1000000 行，当前原始历史 '
+                  '${(vm.rawHistoryBytes / 1024 / 1024).toStringAsFixed(1)} MiB',
+              onChanged: (_) {
+                if (_historyError != null) setState(() => _historyError = null);
+              },
             ),
           ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
-        ),
-      ],
     );
   }
 }

@@ -60,6 +60,40 @@ ProbeConnectionConfig savedProbeConnectionConfig([AppSettings? source]) {
   );
 }
 
+/// 持久化探针连接参数，但不创建后端或建立连接。
+Future<void> persistProbeConnectionConfig(ProbeConnectionConfig config) async {
+  final settings = AppSettings();
+  final previous = savedProbeConnectionConfig(settings);
+  _writeProbeConnectionConfig(settings, config);
+  try {
+    await settings.save();
+  } catch (_) {
+    _writeProbeConnectionConfig(settings, previous);
+    rethrow;
+  }
+}
+
+void _writeProbeConnectionConfig(
+  AppSettings settings,
+  ProbeConnectionConfig config,
+) {
+  settings
+    ..rttProbeKind = config.probeKind.value
+    ..rttBackendSelection = config.backend.value
+    ..rttLastProbeId = config.probeId
+    ..rttTarget = config.target
+    ..rttAutoDetectTarget = config.autoDetectTarget
+    ..rttWireProtocol = config.wireProtocol.value
+    ..rttClockKhz = config.clockKhz
+    ..rttControlBlockMode = config.controlBlockMode.value
+    ..rttControlBlockAddress = config.controlBlockAddress
+    ..rttControlBlockRangeStart = config.controlBlockRangeStart
+    ..rttControlBlockRangeEnd = config.controlBlockRangeEnd
+    ..rttOpenocdInterfaceConfig = config.openOcdInterfaceConfig
+    ..rttOpenocdTargetConfig = config.openOcdTargetConfig
+    ..rttPyocdCmsisDapVersion = config.pyOcdCmsisDapVersion.value;
+}
+
 /// RTT 连接、后端选择和接收队列的唯一所有者。
 class ProbeConnectionService extends ChangeNotifier {
   ProbeConnectionService({
@@ -749,23 +783,12 @@ class ProbeConnectionService extends ChangeNotifier {
   }
 
   void _persistConnection(ProbeConnectionConfig config) {
-    final settings =
-        AppSettings()
-          ..rttProbeKind = config.probeKind.value
-          ..rttBackendSelection = config.backend.value
-          ..rttLastProbeId = config.probeId
-          ..rttTarget = config.target
-          ..rttAutoDetectTarget = config.autoDetectTarget
-          ..rttWireProtocol = config.wireProtocol.value
-          ..rttClockKhz = config.clockKhz
-          ..rttControlBlockMode = config.controlBlockMode.value
-          ..rttControlBlockAddress = config.controlBlockAddress
-          ..rttControlBlockRangeStart = config.controlBlockRangeStart
-          ..rttControlBlockRangeEnd = config.controlBlockRangeEnd
-          ..rttOpenocdInterfaceConfig = config.openOcdInterfaceConfig
-          ..rttOpenocdTargetConfig = config.openOcdTargetConfig
-          ..rttPyocdCmsisDapVersion = config.pyOcdCmsisDapVersion.value;
-    unawaited(settings.save());
+    unawaited(saveConnectionConfig(config));
+  }
+
+  /// 只保存探针连接参数，不建立或修改当前连接。
+  Future<void> saveConnectionConfig(ProbeConnectionConfig config) async {
+    await persistProbeConnectionConfig(config);
   }
 
   void _setState(ProbeConnectionState value) {

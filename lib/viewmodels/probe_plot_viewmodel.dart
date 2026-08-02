@@ -17,6 +17,7 @@ import '../services/app_settings.dart';
 import '../services/probe_connection_service.dart';
 import '../views/plot/plot_render_snapshot.dart';
 import '../views/plot/plot_viewport.dart';
+import 'settings_drafts.dart';
 
 /// 探针绘图的独立历史、LOD 和视口状态，不依赖串口绘图 ViewModel。
 class ProbePlotViewModel extends ChangeNotifier {
@@ -209,6 +210,94 @@ class ProbePlotViewModel extends ChangeNotifier {
     settings.probePlotFollowPositionRatio = followPositionRatio;
     settings.probePlotObservationClickToPlace = observationClickToPlace;
     unawaited(settings.save());
+  }
+
+  /// 原子提交探针绘图设置草稿，持久化成功前不改变当前绘图。
+  Future<void> applyPlotSettings(PlotUiSettingsDraft draft) async {
+    final nextWindow = draft.windowPointLimit.clamp(
+      minWindowPointLimit,
+      maxWindowPointLimit,
+    );
+    final nextMemory = draft.historyLimit.clamp(
+      minHistoryMemoryLimitMiB,
+      maxHistoryMemoryLimitMiB,
+    );
+    final nextOpacity = draft.floatingPanelOpacity.clamp(0.0, 1.0);
+    final nextFollow = draft.followPositionRatio.clamp(0.5, 0.95);
+    final nextGridDensity = draft.gridDensity as GridDensity;
+    final nextBackground = draft.background as PlotBackgroundStyle;
+    final nextQuality = draft.quality as PlotLodQuality;
+    final settings = AppSettings();
+    final previous = (
+      window: settings.probePlotWindowPointLimit,
+      history: settings.probePlotHistoryMemoryLimitMiB,
+      quality: settings.probePlotLodQuality,
+      showGrid: settings.probePlotShowGrid,
+      gridDensity: settings.probePlotGridDensity,
+      background: settings.probePlotBackground,
+      opacity: settings.probePlotFloatingPanelOpacity,
+      fontSize: settings.probePlotFontSizeDelta,
+      fontBold: settings.probePlotFontBold,
+      follow: settings.probePlotFollowPositionRatio,
+      observation: settings.probePlotObservationClickToPlace,
+    );
+    settings
+      ..probePlotWindowPointLimit = nextWindow
+      ..probePlotHistoryMemoryLimitMiB = nextMemory
+      ..probePlotLodQuality = nextQuality.name
+      ..probePlotShowGrid = draft.showGrid
+      ..probePlotGridDensity = nextGridDensity.name
+      ..probePlotBackground = nextBackground.name
+      ..probePlotFloatingPanelOpacity = nextOpacity
+      ..probePlotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6)
+      ..probePlotFontBold = draft.fontBold
+      ..probePlotFollowPositionRatio = nextFollow
+      ..probePlotObservationClickToPlace = draft.observationClickToPlace;
+    try {
+      await settings.save();
+    } catch (_) {
+      settings
+        ..probePlotWindowPointLimit = previous.window
+        ..probePlotHistoryMemoryLimitMiB = previous.history
+        ..probePlotLodQuality = previous.quality
+        ..probePlotShowGrid = previous.showGrid
+        ..probePlotGridDensity = previous.gridDensity
+        ..probePlotBackground = previous.background
+        ..probePlotFloatingPanelOpacity = previous.opacity
+        ..probePlotFontSizeDelta = previous.fontSize
+        ..probePlotFontBold = previous.fontBold
+        ..probePlotFollowPositionRatio = previous.follow
+        ..probePlotObservationClickToPlace = previous.observation;
+      rethrow;
+    }
+
+    windowPointLimit = nextWindow;
+    historyMemoryLimitMiB = nextMemory;
+    lodQuality = nextQuality;
+    showGrid = draft.showGrid;
+    gridDensity = nextGridDensity;
+    backgroundStyle = nextBackground;
+    floatingPanelOpacity = nextOpacity;
+    plotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6);
+    plotFontBold = draft.fontBold;
+    followPositionRatio = nextFollow;
+    observationClickToPlace = draft.observationClickToPlace;
+    while (_exactPoints.length > windowPointLimit) {
+      final removed = _exactPoints.removeFirst();
+      _exactPointsEstimatedBytes -= _estimatePointBytes(removed);
+      _pointsByIndex.remove(removed.index);
+    }
+    _pointsSnapshot = null;
+    retentionLimitReached = estimatedHistoryBytes >= historyMemoryLimitBytes;
+    if (!observationClickToPlace) {
+      observationPlacementActive = false;
+      observationPreview = null;
+    }
+    dataRevision++;
+    revision++;
+    overlayRevision++;
+    notifyListeners();
+    if (retentionLimitReached) unawaited(_stopAfterRetentionLimit());
   }
 
   Future<void> start() async {

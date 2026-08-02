@@ -63,6 +63,15 @@ void main() {
     expect(find.text('已停止'), findsOneWidget);
   });
 
+  testWidgets('SSH Keepalive 仅在 Shell 设置中提供', (tester) async {
+    await tester.pumpWidget(buildPage());
+    await tester.tap(find.byTooltip(AppStrings.common.shellSettings));
+    await tester.pumpAndSettle();
+
+    expect(find.text('启用 SSH Keepalive'), findsOneWidget);
+    expect(find.textContaining('每 10 秒发送一次 OpenSSH keepalive'), findsOneWidget);
+  });
+
   testWidgets('800px toolbar keeps all tools without RenderFlex overflow', (
     tester,
   ) async {
@@ -149,7 +158,7 @@ void main() {
     final cursorX = terminal.buffer.cursorX;
     final cursorY = terminal.buffer.cursorY;
 
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pump();
 
     expect(terminal.buffer.getText(), contains('prompt'));
@@ -174,7 +183,7 @@ void main() {
       terminal.write('prompt> ');
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('开始 Shell'));
+      await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
       await tester.pumpAndSettle();
       var view = tester.widget<TerminalView>(terminalView);
       expect(view.cursorType, TerminalCursorType.verticalBar);
@@ -232,7 +241,7 @@ void main() {
   ) async {
     service.isConnected = true;
     await tester.pumpWidget(buildPage());
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pumpAndSettle();
 
     final inputFinder = find.byKey(const ValueKey('shell-line-input'));
@@ -250,7 +259,7 @@ void main() {
   ) async {
     service.isConnected = true;
     await tester.pumpWidget(buildPage());
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pumpAndSettle();
 
     final view = tester.widget<TerminalView>(find.byType(TerminalView));
@@ -276,7 +285,7 @@ void main() {
     service.isConnected = true;
     service.setRawShellInputMode(RawShellInputMode.key);
     await tester.pumpWidget(buildPage());
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pump();
 
     final terminal =
@@ -301,7 +310,7 @@ void main() {
     service.isConnected = true;
     service.setRawShellInputMode(RawShellInputMode.key);
     await tester.pumpWidget(buildPage(onConnectionShortcut: shortcuts.add));
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pump();
 
     final terminal =
@@ -351,7 +360,7 @@ void main() {
   ) async {
     service.isConnected = true;
     await tester.pumpWidget(buildPage());
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pump();
 
     service.debugAddShellData(
@@ -372,7 +381,7 @@ void main() {
   ) async {
     service.isConnected = true;
     await tester.pumpWidget(buildPage(receiveQueueLimitBytes: 8));
-    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.tap(find.byKey(const ValueKey('shell-start-stop-button')));
     await tester.pump();
 
     service.debugAddShellData(Uint8List.fromList([0xE4]));

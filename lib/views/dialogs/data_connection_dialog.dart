@@ -36,6 +36,9 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
   bool _showPortDetails = false;
   late DataConnectionType _connectionType;
   late NetworkConnectionConfig _networkConfig;
+  Timer? _networkSaveTimer;
+  NetworkConnectionConfig? _pendingNetworkConfig;
+  bool _networkDraftValid = true;
 
   @override
   void initState() {
@@ -60,10 +63,49 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
   }
 
   void _saveNetworkConfig(NetworkConnectionConfig value) {
+    _networkSaveTimer?.cancel();
+    _pendingNetworkConfig = null;
     setState(() => _networkConfig = value);
     final settings = AppSettings();
     settings.saveNetworkConfigForPage(widget.pageId, value);
     unawaited(settings.save());
+  }
+
+  void _scheduleNetworkConfigSave(NetworkConnectionConfig value) {
+    if (value.host.trim().isEmpty ||
+        value.port < 1 ||
+        value.port > 65535 ||
+        (value.localPort != null &&
+            (value.localPort! < 1 || value.localPort! > 65535))) {
+      setState(() => _networkDraftValid = false);
+      return;
+    }
+    setState(() {
+      _networkConfig = value;
+      _networkDraftValid = true;
+    });
+    _pendingNetworkConfig = value;
+    _networkSaveTimer?.cancel();
+    _networkSaveTimer = Timer(
+      const Duration(milliseconds: 300),
+      _flushNetworkConfig,
+    );
+  }
+
+  void _flushNetworkConfig() {
+    _networkSaveTimer?.cancel();
+    final value = _pendingNetworkConfig;
+    _pendingNetworkConfig = null;
+    if (value == null) return;
+    final settings = AppSettings();
+    settings.saveNetworkConfigForPage(widget.pageId, value);
+    unawaited(settings.save());
+  }
+
+  @override
+  void dispose() {
+    _flushNetworkConfig();
+    super.dispose();
   }
 
   @override
@@ -87,13 +129,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (AppSettings().networkConnectionsEnabled) ...[
-                  NoAnimDropdown<DataConnectionType>(
+                  AppDialogDropdown<DataConnectionType>(
                     value: _connectionType,
                     hint: '连接类型',
-                    decoration: const InputDecoration(
-                      labelText: '连接类型',
-                      border: OutlineInputBorder(),
-                    ),
+                    labelText: '连接类型',
                     items:
                         [
                               if (widget.pageId != 'modbus' ||
@@ -142,17 +181,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                   Row(
                     children: [
                       Expanded(
-                        child: NoAnimDropdown<String>(
+                        child: AppDialogDropdown<String>(
                           value: service.config.port,
                           hint: AppStrings.serial.selectPortHint,
-                          decoration: InputDecoration(
-                            labelText: AppStrings.serial.port,
-                            border: const OutlineInputBorder(),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
+                          labelText: AppStrings.serial.port,
                           items:
                               displayedPorts.map((port) {
                                 final displayLabel = service.portDisplayLabel(
@@ -213,38 +245,40 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                       SizedBox(
                         key: const ValueKey('baud-rate-field-container'),
                         width: 220,
-                        child: ComboInput(
-                          value: service.config.baudRate.toString(),
-                          hint: AppStrings.serial.baudRate,
-                          items: const [
-                            '9600',
-                            '19200',
-                            '38400',
-                            '57600',
-                            '115200',
-                            '230400',
-                            '460800',
-                            '512000',
-                            '921600',
-                            '1152000',
-                          ],
-                          enabled: !service.isConnected,
-                          decoration: InputDecoration(
-                            labelText: AppStrings.serial.baudRate,
-                            border: const OutlineInputBorder(),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
+                        child: AppLabeledField(
+                          label: AppStrings.serial.baudRate,
+                          child: ComboInput(
+                            value: service.config.baudRate.toString(),
+                            hint: AppStrings.serial.baudRate,
+                            items: const [
+                              '9600',
+                              '19200',
+                              '38400',
+                              '57600',
+                              '115200',
+                              '230400',
+                              '460800',
+                              '512000',
+                              '921600',
+                              '1152000',
+                            ],
+                            enabled: !service.isConnected,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
                             ),
+                            onChanged: (value) {
+                              final rate = int.tryParse(value);
+                              if (rate != null && rate > 0) {
+                                service.updateConfig(
+                                  service.config.copyWith(baudRate: rate),
+                                );
+                              }
+                            },
                           ),
-                          onChanged: (value) {
-                            final rate = int.tryParse(value);
-                            if (rate != null && rate > 0) {
-                              service.updateConfig(
-                                service.config.copyWith(baudRate: rate),
-                              );
-                            }
-                          },
                         ),
                       ),
                       const Spacer(),
@@ -272,17 +306,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                   Row(
                     children: [
                       Expanded(
-                        child: NoAnimDropdown<int>(
+                        child: AppDialogDropdown<int>(
                           value: service.config.dataBits,
                           hint: AppStrings.serial.dataBits,
-                          decoration: InputDecoration(
-                            labelText: AppStrings.serial.dataBits,
-                            border: const OutlineInputBorder(),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
+                          labelText: AppStrings.serial.dataBits,
                           items:
                               [5, 6, 7, 8].map((bits) {
                                 return DropdownMenuItem(
@@ -302,17 +329,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: NoAnimDropdown<int>(
+                        child: AppDialogDropdown<int>(
                           value: service.config.stopBits,
                           hint: AppStrings.serial.stopBits,
-                          decoration: InputDecoration(
-                            labelText: AppStrings.serial.stopBits,
-                            border: const OutlineInputBorder(),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
+                          labelText: AppStrings.serial.stopBits,
                           items:
                               [1, 2].map((bits) {
                                 return DropdownMenuItem(
@@ -332,17 +352,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: NoAnimDropdown<int>(
+                        child: AppDialogDropdown<int>(
                           value: service.config.parity,
                           hint: AppStrings.serial.parity,
-                          decoration: InputDecoration(
-                            labelText: AppStrings.serial.parity,
-                            border: const OutlineInputBorder(),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
+                          labelText: AppStrings.serial.parity,
                           items: [
                             DropdownMenuItem(
                               value: SerialParity.none,
@@ -397,72 +410,89 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                     ],
                   ),
                 ] else ...[
-                  TextFormField(
-                    initialValue: _networkConfig.host,
-                    enabled: !service.isConnectionBusy,
-                    decoration: InputDecoration(
-                      labelText:
-                          _connectionType == DataConnectionType.tcpServer
-                              ? '监听地址'
-                              : '远端地址',
-                      helperText:
-                          _connectionType == DataConnectionType.tcpServer
-                              ? '默认监听全部本机网络接口'
-                              : null,
-                      border: const OutlineInputBorder(),
+                  AppLabeledField(
+                    label:
+                        _connectionType == DataConnectionType.tcpServer
+                            ? '监听地址'
+                            : '远端地址',
+                    helpText:
+                        _connectionType == DataConnectionType.tcpServer
+                            ? '默认监听全部本机网络接口'
+                            : null,
+                    child: TextFormField(
+                      initialValue: _networkConfig.host,
+                      enabled: !service.isConnectionBusy,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged:
+                          (value) => _scheduleNetworkConfigSave(
+                            _networkConfig.copyWith(host: value),
+                          ),
                     ),
-                    onChanged:
-                        (value) => _saveNetworkConfig(
-                          _networkConfig.copyWith(host: value),
-                        ),
                   ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
-                        child: TextFormField(
-                          initialValue: _networkConfig.port.toString(),
-                          enabled: !service.isConnectionBusy,
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText:
-                                _connectionType == DataConnectionType.tcpServer
-                                    ? '监听端口'
-                                    : '远端端口',
-                            border: const OutlineInputBorder(),
+                        child: AppLabeledField(
+                          label:
+                              _connectionType == DataConnectionType.tcpServer
+                                  ? '监听端口'
+                                  : '远端端口',
+                          child: TextFormField(
+                            initialValue: _networkConfig.port.toString(),
+                            enabled: !service.isConnectionBusy,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (value) {
+                              final port = int.tryParse(value);
+                              if (port != null && port >= 1 && port <= 65535) {
+                                _scheduleNetworkConfigSave(
+                                  _networkConfig.copyWith(port: port),
+                                );
+                              } else {
+                                setState(() => _networkDraftValid = false);
+                              }
+                            },
                           ),
-                          onChanged: (value) {
-                            final port = int.tryParse(value);
-                            if (port != null && port >= 1 && port <= 65535) {
-                              _saveNetworkConfig(
-                                _networkConfig.copyWith(port: port),
-                              );
-                            }
-                          },
                         ),
                       ),
                       if (_connectionType == DataConnectionType.udp) ...[
                         const SizedBox(width: 12),
                         Expanded(
-                          child: TextFormField(
-                            initialValue:
-                                _networkConfig.localPort?.toString() ?? '',
-                            enabled: !service.isConnectionBusy,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: '本地端口（可选）',
-                              border: OutlineInputBorder(),
+                          child: AppLabeledField(
+                            label: '本地端口（可选）',
+                            child: TextFormField(
+                              initialValue:
+                                  _networkConfig.localPort?.toString() ?? '',
+                              enabled: !service.isConnectionBusy,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                border: OutlineInputBorder(),
+                              ),
+                              onChanged: (value) {
+                                final port = int.tryParse(value);
+                                if (value.trim().isNotEmpty &&
+                                    (port == null ||
+                                        port < 1 ||
+                                        port > 65535)) {
+                                  setState(() => _networkDraftValid = false);
+                                  return;
+                                }
+                                _scheduleNetworkConfigSave(
+                                  value.trim().isEmpty
+                                      ? _networkConfig.copyWith(
+                                        clearLocalPort: true,
+                                      )
+                                      : _networkConfig.copyWith(
+                                        localPort: port,
+                                      ),
+                                );
+                              },
                             ),
-                            onChanged: (value) {
-                              final port = int.tryParse(value);
-                              _saveNetworkConfig(
-                                value.trim().isEmpty
-                                    ? _networkConfig.copyWith(
-                                      clearLocalPort: true,
-                                    )
-                                    : _networkConfig.copyWith(localPort: port),
-                              );
-                            },
                           ),
                         ),
                       ],
@@ -474,7 +504,10 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                _flushNetworkConfig();
+                Navigator.of(context).pop();
+              },
               child: Text(AppStrings.common.close),
             ),
             if (service.isConnecting)
@@ -506,10 +539,12 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                 onPressed:
                     (_connectionType == DataConnectionType.serial
                             ? service.canConnectSelectedPort
-                            : _networkConfig.host.trim().isNotEmpty &&
+                            : _networkDraftValid &&
+                                _networkConfig.host.trim().isNotEmpty &&
                                 _networkConfig.port >= 1 &&
                                 _networkConfig.port <= 65535)
                         ? () {
+                          _flushNetworkConfig();
                           if (_connectionType == DataConnectionType.serial) {
                             service.connect();
                           } else {

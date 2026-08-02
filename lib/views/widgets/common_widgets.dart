@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+export 'app_controls/app_dialog.dart';
+export 'app_controls/app_feedback.dart';
+export 'app_controls/app_form.dart';
 
 /// 二级弹窗内单行输入框和下拉框的默认宽度。
 const double kSecondaryDialogFieldWidth = 140;
@@ -703,7 +708,9 @@ class ToolbarStartStopButton extends StatelessWidget {
               ),
             );
 
-    if (tooltip == null) return button;
+    // “开始”状态已有文字和播放图标，不再重复显示悬停提示；运行后的
+    // “停止”状态仍可按调用方需要提供具体的停止或断开说明。
+    if (tooltip == null || !running) return button;
     return Tooltip(message: tooltip!, child: button);
   }
 }
@@ -735,7 +742,6 @@ class ToolbarAdvancedSettingsButton extends StatelessWidget {
 /// 二级弹窗内单行输入框和下拉框的统一装饰。
 InputDecoration secondaryDialogFieldDecoration({
   String? hintText,
-  String? labelText,
   String? suffixText,
   String? counterText,
 }) {
@@ -744,7 +750,6 @@ InputDecoration secondaryDialogFieldDecoration({
     border: const OutlineInputBorder(),
     contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
     hintText: hintText,
-    labelText: labelText,
     suffixText: suffixText,
     counterText: counterText,
   );
@@ -871,9 +876,139 @@ class NoAnimDropdown<T> extends StatefulWidget {
   State<NoAnimDropdown<T>> createState() => _NoAnimDropdownState<T>();
 }
 
+/// 设置和普通表单统一使用的无动画下拉基础。
+typedef AppDropdown<T> = NoAnimDropdown<T>;
+
+/// 弹窗下拉语义别名；视觉由 [secondaryDialogFieldDecoration] 统一提供。
+class AppDialogDropdown<T> extends StatelessWidget {
+  const AppDialogDropdown({
+    super.key,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.hint,
+    this.labelText,
+    this.errorText,
+    this.enabled = true,
+  });
+
+  final T? value;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?>? onChanged;
+  final String? hint;
+  final String? labelText;
+  final String? errorText;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      if (labelText != null) ...[
+        Text(labelText!, style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(height: 4),
+      ],
+      NoAnimDropdown<T>(
+        value: value,
+        items: items,
+        onChanged: enabled ? onChanged : null,
+        hint: hint ?? '',
+        decoration: secondaryDialogFieldDecoration().copyWith(
+          errorText: errorText,
+        ),
+      ),
+    ],
+  );
+}
+
+/// 2～3个短选项的统一分段选择控件。
+class AppSegmentedSelector<T> extends StatelessWidget {
+  const AppSegmentedSelector({
+    super.key,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    this.enabled = true,
+    this.minItemWidth = 72,
+    this.disabledValues = const {},
+  });
+
+  final T value;
+  final Map<T, Widget> items;
+  final ValueChanged<T> onChanged;
+  final bool enabled;
+  final double minItemWidth;
+  final Set<T> disabledValues;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var index = 0; index < items.length; index++) ...[
+          if (index > 0) const SizedBox(width: 4),
+          Builder(
+            builder: (context) {
+              final entry = items.entries.elementAt(index);
+              final selected = entry.key == value;
+              final itemEnabled =
+                  enabled && !disabledValues.contains(entry.key);
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(4),
+                  onTap: itemEnabled ? () => onChanged(entry.key) : null,
+                  child: AnimatedContainer(
+                    duration: Duration.zero,
+                    constraints: BoxConstraints(minWidth: minItemWidth),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color:
+                          selected
+                              ? colors.primaryContainer.withValues(alpha: 0.72)
+                              : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: DefaultTextStyle.merge(
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color:
+                            !itemEnabled
+                                ? colors.onSurface.withValues(alpha: 0.38)
+                                : selected
+                                ? colors.onPrimaryContainer
+                                : colors.primary,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                      child: Center(
+                        child: AppSegmentedButtonLabel(child: entry.value),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 工具栏下拉统一复用已有的紧凑实现。
+typedef AppToolbarDropdown<T> = ToolbarDropdown<T>;
+
 class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
   OverlayEntry? _overlayEntry;
   final LayerLink _layerLink = LayerLink();
+  final FocusNode _focusNode = FocusNode();
+  int _highlightedIndex = -1;
 
   void _toggleMenu() {
     if (_overlayEntry != null) {
@@ -896,6 +1031,12 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
         availableBelow < desiredMaxHeight && availableAbove > availableBelow;
     final availableSpace = opensUp ? availableAbove : availableBelow;
     final menuMaxHeight = availableSpace.clamp(56.0, desiredMaxHeight);
+    _highlightedIndex = widget.items.indexWhere(
+      (item) => item.enabled && item.value == widget.value,
+    );
+    if (_highlightedIndex < 0) {
+      _highlightedIndex = widget.items.indexWhere((item) => item.enabled);
+    }
 
     _overlayEntry = OverlayEntry(
       builder: (context) {
@@ -935,13 +1076,19 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children:
-                            widget.items.map((item) {
+                            widget.items.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final item = entry.value;
                               final isSelected = item.value == widget.value;
+                              final isHighlighted = index == _highlightedIndex;
                               return InkWell(
-                                onTap: () {
-                                  widget.onChanged?.call(item.value);
-                                  _removeOverlay();
-                                },
+                                onTap:
+                                    item.enabled
+                                        ? () {
+                                          widget.onChanged?.call(item.value);
+                                          _removeOverlay();
+                                        }
+                                        : null,
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 12,
@@ -949,16 +1096,21 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
                                   ),
                                   decoration: BoxDecoration(
                                     color:
-                                        isSelected
-                                            ? Theme.of(
-                                              context,
-                                            ).colorScheme.primaryContainer
+                                        isSelected || isHighlighted
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primaryContainer
+                                                .withValues(
+                                                  alpha: isSelected ? 1 : 0.55,
+                                                )
                                             : null,
                                   ),
                                   child: DefaultTextStyle(
                                     style: TextStyle(
                                       color:
-                                          isSelected
+                                          !item.enabled
+                                              ? Theme.of(context).disabledColor
+                                              : isSelected
                                               ? Theme.of(
                                                 context,
                                               ).colorScheme.onPrimaryContainer
@@ -986,14 +1138,70 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
     Overlay.of(context).insert(_overlayEntry!);
   }
 
-  void _removeOverlay() {
+  void _removeOverlay({bool restoreFocus = true}) {
     _overlayEntry?.remove();
     _overlayEntry = null;
+    _highlightedIndex = -1;
+    if (restoreFocus && mounted && widget.onChanged != null) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _moveHighlight(int delta) {
+    if (widget.items.isEmpty) return;
+    var index = _highlightedIndex;
+    for (var count = 0; count < widget.items.length; count++) {
+      index = (index + delta) % widget.items.length;
+      if (index < 0) index += widget.items.length;
+      if (widget.items[index].enabled) {
+        _highlightedIndex = index;
+        _overlayEntry?.markNeedsBuild();
+        return;
+      }
+    }
+  }
+
+  void _selectHighlighted() {
+    if (_highlightedIndex < 0 ||
+        _highlightedIndex >= widget.items.length ||
+        !widget.items[_highlightedIndex].enabled) {
+      return;
+    }
+    widget.onChanged?.call(widget.items[_highlightedIndex].value);
+    _removeOverlay();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (widget.onChanged == null || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape &&
+        _overlayEntry != null) {
+      _removeOverlay();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown ||
+        event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      if (_overlayEntry == null) _showOverlay();
+      _moveHighlight(event.logicalKey == LogicalKeyboardKey.arrowDown ? 1 : -1);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.space) {
+      if (_overlayEntry == null) {
+        _showOverlay();
+      } else {
+        _selectHighlighted();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
   void dispose() {
-    _removeOverlay();
+    _removeOverlay(restoreFocus: false);
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -1014,43 +1222,53 @@ class _NoAnimDropdownState<T> extends State<NoAnimDropdown<T>> {
       }
     }
 
-    return CompositedTransformTarget(
-      link: _layerLink,
-      child: InkWell(
-        onTap: widget.onChanged == null ? null : _toggleMenu,
-        child: InputDecorator(
-          decoration:
-              widget.decoration ??
-              const InputDecoration(
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-              ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  displayText,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color:
-                        widget.onChanged == null
-                            ? Colors.grey
-                            : (widget.value != null
-                                ? Theme.of(context).colorScheme.onSurface
-                                : Colors.grey),
-                    fontSize: 14,
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: _handleKeyEvent,
+      child: CompositedTransformTarget(
+        link: _layerLink,
+        child: InkWell(
+          onTap:
+              widget.onChanged == null
+                  ? null
+                  : () {
+                    _focusNode.requestFocus();
+                    _toggleMenu();
+                  },
+          child: InputDecorator(
+            decoration:
+                widget.decoration ??
+                const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
                   ),
                 ),
-              ),
-              Icon(
-                Icons.arrow_drop_down,
-                color: widget.onChanged == null ? Colors.grey : null,
-              ),
-            ],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    displayText,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color:
+                          widget.onChanged == null
+                              ? Colors.grey
+                              : (widget.value != null
+                                  ? Theme.of(context).colorScheme.onSurface
+                                  : Colors.grey),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_drop_down,
+                  color: widget.onChanged == null ? Colors.grey : null,
+                ),
+              ],
+            ),
           ),
         ),
       ),

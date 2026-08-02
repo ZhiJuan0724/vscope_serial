@@ -230,7 +230,7 @@ void main() {
     expect(shortcutToggle, findsOneWidget);
     await tester.tap(shortcutToggle);
     await tester.pump();
-    expect(AppSettings().connectionShortcutsEnabled, isFalse);
+    expect(AppSettings().connectionShortcutsEnabled, isTrue);
     final diagnosticToggle = find.ancestor(
       of: find.text(AppStrings.appInfo.diagnosticLogging),
       matching: find.byType(SwitchListTile),
@@ -239,8 +239,8 @@ void main() {
     expect(AppSettings().diagnosticLoggingEnabled, isFalse);
     await tester.tap(diagnosticToggle);
     await tester.pump();
-    expect(AppSettings().diagnosticLoggingEnabled, isTrue);
-    expect(AppLogger().diagnosticEnabled, isTrue);
+    expect(AppSettings().diagnosticLoggingEnabled, isFalse);
+    expect(AppLogger().diagnosticEnabled, isFalse);
     final aggregationToggle = find.ancestor(
       of: find.text(AppStrings.appInfo.plotReceiveAggregation),
       matching: find.byType(SwitchListTile),
@@ -250,7 +250,7 @@ void main() {
     await tester.ensureVisible(aggregationToggle);
     await tester.tap(aggregationToggle);
     await tester.pump();
-    expect(AppSettings().plotReceiveAggregationEnabled, isTrue);
+    expect(AppSettings().plotReceiveAggregationEnabled, isFalse);
     final plotMemoryField = find.byKey(
       const ValueKey('app-plot-history-memory-limit'),
     );
@@ -274,6 +274,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('内置 OpenOCD: v0.12.0-bundled'), findsOneWidget);
     expect(find.textContaining('外置 OpenOCD: v0.12.0-external'), findsOneWidget);
+
+    await tester.tap(find.text('保存').last);
+    await tester.pumpAndSettle();
+    expect(AppSettings().connectionShortcutsEnabled, isFalse);
+    expect(AppSettings().diagnosticLoggingEnabled, isTrue);
+    expect(AppLogger().diagnosticEnabled, isTrue);
+    expect(AppSettings().plotReceiveAggregationEnabled, isTrue);
 
     await tester.pumpWidget(const SizedBox.shrink());
     plotViewModel.dispose();

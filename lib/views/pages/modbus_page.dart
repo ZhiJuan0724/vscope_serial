@@ -137,19 +137,15 @@ class _ModbusPageState extends State<ModbusPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
+                  AppDialogTextField(
                     controller: nameController,
-                    decoration: secondaryDialogFieldDecoration(
-                      labelText: '任务名称',
-                    ),
+                    labelText: '任务名称',
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AppDialogTextField(
                     controller: retriesController,
                     keyboardType: TextInputType.number,
-                    decoration: secondaryDialogFieldDecoration(
-                      labelText: '读取重试（0～3）',
-                    ),
+                    labelText: '读取重试（0～3）',
                   ),
                 ],
               ),
@@ -222,19 +218,15 @@ class _ModbusPageState extends State<ModbusPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        TextField(
+                        AppDialogTextField(
                           controller: nameController,
-                          decoration: secondaryDialogFieldDecoration(
-                            labelText: '任务名称',
-                          ),
+                          labelText: '任务名称',
                         ),
                         const SizedBox(height: 12),
-                        NoAnimDropdown<ModbusSendValueMode>(
+                        AppDialogDropdown<ModbusSendValueMode>(
                           value: valueMode,
                           hint: '选择数值生成方式',
-                          decoration: secondaryDialogFieldDecoration(
-                            labelText: '数值生成方式',
-                          ),
+                          labelText: '数值生成方式',
                           items: [
                             for (final mode in ModbusSendValueMode.values)
                               DropdownMenuItem(
@@ -249,12 +241,10 @@ class _ModbusPageState extends State<ModbusPage> {
                         ),
                         if (valueMode != ModbusSendValueMode.random) ...[
                           const SizedBox(height: 12),
-                          TextField(
+                          AppDialogTextField(
                             controller: stepController,
                             keyboardType: TextInputType.number,
-                            decoration: secondaryDialogFieldDecoration(
-                              labelText: '步长 N（1～65535）',
-                            ),
+                            labelText: '步长 N（1～65535）',
                           ),
                           const SizedBox(height: 6),
                           Align(
@@ -325,13 +315,11 @@ class _ModbusPageState extends State<ModbusPage> {
             title: Text(polling ? '轮询周期设置' : '发送周期设置'),
             content: SizedBox(
               width: 360,
-              child: TextField(
+              child: AppDialogTextField(
                 controller: controller,
                 autofocus: true,
                 keyboardType: TextInputType.number,
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: '周期（ms，50～3600000）',
-                ),
+                labelText: '周期（ms，50～3600000）',
               ),
             ),
             actions: [
@@ -396,12 +384,10 @@ class _ModbusPageState extends State<ModbusPage> {
             title: const Text('Modbus协议设置'),
             content: SizedBox(
               width: 360,
-              child: TextField(
+              child: AppDialogTextField(
                 controller: controller,
                 keyboardType: TextInputType.number,
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: '响应超时（ms）',
-                ),
+                labelText: '响应超时（ms）',
               ),
             ),
             actions: [
@@ -616,12 +602,10 @@ class _ModbusPageState extends State<ModbusPage> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 8),
-                    NoAnimDropdown<ModbusFunction>(
+                    AppDialogDropdown<ModbusFunction>(
                       value: _function,
                       hint: '选择功能码',
-                      decoration: secondaryDialogFieldDecoration(
-                        labelText: '功能码',
-                      ),
+                      labelText: '功能码',
                       items: [
                         for (final item in ModbusFunction.values)
                           DropdownMenuItem(
@@ -638,11 +622,9 @@ class _ModbusPageState extends State<ModbusPage> {
                     const SizedBox(height: 8),
                     _numberField(_quantityController, '数量'),
                     const SizedBox(height: 8),
-                    TextField(
+                    AppDialogTextField(
                       controller: _valuesController,
-                      decoration: secondaryDialogFieldDecoration(
-                        labelText: '写入值（逗号或空格分隔）',
-                      ),
+                      labelText: '写入值（逗号或空格分隔）',
                     ),
                     const SizedBox(height: 10),
                     Wrap(
@@ -776,11 +758,14 @@ class _ModbusPageState extends State<ModbusPage> {
     TextEditingController controller,
     String label, {
     ValueChanged<String>? onChanged,
-  }) => TextField(
-    controller: controller,
-    keyboardType: TextInputType.number,
-    decoration: secondaryDialogFieldDecoration(labelText: label),
-    onChanged: onChanged,
+  }) => AppLabeledField(
+    label: label,
+    child: TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      decoration: secondaryDialogFieldDecoration(),
+      onChanged: onChanged,
+    ),
   );
 }
 

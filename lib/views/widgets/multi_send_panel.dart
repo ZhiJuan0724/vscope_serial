@@ -61,14 +61,13 @@ class MultiSendPanel extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: profile?.id,
-                        isExpanded: true,
+                      child: AppDropdown<String>(
+                        value: profile?.id,
+                        hint: '选择发送配置',
                         decoration: const InputDecoration(
                           isDense: true,
                           border: OutlineInputBorder(),
                         ),
-                        hint: const Text('选择发送配置'),
                         items:
                             vm.profiles
                                 .map(
@@ -329,13 +328,10 @@ class MultiSendPanel extends StatelessWidget {
       builder:
           (context) => AlertDialog(
             title: Text(rename ? '重命名配置' : '新建发送配置'),
-            content: TextField(
+            content: AppDialogTextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '配置名称',
-                border: OutlineInputBorder(),
-              ),
+              labelText: '配置名称',
             ),
             actions: [
               TextButton(
@@ -642,21 +638,13 @@ class _EntryEditorState extends State<_EntryEditor> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(
-              labelText: '名称',
-              border: OutlineInputBorder(),
-            ),
-          ),
+          AppDialogTextField(controller: _name, labelText: '名称'),
           if (!_hex) ...[
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _textLineEnding,
-              decoration: const InputDecoration(
-                labelText: '文本行尾',
-                border: OutlineInputBorder(),
-              ),
+            AppDialogDropdown<String>(
+              value: _textLineEnding,
+              hint: '文本行尾',
+              labelText: '文本行尾',
               items: const [
                 DropdownMenuItem(value: '', child: Text('不追加')),
                 DropdownMenuItem(value: '\r', child: Text(r'\r')),
@@ -668,30 +656,17 @@ class _EntryEditorState extends State<_EntryEditor> {
             ),
           ],
           const SizedBox(height: 12),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment(
-                value: false,
-                label: AppSegmentedButtonLabel(child: Text('文本')),
-              ),
-              ButtonSegment(
-                value: true,
-                label: AppSegmentedButtonLabel(child: Text('HEX')),
-              ),
-            ],
-            selected: {_hex},
-            onSelectionChanged: (value) => _setHexMode(value.first),
+          AppSegmentedSelector<bool>(
+            value: _hex,
+            items: const {false: Text('文本'), true: Text('HEX')},
+            onChanged: _setHexMode,
           ),
           const SizedBox(height: 12),
-          TextField(
+          AppDialogTextField(
             controller: _content,
             minLines: 3,
             maxLines: 7,
-            decoration: InputDecoration(
-              labelText: _hex ? 'HEX 内容' : '发送内容',
-              border: const OutlineInputBorder(),
-              alignLabelWithHint: true,
-            ),
+            labelText: _hex ? 'HEX 内容' : '发送内容',
             inputFormatters: _hex ? const [HexInputFormatter()] : null,
             onChanged: _hex ? _formatHexContent : null,
           ),
@@ -699,13 +674,10 @@ class _EntryEditorState extends State<_EntryEditor> {
           Row(
             children: [
               Expanded(
-                child: TextField(
+                child: AppDialogTextField(
                   controller: _interval,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '发送后间隔 (ms)',
-                    border: OutlineInputBorder(),
-                  ),
+                  labelText: '发送后间隔 (ms)',
                 ),
               ),
               const SizedBox(width: 12),

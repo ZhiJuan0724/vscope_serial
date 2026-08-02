@@ -13,6 +13,7 @@ import 'package:xterm/xterm.dart';
 import '../../core/constants/terminal_fonts.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/byte_size_formatter.dart';
 import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
@@ -21,6 +22,7 @@ import '../../services/shell_receive_queue.dart';
 import '../../services/shell_stream_decoder.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/shell_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../widgets/common_widgets.dart';
 
 /// 独立串口 Shell 页面。
@@ -186,7 +188,7 @@ class _ShellPageState extends State<ShellPage> {
     _lastOverflowWarningAt = now;
     _terminal.write(
       '\r\n[警告] Shell 接收过载，已丢弃最旧数据 '
-      '${_formatBytes(_receiveQueue.droppedBytes)}。\r\n',
+      '${formatByteSize(_receiveQueue.droppedBytes)}。\r\n',
     );
   }
 
@@ -889,7 +891,7 @@ class _ShellPageState extends State<ShellPage> {
                       _scheduleScrollToBottom();
                     },
                     icon: const Icon(Icons.arrow_downward, size: 16),
-                    label: Text('新输出 ${_formatBytes(_newOutputBytes)}'),
+                    label: Text('新输出 ${formatByteSize(_newOutputBytes)}'),
                   ),
                 ),
             ],
@@ -1023,13 +1025,13 @@ class _ShellPageState extends State<ShellPage> {
             Text('${_terminal.viewWidth} x ${_terminal.viewHeight}'),
             const SizedBox(width: 16),
             Text(
-              '接收 ${_formatBytes(_receivedBytes)}',
+              '接收 ${formatByteSize(_receivedBytes)}',
               key: const ValueKey('shell-received-bytes'),
             ),
             if (_receiveQueue.droppedBytes > 0) ...[
               const SizedBox(width: 16),
               Text(
-                '丢弃 ${_formatBytes(_receiveQueue.droppedBytes)}',
+                '丢弃 ${formatByteSize(_receiveQueue.droppedBytes)}',
                 key: const ValueKey('shell-dropped-bytes'),
               ),
             ],
@@ -1061,6 +1063,7 @@ class _ShellPageState extends State<ShellPage> {
     var cursor = vm.cursorMode;
     var localEcho = vm.localEcho;
     var scrollback = vm.scrollbackLines;
+    var sshKeepAliveEnabled = AppSettings().sshKeepAliveEnabled;
     var fontSizeText = fontSize.round().toString();
     String? fontSizeError;
     final scrollController = ScrollController();
@@ -1068,16 +1071,59 @@ class _ShellPageState extends State<ShellPage> {
     final fontSectionKey = GlobalKey();
     final appearanceSectionKey = GlobalKey();
     final historySectionKey = GlobalKey();
+    final sshSectionKey = GlobalKey();
     try {
       await showDialog<void>(
         context: context,
         builder:
             (dialogContext) => StatefulBuilder(
               builder:
-                  (context, setDialogState) => AlertDialog(
-                    shape: kAdvancedSettingsDialogShape,
+                  (context, setDialogState) => AppSettingsDialog(
                     title: Text(AppStrings.common.shellSettings),
-                    content: SettingsNavigationView(
+                    size: AppDialogSize.navigation,
+                    hasUnsavedChanges:
+                        () =>
+                            encoding != vm.encoding ||
+                            lineEnding != vm.lineEnding ||
+                            fontSizeText != vm.fontSize.round().toString() ||
+                            fontFamily != vm.fontFamily ||
+                            theme != vm.themeMode ||
+                            cursor != vm.cursorMode ||
+                            localEcho != vm.localEcho ||
+                            scrollback != vm.scrollbackLines ||
+                            sshKeepAliveEnabled !=
+                                AppSettings().sshKeepAliveEnabled,
+                    onSave: () async {
+                      final parsedFontSize = double.tryParse(fontSizeText);
+                      if (parsedFontSize == null ||
+                          parsedFontSize < 10 ||
+                          parsedFontSize > 24) {
+                        setDialogState(
+                          () =>
+                              fontSizeError =
+                                  AppStrings.raw.terminalFontSizeInvalid,
+                        );
+                        throw const FormatException('请修正无效设置');
+                      }
+                      final oldScrollback = vm.scrollbackLines;
+                      await vm.applyTerminalSettings(
+                        ShellTerminalSettingsDraft(
+                          encoding: encoding,
+                          lineEnding: lineEnding,
+                          fontSize: parsedFontSize,
+                          fontFamily: fontFamily,
+                          themeMode: theme,
+                          cursorMode: cursor,
+                          localEcho: localEcho,
+                          scrollbackLines: scrollback,
+                          sshKeepAliveEnabled: sshKeepAliveEnabled,
+                        ),
+                      );
+                      if (scrollback != oldScrollback) {
+                        _replaceTerminal(scrollback, vm);
+                      }
+                    },
+                    child: SettingsNavigationView(
                       scrollController: scrollController,
                       items: [
                         SettingsNavigationItem(
@@ -1095,6 +1141,10 @@ class _ShellPageState extends State<ShellPage> {
                         SettingsNavigationItem(
                           label: AppStrings.common.settingsHistory,
                           anchorKey: historySectionKey,
+                        ),
+                        SettingsNavigationItem(
+                          label: 'SSH',
+                          anchorKey: sshSectionKey,
                         ),
                       ],
                       child: Column(
@@ -1193,8 +1243,7 @@ class _ShellPageState extends State<ShellPage> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          SwitchListTile.adaptive(
-                            contentPadding: EdgeInsets.zero,
+                          AppSwitchRow(
                             title: const Text('命令行本地回显'),
                             value: localEcho,
                             onChanged:
@@ -1210,10 +1259,9 @@ class _ShellPageState extends State<ShellPage> {
                           const SizedBox(height: 4),
                           SizedBox(
                             width: kSecondaryDialogWideFieldWidth,
-                            child: NoAnimDropdown<String>(
+                            child: AppDialogDropdown<String>(
                               value: fontFamily,
                               hint: '选择终端字体',
-                              decoration: secondaryDialogFieldDecoration(),
                               items:
                                   terminalFontFamilies
                                       .map(
@@ -1301,25 +1349,14 @@ class _ShellPageState extends State<ShellPage> {
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 6),
-                          SegmentedButton<RawShellThemeMode>(
-                            segments: const [
-                              ButtonSegment(
-                                value: RawShellThemeMode.light,
-                                label: AppSegmentedButtonLabel(
-                                  child: Text('浅色'),
-                                ),
-                              ),
-                              ButtonSegment(
-                                value: RawShellThemeMode.dark,
-                                label: AppSegmentedButtonLabel(
-                                  child: Text('深色'),
-                                ),
-                              ),
-                            ],
-                            selected: <RawShellThemeMode>{theme},
-                            onSelectionChanged:
-                                (values) =>
-                                    setDialogState(() => theme = values.single),
+                          AppSegmentedSelector<RawShellThemeMode>(
+                            value: theme,
+                            items: const {
+                              RawShellThemeMode.light: Text('浅色'),
+                              RawShellThemeMode.dark: Text('深色'),
+                            },
+                            onChanged:
+                                (value) => setDialogState(() => theme = value),
                           ),
                           const SizedBox(height: 12),
                           const Text('光标样式', style: TextStyle(fontSize: 14)),
@@ -1373,49 +1410,39 @@ class _ShellPageState extends State<ShellPage> {
                                   ),
                             ),
                           ),
+                          const Divider(height: 24),
+                          AppSwitchRow(
+                            key: sshSectionKey,
+                            title: const Text('启用 SSH Keepalive'),
+                            subtitle: Text(
+                              '默认每 10 秒发送一次 OpenSSH keepalive 请求；不兼容的嵌入式 SSH 服务端可关闭，下次连接生效。',
+                              style: Theme.of(
+                                context,
+                              ).textTheme.bodySmall?.copyWith(
+                                color:
+                                    Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            value: sshKeepAliveEnabled,
+                            onChanged:
+                                vm.sshService.isConnected ||
+                                        vm.sshService.isConnecting ||
+                                        vm.sshService.isDisconnecting
+                                    ? null
+                                    : (value) => setDialogState(
+                                      () => sshKeepAliveEnabled = value,
+                                    ),
+                          ),
                         ],
                       ),
                     ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(dialogContext),
-                        child: Text(AppStrings.common.cancel),
-                      ),
-                      DialogPrimaryActionButton(
-                        onPressed: () {
-                          final parsedFontSize = double.tryParse(fontSizeText);
-                          if (parsedFontSize == null ||
-                              parsedFontSize < 10 ||
-                              parsedFontSize > 24) {
-                            setDialogState(
-                              () =>
-                                  fontSizeError =
-                                      AppStrings.raw.terminalFontSizeInvalid,
-                            );
-                            return;
-                          }
-                          vm
-                            ..setEncoding(encoding)
-                            ..setLineEnding(lineEnding)
-                            ..setLocalEcho(localEcho)
-                            ..setFontFamily(fontFamily)
-                            ..setFontSize(parsedFontSize)
-                            ..setThemeMode(theme)
-                            ..setCursorMode(cursor);
-                          if (scrollback != vm.scrollbackLines) {
-                            vm.setScrollbackLines(scrollback);
-                            _replaceTerminal(scrollback, vm);
-                          }
-                          Navigator.pop(dialogContext);
-                        },
-                        label: AppStrings.common.save,
-                      ),
-                    ],
                   ),
             ),
       );
     } finally {
-      scrollController.dispose();
+      disposeAfterDialogTransition(scrollController.dispose);
     }
   }
 
@@ -1483,12 +1510,10 @@ class _ShellPageState extends State<ShellPage> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            DropdownButtonFormField<YmodemPacketSizeMode>(
-                              initialValue: packetSize,
-                              decoration: const InputDecoration(
-                                labelText: '发送分包',
-                                border: OutlineInputBorder(),
-                              ),
+                            AppDialogDropdown<YmodemPacketSizeMode>(
+                              value: packetSize,
+                              hint: '发送分包',
+                              labelText: '发送分包',
                               items: const [
                                 DropdownMenuItem(
                                   value: YmodemPacketSizeMode.auto,
@@ -1682,11 +1707,5 @@ class _ShellPageState extends State<ShellPage> {
   void _showPageError(String message) {
     if (!mounted) return;
     AppNotifications.show(message);
-  }
-
-  String _formatBytes(int value) {
-    if (value < 1024) return '$value B';
-    if (value < 1024 * 1024) return '${(value / 1024).toStringAsFixed(1)} KiB';
-    return '${(value / (1024 * 1024)).toStringAsFixed(1)} MiB';
   }
 }

@@ -12,7 +12,7 @@ import '../../core/constants/plot_configuration.dart';
 import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/app_logger.dart';
-import '../../data/models/data_connection_config.dart';
+import '../../core/utils/byte_size_formatter.dart';
 import '../../data/models/modbus_models.dart';
 import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_info.dart';
@@ -21,13 +21,13 @@ import '../../services/app_settings.dart';
 import '../../services/crash_dump_service.dart';
 import '../../services/native_serial_reader.dart';
 import '../../services/probe_connection_service.dart';
+import '../../services/ssh_connection_service.dart';
 import '../../services/probe_backend.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
 import '../../services/data_connection_service.dart';
 import '../../services/modbus_client_service.dart';
 import '../../services/shell_receive_queue.dart';
-import '../../services/ssh_connection_service.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
 import '../../services/ymodem_service.dart';
@@ -181,9 +181,9 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                     Text(
                       _progress == null
                           ? AppStrings.appInfo.preparingDownload
-                          : '${_formatBytes(_progress!.received)} / '
-                              '${_formatBytes(_progress!.total)}  '
-                              '${_formatBytes(_progress!.bytesPerSecond.round())}/s',
+                          : '${formatByteSize(_progress!.received)} / '
+                              '${formatByteSize(_progress!.total)}  '
+                              '${formatByteSize(_progress!.bytesPerSecond.round())}/s',
                     ),
                   ],
                   if (_prepared != null) ...[
@@ -342,14 +342,6 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       });
     }
     return closed;
-  }
-
-  static String _formatBytes(num bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${bytes.toStringAsFixed(0)} B';
   }
 }
 
@@ -757,7 +749,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     required int ymodemQueueUsedBytes,
     required int rttQueueUsedBytes,
     required int rttRawHistoryUsedBytes,
-    required VoidCallback onApplyPlotHistoryLimit,
   }) {
     final emergencyRssLimitBytes = math.max(
       PlotConfiguration.baseEmergencyRssLimitBytes,
@@ -786,13 +777,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   decoration: secondaryDialogFieldDecoration(
                     suffixText: AppStrings.plot.unitGiB,
                   ),
-                  onSubmitted: (_) => onApplyPlotHistoryLimit(),
                 ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: onApplyPlotHistoryLimit,
-                child: Text(AppStrings.common.apply),
               ),
             ],
           ),
@@ -896,12 +881,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
+        AppDialogTextField(
           controller: _rttJlinkPathController,
-          decoration: const InputDecoration(
-            labelText: 'JLinkGDBServerCL.exe 路径',
-            helperText: '留空时从 SEGGER 安装目录和 PATH 自动查找',
-          ),
+          labelText: 'JLinkGDBServerCL.exe 路径',
+          helperText: '留空时从 SEGGER 安装目录和 PATH 自动查找',
           onChanged: (value) {
             settings.rttJlinkExecutablePath = value.trim();
             unawaited(settings.save());
@@ -909,12 +892,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           onSubmitted: (_) => refreshAvailability(),
         ),
         const SizedBox(height: 12),
-        TextField(
+        AppDialogTextField(
           controller: _rttOpenocdPathController,
-          decoration: const InputDecoration(
-            labelText: '外置 openocd.exe 路径',
-            helperText: '留空时从 PATH 查找；仅影响外置 OpenOCD',
-          ),
+          labelText: '外置 openocd.exe 路径',
+          helperText: '留空时从 PATH 查找；仅影响外置 OpenOCD',
           onChanged: (value) {
             settings.rttOpenocdExecutablePath = value.trim();
             unawaited(settings.save());
@@ -922,12 +903,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           onSubmitted: (_) => refreshAvailability(),
         ),
         const SizedBox(height: 12),
-        TextField(
+        AppDialogTextField(
           controller: _rttPyocdPythonPathController,
-          decoration: const InputDecoration(
-            labelText: '外置 pyOCD Python 路径',
-            helperText: '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x',
-          ),
+          labelText: '外置 pyOCD Python 路径',
+          helperText: '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x',
           onChanged: (value) {
             settings.rttPyocdPythonPath = value.trim();
             unawaited(settings.save());
@@ -979,7 +958,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
     var networkConnectionsEnabled = AppSettings().networkConnectionsEnabled;
     var separateSerialProfiles = AppSettings().separateSerialProfiles;
-    var sshKeepAliveEnabled = AppSettings().sshKeepAliveEnabled;
     final sshService = dialogContext.read<SshConnectionService?>();
     // 探针后端属于连接能力设置，即使当前未显示探针页面也允许预先配置。
     const rttEnabled = true;
@@ -989,7 +967,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final diagnosticsSectionKey = GlobalKey();
     final shortcutsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
-    final sshSectionKey = GlobalKey();
     final probeBackendSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
@@ -997,12 +974,117 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final resetSectionKey = GlobalKey();
     return StatefulBuilder(
       builder:
-          (context, setDialogState) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
+          (context, setDialogState) => AppSettingsDialog(
             title: Text(AppStrings.common.advancedSettings),
-            content: SettingsNavigationView(
+            size: AppDialogSize.navigation,
+            hasUnsavedChanges:
+                () =>
+                    disableNotifications !=
+                        AppSettings().disableNotifications ||
+                    diagnosticLoggingEnabled !=
+                        AppSettings().diagnosticLoggingEnabled ||
+                    crashDumpEnabled != AppSettings().crashDumpEnabled ||
+                    connectionShortcutsEnabled !=
+                        AppSettings().connectionShortcutsEnabled ||
+                    networkConnectionsEnabled !=
+                        AppSettings().networkConnectionsEnabled ||
+                    separateSerialProfiles !=
+                        AppSettings().separateSerialProfiles ||
+                    plotReceiveAggregationEnabled !=
+                        AppSettings().plotReceiveAggregationEnabled ||
+                    _plotHistoryLimitController.text !=
+                        '${AppSettings().plotHistoryMemoryLimitGiB}',
+            onSave: () async {
+              final plotLimit = int.tryParse(
+                _plotHistoryLimitController.text.trim(),
+              );
+              if (plotLimit == null ||
+                  plotLimit < PlotConfiguration.minHistoryMemoryLimitGiB ||
+                  plotLimit > PlotConfiguration.maxHistoryMemoryLimitGiB) {
+                throw const FormatException('请检查绘图历史内存上限');
+              }
+              final dataService = DataConnectionService();
+              if (dataService.isConnectionBusy &&
+                  (networkConnectionsEnabled !=
+                          AppSettings().networkConnectionsEnabled ||
+                      separateSerialProfiles !=
+                          AppSettings().separateSerialProfiles)) {
+                throw StateError('数据连接活动期间不能修改网络或串口配置记录方式');
+              }
+              final settings = AppSettings();
+              final plotViewModel = dialogContext.read<PlotViewModel>();
+              final modbusService = dialogContext.read<ModbusClientService?>();
+              final shellViewModel = dialogContext.read<ShellViewModel?>();
+              final oldDisableNotifications = settings.disableNotifications;
+              final oldDiagnosticLogging = settings.diagnosticLoggingEnabled;
+              final oldCrashDump = settings.crashDumpEnabled;
+              final oldConnectionShortcuts =
+                  settings.connectionShortcutsEnabled;
+              final oldNetworkConnections = settings.networkConnectionsEnabled;
+              final oldSeparateProfiles = settings.separateSerialProfiles;
+              final oldSerialProfiles = {
+                for (final entry in settings.serialPageProfiles.entries)
+                  entry.key: entry.value.copyWith(),
+              };
+              final oldReceiveAggregation =
+                  settings.plotReceiveAggregationEnabled;
+              final oldPlotLimit = settings.plotHistoryMemoryLimitGiB;
+              try {
+                if (crashDumpEnabled != oldCrashDump) {
+                  await CrashDumpService().setEnabled(crashDumpEnabled);
+                }
+                settings
+                  ..disableNotifications = disableNotifications
+                  ..diagnosticLoggingEnabled = diagnosticLoggingEnabled
+                  ..crashDumpEnabled = crashDumpEnabled
+                  ..connectionShortcutsEnabled = connectionShortcutsEnabled
+                  ..networkConnectionsEnabled = networkConnectionsEnabled
+                  ..setSeparateSerialProfiles(separateSerialProfiles)
+                  ..plotReceiveAggregationEnabled =
+                      plotReceiveAggregationEnabled
+                  ..plotHistoryMemoryLimitGiB = plotLimit;
+                await settings.save();
+              } catch (_) {
+                settings
+                  ..disableNotifications = oldDisableNotifications
+                  ..diagnosticLoggingEnabled = oldDiagnosticLogging
+                  ..crashDumpEnabled = oldCrashDump
+                  ..connectionShortcutsEnabled = oldConnectionShortcuts
+                  ..networkConnectionsEnabled = oldNetworkConnections
+                  ..separateSerialProfiles = oldSeparateProfiles
+                  ..serialPageProfiles = oldSerialProfiles
+                  ..plotReceiveAggregationEnabled = oldReceiveAggregation
+                  ..plotHistoryMemoryLimitGiB = oldPlotLimit;
+                if (crashDumpEnabled != oldCrashDump) {
+                  try {
+                    await CrashDumpService().setEnabled(oldCrashDump);
+                  } catch (_) {
+                    // 保留原始保存错误；下次启动会根据已恢复的设置重新同步原生状态。
+                  }
+                }
+                rethrow;
+              }
+              setState(() => _disableNotifications = disableNotifications);
+              AppLogger().setDiagnosticEnabled(diagnosticLoggingEnabled);
+              dataService
+                ..setNetworkConnectionsEnabled(networkConnectionsEnabled)
+                ..setPlotReceiveAggregationEnabled(
+                  plotReceiveAggregationEnabled,
+                );
+              dataService.selectSerialProfile('rawData', forceReload: true);
+              plotViewModel.syncPlotRetentionLimitFromSettings(plotLimit);
+              if (!networkConnectionsEnabled) {
+                if (modbusService?.mode == ModbusMode.tcp) {
+                  await modbusService!.setMode(ModbusMode.rtu);
+                }
+                if (shellViewModel?.connectionMode == ShellConnectionMode.ssh) {
+                  await shellViewModel!.setConnectionMode(
+                    ShellConnectionMode.normal,
+                  );
+                }
+              }
+            },
+            child: SettingsNavigationView(
               scrollController: _advancedSettingsScrollController,
               items: [
                 SettingsNavigationItem(
@@ -1021,7 +1103,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   label: AppStrings.common.settingsPages,
                   anchorKey: pageSectionKey,
                 ),
-                SettingsNavigationItem(label: 'SSH', anchorKey: sshSectionKey),
                 if (rttEnabled)
                   SettingsNavigationItem(
                     label: AppStrings.common.settingsProbeBackend,
@@ -1048,10 +1129,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SwitchListTile(
+                  AppSwitchRow(
                     key: notificationSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
                     title: Text(
                       AppStrings.appInfo.disableNotifications,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1067,17 +1146,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     value: disableNotifications,
                     onChanged: (value) {
                       setDialogState(() => disableNotifications = value);
-                      setState(() => _disableNotifications = value);
-                      final settings =
-                          AppSettings()..disableNotifications = value;
-                      settings.save();
                     },
                   ),
                   const Divider(height: 16),
-                  SwitchListTile(
+                  AppSwitchRow(
                     key: diagnosticsSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
                     title: Text(
                       AppStrings.appInfo.diagnosticLogging,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1093,15 +1166,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     value: diagnosticLoggingEnabled,
                     onChanged: (value) {
                       setDialogState(() => diagnosticLoggingEnabled = value);
-                      final settings =
-                          AppSettings()..diagnosticLoggingEnabled = value;
-                      AppLogger().setDiagnosticEnabled(value);
-                      settings.save();
                     },
                   ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
+                  AppSwitchRow(
                     title: Text(
                       AppStrings.appInfo.crashDump,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1115,34 +1182,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       ),
                     ),
                     value: crashDumpEnabled,
-                    onChanged: (value) async {
-                      setDialogState(() => crashDumpEnabled = value);
-                      final settings = AppSettings()..crashDumpEnabled = value;
-                      final crashDumpService = CrashDumpService();
-                      try {
-                        await crashDumpService.setEnabled(value);
-                        await settings.save();
-                      } catch (error, stackTrace) {
-                        AppLogger().error(
-                          '更新原生崩溃转储开关失败: $error',
-                          category: 'APP',
-                          error: error,
-                          stackTrace: stackTrace,
-                        );
-                        settings.crashDumpEnabled = !value;
-                        try {
-                          await crashDumpService.setEnabled(!value);
-                        } catch (_) {
-                          // 已记录原始失败；回滚同样失败时保持内存值并等待下次启动同步。
-                        }
-                        if (context.mounted) {
-                          setDialogState(
-                            () => crashDumpEnabled = settings.crashDumpEnabled,
-                          );
-                          AppNotifications.show('崩溃转储设置保存失败，请检查程序目录写入权限');
-                        }
-                      }
-                    },
+                    onChanged:
+                        (value) =>
+                            setDialogState(() => crashDumpEnabled = value),
                   ),
                   if (kDebugMode) ...[
                     const SizedBox(height: 4),
@@ -1179,10 +1221,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                   ],
                   const Divider(height: 16),
-                  SwitchListTile(
+                  AppSwitchRow(
                     key: shortcutsSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
                     title: Text(
                       '启用连接快捷键',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1199,16 +1239,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     value: connectionShortcutsEnabled,
                     onChanged: (value) {
                       setDialogState(() => connectionShortcutsEnabled = value);
-                      final settings =
-                          AppSettings()..connectionShortcutsEnabled = value;
-                      unawaited(settings.save());
                     },
                   ),
                   const Divider(height: 16),
-                  SwitchListTile(
+                  AppSwitchRow(
                     key: pageSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
                     title: Text(
                       '启用网络连接',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1232,38 +1267,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               setDialogState(
                                 () => networkConnectionsEnabled = value,
                               );
-                              final modbus =
-                                  dialogContext.read<ModbusClientService?>();
-                              final shell =
-                                  dialogContext.read<ShellViewModel?>();
-                              unawaited(() async {
-                                final settings = AppSettings();
-                                if (!value) {
-                                  if (modbus?.mode == ModbusMode.tcp) {
-                                    await modbus!.setMode(ModbusMode.rtu);
-                                    settings
-                                      ..modbusMode = ModbusMode.rtu.value
-                                      ..saveConnectionTypeForPage(
-                                        'modbus',
-                                        DataConnectionType.serial,
-                                      );
-                                  }
-                                  if (shell?.connectionMode ==
-                                      ShellConnectionMode.ssh) {
-                                    await shell!.setConnectionMode(
-                                      ShellConnectionMode.normal,
-                                    );
-                                  }
-                                }
-                                DataConnectionService()
-                                    .setNetworkConnectionsEnabled(value);
-                                await settings.save();
-                              }());
                             },
                   ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
+                  AppSwitchRow(
                     title: Text(
                       '按页面独立保存串口参数',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1281,47 +1287,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         DataConnectionService().isConnectionBusy
                             ? null
                             : (value) {
-                              final settings =
-                                  AppSettings()
-                                    ..setSeparateSerialProfiles(value);
                               setDialogState(
                                 () => separateSerialProfiles = value,
                               );
-                              DataConnectionService().selectSerialProfile(
-                                'rawData',
-                                forceReload: true,
-                              );
-                              unawaited(settings.save());
-                            },
-                  ),
-                  const Divider(height: 16),
-                  SwitchListTile(
-                    key: sshSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    title: Text(
-                      '启用 SSH Keepalive',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '默认每 10 秒发送一次 OpenSSH keepalive 请求；不兼容的嵌入式 SSH 服务端可关闭，下次连接生效。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    value: sshKeepAliveEnabled,
-                    onChanged:
-                        (sshService?.isConnected ?? false) ||
-                                (sshService?.isConnecting ?? false) ||
-                                (sshService?.isDisconnecting ?? false)
-                            ? null
-                            : (value) {
-                              setDialogState(() => sshKeepAliveEnabled = value);
-                              final settings =
-                                  AppSettings()..sshKeepAliveEnabled = value;
-                              unawaited(settings.save());
                             },
                   ),
                   const Divider(height: 16),
@@ -1332,10 +1300,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     const Divider(height: 16),
                   ],
-                  SwitchListTile(
+                  AppSwitchRow(
                     key: receivePerformanceSectionKey,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
                     title: Text(
                       AppStrings.appInfo.plotReceiveAggregation,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -1353,9 +1319,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       setDialogState(
                         () => plotReceiveAggregationEnabled = value,
                       );
-                      context
-                          .read<DataConnectionService>()
-                          .setPlotReceiveAggregationEnabled(value);
                     },
                   ),
                   const Divider(height: 16),
@@ -1392,16 +1355,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                               probeConnectionService?.queuedBytes ?? 0,
                           rttRawHistoryUsedBytes:
                               rttViewModel?.rawHistoryBytes ?? 0,
-                          onApplyPlotHistoryLimit: () {
-                            final value = int.tryParse(
-                              _plotHistoryLimitController.text,
-                            );
-                            if (value == null) return;
-                            plotViewModel.setPlotRetentionLimitGiB(value);
-                            _plotHistoryLimitController.text =
-                                plotViewModel.plotRetentionLimitGiB.toString();
-                            setDialogState(() {});
-                          },
                         );
                       },
                     ),
@@ -1437,8 +1390,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 AppSettings().networkConnectionsEnabled;
                             separateSerialProfiles =
                                 AppSettings().separateSerialProfiles;
-                            sshKeepAliveEnabled =
-                                AppSettings().sshKeepAliveEnabled;
                             plotReceiveAggregationEnabled =
                                 AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =
@@ -1463,12 +1414,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text(AppStrings.common.close),
-              ),
-            ],
           ),
     );
   }

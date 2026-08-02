@@ -6,6 +6,7 @@ import '../core/utils/crc.dart';
 import '../data/models/retention_usage.dart';
 import '../services/data_connection_service.dart';
 import 'base_viewmodel.dart';
+import 'settings_drafts.dart';
 
 /// 数据收发页面 ViewModel
 class RawDataViewModel extends BaseViewModel {
@@ -148,6 +149,13 @@ class RawDataViewModel extends BaseViewModel {
   void setDisplayLineLimit(int value) {
     connectionService.setDisplayLineLimit(value);
   }
+
+  Future<void> applyDisplaySettings(RawDisplaySettingsDraft draft) =>
+      connectionService.applyRawDisplaySettings(
+        encoding: draft.encoding,
+        autoLineBreakIntervalMs: draft.autoLineBreakIntervalMs,
+        displayLineLimit: draft.displayLineLimit,
+      );
 
   void clearData() {
     AppLogger().info('用户清空数据收发接收区', category: 'DATA');

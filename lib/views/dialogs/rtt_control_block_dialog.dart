@@ -119,30 +119,31 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            NoAnimDropdown<RttControlBlockMode>(
-              key: const ValueKey('rtt-activity-control-block-mode'),
-              value: _mode,
-              hint: '控制块定位',
-              decoration: secondaryDialogFieldDecoration(
-                labelText: 'RTT 控制块定位',
+            AppLabeledField(
+              label: 'RTT 控制块定位',
+              child: NoAnimDropdown<RttControlBlockMode>(
+                key: const ValueKey('rtt-activity-control-block-mode'),
+                value: _mode,
+                hint: '控制块定位',
+                decoration: secondaryDialogFieldDecoration(),
+                items:
+                    RttControlBlockMode.values
+                        .where(
+                          (value) =>
+                              _supportsAutomatic ||
+                              value != RttControlBlockMode.automatic,
+                        )
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value.label),
+                          ),
+                        )
+                        .toList(),
+                onChanged: (value) {
+                  if (value != null) setState(() => _mode = value);
+                },
               ),
-              items:
-                  RttControlBlockMode.values
-                      .where(
-                        (value) =>
-                            _supportsAutomatic ||
-                            value != RttControlBlockMode.automatic,
-                      )
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _mode = value);
-              },
             ),
             const SizedBox(height: 6),
             Text(
@@ -153,12 +154,14 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
             ),
             if (_mode == RttControlBlockMode.address) ...[
               const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('rtt-activity-control-block-address'),
-                controller: _address,
-                decoration: secondaryDialogFieldDecoration(
-                  labelText: 'RTT 控制块地址',
-                  hintText: '例如 0x20000410',
+              AppLabeledField(
+                label: 'RTT 控制块地址',
+                child: TextField(
+                  key: const ValueKey('rtt-activity-control-block-address'),
+                  controller: _address,
+                  decoration: secondaryDialogFieldDecoration(
+                    hintText: '例如 0x20000410',
+                  ),
                 ),
               ),
             ],
@@ -167,21 +170,23 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
               Row(
                 children: [
                   Expanded(
-                    child: TextField(
-                      key: const ValueKey('rtt-activity-range-start'),
-                      controller: _rangeStart,
-                      decoration: secondaryDialogFieldDecoration(
-                        labelText: '搜索起始地址',
+                    child: AppLabeledField(
+                      label: '搜索起始地址',
+                      child: TextField(
+                        key: const ValueKey('rtt-activity-range-start'),
+                        controller: _rangeStart,
+                        decoration: secondaryDialogFieldDecoration(),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: TextField(
-                      key: const ValueKey('rtt-activity-range-end'),
-                      controller: _rangeEnd,
-                      decoration: secondaryDialogFieldDecoration(
-                        labelText: '搜索结束地址',
+                    child: AppLabeledField(
+                      label: '搜索结束地址',
+                      child: TextField(
+                        key: const ValueKey('rtt-activity-range-end'),
+                        controller: _rangeEnd,
+                        decoration: secondaryDialogFieldDecoration(),
                       ),
                     ),
                   ),
@@ -189,14 +194,14 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
               ),
             ],
             const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('rtt-activity-polling-interval'),
-              controller: _pollingInterval,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: secondaryDialogFieldDecoration(
-                labelText: 'RTT 轮询间隔',
-                suffixText: 'ms',
+            AppLabeledField(
+              label: 'RTT 轮询间隔',
+              child: TextField(
+                key: const ValueKey('rtt-activity-polling-interval'),
+                controller: _pollingInterval,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: secondaryDialogFieldDecoration(suffixText: 'ms'),
               ),
             ),
             const SizedBox(height: 6),

@@ -23,8 +23,10 @@ import '../../data/models/parser_config.dart';
 import '../../data/protocol/r_protocol_codec.dart';
 import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_draggable_info_box.dart';
 import '../plot/plot_layer_stack.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_locator_bar.dart';
@@ -2207,7 +2209,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       );
     }
 
-    return _DraggableInfoBox(
+    return PlotDraggableInfoBox(
       key: const ValueKey('plot-live-values-box'),
       initialRight: vm.liveValuesPanelRight,
       initialTop: vm.liveValuesPanelTop(legendVisible: _legendVisible),
@@ -2306,7 +2308,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
     final contentWidth = (16 + longestNameWidth).clamp(96.0, 480.0);
 
-    return _DraggableInfoBox(
+    return PlotDraggableInfoBox(
       key: const ValueKey('plot-legend-box'),
       initialRight: vm.legendPanelRight,
       initialTop: vm.legendPanelTop,
@@ -2473,15 +2475,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
+                AppDialogTextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
-                    labelText: AppStrings.plot.frequencyHz,
-                    hintText: '1 ~ 100000',
-                    suffixText: 'Hz',
-                  ),
+                  labelText: AppStrings.plot.frequencyHz,
+                  hintText: '1 ~ 100000',
+                  suffixText: 'Hz',
                   autofocus: true,
                 ),
                 const SizedBox(height: 8),
@@ -2704,15 +2704,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       Row(
                         children: [
                           Expanded(
-                            child: TextField(
+                            child: AppDialogTextField(
                               controller: startController,
                               autofocus: true,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: '起始点',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
+                              labelText: '起始点',
                               onChanged: (_) {
                                 if (errorText != null) {
                                   setDialogState(() => errorText = null);
@@ -2723,14 +2719,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: TextField(
+                            child: AppDialogTextField(
                               controller: endController,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: '结束点',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
+                              labelText: '结束点',
                               onChanged: (_) {
                                 if (errorText != null) {
                                   setDialogState(() => errorText = null);
@@ -3079,16 +3071,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Row(
                             children: [
                               Expanded(
-                                child: DropdownButtonFormField<int>(
-                                  initialValue:
+                                child: AppDialogDropdown<int>(
+                                  value:
                                       triggerChannels.isEmpty
                                           ? null
                                           : channelIndex,
-                                  decoration: const InputDecoration(
-                                    labelText: '通道',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
+                                  hint: '通道',
+                                  labelText: '通道',
                                   items: [
                                     for (final channel in triggerChannels)
                                       DropdownMenuItem(
@@ -3108,15 +3097,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               ),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: DropdownButtonFormField<
-                                  PlotTriggerComparison
-                                >(
-                                  initialValue: comparison,
-                                  decoration: const InputDecoration(
-                                    labelText: '条件',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
+                                child: AppDialogDropdown<PlotTriggerComparison>(
+                                  value: comparison,
+                                  hint: '条件',
+                                  labelText: '条件',
                                   items: [
                                     for (final item
                                         in PlotTriggerComparison.values)
@@ -3141,18 +3125,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               const SizedBox(width: 8),
                               SizedBox(
                                 width: 120,
-                                child: TextField(
+                                child: AppDialogTextField(
                                   controller: targetController,
                                   keyboardType:
                                       const TextInputType.numberWithOptions(
                                         decimal: true,
                                         signed: true,
                                       ),
-                                  decoration: const InputDecoration(
-                                    labelText: '目标值',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
+                                  labelText: '目标值',
                                 ),
                               ),
                             ],
@@ -3166,26 +3146,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Row(
                             children: [
                               Expanded(
-                                child: TextField(
+                                child: AppDialogTextField(
                                   controller: hitThresholdController,
                                   keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: '累计命中次数',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
+                                  labelText: '累计命中次数',
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: TextField(
+                                child: AppDialogTextField(
                                   controller: triggerLimitController,
                                   keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: '触发次数',
-                                    border: OutlineInputBorder(),
-                                    isDense: true,
-                                  ),
+                                  labelText: '触发次数',
                                 ),
                               ),
                             ],
@@ -3196,13 +3168,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
-                          DropdownButtonFormField<PlotTriggerAction>(
-                            initialValue: action,
-                            decoration: const InputDecoration(
-                              labelText: '触发行为',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
+                          AppDialogDropdown<PlotTriggerAction>(
+                            value: action,
+                            hint: '触发行为',
+                            labelText: '触发行为',
                             items: [
                               for (final item in PlotTriggerAction.values)
                                 DropdownMenuItem(
@@ -3219,24 +3188,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                           if (action == PlotTriggerAction.stopAfterPackets) ...[
                             const SizedBox(height: 12),
-                            TextField(
+                            AppDialogTextField(
                               controller: postPacketsController,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: '继续接收包数',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
+                              labelText: '继续接收包数',
                             ),
                           ],
                           const SizedBox(height: 12),
-                          DropdownButtonFormField<PlotTriggerObservationMode>(
-                            initialValue: observationMode,
-                            decoration: const InputDecoration(
-                              labelText: '观察标记',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
+                          AppDialogDropdown<PlotTriggerObservationMode>(
+                            value: observationMode,
+                            hint: '观察标记',
+                            labelText: '观察标记',
                             items: [
                               for (final item
                                   in PlotTriggerObservationMode.values)
@@ -3549,17 +3511,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 title: const Text('跳转到 X'),
                 content: SizedBox(
                   width: 260,
-                  child: TextField(
+                  child: AppDialogTextField(
                     controller: controller,
                     autofocus: true,
                     keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: 'X',
-                      helperText: '范围: 0-$maxX',
-                      errorText: errorText,
-                      border: const OutlineInputBorder(),
-                      isDense: true,
-                    ),
+                    labelText: 'X',
+                    helperText: '范围: 0-$maxX',
+                    errorText: errorText,
                     onChanged: (_) {
                       if (errorText != null) {
                         setDialogState(() => errorText = null);
@@ -3684,69 +3642,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         : Colors.white70;
   }
 
-  /// 构建网格密度选择按钮
-  Widget _buildDensityButton(
-    String label,
-    String density,
-    PlotViewModel vm,
-    StateSetter setState,
-  ) {
-    final isSelected = vm.gridDensity == density;
-    return Expanded(
-      child: TextButton(
-        onPressed: () {
-          vm.setGridDensity(density);
-          setState(() {});
-        },
-        style: TextButton.styleFrom(
-          backgroundColor:
-              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: const Size(0, 32),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isSelected ? Colors.blue : null,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBackgroundButton(
-    String label,
-    String background,
-    PlotViewModel vm,
-    StateSetter setState,
-  ) {
-    final isSelected = vm.plotBackground == background;
-    return Expanded(
-      child: TextButton(
-        onPressed: () {
-          vm.setPlotBackground(background);
-          setState(() {});
-        },
-        style: TextButton.styleFrom(
-          backgroundColor:
-              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: const Size(0, 32),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isSelected ? Colors.blue : null,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
   /// 构建合并的信息框（X-X/Y-Y + 统计信息在同一框内，从左到右排列）
   Widget _buildCombinedInfoBox(BuildContext context, PlotViewModel vm) {
     final children = <Widget>[];
@@ -3786,7 +3681,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children.add(_buildStatsContent(vm.statsText!, vm));
     }
 
-    return _DraggableInfoBox(
+    return PlotDraggableInfoBox(
       initialRight: 16,
       initialTop: 16,
       backgroundColor: _floatingBoxBackgroundColor(vm),
@@ -4093,6 +3988,29 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 包含：网格开关、网格密度、刷新帧率、绘图窗口上限。
   void _showAdvancedSettingsDialog(BuildContext context, PlotViewModel vm) {
+    final draft = PlotUiSettingsDraft(
+      showGrid: vm.showGrid,
+      gridDensity: vm.gridDensity,
+      background: vm.plotBackground,
+      floatingPanelOpacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
+      followPositionRatio: vm.followPositionRatio,
+      observationClickToPlace: vm.observationClickToPlace,
+      quality: vm.lodQuality,
+      windowPointLimit: vm.maxVisiblePoints,
+      historyLimit: vm.plotRetentionLimitGiB,
+      refreshFps: vm.refreshFps,
+      yFitDisplayRatio: vm.yFitDisplayRatio,
+      keepPlotOnRestart: vm.keepPlotOnRestart,
+      discardInitialPacketCount: vm.discardInitialPacketCount,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
+      triggerToolbarEnabled: vm.triggerToolbarEnabled,
+      statsToolbarEnabled: vm.statsToolbarEnabled,
+      snapHighlightEnabled: vm.snapHighlightEnabled,
+      snapHighlightDiameter: vm.snapHighlightDiameter,
+      snapHighlightColorMode: vm.snapHighlightColorMode,
+    );
     final refreshFpsController = TextEditingController(
       text: vm.refreshFps.toString(),
     );
@@ -4131,44 +4049,121 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         floatingPanelOpacityController.text.trim(),
       );
       if (percent != null) {
-        vm.setFloatingPanelOpacity(percent / 100);
+        draft.floatingPanelOpacity = percent / 100;
       }
-      floatingPanelOpacityController.text =
-          (vm.floatingPanelOpacity * 100).round().toString();
       setDialogState(() {});
     }
 
     void applyFollowPosition(StateSetter setDialogState) {
       final percent = double.tryParse(followPositionController.text.trim());
       if (percent != null) {
-        vm.setFollowPositionRatio(percent / 100);
+        draft.followPositionRatio = percent / 100;
       }
-      followPositionController.text =
-          (vm.followPositionRatio * 100).round().toString();
       setDialogState(() {});
     }
 
     void applyYFitRatio(StateSetter setDialogState) {
       final percent = double.tryParse(yFitDisplayRatioController.text.trim());
       if (percent != null) {
-        vm.setYFitDisplayRatio(percent / 100);
+        draft.yFitDisplayRatio = percent / 100;
       }
-      yFitDisplayRatioController.text =
-          (vm.yFitDisplayRatio * 100).round().toString();
       setDialogState(() {});
     }
 
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-            title: Text(AppStrings.plot.advancedSettings),
-            content: StatefulBuilder(
-              builder: (context, setState) {
-                return SettingsNavigationView(
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setState) {
+              return AppSettingsDialog(
+                title: Text(AppStrings.plot.advancedSettings),
+                size: AppDialogSize.navigation,
+                hasUnsavedChanges:
+                    () =>
+                        draft.showGrid != vm.showGrid ||
+                        draft.gridDensity != vm.gridDensity ||
+                        draft.background != vm.plotBackground ||
+                        floatingPanelOpacityController.text !=
+                            '${(vm.floatingPanelOpacity * 100).round()}' ||
+                        draft.fontSizeDelta != vm.plotFontSizeDelta ||
+                        draft.fontBold != vm.plotFontBold ||
+                        followPositionController.text !=
+                            '${(vm.followPositionRatio * 100).round()}' ||
+                        yFitDisplayRatioController.text !=
+                            '${(vm.yFitDisplayRatio * 100).round()}' ||
+                        draft.observationClickToPlace !=
+                            vm.observationClickToPlace ||
+                        draft.quality != vm.lodQuality ||
+                        refreshFpsController.text != '${vm.refreshFps}' ||
+                        draft.previewToolbarEnabled !=
+                            vm.previewToolbarEnabled ||
+                        draft.triggerToolbarEnabled !=
+                            vm.triggerToolbarEnabled ||
+                        draft.statsToolbarEnabled != vm.statsToolbarEnabled ||
+                        draft.snapHighlightEnabled != vm.snapHighlightEnabled ||
+                        snapDiameterController.text !=
+                            vm.snapHighlightDiameter.toStringAsFixed(0) ||
+                        draft.snapHighlightColorMode !=
+                            vm.snapHighlightColorMode ||
+                        draft.keepPlotOnRestart != vm.keepPlotOnRestart ||
+                        plotRetentionLimitController.text !=
+                            '${vm.plotRetentionLimitGiB}' ||
+                        maxVisibleController.text !=
+                            _formatCompactCount(vm.maxVisiblePoints) ||
+                        discardInitialPacketController.text !=
+                            _formatCompactCount(vm.discardInitialPacketCount),
+                onSave: () async {
+                  applyFloatingPanelOpacity(setState);
+                  applyFollowPosition(setState);
+                  applyYFitRatio(setState);
+                  final fps = int.tryParse(refreshFpsController.text.trim());
+                  final diameter = double.tryParse(
+                    snapDiameterController.text.trim(),
+                  );
+                  final history = int.tryParse(
+                    plotRetentionLimitController.text.trim(),
+                  );
+                  final window = _parseCompactCount(
+                    maxVisibleController.text.trim(),
+                  );
+                  final discard = _parseCompactCount(
+                    discardInitialPacketController.text.trim(),
+                  );
+                  if (fps == null ||
+                      fps < 30 ||
+                      fps > 60 ||
+                      diameter == null ||
+                      diameter < 6 ||
+                      diameter > 12 ||
+                      draft.floatingPanelOpacity < 0 ||
+                      draft.floatingPanelOpacity > 1 ||
+                      draft.followPositionRatio < 0.5 ||
+                      draft.followPositionRatio > 0.95 ||
+                      draft.yFitDisplayRatio! < 0.5 ||
+                      draft.yFitDisplayRatio! > 0.95 ||
+                      history == null ||
+                      history < PlotConfiguration.minHistoryMemoryLimitGiB ||
+                      history > PlotConfiguration.maxHistoryMemoryLimitGiB ||
+                      window == null ||
+                      window < PlotViewModel.minVisiblePoints ||
+                      window > PlotViewModel.maxVisiblePointsLimit ||
+                      discard == null ||
+                      discard < 0 ||
+                      discard > PlotViewModel.maxDiscardInitialPacketCount) {
+                    throw const FormatException('请检查绘图设置中的数值范围');
+                  }
+                  draft
+                    ..refreshFps = fps
+                    ..snapHighlightDiameter = diameter
+                    ..historyLimit = history
+                    ..windowPointLimit = window
+                    ..discardInitialPacketCount = discard;
+                  await vm.applyPlotSettings(draft);
+                  if (!(draft.previewToolbarEnabled ?? true)) {
+                    _previewVisible = false;
+                  }
+                },
+                child: SettingsNavigationView(
                   scrollController: advancedSettingsScrollController,
                   items: [
                     SettingsNavigationItem(
@@ -4210,22 +4205,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          _buildBackgroundButton(
-                            AppStrings.plot.plotBackgroundDark,
-                            'dark',
-                            vm,
-                            setState,
-                          ),
-                          const SizedBox(width: 8),
-                          _buildBackgroundButton(
-                            AppStrings.plot.plotBackgroundLight,
-                            'light',
-                            vm,
-                            setState,
-                          ),
-                        ],
+                      AppSegmentedSelector<String>(
+                        value: draft.background as String,
+                        items: {
+                          'dark': Text(AppStrings.plot.plotBackgroundDark),
+                          'light': Text(AppStrings.plot.plotBackgroundLight),
+                        },
+                        onChanged:
+                            (value) => setState(() => draft.background = value),
                       ),
                       const SizedBox(height: 8),
                       // 网格开关
@@ -4237,45 +4224,31 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                           const Spacer(),
                           Switch(
-                            value: vm.showGrid,
+                            value: draft.showGrid,
                             onChanged: (value) {
-                              vm.setShowGrid(value);
-                              setState(() {}); // 刷新对话框内部状态
+                              setState(() => draft.showGrid = value);
                             },
                           ),
                         ],
                       ),
                       // 网格密度
-                      if (vm.showGrid) ...[
+                      if (draft.showGrid) ...[
                         const SizedBox(height: 8),
                         Text(
                           AppStrings.plot.gridDensity,
                           style: const TextStyle(fontSize: 14),
                         ),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            _buildDensityButton(
-                              AppStrings.plot.densitySparse,
-                              'sparse',
-                              vm,
-                              setState,
-                            ),
-                            const SizedBox(width: 8),
-                            _buildDensityButton(
-                              AppStrings.plot.densityNormal,
-                              'normal',
-                              vm,
-                              setState,
-                            ),
-                            const SizedBox(width: 8),
-                            _buildDensityButton(
-                              AppStrings.plot.densityDense,
-                              'dense',
-                              vm,
-                              setState,
-                            ),
-                          ],
+                        AppSegmentedSelector<String>(
+                          value: draft.gridDensity as String,
+                          items: {
+                            'sparse': Text(AppStrings.plot.densitySparse),
+                            'normal': Text(AppStrings.plot.densityNormal),
+                            'dense': Text(AppStrings.plot.densityDense),
+                          },
+                          onChanged:
+                              (value) =>
+                                  setState(() => draft.gridDensity = value),
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -4301,12 +4274,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                   (_) => applyFloatingPanelOpacity(setState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                () => applyFloatingPanelOpacity(setState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const Divider(),
@@ -4316,38 +4283,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 6),
-                      SegmentedButton<PlotLodQuality>(
+                      AppSegmentedSelector<PlotLodQuality>(
                         key: const ValueKey('plotLodQualitySelector'),
-                        // 占满对话框可用宽度，避免选中图标切换到短标签时
-                        // SegmentedButton 按固有内容宽度重新收缩。
-                        expandedInsets: EdgeInsets.zero,
-                        segments: [
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.performance,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(
-                                AppStrings.plot.lodQualityPerformance,
-                              ),
-                            ),
+                        value: draft.quality as PlotLodQuality,
+                        items: {
+                          PlotLodQuality.performance: Text(
+                            AppStrings.plot.lodQualityPerformance,
                           ),
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.balanced,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(AppStrings.plot.lodQualityBalanced),
-                            ),
+                          PlotLodQuality.balanced: Text(
+                            AppStrings.plot.lodQualityBalanced,
                           ),
-                          ButtonSegment<PlotLodQuality>(
-                            value: PlotLodQuality.quality,
-                            label: AppSegmentedButtonLabel(
-                              child: Text(AppStrings.plot.lodQualityQuality),
-                            ),
+                          PlotLodQuality.quality: Text(
+                            AppStrings.plot.lodQualityQuality,
                           ),
-                        ],
-                        selected: {vm.lodQuality},
-                        onSelectionChanged: (values) {
-                          vm.setLodQuality(values.first);
-                          setState(() {});
                         },
+                        onChanged:
+                            (value) => setState(() => draft.quality = value),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -4377,9 +4328,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               onSubmitted: (value) {
                                 final fps = int.tryParse(value);
                                 if (fps != null) {
-                                  vm.setRefreshFps(fps);
-                                  refreshFpsController.text =
-                                      vm.refreshFps.toString();
+                                  draft.refreshFps = fps;
                                   setState(() {});
                                 }
                               },
@@ -4392,9 +4341,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 refreshFpsController.text,
                               );
                               if (fps != null) {
-                                vm.setRefreshFps(fps);
-                                refreshFpsController.text =
-                                    vm.refreshFps.toString();
+                                draft.refreshFps = fps;
                                 setState(() {});
                               }
                             },
@@ -4402,7 +4349,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '${(1000 / vm.refreshFps).round()}ms',
+                            '${(1000 / (draft.refreshFps ?? vm.refreshFps)).round()}ms',
                             style: const TextStyle(
                               fontSize: 12,
                               color: Colors.grey,
@@ -4425,11 +4372,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       Row(
                         children: [
                           Text(
-                            vm.plotFontSizeDelta == 0
+                            draft.fontSizeDelta == 0
                                 ? AppStrings.plot.defaultValue
-                                : vm.plotFontSizeDelta > 0
-                                ? '+${vm.plotFontSizeDelta}'
-                                : '${vm.plotFontSizeDelta}',
+                                : draft.fontSizeDelta > 0
+                                ? '+${draft.fontSizeDelta}'
+                                : '${draft.fontSizeDelta}',
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
@@ -4439,10 +4386,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           Text(
                             AppStrings.plot.fontPreview,
                             style: TextStyle(
-                              fontSize: _plotFontSize(vm, 14),
+                              fontSize:
+                                  (14 + draft.fontSizeDelta)
+                                      .clamp(10, 24)
+                                      .toDouble(),
                               fontFamily: 'SarasaUiSC',
                               fontWeight:
-                                  vm.plotFontBold
+                                  draft.fontBold
                                       ? FontWeight.bold
                                       : FontWeight.normal,
                               color:
@@ -4454,29 +4404,25 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ],
                       ),
                       Slider(
-                        value: vm.plotFontSizeDelta.toDouble(),
+                        value: draft.fontSizeDelta.toDouble(),
                         min: -3,
                         max: 6,
                         divisions: 9,
                         label:
-                            vm.plotFontSizeDelta == 0
+                            draft.fontSizeDelta == 0
                                 ? AppStrings.plot.defaultValue
-                                : vm.plotFontSizeDelta > 0
-                                ? '+${vm.plotFontSizeDelta}'
-                                : '${vm.plotFontSizeDelta}',
+                                : draft.fontSizeDelta > 0
+                                ? '+${draft.fontSizeDelta}'
+                                : '${draft.fontSizeDelta}',
                         onChanged: (value) {
-                          vm.setPlotFontSizeDelta(value.round());
-                          setState(() {});
+                          setState(() => draft.fontSizeDelta = value.round());
                         },
                       ),
-                      SwitchListTile.adaptive(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
+                      AppSwitchRow(
                         title: Text(AppStrings.plot.plotFontBold),
-                        value: vm.plotFontBold,
+                        value: draft.fontBold,
                         onChanged: (value) {
-                          vm.setPlotFontBold(value);
-                          setState(() {});
+                          setState(() => draft.fontBold = value);
                         },
                       ),
                       Text(
@@ -4503,11 +4449,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               onSubmitted: (_) => applyFollowPosition(setState),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () => applyFollowPosition(setState),
-                            child: Text(AppStrings.common.apply),
-                          ),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -4533,11 +4474,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               ),
                               onSubmitted: (_) => applyYFitRatio(setState),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () => applyYFitRatio(setState),
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4570,11 +4506,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.previewToolbarEnabled,
+                            value: draft.previewToolbarEnabled!,
                             onChanged: (value) {
-                              vm.setPreviewToolbarEnabled(value);
-                              if (!value) _previewVisible = false;
-                              setState(() {});
+                              setState(
+                                () => draft.previewToolbarEnabled = value,
+                              );
                             },
                           ),
                         ],
@@ -4602,10 +4538,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.triggerToolbarEnabled,
+                            value: draft.triggerToolbarEnabled!,
                             onChanged: (value) {
-                              vm.setTriggerToolbarEnabled(value);
-                              setState(() {});
+                              setState(
+                                () => draft.triggerToolbarEnabled = value,
+                              );
                             },
                           ),
                         ],
@@ -4633,10 +4570,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.statsToolbarEnabled,
+                            value: draft.statsToolbarEnabled!,
                             onChanged: (value) {
-                              vm.setStatsToolbarEnabled(value);
-                              setState(() {});
+                              setState(() => draft.statsToolbarEnabled = value);
                             },
                           ),
                         ],
@@ -4665,10 +4601,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.observationClickToPlace,
+                            value: draft.observationClickToPlace,
                             onChanged: (value) {
-                              vm.setObservationClickToPlace(value);
-                              setState(() {});
+                              setState(
+                                () => draft.observationClickToPlace = value,
+                              );
                             },
                           ),
                         ],
@@ -4684,12 +4621,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.snapHighlightEnabled,
+                            value: draft.snapHighlightEnabled!,
                             materialTapTargetSize:
                                 MaterialTapTargetSize.shrinkWrap,
                             onChanged: (value) {
-                              vm.setSnapHighlightEnabled(value);
-                              setState(() {});
+                              setState(
+                                () => draft.snapHighlightEnabled = value,
+                              );
                             },
                           ),
                         ],
@@ -4702,40 +4640,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             child: TextField(
                               controller: snapDiameterController,
                               keyboardType: TextInputType.number,
-                              enabled: vm.snapHighlightEnabled,
+                              enabled: draft.snapHighlightEnabled,
                               decoration: secondaryDialogFieldDecoration(
                                 suffixText: AppStrings.plot.unitPixel,
                               ),
                               onSubmitted: (value) {
                                 final diameter = double.tryParse(value);
                                 if (diameter != null) {
-                                  vm.setSnapHighlightDiameter(diameter);
-                                  snapDiameterController.text = vm
-                                      .snapHighlightDiameter
-                                      .toStringAsFixed(0);
+                                  draft.snapHighlightDiameter = diameter;
                                   setState(() {});
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed:
-                                vm.snapHighlightEnabled
-                                    ? () {
-                                      final diameter = double.tryParse(
-                                        snapDiameterController.text,
-                                      );
-                                      if (diameter != null) {
-                                        vm.setSnapHighlightDiameter(diameter);
-                                        snapDiameterController.text = vm
-                                            .snapHighlightDiameter
-                                            .toStringAsFixed(0);
-                                        setState(() {});
-                                      }
-                                    }
-                                    : null,
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4750,33 +4666,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 4),
-                      SegmentedButton<String>(
-                        segments: [
-                          ButtonSegment<String>(
-                            value: 'cursor',
-                            label: AppSegmentedButtonLabel(
-                              child: Text(
-                                AppStrings.plot.snapHighlightColorCursor,
-                              ),
-                            ),
+                      AppSegmentedSelector<String>(
+                        value: draft.snapHighlightColorMode!,
+                        enabled: draft.snapHighlightEnabled!,
+                        items: {
+                          'cursor': Text(
+                            AppStrings.plot.snapHighlightColorCursor,
                           ),
-                          ButtonSegment<String>(
-                            value: 'channel',
-                            label: AppSegmentedButtonLabel(
-                              child: Text(
-                                AppStrings.plot.snapHighlightColorChannel,
-                              ),
-                            ),
+                          'channel': Text(
+                            AppStrings.plot.snapHighlightColorChannel,
                           ),
-                        ],
-                        selected: {vm.snapHighlightColorMode},
-                        onSelectionChanged:
-                            vm.snapHighlightEnabled
-                                ? (values) {
-                                  vm.setSnapHighlightColorMode(values.first);
-                                  setState(() {});
-                                }
-                                : null,
+                        },
+                        onChanged:
+                            (value) => setState(
+                              () => draft.snapHighlightColorMode = value,
+                            ),
                       ),
                       const Divider(),
                       Row(
@@ -4802,10 +4706,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             ),
                           ),
                           Switch(
-                            value: vm.keepPlotOnRestart,
+                            value: draft.keepPlotOnRestart!,
                             onChanged: (value) {
-                              vm.setKeepPlotOnRestart(value);
-                              setState(() {});
+                              setState(() => draft.keepPlotOnRestart = value);
                             },
                           ),
                         ],
@@ -4833,28 +4736,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               onSubmitted: (value) {
                                 final gib = int.tryParse(value);
                                 if (gib != null) {
-                                  vm.setPlotRetentionLimitGiB(gib);
-                                  plotRetentionLimitController.text =
-                                      vm.plotRetentionLimitGiB.toString();
+                                  draft.historyLimit = gib;
                                   setState(() {});
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              final gib = int.tryParse(
-                                plotRetentionLimitController.text,
-                              );
-                              if (gib != null) {
-                                vm.setPlotRetentionLimitGiB(gib);
-                                plotRetentionLimitController.text =
-                                    vm.plotRetentionLimitGiB.toString();
-                                setState(() {});
-                              }
-                            },
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4885,29 +4771,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               onSubmitted: (value) {
                                 final points = _parseCompactCount(value);
                                 if (points != null) {
-                                  vm.setMaxVisiblePoints(points);
-                                  maxVisibleController.text =
-                                      _formatCompactCount(vm.maxVisiblePoints);
+                                  draft.windowPointLimit = points;
                                   setState(() {});
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              final points = _parseCompactCount(
-                                maxVisibleController.text,
-                              );
-                              if (points != null) {
-                                vm.setMaxVisiblePoints(points);
-                                maxVisibleController.text = _formatCompactCount(
-                                  vm.maxVisiblePoints,
-                                );
-                                setState(() {});
-                              }
-                            },
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4949,32 +4817,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               onSubmitted: (value) {
                                 final count = _parseCompactCount(value);
                                 if (count != null) {
-                                  vm.setDiscardInitialPacketCount(count);
-                                  discardInitialPacketController
-                                      .text = _formatCompactCount(
-                                    vm.discardInitialPacketCount,
-                                  );
+                                  draft.discardInitialPacketCount = count;
                                   setState(() {});
                                 }
                               },
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              final count = _parseCompactCount(
-                                discardInitialPacketController.text,
-                              );
-                              if (count != null) {
-                                vm.setDiscardInitialPacketCount(count);
-                                discardInitialPacketController
-                                    .text = _formatCompactCount(
-                                  vm.discardInitialPacketCount,
-                                );
-                                setState(() {});
-                              }
-                            },
-                            child: Text(AppStrings.common.apply),
                           ),
                         ],
                       ),
@@ -4992,25 +4839,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                     ],
                   ),
-                );
-              },
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(AppStrings.common.close),
-              ),
-            ],
+                ),
+              );
+            },
           ),
     ).whenComplete(() {
-      refreshFpsController.dispose();
-      snapDiameterController.dispose();
-      maxVisibleController.dispose();
-      plotRetentionLimitController.dispose();
-      discardInitialPacketController.dispose();
-      followPositionController.dispose();
-      yFitDisplayRatioController.dispose();
-      advancedSettingsScrollController.dispose();
+      disposeAfterDialogTransition(() {
+        refreshFpsController.dispose();
+        snapDiameterController.dispose();
+        maxVisibleController.dispose();
+        plotRetentionLimitController.dispose();
+        discardInitialPacketController.dispose();
+        followPositionController.dispose();
+        yFitDisplayRatioController.dispose();
+        floatingPanelOpacityController.dispose();
+        advancedSettingsScrollController.dispose();
+      });
     });
   }
 
