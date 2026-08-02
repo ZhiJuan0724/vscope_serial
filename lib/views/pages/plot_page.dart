@@ -4324,15 +4324,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         segments: [
                           ButtonSegment<PlotLodQuality>(
                             value: PlotLodQuality.performance,
-                            label: Text(AppStrings.plot.lodQualityPerformance),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(
+                                AppStrings.plot.lodQualityPerformance,
+                              ),
+                            ),
                           ),
                           ButtonSegment<PlotLodQuality>(
                             value: PlotLodQuality.balanced,
-                            label: Text(AppStrings.plot.lodQualityBalanced),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(AppStrings.plot.lodQualityBalanced),
+                            ),
                           ),
                           ButtonSegment<PlotLodQuality>(
                             value: PlotLodQuality.quality,
-                            label: Text(AppStrings.plot.lodQualityQuality),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(AppStrings.plot.lodQualityQuality),
+                            ),
                           ),
                         ],
                         selected: {vm.lodQuality},
@@ -4746,14 +4754,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         segments: [
                           ButtonSegment<String>(
                             value: 'cursor',
-                            label: Text(
-                              AppStrings.plot.snapHighlightColorCursor,
+                            label: AppSegmentedButtonLabel(
+                              child: Text(
+                                AppStrings.plot.snapHighlightColorCursor,
+                              ),
                             ),
                           ),
                           ButtonSegment<String>(
                             value: 'channel',
-                            label: Text(
-                              AppStrings.plot.snapHighlightColorChannel,
+                            label: AppSegmentedButtonLabel(
+                              child: Text(
+                                AppStrings.plot.snapHighlightColorChannel,
+                              ),
                             ),
                           ),
                         ],

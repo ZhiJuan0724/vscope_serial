@@ -46,10 +46,14 @@ class JLinkProgrammingBackend implements FlashProgrammingBackend {
       );
 
   @override
+  Future<bool> isToolAvailable(FlashConnectionConfig config) async =>
+      await _findExecutable(config) != null;
+
+  @override
   Future<bool> isAvailable(FlashConnectionConfig config) async =>
       config.probeKind == FlashProbeKind.jlink &&
       config.target.trim().isNotEmpty &&
-      await _findExecutable(config) != null;
+      await isToolAvailable(config);
 
   @override
   Future<void> connect(FlashConnectionConfig config) async {

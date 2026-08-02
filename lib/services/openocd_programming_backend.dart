@@ -57,8 +57,15 @@ class OpenOcdProgrammingBackend implements FlashProgrammingBackend {
       config.openOcdTargetConfig.trim().isNotEmpty;
 
   @override
-  Future<bool> isAvailable(FlashConnectionConfig config) async =>
-      _configurationComplete(config) && await _findExecutable(config) != null;
+  Future<bool> isToolAvailable(FlashConnectionConfig config) async =>
+      await _findExecutable(config) != null;
+
+  @override
+  Future<bool> isAvailable(FlashConnectionConfig config) async {
+    // 内置后端一经选择就必须先准备运行时。配置尚未填写时也不能短路，
+    // 否则用户需要浏览内置cfg，却因运行时未解压而陷入循环依赖。
+    return await isToolAvailable(config) && _configurationComplete(config);
+  }
 
   @override
   Future<void> connect(FlashConnectionConfig config) async {

@@ -201,6 +201,137 @@ class ModbusPollingTask {
   }
 }
 
+/// 周期写任务每次生成待发送值的方式。
+enum ModbusSendValueMode {
+  random('random', '随机值'),
+  increment('increment', '自增 N'),
+  decrement('decrement', '自减 N');
+
+  const ModbusSendValueMode(this.value, this.label);
+  final String value;
+  final String label;
+
+  static ModbusSendValueMode fromString(String? value) => switch (value) {
+    'increment' => increment,
+    'decrement' => decrement,
+    _ => random,
+  };
+}
+
+/// 周期发送只允许写功能码；初始值和步长均按16位无符号数循环。
+class ModbusSendTask {
+  const ModbusSendTask({
+    required this.id,
+    required this.name,
+    required this.unitId,
+    required this.function,
+    required this.address,
+    required this.quantity,
+    required this.valueMode,
+    this.initialValues = const [],
+    this.step = 1,
+    this.intervalMs = 1000,
+    this.enabled = true,
+  });
+
+  final String id;
+  final String name;
+  final int unitId;
+  final ModbusFunction function;
+  final int address;
+  final int quantity;
+  final ModbusSendValueMode valueMode;
+  final List<int> initialValues;
+  final int step;
+  final int intervalMs;
+  final bool enabled;
+
+  ModbusSendTask copyWith({bool? enabled}) => ModbusSendTask(
+    id: id,
+    name: name,
+    unitId: unitId,
+    function: function,
+    address: address,
+    quantity: quantity,
+    valueMode: valueMode,
+    initialValues: initialValues,
+    step: step,
+    intervalMs: intervalMs,
+    enabled: enabled ?? this.enabled,
+  );
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'name': name,
+    'unitId': unitId,
+    'function': function.name,
+    'address': address,
+    'quantity': quantity,
+    'valueMode': valueMode.value,
+    'initialValues': initialValues,
+    'step': step,
+    'intervalMs': intervalMs,
+    'enabled': enabled,
+  };
+
+  static ModbusSendTask? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final id = '${value['id'] ?? ''}'.trim();
+    final name = '${value['name'] ?? ''}'.trim();
+    final unitId = (value['unitId'] as num?)?.toInt();
+    final address = (value['address'] as num?)?.toInt();
+    final quantity = (value['quantity'] as num?)?.toInt();
+    final intervalMs = (value['intervalMs'] as num?)?.toInt() ?? 1000;
+    final step = (value['step'] as num?)?.toInt() ?? 1;
+    final function = ModbusFunction.fromString(value['function'] as String?);
+    final maxQuantity = switch (function) {
+      ModbusFunction.writeSingleCoil || ModbusFunction.writeSingleRegister => 1,
+      ModbusFunction.writeMultipleCoils => 1968,
+      ModbusFunction.writeMultipleRegisters => 123,
+      _ => 0,
+    };
+    final initialValues = [
+      for (final item
+          in value['initialValues'] is List
+              ? value['initialValues'] as List
+              : const [])
+        if (item is num) item.toInt(),
+    ];
+    if (id.isEmpty ||
+        name.isEmpty ||
+        function.isRead ||
+        unitId == null ||
+        unitId < 0 ||
+        unitId > 255 ||
+        address == null ||
+        address < 0 ||
+        address > 0xFFFF ||
+        quantity == null ||
+        quantity < 1 ||
+        quantity > maxQuantity ||
+        intervalMs < 50 ||
+        intervalMs > 3600000 ||
+        step < 1 ||
+        step > 0xFFFF ||
+        initialValues.any((item) => item < 0 || item > 0xFFFF)) {
+      return null;
+    }
+    return ModbusSendTask(
+      id: id,
+      name: name,
+      unitId: unitId,
+      function: function,
+      address: address,
+      quantity: quantity,
+      valueMode: ModbusSendValueMode.fromString(value['valueMode'] as String?),
+      initialValues: initialValues,
+      step: step,
+      intervalMs: intervalMs,
+      enabled: value['enabled'] as bool? ?? true,
+    );
+  }
+}
+
 class ModbusFrameRecord {
   const ModbusFrameRecord({
     required this.timestamp,

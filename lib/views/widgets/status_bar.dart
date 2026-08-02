@@ -9,10 +9,12 @@ import '../../services/data_connection_service.dart';
 import '../../services/flash_programming_service.dart';
 import '../../services/probe_connection_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../../viewmodels/shell_viewmodel.dart';
 import '../dialogs/app_info_dialog.dart';
 import '../dialogs/data_connection_dialog.dart';
 import '../dialogs/flash_connection_dialog.dart';
 import '../dialogs/probe_connection_dialog.dart';
+import '../dialogs/ssh_connection_dialog.dart';
 
 /// 根据当前页面连接类型生成无歧义的状态文案。
 @visibleForTesting
@@ -70,6 +72,17 @@ class StatusBar extends StatelessWidget {
                 ),
           );
         }
+        if (currentPageId == 'shell') {
+          return Consumer<ShellViewModel>(
+            builder:
+                (context, shellViewModel, _) => _buildStatus(
+                  context,
+                  service,
+                  plotVm,
+                  shellViewModel: shellViewModel,
+                ),
+          );
+        }
         return _buildStatus(context, service, plotVm);
       },
     );
@@ -81,20 +94,26 @@ class StatusBar extends StatelessWidget {
     PlotViewModel plotVm, {
     ProbeConnectionService? probeConnectionService,
     FlashProgrammingService? flashProgrammingService,
+    ShellViewModel? shellViewModel,
   }) {
     final isRttPage = probeConnectionService != null;
     final isFlashPage = flashProgrammingService != null;
+    final isSshPage = shellViewModel?.isSshMode ?? false;
     final connected =
         isRttPage
             ? probeConnectionService.isConnected
             : isFlashPage
             ? flashProgrammingService.isConnected
+            : isSshPage
+            ? shellViewModel!.sshService.isConnected
             : service.isConnected;
     final connecting =
         isRttPage
             ? probeConnectionService.isConnecting
             : isFlashPage
             ? flashProgrammingService.isConnecting
+            : isSshPage
+            ? shellViewModel!.sshService.isConnecting
             : service.isConnecting;
     return Container(
       height: 26,
@@ -113,6 +132,8 @@ class StatusBar extends StatelessWidget {
                         ? showProbeConnectionDialog(context)
                         : isFlashPage
                         ? showFlashConnectionDialog(context)
+                        : isSshPage
+                        ? showSshConnectionDialog(context)
                         : showDataConnectionDialog(
                           context,
                           pageId: currentPageId,
@@ -144,6 +165,8 @@ class StatusBar extends StatelessWidget {
                     dataConnectionName:
                         isFlashPage
                             ? 'Flash编程会话'
+                            : isSshPage
+                            ? 'SSH'
                             : !isRttPage &&
                                 !connected &&
                                 !connecting &&
@@ -170,6 +193,8 @@ class StatusBar extends StatelessWidget {
                   Text(
                     '(${isFlashPage
                         ? flashProgrammingService.activeBackendName
+                        : isSshPage
+                        ? '${shellViewModel!.sshService.activeConfig?.host ?? ''}:${shellViewModel.sshService.activeConfig?.port ?? ''}'
                         : service.activeConnectionType == DataConnectionType.serial
                         ? service.config.port
                         : service.connectionDescription})',

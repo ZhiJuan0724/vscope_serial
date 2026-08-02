@@ -6,10 +6,26 @@
 
 | 工具 | 用途 |
 | --- | --- |
+| `build_debug.py` | 准备 Debug 附加运行时并构建、运行 Windows 应用 |
 | `build_release.py` | 执行完整 Windows Release 检查、构建和打包 |
 | `generate_update_assets.py` | 生成便携 ZIP、应用文件清单和更新清单 |
 | `prepare_openocd_runtime.py` | 准备固定版本的最小 OpenOCD 运行时 |
 | `analyze_crash_dump.ps1` | 检查并分析 Windows 原生崩溃转储 |
+
+## `build_debug.py`
+
+本地 Debug 推荐入口。脚本会先准备 `flutter run` 不会自动生成的内置 OpenOCD 压缩运行时，再执行 Windows Debug 构建并启动应用。原生 DLL、崩溃转储支持和 updater 仍由 Flutter/CMake 构建链生成。
+
+```powershell
+python tools/build_debug.py
+```
+
+常用选项：
+
+- `--openocd-source`：使用本地已解压的 xPack OpenOCD，避免下载锁定版本。
+- `--openocd-cache`：指定 OpenOCD 下载缓存目录。
+- `--build-only`：只构建 Debug，不启动应用。
+- `-- <参数>`：把其后的参数继续传给 `flutter run`。
 
 ## `build_release.py`
 

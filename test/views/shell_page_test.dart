@@ -34,7 +34,10 @@ void main() {
     viewModel.dispose();
   });
 
-  Widget buildPage({int receiveQueueLimitBytes = 256 * 1024 * 1024}) {
+  Widget buildPage({
+    int receiveQueueLimitBytes = 256 * 1024 * 1024,
+    ValueChanged<LogicalKeyboardKey>? onConnectionShortcut,
+  }) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<DataConnectionService>.value(value: service),
@@ -42,7 +45,10 @@ void main() {
       ],
       child: MaterialApp(
         home: Scaffold(
-          body: ShellPage(receiveQueueLimitBytes: receiveQueueLimitBytes),
+          body: ShellPage(
+            receiveQueueLimitBytes: receiveQueueLimitBytes,
+            onConnectionShortcut: onConnectionShortcut,
+          ),
         ),
       ),
     );
@@ -75,7 +81,7 @@ void main() {
     expect(find.byTooltip('清屏'), findsOneWidget);
     expect(find.byTooltip(AppStrings.common.shellSettings), findsOneWidget);
     expect(find.text(AppStrings.common.shellSettings), findsNothing);
-    expect(find.text('UTF-8  CRLF'), findsOneWidget);
+    expect(find.text('UTF-8  CR'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -96,14 +102,15 @@ void main() {
     expect(find.text('文本编码'), findsOneWidget);
     expect(find.text('命令行行尾'), findsOneWidget);
     expect(find.text('Shell 配置方案'), findsNothing);
-    expect(find.text('CRLF'), findsWidgets);
+    expect(find.text('CR'), findsWidgets);
     final lineEndingDropdown = find.byKey(
       const ValueKey('shell-line-ending-dropdown'),
     );
     await tester.tap(lineEndingDropdown);
     await tester.pump();
+    expect(find.text('CRLF'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('CR')).dy,
+      tester.getTopLeft(find.text('LF').last).dy,
       greaterThan(tester.getBottomLeft(lineEndingDropdown).dy),
     );
   });
@@ -199,6 +206,24 @@ void main() {
         tester.getCenter(cursor).dy,
         greaterThan(tester.getCenter(terminalView).dy),
       );
+
+      final cursorOpacity = find.descendant(
+        of: cursor,
+        matching: find.byType(Opacity),
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+      await tester.pump();
+      expect(tester.widget<Opacity>(cursorOpacity).opacity, 1);
+      await tester.pump(const Duration(milliseconds: 550));
+      expect(tester.widget<Opacity>(cursorOpacity).opacity, 0);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.widget<Opacity>(cursorOpacity).opacity, 1);
+
+      // 离开逐键模式后停止闪烁计时，避免后台保留无意义的周期任务。
+      await tester.tap(find.byTooltip('命令行模式'));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('shell-terminal-cursor')), findsNothing);
     },
   );
 
@@ -267,6 +292,30 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
 
     expect(output, ['\x1b[A', '\x1b[B', '\x1b[D', '\x1b[C', '\t']);
+  });
+
+  testWidgets('key mode routes connection shortcuts and blocks all F keys', (
+    tester,
+  ) async {
+    final shortcuts = <LogicalKeyboardKey>[];
+    service.isConnected = true;
+    service.setRawShellInputMode(RawShellInputMode.key);
+    await tester.pumpWidget(buildPage(onConnectionShortcut: shortcuts.add));
+    await tester.tap(find.byTooltip('开始 Shell'));
+    await tester.pump();
+
+    final terminal =
+        tester.widget<TerminalView>(find.byType(TerminalView)).terminal;
+    final output = <String>[];
+    terminal.onOutput = output.add;
+    await tester.tap(find.byType(TerminalView));
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.sendKeyEvent(LogicalKeyboardKey.f1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.f4);
+    await tester.sendKeyEvent(LogicalKeyboardKey.f5);
+
+    expect(shortcuts, [LogicalKeyboardKey.f1, LogicalKeyboardKey.f5]);
+    expect(output, isEmpty);
   });
 
   testWidgets('remote ED2 clears current screen but preserves scrollback', (

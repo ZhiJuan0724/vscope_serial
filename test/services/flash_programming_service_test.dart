@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/flash_programming_models.dart';
@@ -7,11 +8,13 @@ import 'package:vscope_serial/services/flash_programming_backend.dart';
 import 'package:vscope_serial/services/flash_programming_service.dart';
 
 class _FakeBackend implements FlashProgrammingBackend {
-  _FakeBackend(this.selection, {this.available = true});
+  _FakeBackend(this.selection, {this.available = true, bool? toolAvailable})
+    : toolAvailable = toolAvailable ?? available;
 
   @override
   final ProgrammingBackendSelection selection;
   bool available;
+  bool toolAvailable;
   bool connected = false;
   bool failOperation = false;
   int connectCount = 0;
@@ -31,6 +34,10 @@ class _FakeBackend implements FlashProgrammingBackend {
 
   @override
   Future<bool> isAvailable(FlashConnectionConfig config) async => available;
+
+  @override
+  Future<bool> isToolAvailable(FlashConnectionConfig config) async =>
+      toolAvailable;
 
   @override
   Future<void> connect(FlashConnectionConfig config) async {
@@ -63,7 +70,11 @@ class _FakeBackend implements FlashProgrammingBackend {
   Future<void> read(
     FlashReadRequest request,
     FlashProgressCallback onProgress,
-  ) async {}
+  ) async {
+    await File(
+      request.outputPath,
+    ).writeAsBytes(List<int>.generate(request.length, (index) => index & 0xFF));
+  }
 
   @override
   Future<void> forceTerminate() async => connected = false;
@@ -112,6 +123,28 @@ void main() {
     expect(owners.owner, ConnectionOwner.none);
   });
 
+  test('预计后端只检测工具，不把尚未填写的连接配置误报为工具缺失', () async {
+    final backend = _FakeBackend(
+      ProgrammingBackendSelection.externalOpenocd,
+      available: false,
+      toolAvailable: true,
+    );
+    addTearDown(backend.outputController.close);
+    final service = FlashProgrammingService(
+      owners: owners,
+      backendBuilder: (_) => backend,
+    );
+
+    final name = await service.expectedBackendName(
+      const FlashConnectionConfig(
+        backend: ProgrammingBackendSelection.externalOpenocd,
+        probeKind: FlashProbeKind.cmsisDap,
+      ),
+    );
+
+    expect(name, '外置 OpenOCD');
+  });
+
   test('编程会话与数据及探针所有权互斥', () async {
     owners.tryAcquire(ConnectionOwner.data);
     final backend = _FakeBackend(ProgrammingBackendSelection.externalJlink);
@@ -158,5 +191,26 @@ void main() {
     await operation;
     expect(owners.owner, ConnectionOwner.none);
     expect(service.state, FlashOperationState.unknown);
+  });
+
+  test('读取使用临时文件交换并返回内存数据', () async {
+    final backend = _FakeBackend(ProgrammingBackendSelection.externalJlink);
+    addTearDown(backend.outputController.close);
+    final service = FlashProgrammingService(
+      owners: owners,
+      backendBuilder: (_) => backend,
+    );
+    await service.connect(
+      const FlashConnectionConfig(
+        backend: ProgrammingBackendSelection.externalJlink,
+        probeKind: FlashProbeKind.jlink,
+        target: 'STM32F407ZG',
+      ),
+    );
+
+    final data = await service.readBytes(address: 0x08000000, length: 4);
+
+    expect(data, [0, 1, 2, 3]);
+    await service.disconnect();
   });
 }

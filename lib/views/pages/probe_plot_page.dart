@@ -102,8 +102,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             label: SizedBox(
                               width: 28,
                               child: Center(
-                                child: Transform.translate(
-                                  offset: Offset(0, -1),
+                                child: AppSegmentedButtonLabel(
                                   child: Text(
                                     'HSS',
                                     textAlign: TextAlign.center,
@@ -117,8 +116,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             label: SizedBox(
                               width: 28,
                               child: Center(
-                                child: Transform.translate(
-                                  offset: Offset(0, -1),
+                                child: AppSegmentedButtonLabel(
                                   child: Text(
                                     'RTT',
                                     textAlign: TextAlign.center,
@@ -1598,15 +1596,23 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         segments: [
                           ButtonSegment(
                             value: PlotLodQuality.performance,
-                            label: Text(AppStrings.plot.lodQualityPerformance),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(
+                                AppStrings.plot.lodQualityPerformance,
+                              ),
+                            ),
                           ),
                           ButtonSegment(
                             value: PlotLodQuality.balanced,
-                            label: Text(AppStrings.plot.lodQualityBalanced),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(AppStrings.plot.lodQualityBalanced),
+                            ),
                           ),
                           ButtonSegment(
                             value: PlotLodQuality.quality,
-                            label: Text(AppStrings.plot.lodQualityQuality),
+                            label: AppSegmentedButtonLabel(
+                              child: Text(AppStrings.plot.lodQualityQuality),
+                            ),
                           ),
                         ],
                         selected: {vm.lodQuality},

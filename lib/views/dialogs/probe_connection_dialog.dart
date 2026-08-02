@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/localization/app_strings.dart';
+import '../../data/models/flash_programming_models.dart';
 import '../../data/models/probe_connection_config.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
+import '../../services/flash_programming_service.dart';
 import '../../services/rtt_process_backends.dart';
 import '../../services/probe_connection_service.dart';
 import '../widgets/common_widgets.dart';
@@ -16,9 +18,13 @@ import '../widgets/common_widgets.dart';
 class ProbeConnectionDialog extends StatefulWidget {
   const ProbeConnectionDialog({
     super.key,
+    this.forFlashProgramming = false,
     this.openOcdConfigFilePicker,
     this.openOcdConfigDirectoryResolver,
   });
+
+  /// 只复用探针枚举、芯片选择和配置表单；实际连接交给独立Flash服务。
+  final bool forFlashProgramming;
 
   final Future<String?> Function(String dialogTitle, String? initialDirectory)?
   openOcdConfigFilePicker;
@@ -59,6 +65,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       (_backend == ProbeBackendSelection.automatic &&
           _kind == ProbeKind.cmsisDap);
 
+  bool get _isProgramming => widget.forFlashProgramming;
+
   ProbeConnectionConfig _draftConfig() {
     // pyOCD 的刷新列表使用合成 ID 展示 USB 设备；正式连接必须把选中项
     // 还原成 VID/PID，才能让 Worker 跳过全量 USB 探针发现。
@@ -86,12 +94,42 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     );
   }
 
+  FlashConnectionConfig _draftFlashConfig() => FlashConnectionConfig(
+    backend: _toProgrammingBackend(_backend),
+    probeKind:
+        _kind == ProbeKind.jlink
+            ? FlashProbeKind.jlink
+            : FlashProbeKind.cmsisDap,
+    probeId: _probeId,
+    target: _target.trim(),
+    wireProtocol:
+        _wireProtocol == ProbeWireProtocol.swd
+            ? FlashWireProtocol.swd
+            : FlashWireProtocol.jtag,
+    clockKhz: int.tryParse(_clockController.text.trim()) ?? 4000,
+    // Flash与普通探针连接复用高级设置中的工具定位；这里只隔离连接会话，
+    // 不再要求用户在Flash窗口重复填写外部工具路径。
+    jlinkExecutablePath: AppSettings().rttJlinkExecutablePath,
+    openocdExecutablePath: AppSettings().rttOpenocdExecutablePath,
+    openOcdInterfaceConfig: _openOcdInterfaceController.text.trim(),
+    openOcdTargetConfig: _openOcdTargetController.text.trim(),
+  );
+
   @override
   void initState() {
     super.initState();
     final settings = AppSettings();
-    _backend = ProbeBackendSelection.fromString(settings.rttBackendSelection);
-    _kind = ProbeKind.fromString(settings.rttProbeKind);
+    final flashConfig = settings.flashConnectionConfig;
+    _backend =
+        _isProgramming
+            ? _toProbeBackend(flashConfig.backend)
+            : ProbeBackendSelection.fromString(settings.rttBackendSelection);
+    _kind =
+        _isProgramming
+            ? flashConfig.probeKind == FlashProbeKind.jlink
+                ? ProbeKind.jlink
+                : ProbeKind.cmsisDap
+            : ProbeKind.fromString(settings.rttProbeKind);
     _kind = switch (_backend) {
       ProbeBackendSelection.externalJlink => ProbeKind.jlink,
       ProbeBackendSelection.bundledOpenocd ||
@@ -99,21 +137,38 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       ProbeBackendSelection.externalPyocd => ProbeKind.cmsisDap,
       ProbeBackendSelection.automatic => _kind,
     };
-    _wireProtocol = ProbeWireProtocol.fromString(settings.rttWireProtocol);
+    _wireProtocol =
+        _isProgramming
+            ? flashConfig.wireProtocol == FlashWireProtocol.swd
+                ? ProbeWireProtocol.swd
+                : ProbeWireProtocol.jtag
+            : ProbeWireProtocol.fromString(settings.rttWireProtocol);
     _pyOcdCmsisDapVersion = PyOcdCmsisDapVersion.fromString(
       settings.rttPyocdCmsisDapVersion,
     );
-    _autoDetect = settings.rttAutoDetectTarget;
+    _autoDetect = _isProgramming ? false : settings.rttAutoDetectTarget;
     // 探针尚未枚举时必须显式使用自动选择，不能暗中沿用一个未验证的旧 ID。
     _probeId = '';
-    _target = settings.rttTarget;
+    _target = _isProgramming ? flashConfig.target : settings.rttTarget;
     _targetController = TextEditingController(text: _target);
-    _clockController = TextEditingController(text: '${settings.rttClockKhz}');
+    _clockController = TextEditingController(
+      text: '${_isProgramming ? flashConfig.clockKhz : settings.rttClockKhz}',
+    );
     _openOcdInterfaceController = TextEditingController(
-      text: settings.rttOpenocdInterfaceConfig,
+      text:
+          _isProgramming
+              ? flashConfig.openOcdInterfaceConfig.trim().isNotEmpty
+                  ? flashConfig.openOcdInterfaceConfig
+                  : settings.rttOpenocdInterfaceConfig
+              : settings.rttOpenocdInterfaceConfig,
     );
     _openOcdTargetController = TextEditingController(
-      text: settings.rttOpenocdTargetConfig,
+      text:
+          _isProgramming
+              ? flashConfig.openOcdTargetConfig.trim().isNotEmpty
+                  ? flashConfig.openOcdTargetConfig
+                  : settings.rttOpenocdTargetConfig
+              : settings.rttOpenocdTargetConfig,
     );
   }
 
@@ -145,13 +200,18 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       _expectedBackendError = null;
     });
     try {
-      final name = await context
-          .read<ProbeConnectionService>()
-          .expectedBackendName(
-            kind,
-            backend: backend,
-            connectionConfig: _draftConfig(),
-          );
+      final name =
+          _isProgramming
+              ? await context
+                  .read<FlashProgrammingService>()
+                  .expectedBackendName(_draftFlashConfig())
+              : await context
+                  .read<ProbeConnectionService>()
+                  .expectedBackendName(
+                    kind,
+                    backend: backend,
+                    connectionConfig: _draftConfig(),
+                  );
       if (!mounted ||
           generation != _backendPreviewGeneration ||
           kind != _kind ||
@@ -329,21 +389,59 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     );
   }
 
+  Future<bool> _confirmFlashConnection(FlashConnectionConfig config) async =>
+      await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (dialogContext) => AlertDialog(
+              shape: kAdvancedSettingsDialogShape,
+              title: const Text('连接高权限Flash会话'),
+              content: Text(
+                'Flash连接可能复位或停止目标芯片。\n\n'
+                '目标：${config.target.isEmpty ? config.openOcdTargetConfig : config.target}\n'
+                '后端：${config.backend.label}\n\n'
+                '请确认目标硬件已处于允许编程的安全状态。',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('取消'),
+                ),
+                DialogPrimaryActionButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  label: '确认连接',
+                ),
+              ],
+            ),
+      ) ??
+      false;
+
   Future<void> _connect() async {
     final clock = int.tryParse(_clockController.text.trim());
     if (clock == null || clock < 100 || clock > 50000) {
       setState(() => _error = '调试时钟范围为 100~50000 kHz');
       return;
     }
-    if (_backend != ProbeBackendSelection.externalOpenocd &&
-        _backend != ProbeBackendSelection.bundledOpenocd &&
-        !_autoDetect &&
-        _target.trim().isEmpty) {
+    final targetRequired =
+        _isProgramming
+            ? _backend == ProbeBackendSelection.externalJlink ||
+                (_backend == ProbeBackendSelection.automatic &&
+                    _kind == ProbeKind.jlink)
+            : _backend != ProbeBackendSelection.externalOpenocd &&
+                _backend != ProbeBackendSelection.bundledOpenocd &&
+                !_autoDetect;
+    if (targetRequired && _target.trim().isEmpty) {
       setState(() => _error = '请选择或输入目标芯片');
       return;
     }
-    if (_backend == ProbeBackendSelection.externalOpenocd ||
-        _backend == ProbeBackendSelection.bundledOpenocd) {
+    final openOcdConfigRequired =
+        _backend == ProbeBackendSelection.externalOpenocd ||
+        _backend == ProbeBackendSelection.bundledOpenocd ||
+        (_isProgramming &&
+            _backend == ProbeBackendSelection.automatic &&
+            _kind == ProbeKind.cmsisDap);
+    if (openOcdConfigRequired) {
       if (_openOcdInterfaceController.text.trim().isEmpty ||
           _openOcdTargetController.text.trim().isEmpty) {
         setState(() => _error = 'OpenOCD 需要接口配置和目标配置');
@@ -355,7 +453,16 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       _error = null;
     });
     try {
-      await context.read<ProbeConnectionService>().connect(_draftConfig());
+      if (_isProgramming) {
+        final config = _draftFlashConfig();
+        if (!await _confirmFlashConnection(config)) return;
+        AppSettings().flashConnectionConfig = config;
+        await AppSettings().save();
+        if (!mounted) return;
+        await context.read<FlashProgrammingService>().connect(config);
+      } else {
+        await context.read<ProbeConnectionService>().connect(_draftConfig());
+      }
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (mounted && !_cancellingConnection) {
@@ -369,12 +476,17 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
   Future<void> _cancelConnection() async {
     if (!_connecting || _cancellingConnection) return;
     setState(() => _cancellingConnection = true);
-    final service = context.read<ProbeConnectionService>();
+    final probeService = context.read<ProbeConnectionService>();
+    final flashService = context.read<FlashProgrammingService?>();
     // 连接窗口本身不应被慢速驱动枚举或外部进程退出阻塞；先响应用户关闭，
     // 服务层继续等待后端完整收敛，并以连接代次阻止旧请求重新变为已连接。
     Navigator.of(context).pop();
     try {
-      await service.disconnect();
+      if (_isProgramming) {
+        await flashService?.forceTerminate();
+      } else {
+        await probeService.disconnect();
+      }
     } catch (error) {
       AppNotifications.show('取消连接失败：${_displayRttError(error)}');
     }
@@ -382,7 +494,13 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final service = context.watch<ProbeConnectionService>();
+    final probeService = context.watch<ProbeConnectionService>();
+    final flashService =
+        _isProgramming ? context.watch<FlashProgrammingService>() : null;
+    final isConnected =
+        _isProgramming
+            ? flashService?.isConnected ?? false
+            : probeService.isConnected;
     return AlertDialog(
       shape: kAdvancedSettingsDialogShape,
       title: Text(AppStrings.rtt.connect),
@@ -404,6 +522,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   decoration: _connectionFieldDecoration('探针后端'),
                   items:
                       ProbeBackendSelection.values
+                          .where(
+                            (item) =>
+                                !_isProgramming ||
+                                item != ProbeBackendSelection.externalPyocd,
+                          )
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
@@ -412,7 +535,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                           )
                           .toList(),
                   onChanged:
-                      service.isConnected || _connecting
+                      isConnected || _connecting
                           ? null
                           : (value) {
                             if (value == null) return;
@@ -461,7 +584,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                 )
                                 .toList(),
                         onChanged:
-                            service.isConnected || _connecting
+                            isConnected || _connecting
                                 ? null
                                 : (value) {
                                   if (value == null) return;
@@ -513,7 +636,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                           ),
                         ],
                         onChanged:
-                            service.isConnected
+                            isConnected
                                 ? null
                                 : (value) =>
                                     setState(() => _probeId = value ?? ''),
@@ -528,7 +651,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       child: InkWell(
                         borderRadius: BorderRadius.circular(4),
                         onTap:
-                            service.isConnected || _refreshing || _connecting
+                            isConnected || _refreshing || _connecting
                                 ? null
                                 : () => unawaited(_refresh()),
                         child: SizedBox.square(
@@ -546,7 +669,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                       Icons.refresh,
                                       size: kToolbarIconSize,
                                       color:
-                                          service.isConnected || _connecting
+                                          isConnected || _connecting
                                               ? Theme.of(context).disabledColor
                                               : null,
                                     ),
@@ -603,7 +726,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                             )
                             .toList(),
                     onChanged:
-                        service.isConnected || _connecting
+                        isConnected || _connecting
                             ? null
                             : (value) {
                               if (value == null) return;
@@ -629,7 +752,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     hintText: '例如 interface/cmsis-dap.cfg',
                     category: 'interface',
                     controller: _openOcdInterfaceController,
-                    enabled: !service.isConnected && !_connecting,
+                    enabled: !isConnected && !_connecting,
                   ),
                   const SizedBox(height: 12),
                   _buildOpenOcdConfigField(
@@ -638,7 +761,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     hintText: '例如 target/stm32f4x.cfg',
                     category: 'target',
                     controller: _openOcdTargetController,
-                    enabled: !service.isConnected && !_connecting,
+                    enabled: !isConnected && !_connecting,
                   ),
                   const SizedBox(height: 6),
                   Align(
@@ -662,7 +785,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                           key: const ValueKey('rtt-target-field'),
                           controller: _targetController,
                           onChanged: (value) => _target = value,
-                          enabled: !_autoDetect && !service.isConnected,
+                          enabled: !_autoDetect && !isConnected,
                           decoration: _connectionFieldDecoration(
                             '目标芯片',
                             hintText: '输入芯片型号',
@@ -674,7 +797,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         key: const ValueKey('rtt-target-search-button'),
                         tooltip: '检索支持的芯片',
                         onPressed:
-                            _autoDetect || service.isConnected || _connecting
+                            _autoDetect || isConnected || _connecting
                                 ? null
                                 : () => unawaited(_selectTarget()),
                         icon: const Icon(Icons.manage_search),
@@ -683,7 +806,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       Checkbox(
                         value: _autoDetect,
                         onChanged:
-                            service.isConnected
+                            isConnected || _isProgramming
                                 ? null
                                 : (value) => setState(
                                   () => _autoDetect = value ?? false,
@@ -710,7 +833,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                 )
                                 .toList(),
                         onChanged:
-                            service.isConnected
+                            isConnected
                                 ? null
                                 : (value) => setState(
                                   () => _wireProtocol = value ?? _wireProtocol,
@@ -722,7 +845,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       child: TextField(
                         key: const ValueKey('rtt-clock-field'),
                         controller: _clockController,
-                        enabled: !service.isConnected,
+                        enabled: !isConnected,
                         keyboardType: TextInputType.number,
                         decoration: _connectionFieldDecoration(
                           '调试时钟',
@@ -759,7 +882,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
             _connecting ? (_cancellingConnection ? '正在取消...' : '取消连接') : '关闭',
           ),
         ),
-        if (service.isConnected)
+        if (isConnected)
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -770,7 +893,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     ? null
                     : () async {
                       setState(() => _connecting = true);
-                      await service.disconnect();
+                      if (_isProgramming) {
+                        await flashService!.disconnect();
+                      } else {
+                        await probeService.disconnect();
+                      }
                       if (context.mounted) Navigator.of(context).pop();
                     },
             icon: const Icon(Icons.stop),
@@ -801,6 +928,30 @@ bool _backendSupportsProbe(ProbeBackendSelection backend, ProbeKind kind) =>
       ProbeBackendSelection.externalPyocd => kind == ProbeKind.cmsisDap,
       ProbeBackendSelection.automatic => true,
     };
+
+ProbeBackendSelection _toProbeBackend(ProgrammingBackendSelection value) =>
+    switch (value) {
+      ProgrammingBackendSelection.automatic => ProbeBackendSelection.automatic,
+      ProgrammingBackendSelection.externalJlink =>
+        ProbeBackendSelection.externalJlink,
+      ProgrammingBackendSelection.externalOpenocd =>
+        ProbeBackendSelection.externalOpenocd,
+      ProgrammingBackendSelection.bundledOpenocd =>
+        ProbeBackendSelection.bundledOpenocd,
+    };
+
+ProgrammingBackendSelection _toProgrammingBackend(
+  ProbeBackendSelection value,
+) => switch (value) {
+  ProbeBackendSelection.externalJlink =>
+    ProgrammingBackendSelection.externalJlink,
+  ProbeBackendSelection.externalOpenocd =>
+    ProgrammingBackendSelection.externalOpenocd,
+  ProbeBackendSelection.bundledOpenocd =>
+    ProgrammingBackendSelection.bundledOpenocd,
+  ProbeBackendSelection.automatic ||
+  ProbeBackendSelection.externalPyocd => ProgrammingBackendSelection.automatic,
+};
 
 class _RttTargetSearchDialog extends StatefulWidget {
   const _RttTargetSearchDialog({required this.loadTargets});

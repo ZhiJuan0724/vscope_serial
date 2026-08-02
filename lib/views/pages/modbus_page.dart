@@ -12,7 +12,7 @@ import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
 import '../../services/data_connection_service.dart';
 import '../../services/modbus_client_service.dart';
-import '../dialogs/data_connection_dialog.dart';
+import '../widgets/common_widgets.dart';
 
 class ModbusPage extends StatefulWidget {
   const ModbusPage({super.key});
@@ -38,6 +38,10 @@ class _ModbusPageState extends State<ModbusPage> {
   }
 
   Future<void> _changeMode(ModbusMode mode) async {
+    if (mode == ModbusMode.tcp && !AppSettings().networkConnectionsEnabled) {
+      AppNotifications.show('请先在高级设置中启用网络连接');
+      return;
+    }
     final connection = context.read<DataConnectionService>();
     final service = context.read<ModbusClientService>();
     if (connection.isConnected || connection.isConnecting) {
@@ -55,33 +59,6 @@ class _ModbusPageState extends State<ModbusPage> {
             : DataConnectionType.serial,
       );
     await settings.save();
-  }
-
-  Future<void> _openConnection() async {
-    final service = context.read<ModbusClientService>();
-    final settings = AppSettings();
-    if (service.mode == ModbusMode.tcp && !settings.networkConnectionsEnabled) {
-      AppNotifications.show('请先在高级设置中启用网络连接');
-      return;
-    }
-    settings.saveConnectionTypeForPage(
-      'modbus',
-      service.mode == ModbusMode.tcp
-          ? DataConnectionType.tcpClient
-          : DataConnectionType.serial,
-    );
-    await showDataConnectionDialog(context, pageId: 'modbus');
-  }
-
-  Future<void> _toggleConnection() async {
-    final connection = context.read<DataConnectionService>();
-    final modbus = context.read<ModbusClientService>();
-    if (connection.isConnected) {
-      await modbus.stop();
-      await connection.disconnect();
-    } else {
-      await _openConnection();
-    }
   }
 
   ModbusRequest _buildRequest(ModbusMode mode) {
@@ -126,6 +103,19 @@ class _ModbusPageState extends State<ModbusPage> {
     }
   }
 
+  Future<void> _toggleSession() async {
+    final service = context.read<ModbusClientService>();
+    try {
+      if (service.sessionActive) {
+        await service.stop();
+      } else {
+        await service.startSession();
+      }
+    } catch (error) {
+      AppNotifications.show('Modbus操作失败：$error');
+    }
+  }
+
   Future<void> _addPollingTask() async {
     final request = _buildRequest(context.read<ModbusClientService>().mode);
     if (!request.function.isRead) {
@@ -135,12 +125,12 @@ class _ModbusPageState extends State<ModbusPage> {
     final nameController = TextEditingController(
       text: '${request.function.label} ${request.address}',
     );
-    final intervalController = TextEditingController(text: '1000');
     final retriesController = TextEditingController(text: '0');
     final confirmed = await showDialog<bool>(
       context: context,
       builder:
           (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
             title: const Text('添加轮询任务'),
             content: SizedBox(
               width: 420,
@@ -149,17 +139,17 @@ class _ModbusPageState extends State<ModbusPage> {
                 children: [
                   TextField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: '任务名称'),
+                    decoration: secondaryDialogFieldDecoration(
+                      labelText: '任务名称',
+                    ),
                   ),
-                  TextField(
-                    controller: intervalController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '间隔（ms，最小50）'),
-                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: retriesController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '读取重试（0～3）'),
+                    decoration: secondaryDialogFieldDecoration(
+                      labelText: '读取重试（0～3）',
+                    ),
                   ),
                 ],
               ),
@@ -169,17 +159,17 @@ class _ModbusPageState extends State<ModbusPage> {
                 onPressed: () => Navigator.pop(dialogContext, false),
                 child: const Text('取消'),
               ),
-              FilledButton(
+              DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('添加'),
+                label: '添加',
               ),
             ],
           ),
     );
     if (confirmed == true && mounted) {
-      final interval = int.tryParse(intervalController.text) ?? 1000;
+      final service = context.read<ModbusClientService>();
       final retries = int.tryParse(retriesController.text) ?? 0;
-      context.read<ModbusClientService>().addTask(
+      service.addTask(
         ModbusPollingTask(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
           name:
@@ -190,14 +180,183 @@ class _ModbusPageState extends State<ModbusPage> {
           function: request.function,
           address: request.address,
           quantity: request.quantity,
-          intervalMs: interval.clamp(50, 3600000),
+          intervalMs: service.pollingIntervalMs,
           readRetries: retries.clamp(0, 3),
         ),
       );
     }
     nameController.dispose();
-    intervalController.dispose();
     retriesController.dispose();
+  }
+
+  Future<void> _addSendTask() async {
+    final request = _buildRequest(context.read<ModbusClientService>().mode);
+    if (request.function.isRead) {
+      AppNotifications.show('周期发送任务仅支持写功能码');
+      return;
+    }
+    final count =
+        request.function == ModbusFunction.writeSingleCoil ||
+                request.function == ModbusFunction.writeSingleRegister
+            ? 1
+            : request.quantity;
+    final initialValues =
+        request.function.isBitFunction
+            ? request.coilValues.map((value) => value ? 1 : 0).toList()
+            : request.registerValues;
+    final nameController = TextEditingController(
+      text: '${request.function.label} ${request.address}',
+    );
+    final stepController = TextEditingController(text: '1');
+    var valueMode = ModbusSendValueMode.random;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  shape: kAdvancedSettingsDialogShape,
+                  title: const Text('添加周期发送任务'),
+                  content: SizedBox(
+                    width: 420,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(
+                          controller: nameController,
+                          decoration: secondaryDialogFieldDecoration(
+                            labelText: '任务名称',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        NoAnimDropdown<ModbusSendValueMode>(
+                          value: valueMode,
+                          hint: '选择数值生成方式',
+                          decoration: secondaryDialogFieldDecoration(
+                            labelText: '数值生成方式',
+                          ),
+                          items: [
+                            for (final mode in ModbusSendValueMode.values)
+                              DropdownMenuItem(
+                                value: mode,
+                                child: Text(mode.label),
+                              ),
+                          ],
+                          onChanged:
+                              (value) => setDialogState(
+                                () => valueMode = value ?? valueMode,
+                              ),
+                        ),
+                        if (valueMode != ModbusSendValueMode.random) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: stepController,
+                            keyboardType: TextInputType.number,
+                            decoration: secondaryDialogFieldDecoration(
+                              labelText: '步长 N（1～65535）',
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '从当前写入值开始，每次发送后按16位无符号数循环变化。',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: const Text('取消'),
+                    ),
+                    DialogPrimaryActionButton(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      label: '添加',
+                    ),
+                  ],
+                ),
+          ),
+    );
+    if (confirmed == true && mounted) {
+      final service = context.read<ModbusClientService>();
+      final step = int.tryParse(stepController.text.trim()) ?? 1;
+      service.addSendTask(
+        ModbusSendTask(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          name:
+              nameController.text.trim().isEmpty
+                  ? '周期发送任务'
+                  : nameController.text.trim(),
+          unitId: request.unitId,
+          function: request.function,
+          address: request.address,
+          quantity: count,
+          valueMode: valueMode,
+          initialValues: List<int>.generate(
+            count,
+            (index) => initialValues.elementAtOrNull(index) ?? 0,
+          ),
+          step: step.clamp(1, 0xFFFF),
+          intervalMs: service.sendingIntervalMs,
+        ),
+      );
+    }
+    nameController.dispose();
+    stepController.dispose();
+  }
+
+  Future<void> _configurePeriodicInterval({required bool polling}) async {
+    final service = context.read<ModbusClientService>();
+    final controller = TextEditingController(
+      text:
+          polling
+              ? '${service.pollingIntervalMs}'
+              : '${service.sendingIntervalMs}',
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
+            title: Text(polling ? '轮询周期设置' : '发送周期设置'),
+            content: SizedBox(
+              width: 360,
+              child: TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: secondaryDialogFieldDecoration(
+                  labelText: '周期（ms，50～3600000）',
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              DialogPrimaryActionButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                label: '确定',
+              ),
+            ],
+          ),
+    );
+    if (confirmed == true && mounted) {
+      final value = int.tryParse(controller.text.trim());
+      if (value == null || value < 50 || value > 3600000) {
+        AppNotifications.show('周期必须在50～3600000 ms之间');
+      } else if (polling) {
+        service.setPollingIntervalMs(value);
+      } else {
+        service.setSendingIntervalMs(value);
+      }
+    }
+    controller.dispose();
   }
 
   Future<void> _togglePolling() async {
@@ -213,6 +372,19 @@ class _ModbusPageState extends State<ModbusPage> {
     }
   }
 
+  Future<void> _toggleSending() async {
+    final service = context.read<ModbusClientService>();
+    try {
+      if (service.sending) {
+        await service.stopSending();
+      } else {
+        await service.startSending();
+      }
+    } catch (error) {
+      AppNotifications.show('周期发送启动失败：$error');
+    }
+  }
+
   Future<void> _showProtocolSettings() async {
     final service = context.read<ModbusClientService>();
     final controller = TextEditingController(text: '${service.timeoutMs}');
@@ -220,15 +392,15 @@ class _ModbusPageState extends State<ModbusPage> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
             title: const Text('Modbus协议设置'),
             content: SizedBox(
               width: 360,
               child: TextField(
                 controller: controller,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
+                decoration: secondaryDialogFieldDecoration(
                   labelText: '响应超时（ms）',
-                  helperText: '范围100～60000，默认1000',
                 ),
               ),
             ),
@@ -237,9 +409,9 @@ class _ModbusPageState extends State<ModbusPage> {
                 onPressed: () => Navigator.pop(dialogContext, false),
                 child: const Text('取消'),
               ),
-              FilledButton(
+              DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('确定'),
+                label: '确定',
               ),
             ],
           ),
@@ -282,7 +454,8 @@ class _ModbusPageState extends State<ModbusPage> {
       await File(path).readAsString(),
     );
     AppNotifications.show(
-      '已导入${imported.tasks.length}项${imported.errors.isEmpty ? '' : '，${imported.errors.join('；')}'}',
+      '已导入${imported.tasks.length}项轮询任务、${imported.sendTasks.length}项发送任务'
+      '${imported.errors.isEmpty ? '' : '，${imported.errors.join('；')}'}',
     );
   }
 
@@ -300,73 +473,114 @@ class _ModbusPageState extends State<ModbusPage> {
     final reference = int.tryParse(_addressController.text.trim()) ?? 0;
     return Column(
       children: [
-        Container(
-          height: 48,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerLowest,
-            border: Border(
-              bottom: BorderSide(color: Theme.of(context).dividerColor),
+        UnifiedToolbar(
+          leadingItems: [
+            ToolbarLayoutItem(
+              extent: 76,
+              child: ToolbarStartStopButton(
+                running: service.sessionActive,
+                label: service.sessionActive ? '停止' : '开始',
+                tooltip:
+                    service.sessionActive ? '停止Modbus数据处理' : '开始Modbus数据处理',
+                onPressed: connection.isConnected ? _toggleSession : null,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              FilledButton.icon(
-                onPressed: connection.isConnecting ? null : _toggleConnection,
-                icon: Icon(
-                  connection.isConnected ? Icons.link_off : Icons.link,
-                ),
-                label: Text(connection.isConnected ? '断开' : '连接'),
-              ),
-              IconButton(
-                tooltip: '连接配置',
-                onPressed: connection.isConnected ? null : _openConnection,
-                icon: const Icon(Icons.settings),
-              ),
-              const SizedBox(width: 8),
-              SegmentedButton<ModbusMode>(
-                segments: [
+            ToolbarLayoutItem(
+              extent: 120,
+              child: ToolbarDropdown<ModbusMode>(
+                width: 120,
+                value: service.mode,
+                hint: 'Modbus协议',
+                items: [
                   for (final mode in ModbusMode.values)
-                    ButtonSegment(value: mode, label: Text(mode.label)),
+                    DropdownMenuItem(
+                      value: mode,
+                      enabled:
+                          mode != ModbusMode.tcp ||
+                          AppSettings().networkConnectionsEnabled,
+                      child: Text(mode.label),
+                    ),
                 ],
-                selected: {service.mode},
-                showSelectedIcon: false,
-                onSelectionChanged:
+                onChanged:
                     connection.isConnected
                         ? null
-                        : (value) => _changeMode(value.first),
+                        : (value) {
+                          if (value != null) _changeMode(value);
+                        },
               ),
-              const SizedBox(width: 12),
-              FilledButton.tonalIcon(
-                onPressed: connection.isConnected ? _togglePolling : null,
-                icon: Icon(service.polling ? Icons.stop : Icons.play_arrow),
-                label: Text(service.polling ? '停止轮询' : '开始轮询'),
-              ),
-              IconButton(
-                tooltip: 'Modbus协议设置',
-                onPressed:
-                    service.requestPending ? null : _showProtocolSettings,
-                icon: const Icon(Icons.tune),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: '导入任务',
-                onPressed: _importTasks,
+            ),
+          ],
+          trailingItems: [
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarIconButton(
                 icon: const Icon(Icons.file_open),
+                tooltip: '导入轮询任务',
+                onPressed: _importTasks,
               ),
-              IconButton(
-                tooltip: '导出任务',
-                onPressed: service.tasks.isEmpty ? null : _exportTasks,
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.file_open),
+                  label: '导入轮询任务',
+                  onPressed: _importTasks,
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarIconButton(
                 icon: const Icon(Icons.save_alt),
+                tooltip: '导出周期任务',
+                onPressed:
+                    service.tasks.isEmpty && service.sendTasks.isEmpty
+                        ? null
+                        : _exportTasks,
               ),
-              IconButton(
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.save_alt),
+                  label: '导出周期任务',
+                  onPressed:
+                      service.tasks.isEmpty && service.sendTasks.isEmpty
+                          ? null
+                          : _exportTasks,
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarIconButton(
+                icon: const Icon(Icons.delete_sweep_outlined),
                 tooltip: '清空帧记录',
                 onPressed:
                     service.records.isEmpty ? null : service.clearRecords,
-                icon: const Icon(Icons.delete_sweep_outlined),
               ),
-            ],
-          ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  label: '清空帧记录',
+                  onPressed:
+                      service.records.isEmpty ? null : service.clearRecords,
+                ),
+              ],
+            ),
+            ToolbarLayoutItem(
+              extent: kToolbarControlExtent,
+              child: ToolbarAdvancedSettingsButton(
+                onPressed:
+                    service.requestPending ? null : _showProtocolSettings,
+                tooltip: 'Modbus协议设置',
+              ),
+              overflowActions: [
+                ToolbarOverflowAction(
+                  icon: const Icon(Icons.tune),
+                  label: 'Modbus协议设置',
+                  onPressed:
+                      service.requestPending ? null : _showProtocolSettings,
+                ),
+              ],
+            ),
+          ],
         ),
         Expanded(
           child: Row(
@@ -402,15 +616,18 @@ class _ModbusPageState extends State<ModbusPage> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 8),
-                    DropdownButtonFormField<ModbusFunction>(
-                      initialValue: _function,
-                      decoration: const InputDecoration(labelText: '功能码'),
+                    NoAnimDropdown<ModbusFunction>(
+                      value: _function,
+                      hint: '选择功能码',
+                      decoration: secondaryDialogFieldDecoration(
+                        labelText: '功能码',
+                      ),
                       items: [
                         for (final item in ModbusFunction.values)
                           DropdownMenuItem(
                             value: item,
                             child: Text(
-                              '0x${item.code.toRadixString(16).padLeft(2, '0')} ${item.label}',
+                              '0x${item.code.toRadixString(16).toUpperCase().padLeft(2, '0')} ${item.label}',
                             ),
                           ),
                       ],
@@ -423,27 +640,35 @@ class _ModbusPageState extends State<ModbusPage> {
                     const SizedBox(height: 8),
                     TextField(
                       controller: _valuesController,
-                      decoration: const InputDecoration(
+                      decoration: secondaryDialogFieldDecoration(
                         labelText: '写入值（逗号或空格分隔）',
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
                       children: [
-                        FilledButton.icon(
+                        ElevatedButton.icon(
                           onPressed:
-                              connection.isConnected && !service.requestPending
+                              service.sessionActive && !service.requestPending
                                   ? _sendManual
                                   : null,
                           icon: const Icon(Icons.send),
                           label: const Text('发送'),
                         ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _function.isRead ? _addPollingTask : null,
-                          icon: const Icon(Icons.add),
-                          label: const Text('加入轮询'),
-                        ),
+                        if (_function.isRead)
+                          OutlinedButton.icon(
+                            onPressed: _addPollingTask,
+                            icon: const Icon(Icons.add),
+                            label: const Text('加入轮询'),
+                          )
+                        else
+                          OutlinedButton.icon(
+                            onPressed: _addSendTask,
+                            icon: const Icon(Icons.add),
+                            label: const Text('加入周期发送'),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 18),
@@ -492,7 +717,19 @@ class _ModbusPageState extends State<ModbusPage> {
               Expanded(
                 child: Column(
                   children: [
-                    _TaskList(service: service),
+                    _PollingTaskList(
+                      service: service,
+                      onToggle: _togglePolling,
+                      onConfigure:
+                          () => _configurePeriodicInterval(polling: true),
+                    ),
+                    const Divider(height: 1),
+                    _SendTaskList(
+                      service: service,
+                      onToggle: _toggleSending,
+                      onConfigure:
+                          () => _configurePeriodicInterval(polling: false),
+                    ),
                     const Divider(height: 1),
                     Expanded(
                       child: ListView.builder(
@@ -542,23 +779,53 @@ class _ModbusPageState extends State<ModbusPage> {
   }) => TextField(
     controller: controller,
     keyboardType: TextInputType.number,
-    decoration: InputDecoration(labelText: label),
+    decoration: secondaryDialogFieldDecoration(labelText: label),
     onChanged: onChanged,
   );
 }
 
-class _TaskList extends StatelessWidget {
-  const _TaskList({required this.service});
+class _PollingTaskList extends StatelessWidget {
+  const _PollingTaskList({
+    required this.service,
+    required this.onToggle,
+    required this.onConfigure,
+  });
   final ModbusClientService service;
+  final VoidCallback onToggle;
+  final VoidCallback onConfigure;
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    height: 220,
+    height: 190,
     child: Column(
       children: [
-        const ListTile(
+        ListTile(
           dense: true,
-          title: Text('周期轮询任务', style: TextStyle(fontWeight: FontWeight.w600)),
+          title: const Text(
+            '周期轮询任务',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ToolbarIconButton(
+                tooltip: '轮询周期设置',
+                onPressed: onConfigure,
+                icon: const Icon(Icons.settings_outlined),
+              ),
+              ToolbarStartStopButton(
+                running: service.polling,
+                label: service.polling ? '停止' : '开始',
+                tooltip: service.polling ? '停止周期轮询' : '开始周期轮询',
+                onPressed:
+                    service.sessionActive &&
+                            (service.polling ||
+                                service.tasks.any((task) => task.enabled))
+                        ? onToggle
+                        : null,
+              ),
+            ],
+          ),
         ),
         Expanded(
           child:
@@ -581,7 +848,7 @@ class _TaskList extends StatelessWidget {
                         ),
                         title: Text(task.name),
                         subtitle: Text(
-                          '${task.function.label} U${task.unitId} A${task.address} ×${task.quantity} / ${task.intervalMs}ms'
+                          '${task.function.label} U${task.unitId} A${task.address} ×${task.quantity}'
                           '${result == null ? '' : '  已响应'}',
                         ),
                         trailing: IconButton(
@@ -590,6 +857,90 @@ class _TaskList extends StatelessWidget {
                               service.polling
                                   ? null
                                   : () => service.removeTask(task.id),
+                          icon: const Icon(Icons.close),
+                        ),
+                      );
+                    },
+                  ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SendTaskList extends StatelessWidget {
+  const _SendTaskList({
+    required this.service,
+    required this.onToggle,
+    required this.onConfigure,
+  });
+  final ModbusClientService service;
+  final VoidCallback onToggle;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 190,
+    child: Column(
+      children: [
+        ListTile(
+          dense: true,
+          title: const Text(
+            '周期发送任务',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ToolbarIconButton(
+                tooltip: '发送周期设置',
+                onPressed: onConfigure,
+                icon: const Icon(Icons.settings_outlined),
+              ),
+              ToolbarStartStopButton(
+                running: service.sending,
+                label: service.sending ? '停止' : '开始',
+                tooltip: service.sending ? '停止周期发送' : '开始周期发送',
+                onPressed:
+                    service.sessionActive &&
+                            (service.sending ||
+                                service.sendTasks.any((task) => task.enabled))
+                        ? onToggle
+                        : null,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child:
+              service.sendTasks.isEmpty
+                  ? const Center(child: Text('暂无任务'))
+                  : ListView.builder(
+                    itemCount: service.sendTasks.length,
+                    itemBuilder: (context, index) {
+                      final task = service.sendTasks[index];
+                      return ListTile(
+                        dense: true,
+                        leading: Checkbox(
+                          value: task.enabled,
+                          onChanged:
+                              (value) => service.setSendTaskEnabled(
+                                task.id,
+                                value ?? false,
+                              ),
+                        ),
+                        title: Text(task.name),
+                        subtitle: Text(
+                          '${task.function.label} U${task.unitId} A${task.address} ×${task.quantity} / '
+                          '${task.valueMode.label}'
+                          '${task.valueMode == ModbusSendValueMode.random ? '' : ' ${task.step}'}',
+                        ),
+                        trailing: IconButton(
+                          tooltip: '删除任务',
+                          onPressed:
+                              service.sending
+                                  ? null
+                                  : () => service.removeSendTask(task.id),
                           icon: const Icon(Icons.close),
                         ),
                       );

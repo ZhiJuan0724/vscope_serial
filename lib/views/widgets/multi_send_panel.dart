@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/models/multi_send_profile.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
+import 'common_widgets.dart';
 import 'hex_input_formatter.dart';
 
 /// 数据收发页右侧的多条发送扩展面板。
@@ -669,8 +670,14 @@ class _EntryEditorState extends State<_EntryEditor> {
           const SizedBox(height: 12),
           SegmentedButton<bool>(
             segments: const [
-              ButtonSegment(value: false, label: Text('文本')),
-              ButtonSegment(value: true, label: Text('HEX')),
+              ButtonSegment(
+                value: false,
+                label: AppSegmentedButtonLabel(child: Text('文本')),
+              ),
+              ButtonSegment(
+                value: true,
+                label: AppSegmentedButtonLabel(child: Text('HEX')),
+              ),
             ],
             selected: {_hex},
             onSelectionChanged: (value) => _setHexMode(value.first),

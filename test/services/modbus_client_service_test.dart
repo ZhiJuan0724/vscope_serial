@@ -59,6 +59,7 @@ void main() {
         link.controller.add(DataPacket(data: Uint8List.sublistView(frame, 3)));
       });
     };
+    await service.startSession();
     final response = await service.execute(
       ModbusRequest(
         mode: ModbusMode.rtu,
@@ -79,6 +80,7 @@ void main() {
     addTearDown(link.controller.close);
     addTearDown(link.disconnectController.close);
     final service = ModbusClientService(link);
+    await service.startSession();
     await expectLater(
       service.execute(
         ModbusRequest(
@@ -108,7 +110,139 @@ void main() {
       ]}
     ''');
     expect(result.tasks, hasLength(1));
-    expect(result.errors, ['第2项无效']);
-    expect(service.exportTasks(), contains('"schemaVersion": 1'));
+    expect(result.errors, ['第2项轮询任务无效']);
+    expect(service.exportTasks(), contains('"schemaVersion": 2'));
+  });
+
+  test('未点击开始时不订阅数据也不允许发送请求', () async {
+    final link = _FakeLink();
+    addTearDown(link.controller.close);
+    addTearDown(link.disconnectController.close);
+    final service = ModbusClientService(link);
+    link.controller.add(DataPacket(data: Uint8List.fromList([1, 2, 3])));
+    await Future<void>.delayed(Duration.zero);
+    expect(service.records, isEmpty);
+    await expectLater(
+      service.execute(
+        ModbusRequest(
+          mode: ModbusMode.rtu,
+          unitId: 1,
+          function: ModbusFunction.readHoldingRegisters,
+          address: 0,
+        ),
+      ),
+      throwsStateError,
+    );
+    expect(link.sendCount, 0);
+  });
+
+  test('周期发送自增任务按步长生成值并与响应串行完成', () async {
+    final link = _FakeLink();
+    addTearDown(link.controller.close);
+    addTearDown(link.disconnectController.close);
+    final sentValues = <int>[];
+    link.onSend = (data) {
+      sentValues.add((data[4] << 8) | data[5]);
+      scheduleMicrotask(
+        () => link.controller.add(DataPacket(data: Uint8List.fromList(data))),
+      );
+    };
+    final service = ModbusClientService(
+      link,
+      timeoutMs: 200,
+      initialSendingIntervalMs: 50,
+      initialSendTasks: const [
+        ModbusSendTask(
+          id: 'send',
+          name: '自增',
+          unitId: 1,
+          function: ModbusFunction.writeSingleRegister,
+          address: 0,
+          quantity: 1,
+          valueMode: ModbusSendValueMode.increment,
+          initialValues: [10],
+          step: 2,
+          intervalMs: 50,
+        ),
+      ],
+    );
+    await service.startSession();
+    await service.startSending();
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while (sentValues.length < 3 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    await service.stop();
+    expect(sentValues.take(3), [10, 12, 14]);
+  });
+
+  test('轮询与发送同时到期时发送等待轮询响应', () async {
+    final link = _FakeLink();
+    addTearDown(link.controller.close);
+    addTearDown(link.disconnectController.close);
+    final functionCodes = <int>[];
+    link.onSend = (data) {
+      functionCodes.add(data[1]);
+      if (data[1] == ModbusFunction.readHoldingRegisters.code) {
+        Future<void>.delayed(const Duration(milliseconds: 40), () {
+          final body = Uint8List.fromList([1, 3, 2, 0, 1]);
+          final crc = ModbusCodec.crc16(body);
+          link.controller.add(
+            DataPacket(
+              data: Uint8List.fromList([...body, crc & 0xFF, crc >> 8]),
+            ),
+          );
+        });
+      } else {
+        scheduleMicrotask(
+          () => link.controller.add(DataPacket(data: Uint8List.fromList(data))),
+        );
+      }
+    };
+    final service = ModbusClientService(
+      link,
+      timeoutMs: 200,
+      initialPollingIntervalMs: 50,
+      initialSendingIntervalMs: 50,
+      initialTasks: const [
+        ModbusPollingTask(
+          id: 'poll',
+          name: '轮询',
+          unitId: 1,
+          function: ModbusFunction.readHoldingRegisters,
+          address: 0,
+          quantity: 1,
+          intervalMs: 50,
+        ),
+      ],
+      initialSendTasks: const [
+        ModbusSendTask(
+          id: 'send',
+          name: '发送',
+          unitId: 1,
+          function: ModbusFunction.writeSingleRegister,
+          address: 0,
+          quantity: 1,
+          valueMode: ModbusSendValueMode.increment,
+          initialValues: [1],
+          step: 1,
+          intervalMs: 50,
+        ),
+      ],
+    );
+    await service.startSession();
+    await service.startPolling();
+    await service.startSending();
+    await Future<void>.delayed(const Duration(milliseconds: 15));
+    expect(functionCodes, [ModbusFunction.readHoldingRegisters.code]);
+    final deadline = DateTime.now().add(const Duration(milliseconds: 300));
+    while (functionCodes.length < 2 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await service.stop();
+    expect(functionCodes.take(2), [
+      ModbusFunction.readHoldingRegisters.code,
+      ModbusFunction.writeSingleRegister.code,
+    ]);
   });
 }

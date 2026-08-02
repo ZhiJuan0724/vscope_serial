@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_settings.dart';
 import '../../services/ssh_connection_service.dart';
+import '../../services/ssh_password_store.dart';
 import '../widgets/common_widgets.dart';
 
 Future<void> showSshConnectionDialog(BuildContext context) => showDialog(
@@ -15,7 +16,12 @@ Future<void> showSshConnectionDialog(BuildContext context) => showDialog(
 );
 
 class SshConnectionDialog extends StatefulWidget {
-  const SshConnectionDialog({super.key});
+  const SshConnectionDialog({
+    super.key,
+    this.passwordStore = const WindowsSshPasswordStore(),
+  });
+
+  final SshPasswordStore passwordStore;
 
   @override
   State<SshConnectionDialog> createState() => _SshConnectionDialogState();
@@ -30,6 +36,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
   final TextEditingController _passphrase = TextEditingController();
   late SshAuthenticationMode _authenticationMode;
   bool _obscurePassword = true;
+  bool _savePassword = false;
   bool _busy = false;
   String? _error;
 
@@ -42,6 +49,15 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     _username = TextEditingController(text: config.username);
     _privateKey = TextEditingController(text: config.privateKeyPath);
     _authenticationMode = config.authenticationMode;
+    _savePassword = config.savePassword;
+    if (_authenticationMode == SshAuthenticationMode.password &&
+        _savePassword) {
+      try {
+        _password.text = widget.passwordStore.read(config) ?? '';
+      } catch (error) {
+        _error = '无法读取已保存的 SSH 密码：$error';
+      }
+    }
   }
 
   @override
@@ -76,14 +92,40 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       username: _username.text.trim(),
       authenticationMode: _authenticationMode,
       privateKeyPath: _privateKey.text.trim(),
+      savePassword:
+          _authenticationMode == SshAuthenticationMode.password &&
+          _savePassword,
+      keepAliveEnabled: AppSettings().sshKeepAliveEnabled,
     );
   }
 
   Future<void> _connect() async {
     final config = _readConfig();
     if (config == null) return;
-    final settings = AppSettings()..sshConnectionConfig = config;
-    await settings.save();
+    if (config.savePassword && _password.text.isEmpty) {
+      setState(() => _error = '密码为空，无法保存密码');
+      return;
+    }
+    final settings = AppSettings();
+    final previousConfig = settings.sshConnectionConfig;
+    try {
+      final identityChanged =
+          previousConfig.endpointKey != config.endpointKey ||
+          previousConfig.username.trim().toLowerCase() !=
+              config.username.trim().toLowerCase();
+      if (previousConfig.savePassword &&
+          (identityChanged || !config.savePassword)) {
+        widget.passwordStore.delete(previousConfig);
+      }
+      if (config.savePassword) {
+        widget.passwordStore.write(config, _password.text);
+      }
+      settings.sshConnectionConfig = config;
+      await settings.save();
+    } catch (error) {
+      if (mounted) setState(() => _error = '保存 SSH 凭据失败：$error');
+      return;
+    }
     if (!mounted) return;
     final service = context.read<SshConnectionService>();
     final secrets = SshConnectionSecrets(
@@ -105,6 +147,22 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       if (mounted && service.isConnected) Navigator.pop(context);
     } catch (error) {
       if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _disconnect() async {
+    final service = context.read<SshConnectionService>();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await service.disconnect();
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) setState(() => _error = 'SSH 断开失败：$error');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -170,7 +228,11 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
   @override
   Widget build(BuildContext context) {
     final service = context.watch<SshConnectionService>();
-    final locked = _busy || service.isConnecting || service.isConnected;
+    final locked =
+        _busy ||
+        service.isConnecting ||
+        service.isConnected ||
+        service.isDisconnecting;
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       title: const Text('SSH 连接配置'),
@@ -225,9 +287,15 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                   enabled: !locked,
                   obscureText: _obscurePassword,
                   decoration: InputDecoration(
-                    labelText: '密码（不会保存）',
+                    labelText: '密码',
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
+                      splashRadius: 14,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
                       onPressed:
                           () => setState(
                             () => _obscurePassword = !_obscurePassword,
@@ -239,8 +307,31 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                       ),
                     ),
                   ),
-                )
-              else ...[
+                ),
+              if (_authenticationMode == SshAuthenticationMode.password) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: _savePassword,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onChanged:
+                            locked
+                                ? null
+                                : (value) => setState(
+                                  () => _savePassword = value ?? false,
+                                ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text('保存密码（使用 Windows 凭据管理器）'),
+                    ],
+                  ),
+                ),
+              ] else ...[
                 TextField(
                   controller: _privateKey,
                   enabled: !locked,
@@ -299,17 +390,34 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
           onPressed: _busy ? null : () => Navigator.pop(context),
           child: const Text('关闭'),
         ),
-        FilledButton.icon(
-          onPressed: locked ? null : () => unawaited(_connect()),
-          icon:
-              _busy
-                  ? const SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                  : const Icon(Icons.link),
-          label: Text(_busy ? '连接中' : '连接'),
-        ),
+        if (service.isConnected || service.isDisconnecting)
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: _busy ? null : () => unawaited(_disconnect()),
+            icon:
+                _busy
+                    ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.link_off),
+            label: Text(_busy ? '断开中' : '断开'),
+          )
+        else
+          ElevatedButton.icon(
+            onPressed: locked ? null : () => unawaited(_connect()),
+            icon:
+                _busy
+                    ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.link),
+            label: Text(_busy ? '连接中' : '连接'),
+          ),
       ],
     );
   }

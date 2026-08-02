@@ -26,6 +26,11 @@ class ShellViewModel extends BaseViewModel {
     _sshSubscription = this.sshService.dataStream.listen((data) {
       if (connectionMode == ShellConnectionMode.ssh) _dataController.add(data);
     });
+    _sshErrorSubscription = this.sshService.errorStream.listen((error) {
+      if (connectionMode == ShellConnectionMode.ssh) {
+        _dataController.addError(error);
+      }
+    });
   }
 
   final SshConnectionService sshService;
@@ -34,6 +39,7 @@ class ShellViewModel extends BaseViewModel {
       StreamController.broadcast(sync: true);
   late final StreamSubscription<Uint8List> _normalSubscription;
   late final StreamSubscription<Uint8List> _sshSubscription;
+  late final StreamSubscription<Object> _sshErrorSubscription;
 
   ShellConnectionMode get connectionMode =>
       ShellConnectionMode.fromString(AppSettings().shellConnectionMode);
@@ -76,7 +82,8 @@ class ShellViewModel extends BaseViewModel {
 
   Future<void> stop() =>
       isSshMode
-          ? sshService.stopShell()
+          // SSH 的 PTY 与连接保持同一生命周期，停止即完整断开。
+          ? sshService.disconnect()
           : connectionService.stopShellReceiving();
 
   Future<void> sendText(String text) async {
@@ -163,6 +170,7 @@ class ShellViewModel extends BaseViewModel {
     sshService.removeListener(_onSshChanged);
     unawaited(_normalSubscription.cancel());
     unawaited(_sshSubscription.cancel());
+    unawaited(_sshErrorSubscription.cancel());
     unawaited(_dataController.close());
     if (_ownsSshService) sshService.dispose();
     super.dispose();

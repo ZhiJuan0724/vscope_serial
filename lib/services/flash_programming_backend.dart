@@ -14,6 +14,8 @@ abstract interface class FlashProgrammingBackend {
   Stream<String> get output;
   bool get isConnected;
 
+  /// 仅检测编程工具，不把尚未填写的目标或cfg误报为后端缺失。
+  Future<bool> isToolAvailable(FlashConnectionConfig config);
   Future<bool> isAvailable(FlashConnectionConfig config);
   Future<void> connect(FlashConnectionConfig config);
   Future<void> disconnect();

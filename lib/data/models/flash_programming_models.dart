@@ -156,8 +156,9 @@ class FlashProgramRequest {
         !extension.endsWith('.hex')) {
       throw const FormatException('仅支持 ELF、HEX 和 BIN 文件');
     }
-    if (isBinary && (binAddress == null || binAddress! < 0)) {
-      throw const FormatException('BIN文件必须填写有效基地址');
+    if (isBinary &&
+        (binAddress == null || binAddress! < 0 || binAddress! > 0xFFFFFFFF)) {
+      throw const FormatException('BIN文件必须填写有效的32位基地址');
     }
   }
 }

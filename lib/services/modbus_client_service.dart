@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
@@ -43,8 +44,13 @@ class DataConnectionModbusLink implements ModbusDataLink {
 }
 
 class ModbusTaskImportResult {
-  const ModbusTaskImportResult(this.tasks, this.errors);
+  const ModbusTaskImportResult(
+    this.tasks,
+    this.errors, {
+    this.sendTasks = const [],
+  });
   final List<ModbusPollingTask> tasks;
+  final List<ModbusSendTask> sendTasks;
   final List<String> errors;
 }
 
@@ -67,40 +73,65 @@ class ModbusClientService extends ChangeNotifier {
     this._link, {
     ModbusMode initialMode = ModbusMode.rtu,
     int timeoutMs = 1000,
+    int initialPollingIntervalMs = 1000,
+    int initialSendingIntervalMs = 1000,
     List<ModbusPollingTask> initialTasks = const [],
+    List<ModbusSendTask> initialSendTasks = const [],
     this.onTasksChanged,
+    this.onSendTasksChanged,
+    this.onPollingIntervalChanged,
+    this.onSendingIntervalChanged,
+    Random? random,
   }) : _mode = initialMode,
        _timeoutMs = timeoutMs.clamp(100, 60000),
+       _pollingIntervalMs = initialPollingIntervalMs.clamp(50, 3600000),
+       _sendingIntervalMs = initialSendingIntervalMs.clamp(50, 3600000),
        _tasks = List.of(initialTasks),
+       _sendTasks = List.of(initialSendTasks),
+       _random = random ?? Random(),
        _parser = ModbusFrameParser(initialMode);
 
   final ModbusDataLink _link;
   final void Function(List<ModbusPollingTask> tasks)? onTasksChanged;
+  final void Function(List<ModbusSendTask> tasks)? onSendTasksChanged;
+  final ValueChanged<int>? onPollingIntervalChanged;
+  final ValueChanged<int>? onSendingIntervalChanged;
+  final Random _random;
   final List<ModbusFrameRecord> _records = [];
   final Map<String, ModbusResponse> _taskResults = {};
   List<ModbusPollingTask> _tasks;
+  List<ModbusSendTask> _sendTasks;
+  final Map<String, List<int>> _sendTaskValues = {};
+  final Map<String, DateTime> _nextTaskDue = {};
   late ModbusFrameParser _parser;
   StreamSubscription<DataPacket>? _subscription;
   StreamSubscription<void>? _disconnectSubscription;
   _PendingRequest? _pending;
   ModbusMode _mode;
   int _timeoutMs;
+  int _pollingIntervalMs;
+  int _sendingIntervalMs;
   int _transactionId = 0;
-  int _pollGeneration = 0;
   int _requestEpoch = 0;
   bool _sessionActive = false;
   bool _polling = false;
+  bool _sending = false;
+  bool _periodicLoopRunning = false;
   Object? _lastError;
   ModbusResponse? _lastResponse;
 
   ModbusMode get mode => _mode;
   int get timeoutMs => _timeoutMs;
+  int get pollingIntervalMs => _pollingIntervalMs;
+  int get sendingIntervalMs => _sendingIntervalMs;
   bool get sessionActive => _sessionActive;
   bool get polling => _polling;
+  bool get sending => _sending;
   bool get requestPending => _pending != null;
   Object? get lastError => _lastError;
   ModbusResponse? get lastResponse => _lastResponse;
   List<ModbusPollingTask> get tasks => List.unmodifiable(_tasks);
+  List<ModbusSendTask> get sendTasks => List.unmodifiable(_sendTasks);
   List<ModbusFrameRecord> get records => List.unmodifiable(_records);
   Map<String, ModbusResponse> get taskResults => Map.unmodifiable(_taskResults);
 
@@ -108,6 +139,24 @@ class ModbusClientService extends ChangeNotifier {
     final next = value.clamp(100, 60000);
     if (_timeoutMs == next) return;
     _timeoutMs = next;
+    notifyListeners();
+  }
+
+  void setPollingIntervalMs(int value) {
+    final next = value.clamp(50, 3600000);
+    if (_pollingIntervalMs == next) return;
+    _pollingIntervalMs = next;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('poll:'));
+    onPollingIntervalChanged?.call(next);
+    notifyListeners();
+  }
+
+  void setSendingIntervalMs(int value) {
+    final next = value.clamp(50, 3600000);
+    if (_sendingIntervalMs == next) return;
+    _sendingIntervalMs = next;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('send:'));
+    onSendingIntervalChanged?.call(next);
     notifyListeners();
   }
 
@@ -135,6 +184,27 @@ class ModbusClientService extends ChangeNotifier {
       if (task.id == id) task.copyWith(enabled: enabled) else task,
   ]);
 
+  void replaceSendTasks(List<ModbusSendTask> value) {
+    _sendTasks = List.of(value);
+    _sendTaskValues.removeWhere(
+      (id, _) => !_sendTasks.any((task) => task.id == id),
+    );
+    _nextTaskDue.clear();
+    onSendTasksChanged?.call(List.unmodifiable(_sendTasks));
+    notifyListeners();
+  }
+
+  void addSendTask(ModbusSendTask task) =>
+      replaceSendTasks([..._sendTasks, task]);
+
+  void removeSendTask(String id) =>
+      replaceSendTasks(_sendTasks.where((task) => task.id != id).toList());
+
+  void setSendTaskEnabled(String id, bool enabled) => replaceSendTasks([
+    for (final task in _sendTasks)
+      if (task.id == id) task.copyWith(enabled: enabled) else task,
+  ]);
+
   Future<void> startSession() async {
     if (_sessionActive) return;
     if (!_link.isConnected) throw StateError('数据连接未建立');
@@ -157,7 +227,7 @@ class ModbusClientService extends ChangeNotifier {
     ModbusRequest request, {
     int readRetries = 0,
   }) async {
-    await startSession();
+    if (!_sessionActive) throw StateError('请先开始Modbus数据处理');
     if (_pending != null) throw StateError('已有Modbus请求正在等待响应');
     final retries = request.function.isRead ? readRetries.clamp(0, 3) : 0;
     final requestEpoch = _requestEpoch;
@@ -286,60 +356,194 @@ class ModbusClientService extends ChangeNotifier {
 
   Future<void> startPolling() async {
     if (_polling) return;
-    await startSession();
+    if (!_sessionActive) throw StateError('请先开始Modbus数据处理');
     if (!_tasks.any((task) => task.enabled)) {
       throw StateError('没有启用的轮询任务');
     }
     _polling = true;
-    final generation = ++_pollGeneration;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('poll:'));
     notifyListeners();
-    unawaited(_pollLoop(generation));
+    _ensurePeriodicLoop();
   }
 
-  Future<void> _pollLoop(int generation) async {
-    while (_polling && generation == _pollGeneration && _link.isConnected) {
-      final enabledTasks = _tasks.where((task) => task.enabled).toList();
-      if (enabledTasks.isEmpty) break;
-      for (final task in enabledTasks) {
-        if (!_polling || generation != _pollGeneration) break;
-        try {
-          final response = await execute(
-            ModbusRequest(
-              mode: _mode,
-              unitId: task.unitId,
-              function: task.function,
-              address: task.address,
-              quantity: task.quantity,
-            ),
-            readRetries: task.readRetries,
-          );
-          _taskResults[task.id] = response;
-        } catch (error) {
-          _lastError = error;
-        }
-        if (!_polling || generation != _pollGeneration) break;
-        await Future<void>.delayed(Duration(milliseconds: task.intervalMs));
-      }
+  Future<void> startSending() async {
+    if (_sending) return;
+    if (!_sessionActive) throw StateError('请先开始Modbus数据处理');
+    if (!_sendTasks.any((task) => task.enabled)) {
+      throw StateError('没有启用的周期发送任务');
     }
-    if (generation == _pollGeneration) {
-      _polling = false;
-      notifyListeners();
-    }
+    _sending = true;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('send:'));
+    notifyListeners();
+    _ensurePeriodicLoop();
   }
 
   Future<void> stopPolling() async {
     _polling = false;
-    _pollGeneration++;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('poll:'));
+    notifyListeners();
+  }
+
+  Future<void> stopSending() async {
+    _sending = false;
+    _nextTaskDue.removeWhere((key, _) => key.startsWith('send:'));
+    notifyListeners();
+  }
+
+  void _ensurePeriodicLoop() {
+    if (_periodicLoopRunning) return;
+    _periodicLoopRunning = true;
+    unawaited(_periodicLoop());
+  }
+
+  Future<void> _periodicLoop() async {
+    try {
+      while (_sessionActive && _link.isConnected && (_polling || _sending)) {
+        final actions =
+            <
+              ({
+                String key,
+                int intervalMs,
+                int priority,
+                Future<void> Function() run,
+              })
+            >[];
+        if (_polling) {
+          for (final task in _tasks.where((task) => task.enabled)) {
+            actions.add((
+              key: 'poll:${task.id}',
+              intervalMs: _pollingIntervalMs,
+              priority: 0,
+              run: () => _runPollingTask(task),
+            ));
+          }
+        }
+        if (_sending) {
+          for (final task in _sendTasks.where((task) => task.enabled)) {
+            actions.add((
+              key: 'send:${task.id}',
+              intervalMs: _sendingIntervalMs,
+              priority: 1,
+              run: () => _runSendTask(task),
+            ));
+          }
+        }
+        if (actions.isEmpty) {
+          _polling = false;
+          _sending = false;
+          notifyListeners();
+          break;
+        }
+
+        final now = DateTime.now();
+        for (final action in actions) {
+          _nextTaskDue.putIfAbsent(action.key, () => now);
+        }
+        actions.sort((left, right) {
+          final dueOrder = _nextTaskDue[left.key]!.compareTo(
+            _nextTaskDue[right.key]!,
+          );
+          return dueOrder != 0
+              ? dueOrder
+              : left.priority.compareTo(right.priority);
+        });
+        final action = actions.first;
+        final wait = _nextTaskDue[action.key]!.difference(now);
+        if (wait > Duration.zero) {
+          await Future<void>.delayed(
+            wait > const Duration(milliseconds: 50)
+                ? const Duration(milliseconds: 50)
+                : wait,
+          );
+          continue;
+        }
+        try {
+          await action.run();
+        } catch (error) {
+          _lastError = error;
+        }
+        _nextTaskDue[action.key] = DateTime.now().add(
+          Duration(milliseconds: action.intervalMs),
+        );
+        notifyListeners();
+      }
+    } finally {
+      _periodicLoopRunning = false;
+      if (_sessionActive && (_polling || _sending)) _ensurePeriodicLoop();
+    }
+  }
+
+  Future<void> _runPollingTask(ModbusPollingTask task) async {
+    final response = await execute(
+      ModbusRequest(
+        mode: _mode,
+        unitId: task.unitId,
+        function: task.function,
+        address: task.address,
+        quantity: task.quantity,
+      ),
+      readRetries: task.readRetries,
+    );
+    _taskResults[task.id] = response;
+  }
+
+  Future<void> _runSendTask(ModbusSendTask task) async {
+    final values = _nextSendValues(task);
+    await execute(
+      ModbusRequest(
+        mode: _mode,
+        unitId: task.unitId,
+        function: task.function,
+        address: task.address,
+        quantity: task.quantity,
+        registerValues: task.function.isBitFunction ? const [] : values,
+        coilValues:
+            task.function.isBitFunction
+                ? values.map((value) => value != 0).toList()
+                : const [],
+      ),
+    );
+  }
+
+  List<int> _nextSendValues(ModbusSendTask task) {
+    final count =
+        task.function == ModbusFunction.writeSingleCoil ||
+                task.function == ModbusFunction.writeSingleRegister
+            ? 1
+            : task.quantity;
+    if (task.valueMode == ModbusSendValueMode.random) {
+      return List<int>.generate(
+        count,
+        (_) =>
+            task.function.isBitFunction
+                ? _random.nextInt(2)
+                : _random.nextInt(0x10000),
+      );
+    }
+    final modulus = task.function.isBitFunction ? 2 : 0x10000;
+    final current = _sendTaskValues.putIfAbsent(
+      task.id,
+      () => List<int>.generate(
+        count,
+        (index) => (task.initialValues.elementAtOrNull(index) ?? 0) % modulus,
+      ),
+    );
+    final result = List<int>.from(current);
+    final direction = task.valueMode == ModbusSendValueMode.increment ? 1 : -1;
+    for (var index = 0; index < current.length; index++) {
+      current[index] = (current[index] + direction * task.step) % modulus;
+    }
+    return result;
+  }
+
+  Future<void> stop() async {
+    await stopPolling();
+    await stopSending();
     _requestEpoch++;
     final pending = _pending;
     if (pending != null && !pending.completer.isCompleted) {
       pending.completer.completeError(StateError('Modbus活动已停止'));
     }
-    notifyListeners();
-  }
-
-  Future<void> stop() async {
-    await stopPolling();
     _pending = null;
     _parser.reset();
     await _subscription?.cancel();
@@ -352,34 +556,55 @@ class ModbusClientService extends ChangeNotifier {
   }
 
   String exportTasks() => const JsonEncoder.withIndent('  ').convert({
-    'schemaVersion': 1,
-    'tasks': [for (final task in _tasks) task.toJson()],
+    'schemaVersion': 2,
+    'pollingTasks': [for (final task in _tasks) task.toJson()],
+    'sendTasks': [for (final task in _sendTasks) task.toJson()],
   });
 
   ModbusTaskImportResult importTasks(String source) {
     final errors = <String>[];
     final tasks = <ModbusPollingTask>[];
+    final sendTasks = <ModbusSendTask>[];
     try {
       final root = jsonDecode(source);
       if (root is! Map ||
-          root['schemaVersion'] != 1 ||
-          root['tasks'] is! List) {
+          (root['schemaVersion'] != 1 && root['schemaVersion'] != 2)) {
         return const ModbusTaskImportResult([], ['不是受支持的Modbus任务文件']);
       }
-      final values = root['tasks'] as List;
+      final values =
+          (root['schemaVersion'] == 1 ? root['tasks'] : root['pollingTasks']);
+      if (values is! List) {
+        return const ModbusTaskImportResult([], ['轮询任务列表无效']);
+      }
       for (var index = 0; index < values.length; index++) {
         final task = ModbusPollingTask.fromJson(values[index]);
         if (task == null) {
-          errors.add('第${index + 1}项无效');
+          errors.add('第${index + 1}项轮询任务无效');
         } else {
           tasks.add(task);
+        }
+      }
+      if (root['schemaVersion'] == 2) {
+        final sendValues = root['sendTasks'];
+        if (sendValues is! List) {
+          errors.add('周期发送任务列表无效');
+        } else {
+          for (var index = 0; index < sendValues.length; index++) {
+            final task = ModbusSendTask.fromJson(sendValues[index]);
+            if (task == null) {
+              errors.add('第${index + 1}项周期发送任务无效');
+            } else {
+              sendTasks.add(task);
+            }
+          }
         }
       }
     } catch (error) {
       errors.add('JSON解析失败：$error');
     }
     if (tasks.isNotEmpty) replaceTasks(tasks);
-    return ModbusTaskImportResult(tasks, errors);
+    if (sendTasks.isNotEmpty) replaceSendTasks(sendTasks);
+    return ModbusTaskImportResult(tasks, errors, sendTasks: sendTasks);
   }
 
   @override

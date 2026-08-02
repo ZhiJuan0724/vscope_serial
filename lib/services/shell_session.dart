@@ -67,7 +67,7 @@ class ShellSession {
   RawShellThemeMode themeMode = RawShellThemeMode.light;
   RawShellCursorMode cursorMode = RawShellCursorMode.verticalBar;
   String encoding = 'UTF-8';
-  String lineEnding = '\r\n';
+  String lineEnding = '\r';
   bool localEcho = true;
   int scrollbackLines = 10000;
   double fontSize = 13.0;

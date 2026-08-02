@@ -12,6 +12,9 @@ import '../../core/constants/plot_configuration.dart';
 import '../../core/constants/rtt_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/app_logger.dart';
+import '../../data/models/data_connection_config.dart';
+import '../../data/models/modbus_models.dart';
+import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_info.dart';
 import '../../services/app_notifications.dart';
 import '../../services/app_settings.dart';
@@ -22,12 +25,15 @@ import '../../services/probe_backend.dart';
 import '../../services/changelog_service.dart';
 import '../../services/raw_receive_session.dart';
 import '../../services/data_connection_service.dart';
+import '../../services/modbus_client_service.dart';
 import '../../services/shell_receive_queue.dart';
+import '../../services/ssh_connection_service.dart';
 import '../../services/update_checker.dart';
 import '../../services/update_service.dart';
 import '../../services/ymodem_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../../viewmodels/rtt_viewmodel.dart';
+import '../../viewmodels/shell_viewmodel.dart';
 import '../widgets/common_widgets.dart';
 
 /// 打开应用信息、更新和版本说明窗口。
@@ -973,6 +979,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
     var networkConnectionsEnabled = AppSettings().networkConnectionsEnabled;
     var separateSerialProfiles = AppSettings().separateSerialProfiles;
+    var sshKeepAliveEnabled = AppSettings().sshKeepAliveEnabled;
+    final sshService = dialogContext.read<SshConnectionService?>();
     // 探针后端属于连接能力设置，即使当前未显示探针页面也允许预先配置。
     const rttEnabled = true;
     var plotReceiveAggregationEnabled =
@@ -981,6 +989,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final diagnosticsSectionKey = GlobalKey();
     final shortcutsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
+    final sshSectionKey = GlobalKey();
     final probeBackendSectionKey = GlobalKey();
     final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
@@ -1012,6 +1021,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   label: AppStrings.common.settingsPages,
                   anchorKey: pageSectionKey,
                 ),
+                SettingsNavigationItem(label: 'SSH', anchorKey: sshSectionKey),
                 if (rttEnabled)
                   SettingsNavigationItem(
                     label: AppStrings.common.settingsProbeBackend,
@@ -1206,22 +1216,49 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       ),
                     ),
                     subtitle: Text(
-                      '允许数据收发和绘图使用 TCP/UDP；Shell 不受影响。',
+                      '允许数据收发、绘图和Modbus使用TCP/UDP，并允许Shell选择SSH。',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                     value: networkConnectionsEnabled,
                     onChanged:
-                        DataConnectionService().isNetworkConnection &&
-                                DataConnectionService().isConnectionBusy
+                        (DataConnectionService().isNetworkConnection &&
+                                    DataConnectionService().isConnectionBusy) ||
+                                (sshService?.isConnected ?? false) ||
+                                (sshService?.isConnecting ?? false)
                             ? null
                             : (value) {
                               setDialogState(
                                 () => networkConnectionsEnabled = value,
                               );
-                              DataConnectionService()
-                                  .setNetworkConnectionsEnabled(value);
+                              final modbus =
+                                  dialogContext.read<ModbusClientService?>();
+                              final shell =
+                                  dialogContext.read<ShellViewModel?>();
+                              unawaited(() async {
+                                final settings = AppSettings();
+                                if (!value) {
+                                  if (modbus?.mode == ModbusMode.tcp) {
+                                    await modbus!.setMode(ModbusMode.rtu);
+                                    settings
+                                      ..modbusMode = ModbusMode.rtu.value
+                                      ..saveConnectionTypeForPage(
+                                        'modbus',
+                                        DataConnectionType.serial,
+                                      );
+                                  }
+                                  if (shell?.connectionMode ==
+                                      ShellConnectionMode.ssh) {
+                                    await shell!.setConnectionMode(
+                                      ShellConnectionMode.normal,
+                                    );
+                                  }
+                                }
+                                DataConnectionService()
+                                    .setNetworkConnectionsEnabled(value);
+                                await settings.save();
+                              }());
                             },
                   ),
                   SwitchListTile(
@@ -1254,6 +1291,36 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 'rawData',
                                 forceReload: true,
                               );
+                              unawaited(settings.save());
+                            },
+                  ),
+                  const Divider(height: 16),
+                  SwitchListTile(
+                    key: sshSectionKey,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      '启用 SSH Keepalive',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '默认每 10 秒发送一次 OpenSSH keepalive 请求；不兼容的嵌入式 SSH 服务端可关闭，下次连接生效。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    value: sshKeepAliveEnabled,
+                    onChanged:
+                        (sshService?.isConnected ?? false) ||
+                                (sshService?.isConnecting ?? false) ||
+                                (sshService?.isDisconnecting ?? false)
+                            ? null
+                            : (value) {
+                              setDialogState(() => sshKeepAliveEnabled = value);
+                              final settings =
+                                  AppSettings()..sshKeepAliveEnabled = value;
                               unawaited(settings.save());
                             },
                   ),
@@ -1370,6 +1437,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 AppSettings().networkConnectionsEnabled;
                             separateSerialProfiles =
                                 AppSettings().separateSerialProfiles;
+                            sshKeepAliveEnabled =
+                                AppSettings().sshKeepAliveEnabled;
                             plotReceiveAggregationEnabled =
                                 AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =

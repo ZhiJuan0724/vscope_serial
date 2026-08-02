@@ -98,6 +98,7 @@ void main() {
             ..shellLineEnding = '\n'
             ..shellLocalEcho = false
             ..shellScrollbackLines = 50000
+            ..sshKeepAliveEnabled = false
             ..ymodemSaveDirectoryPolicy = 'custom'
             ..rawMultiSendProfileId = 'multi-send'
             ..rttBackendSelection = 'external-openocd'
@@ -214,9 +215,10 @@ void main() {
       expect(settings.rawDataShellTheme, 'light');
       expect(settings.rawDataShellCursor, 'verticalBar');
       expect(settings.shellEncoding, 'UTF-8');
-      expect(settings.shellLineEnding, '\r\n');
-      expect(settings.shellLocalEcho, isTrue);
+      expect(settings.shellLineEnding, '\r');
+      expect(settings.shellLocalEcho, isFalse);
       expect(settings.shellScrollbackLines, 10000);
+      expect(settings.sshKeepAliveEnabled, isTrue);
       expect(settings.ymodemSaveDirectoryPolicy, 'exports');
       expect(settings.rawMultiSendProfileId, isEmpty);
       expect(settings.rttBackendSelection, 'automatic');

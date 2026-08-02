@@ -201,6 +201,21 @@ void main() {
     expect(find.text(AppStrings.appInfo.receivePerformance), findsOneWidget);
     expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
     expect(find.text('版本回退'), findsWidgets);
+    final settingsNavigation = find.byKey(
+      const ValueKey('settings-navigation-view'),
+    );
+    final navigationScroll =
+        find
+            .descendant(
+              of: settingsNavigation,
+              matching: find.byType(Scrollable),
+            )
+            .first;
+    await tester.scrollUntilVisible(
+      find.text('重置设置'),
+      40,
+      scrollable: navigationScroll,
+    );
     expect(find.text('重置设置'), findsWidgets);
     expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
     expect(find.text(AppStrings.appInfo.crashDump), findsOneWidget);

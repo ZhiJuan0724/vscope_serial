@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -82,6 +83,18 @@ class FlashProgrammingService extends ChangeNotifier {
     };
   }
 
+  /// 仅检查编程工具和配置是否可用，不建立目标连接。
+  ///
+  /// Flash连接窗口复用探针连接表单时通过此入口显示预计后端；实际连接
+  /// 仍由本服务创建独立高权限后端，不复用RTT监控后端实例。
+  Future<String> expectedBackendName(FlashConnectionConfig config) async {
+    for (final selection in _candidates(config)) {
+      final backend = _backendBuilder(selection);
+      if (await backend.isToolAvailable(config)) return backend.displayName;
+    }
+    throw StateError('没有检测到可用的Flash编程工具');
+  }
+
   Future<void> connect(FlashConnectionConfig config) async {
     if (_backend != null || isConnecting) return;
     if (!_owners.tryAcquire(ConnectionOwner.programming)) {
@@ -162,6 +175,31 @@ class FlashProgrammingService extends ChangeNotifier {
     FlashOperationState.reading,
     (backend) => backend.read(request, _updateProgress),
   );
+
+  /// 读取结果先由既有后端写入临时BIN，再加载到内存交给HEX查看器。
+  /// 临时文件仅是外部工具的交换介质，不向用户暴露，也不会作为读取操作的保存结果。
+  Future<Uint8List> readBytes({
+    required int address,
+    required int length,
+  }) async {
+    final separator = Platform.pathSeparator;
+    final path =
+        '${Directory.systemTemp.path}${Directory.systemTemp.path.endsWith(separator) ? '' : separator}'
+        'vscope_flash_${DateTime.now().microsecondsSinceEpoch}.bin';
+    final file = File(path);
+    try {
+      await read(
+        FlashReadRequest(address: address, length: length, outputPath: path),
+      );
+      return await file.readAsBytes();
+    } finally {
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {
+        // 临时文件清理失败不覆盖已经完成的读取结果或原始后端错误。
+      }
+    }
+  }
 
   Future<void> _runOperation(
     FlashOperationState operation,

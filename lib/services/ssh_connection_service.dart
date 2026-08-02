@@ -39,6 +39,7 @@ abstract interface class SshClientAdapter {
   Stream<Uint8List> get stdout;
   Stream<Uint8List> get stderr;
   Future<void> get done;
+  Future<void>? get shellDone;
   bool get shellOpen;
 
   Future<void> startShell({required int columns, required int rows});
@@ -72,6 +73,7 @@ class SshConnectionService extends ChangeNotifier {
   SshClientAdapter? _client;
   StreamSubscription<Uint8List>? _stdoutSubscription;
   StreamSubscription<Uint8List>? _stderrSubscription;
+  Future<void> _writeTail = Future<void>.value();
   int _generation = 0;
   bool _disposed = false;
 
@@ -84,6 +86,7 @@ class SshConnectionService extends ChangeNotifier {
   Stream<Object> get errorStream => _errorController.stream;
   bool get isConnected => state == SshConnectionState.connected;
   bool get isConnecting => state == SshConnectionState.connecting;
+  bool get isDisconnecting => state == SshConnectionState.disconnecting;
   bool get isRunning => _client?.shellOpen ?? false;
 
   Future<void> connect(
@@ -98,8 +101,16 @@ class SshConnectionService extends ChangeNotifier {
     final generation = ++_generation;
     state = SshConnectionState.connecting;
     notifyListeners();
+    SshClientAdapter? openedClient;
     try {
       final client = await _connector(config, secrets, trustedHost);
+      openedClient = client;
+      if (generation != _generation) {
+        await client.close();
+        return;
+      }
+      // SSH 模式连接成功后立即建立 PTY；顶部开始/停止只属于普通 Shell。
+      await client.startShell(columns: 80, rows: 24);
       if (generation != _generation) {
         await client.close();
         return;
@@ -118,12 +129,29 @@ class SshConnectionService extends ChangeNotifier {
                   _handleRemoteClosed(generation, error),
         ),
       );
+      final shellDone = client.shellDone;
+      if (shellDone != null) {
+        unawaited(
+          shellDone.then(
+            (_) => _handleRemoteShellClosed(generation, null),
+            onError:
+                (Object error, StackTrace _) =>
+                    _handleRemoteShellClosed(generation, error),
+          ),
+        );
+      }
       state = SshConnectionState.connected;
       AppLogger().info(
         'SSH 已连接：${config.host}:${config.port}',
         category: 'SSH',
       );
     } catch (_) {
+      await openedClient?.close();
+      _client = null;
+      await _stdoutSubscription?.cancel();
+      await _stderrSubscription?.cancel();
+      _stdoutSubscription = null;
+      _stderrSubscription = null;
       _connectionOwners.release(ConnectionOwner.data);
       state = SshConnectionState.disconnected;
       rethrow;
@@ -154,10 +182,22 @@ class SshConnectionService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> write(Uint8List data) async {
-    final client = _client;
-    if (client == null || !client.shellOpen) throw StateError('SSH Shell 尚未开始');
-    await client.write(data);
+  Future<void> write(Uint8List data) {
+    // 逐键输入会在前一个异步写入完成前继续产生数据。所有写入在这里排队，
+    // 避免 dartssh2 同时操作同一个 Socket StreamSink。
+    final payload = Uint8List.fromList(data);
+    final operation = _writeTail.then((_) async {
+      final client = _client;
+      if (client == null || !client.shellOpen) {
+        throw StateError('SSH Shell 尚未开始');
+      }
+      await client.write(payload);
+    });
+    _writeTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return operation;
   }
 
   void resizeTerminal(
@@ -191,7 +231,13 @@ class SshConnectionService extends ChangeNotifier {
 
   void _handleRemoteClosed(int generation, Object? error) {
     if (generation != _generation || _client == null) return;
-    if (error != null) _errorController.add(error);
+    _errorController.add(error ?? StateError('SSH 连接已由远端关闭'));
+    unawaited(disconnect());
+  }
+
+  void _handleRemoteShellClosed(int generation, Object? error) {
+    if (generation != _generation || _client == null) return;
+    _errorController.add(error ?? StateError('SSH 终端已由远端关闭'));
     unawaited(disconnect());
   }
 
@@ -244,6 +290,10 @@ Future<SshClientAdapter> _connectDartSsh(
       },
       handshakeTimeout: const Duration(seconds: 10),
       authTimeout: const Duration(seconds: 15),
+      // 默认保持 dartssh2 的 10 秒 OpenSSH keepalive；不兼容的嵌入式
+      // SSH 服务端可在高级设置中关闭，下一次连接时生效。
+      keepAliveInterval:
+          config.keepAliveEnabled ? const Duration(seconds: 10) : null,
       ident: 'SerialTools_1.0',
     );
     await client.authenticated;
@@ -279,6 +329,7 @@ class _DartSshClientAdapter implements SshClientAdapter {
   final StreamController<Uint8List> _stdout = StreamController.broadcast();
   final StreamController<Uint8List> _stderr = StreamController.broadcast();
   SSHSession? _session;
+  Future<void>? _sessionDone;
   StreamSubscription<Uint8List>? _stdoutSubscription;
   StreamSubscription<Uint8List>? _stderrSubscription;
 
@@ -289,6 +340,8 @@ class _DartSshClientAdapter implements SshClientAdapter {
   @override
   Future<void> get done => _client.done;
   @override
+  Future<void>? get shellDone => _sessionDone;
+  @override
   bool get shellOpen => _session != null;
 
   @override
@@ -296,9 +349,9 @@ class _DartSshClientAdapter implements SshClientAdapter {
     if (_session != null) return;
     final session = await _client.shell(
       pty: SSHPtyConfig(type: 'xterm-256color', width: columns, height: rows),
-      environment: const {'TERM': 'xterm-256color'},
     );
     _session = session;
+    _sessionDone = session.done;
     _stdoutSubscription = session.stdout.listen(_stdout.add);
     _stderrSubscription = session.stderr.listen(_stderr.add);
     unawaited(session.done.whenComplete(() => stopShell()));
@@ -308,6 +361,7 @@ class _DartSshClientAdapter implements SshClientAdapter {
   Future<void> stopShell() async {
     final session = _session;
     _session = null;
+    _sessionDone = null;
     session?.close();
     await _stdoutSubscription?.cancel();
     await _stderrSubscription?.cancel();
@@ -320,7 +374,6 @@ class _DartSshClientAdapter implements SshClientAdapter {
     final session = _session;
     if (session == null) throw StateError('SSH Shell 尚未开始');
     session.write(data);
-    await session.flush();
   }
 
   @override

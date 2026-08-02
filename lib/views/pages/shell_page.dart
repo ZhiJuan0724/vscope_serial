@@ -15,6 +15,7 @@ import '../../core/localization/app_strings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_notifications.dart';
+import '../../services/app_settings.dart';
 import '../../services/shell_session.dart';
 import '../../services/shell_receive_queue.dart';
 import '../../services/shell_stream_decoder.dart';
@@ -34,10 +35,14 @@ class ShellPage extends StatefulWidget {
   const ShellPage({
     super.key,
     this.receiveQueueLimitBytes = ShellReceiveQueue.defaultMaxBytes,
+    this.onConnectionShortcut,
   });
 
   /// Shell UI 尚未消费的接收数据上限；测试可注入较小值验证过载路径。
   final int receiveQueueLimitBytes;
+
+  /// 终端焦点会消费功能键，因此由页面显式把连接快捷键交回主窗口。
+  final ValueChanged<LogicalKeyboardKey>? onConnectionShortcut;
 
   @override
   State<ShellPage> createState() => _ShellPageState();
@@ -45,6 +50,7 @@ class ShellPage extends StatefulWidget {
 
 class _ShellPageState extends State<ShellPage> {
   static const int _maxReceiveBytesPerFrame = 64 * 1024;
+  static const Duration _cursorBlinkInterval = Duration(milliseconds: 500);
 
   late Terminal _terminal;
   late ShellStreamDecoder _decoder;
@@ -53,10 +59,13 @@ class _ShellPageState extends State<ShellPage> {
   final TextEditingController _lineController = TextEditingController();
   final FocusNode _lineFocusNode = FocusNode(debugLabel: 'shellLineInput');
   final FocusNode _terminalFocusNode = FocusNode(debugLabel: 'shellTerminal');
+  final ValueNotifier<bool> _cursorBlinkVisible = ValueNotifier<bool>(true);
+  Timer? _cursorBlinkTimer;
   late final ShellReceiveQueue _receiveQueue;
   final List<String> _commandHistory = <String>[];
   StreamSubscription<Uint8List>? _receiveSubscription;
   ShellViewModel? _viewModel;
+  bool _wasSshRunning = false;
   int _receivedBytes = 0;
   int _newOutputBytes = 0;
   int _historyIndex = 0;
@@ -74,6 +83,7 @@ class _ShellPageState extends State<ShellPage> {
     _terminal = _createTerminal(settings.scrollbackLines);
     _decoder = ShellStreamDecoder(settings.encoding);
     _terminalScrollController.addListener(_handleScrollPosition);
+    _terminalFocusNode.addListener(_syncCursorBlink);
   }
 
   @override
@@ -81,8 +91,11 @@ class _ShellPageState extends State<ShellPage> {
     super.didChangeDependencies();
     final vm = context.read<ShellViewModel>();
     if (identical(_viewModel, vm)) return;
+    _viewModel?.removeListener(_handleViewModelStateChanged);
     _receiveSubscription?.cancel();
     _viewModel = vm;
+    _wasSshRunning = false;
+    vm.addListener(_handleViewModelStateChanged);
     _receiveSubscription = vm.dataStream.listen(
       _enqueueReceivedData,
       onError: (Object error, StackTrace stackTrace) {
@@ -90,13 +103,35 @@ class _ShellPageState extends State<ShellPage> {
       },
     );
     _bindTerminalOutput(vm);
+    _handleViewModelStateChanged();
+  }
+
+  void _handleViewModelStateChanged() {
+    final vm = _viewModel;
+    if (vm == null) return;
+    final running = vm.isSshMode && vm.isRunning;
+    if (running && !_wasSshRunning) {
+      // SSH 在连接窗口中自动启动，连接窗口关闭后再补一次焦点，确保逐键输入可用。
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 120), () {
+          if (!mounted || !vm.isSshMode || !vm.isRunning) return;
+          _focusInputModeAfterLayout(vm.inputMode);
+        }),
+      );
+    }
+    _wasSshRunning = running;
+    _syncCursorBlink();
   }
 
   @override
   void dispose() {
+    _viewModel?.removeListener(_handleViewModelStateChanged);
     _viewModel?.updatePendingReceiveBytes(0);
     unawaited(_receiveSubscription?.cancel());
     _terminalScrollController.removeListener(_handleScrollPosition);
+    _terminalFocusNode.removeListener(_syncCursorBlink);
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkVisible.dispose();
     _terminalScrollController.dispose();
     _terminalController.dispose();
     _lineController.dispose();
@@ -223,6 +258,41 @@ class _ShellPageState extends State<ShellPage> {
     } else if (bottomChanged) {
       setState(() {});
     }
+    if (bottomChanged) _syncCursorBlink();
+  }
+
+  bool get _shouldBlinkCursor {
+    final vm = _viewModel;
+    return vm != null &&
+        vm.isRunning &&
+        vm.inputMode == RawShellInputMode.key &&
+        !vm.isYmodemActive &&
+        _terminalAtBottom &&
+        _terminal.cursorVisibleMode &&
+        _terminalFocusNode.hasFocus;
+  }
+
+  /// 自绘光标不经过 xterm 的光标动画，因此只为光标本身维护闪烁节拍。
+  /// 失焦或停止时停在可见相位，重新获得焦点后再继续闪烁。
+  void _syncCursorBlink() {
+    if (_shouldBlinkCursor) {
+      _cursorBlinkTimer ??= Timer.periodic(_cursorBlinkInterval, (_) {
+        _cursorBlinkVisible.value = !_cursorBlinkVisible.value;
+      });
+      return;
+    }
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkTimer = null;
+    _cursorBlinkVisible.value = true;
+  }
+
+  void _restartCursorBlink() {
+    if (!_shouldBlinkCursor) return;
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkVisible.value = true;
+    _cursorBlinkTimer = Timer.periodic(_cursorBlinkInterval, (_) {
+      _cursorBlinkVisible.value = !_cursorBlinkVisible.value;
+    });
   }
 
   void _scheduleScrollToBottom() {
@@ -260,6 +330,7 @@ class _ShellPageState extends State<ShellPage> {
       return;
     }
     try {
+      // 普通 Shell 与 SSH 统一服从设置中的本地回显开关。
       if (vm.localEcho) _terminal.write('$text\r\n');
       _commandHistory.remove(text);
       _commandHistory.add(text);
@@ -309,9 +380,19 @@ class _ShellPageState extends State<ShellPage> {
     KeyEvent event,
     ShellViewModel vm,
   ) {
+    final key = event.logicalKey;
+    if (_terminalFunctionKeys.contains(key)) {
+      if (event is KeyDownEvent && _connectionShortcutKeys.contains(key)) {
+        widget.onConnectionShortcut?.call(key);
+      }
+      // 所有 F1-F12 均不得继续进入 xterm 并发送到远端。
+      return KeyEventResult.handled;
+    }
     if (event is! KeyDownEvent || !vm.isRunning || vm.isYmodemActive) {
       return KeyEventResult.ignored;
     }
+    // 键盘活动后先显示光标，再重新开始一个完整的闪烁周期。
+    _restartCursorBlink();
     final keyboard = HardwareKeyboard.instance;
     final control = keyboard.isControlPressed;
     final shift = keyboard.isShiftPressed;
@@ -330,6 +411,28 @@ class _ShellPageState extends State<ShellPage> {
     // 方向键、Tab 和其余 Ctrl 组合继续交给 xterm 编码。
     return KeyEventResult.ignored;
   }
+
+  static final Set<LogicalKeyboardKey> _connectionShortcutKeys = {
+    LogicalKeyboardKey.f1,
+    LogicalKeyboardKey.f2,
+    LogicalKeyboardKey.f3,
+    LogicalKeyboardKey.f5,
+  };
+
+  static final Set<LogicalKeyboardKey> _terminalFunctionKeys = {
+    LogicalKeyboardKey.f1,
+    LogicalKeyboardKey.f2,
+    LogicalKeyboardKey.f3,
+    LogicalKeyboardKey.f4,
+    LogicalKeyboardKey.f5,
+    LogicalKeyboardKey.f6,
+    LogicalKeyboardKey.f7,
+    LogicalKeyboardKey.f8,
+    LogicalKeyboardKey.f9,
+    LogicalKeyboardKey.f10,
+    LogicalKeyboardKey.f11,
+    LogicalKeyboardKey.f12,
+  };
 
   Future<void> _copySelection() async {
     final selection = _terminalController.selection;
@@ -418,7 +521,12 @@ class _ShellPageState extends State<ShellPage> {
           extent: 76,
           child: ToolbarStartStopButton(
             key: const ValueKey('shell-start-stop-button'),
-            tooltip: vm.isRunning ? '停止 Shell' : '开始 Shell',
+            tooltip:
+                vm.isSshMode && vm.isRunning
+                    ? '断开 SSH'
+                    : vm.isRunning
+                    ? '停止 Shell'
+                    : '开始 Shell',
             running: vm.isRunning,
             label: vm.isRunning ? '停止' : '开始',
             onPressed:
@@ -453,25 +561,33 @@ class _ShellPageState extends State<ShellPage> {
                   ),
                 ),
               ),
-              segments: const [
-                ButtonSegment(
+              segments: [
+                const ButtonSegment(
                   value: ShellConnectionMode.normal,
-                  label: SizedBox(width: 30, child: Center(child: Text('普通'))),
+                  label: SizedBox(
+                    width: 30,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(child: Text('普通')),
+                    ),
+                  ),
                 ),
                 ButtonSegment(
                   value: ShellConnectionMode.ssh,
-                  label: SizedBox(width: 30, child: Center(child: Text('SSH'))),
+                  enabled: AppSettings().networkConnectionsEnabled,
+                  label: SizedBox(
+                    width: 30,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(child: Text('SSH')),
+                    ),
+                  ),
                 ),
               ],
               selected: {vm.connectionMode},
               showSelectedIcon: false,
               onSelectionChanged:
-                  vm.isConnected || vm.isRunning
-                      ? (selection) => unawaited(
-                        _confirmConnectionModeChange(vm, selection.first),
-                      )
-                      : (selection) =>
-                          unawaited(vm.setConnectionMode(selection.first)),
+                  (selection) => unawaited(
+                    _confirmConnectionModeChange(vm, selection.first),
+                  ),
             ),
           ),
         ),
@@ -549,25 +665,53 @@ class _ShellPageState extends State<ShellPage> {
     ShellConnectionMode mode,
   ) async {
     if (mode == vm.connectionMode) return;
+    final requiresDisconnect = vm.isConnected || vm.isRunning;
     final confirmed = await showDialog<bool>(
       context: context,
       builder:
           (context) => AlertDialog(
             title: const Text('切换 Shell 连接模式'),
-            content: const Text('切换普通终端与 SSH 前必须断开当前连接，是否继续？'),
+            content: Text(
+              requiresDisconnect
+                  ? '切换普通终端与 SSH 前必须断开当前连接，并清空终端显示、滚动历史和命令历史。是否继续？'
+                  : '切换普通终端与 SSH 会清空终端显示、滚动历史和命令历史。是否继续？',
+            ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
                 child: const Text('取消'),
               ),
-              FilledButton(
+              ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('断开并切换'),
+                child: Text(requiresDisconnect ? '断开并切换' : '清空并切换'),
               ),
             ],
           ),
     );
-    if (confirmed == true) await vm.setConnectionMode(mode);
+    if (confirmed != true) return;
+    // 切换前先清除当前普通 Shell 尚未被界面消费的统计；SSH 模式下该调用为空操作。
+    vm.updatePendingReceiveBytes(0);
+    await vm.setConnectionMode(mode);
+    if (!mounted) return;
+    _clearConnectionModeHistory(vm);
+  }
+
+  void _clearConnectionModeHistory(ShellViewModel vm) {
+    _receiveQueue.reset();
+    vm.updatePendingReceiveBytes(0);
+    _terminalController.clearSelection();
+    _terminal.write('\x1b[3J\x1b[2J\x1b[H');
+    _commandHistory.clear();
+    _historyIndex = 0;
+    _lineController.clear();
+    _decoder.reset(encoding: vm.encoding);
+    setState(() {
+      _receivedBytes = 0;
+      _newOutputBytes = 0;
+      _terminalAtBottom = true;
+      _ansiDetectionTail = '';
+      _lastOverflowWarningAt = null;
+    });
   }
 
   ToolbarLayoutItem _shellActionToolbarItem({
@@ -778,7 +922,16 @@ class _ShellPageState extends State<ShellPage> {
       top: top,
       width: width,
       height: height,
-      child: IgnorePointer(child: ColoredBox(color: color)),
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _cursorBlinkVisible,
+        child: IgnorePointer(child: ColoredBox(color: color)),
+        builder:
+            (context, visible, child) => Opacity(
+              // 使用阶跃明灭而非渐隐，保持与常见终端光标一致。
+              opacity: visible ? 1 : 0,
+              child: child,
+            ),
+      ),
     );
   }
 
@@ -1152,11 +1305,15 @@ class _ShellPageState extends State<ShellPage> {
                             segments: const [
                               ButtonSegment(
                                 value: RawShellThemeMode.light,
-                                label: Text('浅色'),
+                                label: AppSegmentedButtonLabel(
+                                  child: Text('浅色'),
+                                ),
                               ),
                               ButtonSegment(
                                 value: RawShellThemeMode.dark,
-                                label: Text('深色'),
+                                label: AppSegmentedButtonLabel(
+                                  child: Text('深色'),
+                                ),
                               ),
                             ],
                             selected: <RawShellThemeMode>{theme},

@@ -74,10 +74,17 @@ class AppSettings {
   /// Modbus页面协议参数和轮询任务。
   String modbusMode = ModbusMode.rtu.value;
   int modbusTimeoutMs = 1000;
+  int modbusPollingIntervalMs = 1000;
+  int modbusSendingIntervalMs = 1000;
   List<ModbusPollingTask> modbusPollingTasks = const [];
+  List<ModbusSendTask> modbusSendTasks = const [];
 
   /// Flash编程配置完全独立于RTT探针配置。
   FlashConnectionConfig flashConnectionConfig = const FlashConnectionConfig();
+
+  /// 用户是否已选择不再显示Flash操作的通用高权限风险说明。
+  /// 擦除、烧写等具体操作的目标与范围确认仍然保留。
+  bool flashOperationRiskWarningDismissed = false;
 
   /// 当前实际显示的主页面。新安装默认只显示数据收发和绘图。
   List<String> visibleMainPages = const ['rawData', 'plot'];
@@ -295,10 +302,10 @@ class AppSettings {
   String shellEncoding = 'UTF-8';
 
   /// Shell 命令行发送后追加的行尾。
-  String shellLineEnding = '\r\n';
+  String shellLineEnding = '\r';
 
   /// Shell 命令行模式是否在发送前显示本地输入。
-  bool shellLocalEcho = true;
+  bool shellLocalEcho = false;
 
   /// Shell 终端保留的最大历史行数。
   int shellScrollbackLines = 10000;
@@ -307,6 +314,7 @@ class AppSettings {
   String shellConnectionMode = ShellConnectionMode.normal.value;
   SshConnectionConfig sshConnectionConfig = const SshConnectionConfig();
   Map<String, SshKnownHost> sshKnownHosts = {};
+  bool sshKeepAliveEnabled = true;
 
   /// YMODEM 接收文件保存策略，当前固定为 exports。
   String ymodemSaveDirectoryPolicy = 'exports';
@@ -405,8 +413,12 @@ class AppSettings {
     dataPageConnectionTypes = {};
     modbusMode = ModbusMode.rtu.value;
     modbusTimeoutMs = 1000;
+    modbusPollingIntervalMs = 1000;
+    modbusSendingIntervalMs = 1000;
     modbusPollingTasks = const [];
+    modbusSendTasks = const [];
     flashConnectionConfig = const FlashConnectionConfig();
+    flashOperationRiskWarningDismissed = false;
     visibleMainPages = const ['rawData', 'plot'];
 
     refreshFps = 60;
@@ -501,12 +513,13 @@ class AppSettings {
     rawDataShellTheme = 'light';
     rawDataShellCursor = 'verticalBar';
     shellEncoding = 'UTF-8';
-    shellLineEnding = '\r\n';
-    shellLocalEcho = true;
+    shellLineEnding = '\r';
+    shellLocalEcho = false;
     shellScrollbackLines = 10000;
     shellConnectionMode = ShellConnectionMode.normal.value;
     sshConnectionConfig = const SshConnectionConfig();
     sshKnownHosts = {};
+    sshKeepAliveEnabled = true;
     ymodemSaveDirectoryPolicy = 'exports';
     rawDataEncoding = 'UTF-8';
     rawMultiSendProfileId = '';
@@ -598,18 +611,38 @@ class AppSettings {
       dataPageConnectionTypes = _decodeConnectionTypes(
         json['dataPageConnectionTypes'],
       );
-      modbusMode = ModbusMode.fromString(json['modbusMode'] as String?).value;
+      final savedModbusMode = ModbusMode.fromString(
+        json['modbusMode'] as String?,
+      );
+      modbusMode =
+          !networkConnectionsEnabled && savedModbusMode == ModbusMode.tcp
+              ? ModbusMode.rtu.value
+              : savedModbusMode.value;
       modbusTimeoutMs =
           ((json['modbusTimeoutMs'] as num?)?.toInt() ?? 1000)
               .clamp(100, 60000)
+              .toInt();
+      modbusPollingIntervalMs =
+          ((json['modbusPollingIntervalMs'] as num?)?.toInt() ?? 1000)
+              .clamp(50, 3600000)
+              .toInt();
+      modbusSendingIntervalMs =
+          ((json['modbusSendingIntervalMs'] as num?)?.toInt() ?? 1000)
+              .clamp(50, 3600000)
               .toInt();
       modbusPollingTasks = [
         for (final value in (json['modbusPollingTasks'] as List? ?? const []))
           if (ModbusPollingTask.fromJson(value) case final task?) task,
       ];
+      modbusSendTasks = [
+        for (final value in (json['modbusSendTasks'] as List? ?? const []))
+          if (ModbusSendTask.fromJson(value) case final task?) task,
+      ];
       flashConnectionConfig = FlashConnectionConfig.fromJson(
         json['flashConnectionConfig'],
       );
+      flashOperationRiskWarningDismissed =
+          json['flashOperationRiskWarningDismissed'] as bool? ?? false;
 
       // 绘图设置
       refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
@@ -885,17 +918,22 @@ class AppSettings {
           json['lineEnding'] as String?) {
         '\r' => '\r',
         '\n' => '\n',
-        _ => '\r\n',
+        '\r\n' => '\r\n',
+        _ => '\r',
       };
-      shellLocalEcho = json['shellLocalEcho'] as bool? ?? true;
+      shellLocalEcho = json['shellLocalEcho'] as bool? ?? false;
       shellScrollbackLines =
           ((json['shellScrollbackLines'] as num?)?.toInt() ?? 10000)
               .clamp(1000, 100000)
               .toInt();
+      final savedShellConnectionMode = ShellConnectionMode.fromString(
+        json['shellConnectionMode'] as String?,
+      );
       shellConnectionMode =
-          ShellConnectionMode.fromString(
-            json['shellConnectionMode'] as String?,
-          ).value;
+          !networkConnectionsEnabled &&
+                  savedShellConnectionMode == ShellConnectionMode.ssh
+              ? ShellConnectionMode.normal.value
+              : savedShellConnectionMode.value;
       sshConnectionConfig = SshConnectionConfig.fromJson(
         json['sshConnectionConfig'],
       );
@@ -906,6 +944,7 @@ class AppSettings {
             if (SshKnownHost.fromJson(entry.value) case final host?)
               '${entry.key}': host,
       };
+      sshKeepAliveEnabled = json['sshKeepAliveEnabled'] as bool? ?? true;
       ymodemSaveDirectoryPolicy = 'exports';
       rawDataEncoding = json['rawDataEncoding'] as String? ?? 'UTF-8';
       rawMultiSendProfileId = json['rawMultiSendProfileId'] as String? ?? '';
@@ -1262,10 +1301,14 @@ class AppSettings {
     'dataPageConnectionTypes': dataPageConnectionTypes,
     'modbusMode': modbusMode,
     'modbusTimeoutMs': modbusTimeoutMs,
+    'modbusPollingIntervalMs': modbusPollingIntervalMs,
+    'modbusSendingIntervalMs': modbusSendingIntervalMs,
     'modbusPollingTasks': [
       for (final task in modbusPollingTasks) task.toJson(),
     ],
+    'modbusSendTasks': [for (final task in modbusSendTasks) task.toJson()],
     'flashConnectionConfig': flashConnectionConfig.toJson(),
+    'flashOperationRiskWarningDismissed': flashOperationRiskWarningDismissed,
 
     // 绘图设置
     'refreshFps': refreshFps,
@@ -1361,6 +1404,7 @@ class AppSettings {
       for (final entry in sshKnownHosts.entries)
         entry.key: entry.value.toJson(),
     },
+    'sshKeepAliveEnabled': sshKeepAliveEnabled,
     'ymodemSaveDirectoryPolicy': ymodemSaveDirectoryPolicy,
     'rawDataEncoding': rawDataEncoding,
     'rawMultiSendProfileId': rawMultiSendProfileId,
@@ -1437,10 +1481,18 @@ class AppSettings {
     // Modbus
     'modbusMode': ['modbus', 'connection', 'mode'],
     'modbusTimeoutMs': ['modbus', 'protocol', 'timeoutMs'],
+    'modbusPollingIntervalMs': ['modbus', 'polling', 'intervalMs'],
+    'modbusSendingIntervalMs': ['modbus', 'sending', 'intervalMs'],
     'modbusPollingTasks': ['modbus', 'polling', 'tasks'],
+    'modbusSendTasks': ['modbus', 'sending', 'tasks'],
 
     // Flash编程
     'flashConnectionConfig': ['flash', 'connection'],
+    'flashOperationRiskWarningDismissed': [
+      'flash',
+      'safety',
+      'operationWarningDismissed',
+    ],
 
     // 数据收发
     'rawDataDisplayLineLimit': ['rawData', 'display', 'lineLimit'],
@@ -1466,6 +1518,7 @@ class AppSettings {
     'shellConnectionMode': ['shell', 'connection', 'mode'],
     'sshConnectionConfig': ['shell', 'ssh', 'connection'],
     'sshKnownHosts': ['shell', 'ssh', 'knownHosts'],
+    'sshKeepAliveEnabled': ['shell', 'ssh', 'keepAliveEnabled'],
     'ymodemSaveDirectoryPolicy': [
       'shell',
       'fileTransfer',

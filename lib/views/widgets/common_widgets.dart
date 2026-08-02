@@ -37,6 +37,17 @@ const double kToolbarHeight = 40;
 const double kToolbarControlExtent = 32;
 const double kToolbarIconSize = 18;
 
+/// Material分段按钮的文字基线统一略微上移，修正中文与英文视觉上偏下的问题。
+class AppSegmentedButtonLabel extends StatelessWidget {
+  const AppSegmentedButtonLabel({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) =>
+      Transform.translate(offset: const Offset(0, -1), child: child);
+}
+
 /// 同组工具和左右工具组之间的统一间距。
 const double kToolbarItemSpacing = 4;
 const double kToolbarGroupSpacing = 12;
@@ -471,6 +482,7 @@ class ToolbarIconButton extends StatelessWidget {
       child: IconButton(
         tooltip: tooltip,
         onPressed: onPressed,
+        splashRadius: 14,
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints.tightFor(
           width: kToolbarControlExtent,

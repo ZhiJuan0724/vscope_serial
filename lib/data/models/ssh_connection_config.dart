@@ -24,7 +24,7 @@ enum SshAuthenticationMode {
       value == 'privateKey' ? privateKey : password;
 }
 
-/// SSH 连接参数。密码和私钥口令只在连接调用中传递，不进入该持久化模型。
+/// SSH 连接参数。密码本身不进入该持久化模型，只记录是否从系统凭据库读取。
 class SshConnectionConfig {
   const SshConnectionConfig({
     this.host = '127.0.0.1',
@@ -32,6 +32,8 @@ class SshConnectionConfig {
     this.username = 'root',
     this.authenticationMode = SshAuthenticationMode.password,
     this.privateKeyPath = '',
+    this.savePassword = false,
+    this.keepAliveEnabled = true,
   });
 
   final String host;
@@ -39,6 +41,10 @@ class SshConnectionConfig {
   final String username;
   final SshAuthenticationMode authenticationMode;
   final String privateKeyPath;
+  final bool savePassword;
+
+  /// 是否启用 dartssh2 的 OpenSSH keepalive 请求；只参与当前连接，不写入连接 JSON。
+  final bool keepAliveEnabled;
 
   String get endpointKey => '${host.trim().toLowerCase()}:$port';
 
@@ -48,12 +54,16 @@ class SshConnectionConfig {
     String? username,
     SshAuthenticationMode? authenticationMode,
     String? privateKeyPath,
+    bool? savePassword,
+    bool? keepAliveEnabled,
   }) => SshConnectionConfig(
     host: host ?? this.host,
     port: port ?? this.port,
     username: username ?? this.username,
     authenticationMode: authenticationMode ?? this.authenticationMode,
     privateKeyPath: privateKeyPath ?? this.privateKeyPath,
+    savePassword: savePassword ?? this.savePassword,
+    keepAliveEnabled: keepAliveEnabled ?? this.keepAliveEnabled,
   );
 
   Map<String, Object?> toJson() => {
@@ -62,6 +72,7 @@ class SshConnectionConfig {
     'username': username,
     'authenticationMode': authenticationMode.value,
     'privateKeyPath': privateKeyPath,
+    'savePassword': savePassword,
   };
 
   static SshConnectionConfig fromJson(Object? value) {
@@ -76,6 +87,7 @@ class SshConnectionConfig {
         json['authenticationMode'] as String?,
       ),
       privateKeyPath: '${json['privateKeyPath'] ?? ''}',
+      savePassword: json['savePassword'] == true,
     );
   }
 }

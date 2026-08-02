@@ -150,9 +150,24 @@ class MyApp extends StatelessWidget {
                 DataConnectionModbusLink(connectionService),
                 initialMode: ModbusMode.fromString(AppSettings().modbusMode),
                 timeoutMs: AppSettings().modbusTimeoutMs,
+                initialPollingIntervalMs: AppSettings().modbusPollingIntervalMs,
+                initialSendingIntervalMs: AppSettings().modbusSendingIntervalMs,
                 initialTasks: AppSettings().modbusPollingTasks,
+                initialSendTasks: AppSettings().modbusSendTasks,
                 onTasksChanged: (tasks) {
                   AppSettings().modbusPollingTasks = List.of(tasks);
+                  unawaited(AppSettings().save());
+                },
+                onSendTasksChanged: (tasks) {
+                  AppSettings().modbusSendTasks = List.of(tasks);
+                  unawaited(AppSettings().save());
+                },
+                onPollingIntervalChanged: (value) {
+                  AppSettings().modbusPollingIntervalMs = value;
+                  unawaited(AppSettings().save());
+                },
+                onSendingIntervalChanged: (value) {
+                  AppSettings().modbusSendingIntervalMs = value;
                   unawaited(AppSettings().save());
                 },
               ),
@@ -496,7 +511,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
             id: 'shell',
             label: AppStrings.nav.shell,
             icon: Icons.terminal,
-            page: const ShellPage(),
+            page: ShellPage(onConnectionShortcut: _handleConnectionShortcut),
           ),
           'plot': (
             id: 'plot',
@@ -837,6 +852,15 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
 
   Future<void> _runFlashConnectionShortcut(LogicalKeyboardKey key) async {
     final service = context.read<FlashProgrammingService>();
+    if (key == LogicalKeyboardKey.f2) {
+      if (service.isConnected) {
+        AppNotifications.show('快捷连接：Flash编程会话已连接');
+      } else {
+        AppNotifications.show('快捷连接：请确认Flash高权限连接配置');
+        await showFlashConnectionDialog(context);
+      }
+      return;
+    }
     if (key == LogicalKeyboardKey.f3) {
       if (!service.hasSession) {
         AppNotifications.show('快捷断开：Flash编程会话未连接');
@@ -847,7 +871,7 @@ class _MainFrameState extends State<MainFrame> with WidgetsBindingObserver {
       await service.disconnect();
       return;
     }
-    AppNotifications.show('Flash高权限会话必须在页面中确认安全提示后显式连接');
+    AppNotifications.show('Flash高权限会话请通过连接窗口确认后显式连接');
   }
 
   Future<void> _runSshConnectionShortcut(LogicalKeyboardKey key) async {
