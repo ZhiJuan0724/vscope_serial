@@ -242,17 +242,116 @@ class ModbusPduProcessor:
             return None
         fc = pdu[0]
         if fc not in READ_FC and fc not in WRITE_FC:
-            return bytes([fc | 0x80, EX_ILLEGAL_FUNCTION])
+            response = bytes([fc | 0x80, EX_ILLEGAL_FUNCTION])
+            self._log_operation(unit_id, pdu, response)
+            return response
         if self.inject_exception is not None:
-            return bytes([fc | 0x80, self.inject_exception])
+            response = bytes([fc | 0x80, self.inject_exception])
+            self._log_operation(unit_id, pdu, response)
+            return response
 
         try:
             if fc in (FC_READ_COILS, FC_READ_DISCRETE_INPUTS,
                       FC_READ_HOLDING_REGISTERS, FC_READ_INPUT_REGISTERS):
-                return self._handle_read(fc, pdu)
-            return self._handle_write(fc, pdu)
+                response = self._handle_read(fc, pdu)
+            else:
+                response = self._handle_write(fc, pdu)
         except ModbusFrameError as exc:
-            return bytes([fc | 0x80, exc.args[0]])
+            response = bytes([fc | 0x80, exc.args[0]])
+        self._log_operation(unit_id, pdu, response)
+        return response
+
+    def _log_operation(self, unit_id: int, pdu: bytes, response: bytes):
+        timestamp = time.strftime("%H:%M:%S")
+        millis = int((time.time() % 1) * 1000)
+        fc = pdu[0]
+        operation = "查询" if fc in READ_FC else "写入"
+        label = FC_LABELS.get(fc, f"未知功能 0x{fc:02X}")
+        details = self._request_details(fc, pdu)
+        result = self._response_details(fc, pdu, response)
+        print(
+            f"[{timestamp}.{millis:03d}] {operation} | 从站={unit_id} | "
+            f"FC=0x{fc:02X} {label}{details} | {result}",
+            flush=True,
+        )
+
+    def _request_details(self, fc: int, pdu: bytes) -> str:
+        if len(pdu) < 5:
+            return f" | PDU={_format_hex(pdu)}"
+        address = (pdu[1] << 8) | pdu[2]
+        reference_bases = {
+            FC_READ_COILS: 1,
+            FC_READ_DISCRETE_INPUTS: 10001,
+            FC_READ_HOLDING_REGISTERS: 40001,
+            FC_READ_INPUT_REGISTERS: 30001,
+            FC_WRITE_SINGLE_COIL: 1,
+            FC_WRITE_SINGLE_REGISTER: 40001,
+            FC_WRITE_MULTIPLE_COILS: 1,
+            FC_WRITE_MULTIPLE_REGISTERS: 40001,
+        }
+        reference = reference_bases.get(fc, 0) + address
+        if fc in READ_FC:
+            quantity = (pdu[3] << 8) | pdu[4]
+            return f" | 地址={address} (参考号={reference}) | 数量={quantity}"
+        if fc == FC_WRITE_SINGLE_COIL:
+            raw = (pdu[3] << 8) | pdu[4]
+            value = "ON" if raw == 0xFF00 else "OFF" if raw == 0 else f"0x{raw:04X}"
+            return f" | 地址={address} (参考号={reference}) | 值={value}"
+        if fc == FC_WRITE_SINGLE_REGISTER:
+            value = (pdu[3] << 8) | pdu[4]
+            return f" | 地址={address} (参考号={reference}) | 值={value} (0x{value:04X})"
+        quantity = (pdu[3] << 8) | pdu[4]
+        values = self._write_values(fc, pdu, quantity)
+        return (
+            f" | 地址={address} (参考号={reference}) | 数量={quantity}"
+            f" | 值={self._format_values(values)}"
+        )
+
+    @staticmethod
+    def _write_values(fc: int, pdu: bytes, quantity: int) -> List[int]:
+        if len(pdu) < 6:
+            return []
+        if fc == FC_WRITE_MULTIPLE_COILS:
+            data = pdu[6:]
+            return [
+                1 if data[index // 8] & (1 << (index % 8)) else 0
+                for index in range(min(quantity, len(data) * 8))
+            ]
+        data = pdu[6:]
+        return [
+            (data[index] << 8) | data[index + 1]
+            for index in range(0, min(len(data), quantity * 2) - 1, 2)
+        ]
+
+    def _response_details(self, fc: int, pdu: bytes, response: bytes) -> str:
+        if not response:
+            return "无响应"
+        if response[0] & 0x80:
+            code = response[1] if len(response) > 1 else 0
+            return f"异常 | 异常码=0x{code:02X}"
+        if fc not in READ_FC:
+            return "写入成功"
+        if len(response) < 2:
+            return f"响应异常 | PDU={_format_hex(response)}"
+        data = response[2:2 + response[1]]
+        if fc in (FC_READ_COILS, FC_READ_DISCRETE_INPUTS):
+            quantity = (pdu[3] << 8) | pdu[4] if len(pdu) >= 5 else len(data) * 8
+            values = [
+                1 if data[index // 8] & (1 << (index % 8)) else 0
+                for index in range(min(quantity, len(data) * 8))
+            ]
+        else:
+            values = [
+                (data[index] << 8) | data[index + 1]
+                for index in range(0, len(data) - 1, 2)
+            ]
+        return f"查询成功 | 返回值={self._format_values(values)}"
+
+    @staticmethod
+    def _format_values(values: List[int], limit: int = 32) -> str:
+        displayed = ", ".join(str(value) for value in values[:limit])
+        suffix = f", ... (共{len(values)}项)" if len(values) > limit else ""
+        return f"[{displayed}{suffix}]"
 
     def _check_read_request(self, pdu: bytes) -> Tuple[int, int]:
         if len(pdu) != 5:
@@ -737,7 +836,7 @@ def main():
     parser.add_argument("--baud", "-b", type=int, default=115200, help="RTU/ASCII 串口波特率 (默认 115200)")
     parser.add_argument("--host", default="127.0.0.1", help="TCP 监听地址 (默认 127.0.0.1)")
     parser.add_argument("--unit", "-u", type=int, default=1, help="从站单元号 (默认 1)")
-    parser.add_argument("--verbose", "-v", action="store_true", help="打印接收/发送的完整帧")
+    parser.add_argument("--verbose", "-v", action="store_true", help="额外打印接收/发送的完整原始帧")
     parser.add_argument(
         "--inject-exception",
         type=int,
@@ -783,6 +882,7 @@ def main():
         print(f"异常注入: 0x{args.inject_exception:02X}")
     if args.auto_increment:
         print("自增模拟: 前 64 个寄存器每秒 +1")
+    print("操作日志: 已开启（每次查询和写入都会输出）")
     print("=" * 56)
 
     store = ModbusSlaveStore(

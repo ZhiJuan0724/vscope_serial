@@ -231,9 +231,10 @@ extension PlotViewModelViewportControls on PlotViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置框选放大开关
-  void setBoxZoomEnabled(bool value) {
+  /// 设置框选放大开关；连续模式需要手动关闭，单次模式在框选成功后关闭。
+  void setBoxZoomEnabled(bool value, {bool continuous = false}) {
     _boxZoomEnabled = value;
+    _boxZoomContinuous = value && continuous;
     Future.microtask(() => notifyListeners());
   }
 

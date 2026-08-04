@@ -71,13 +71,15 @@ class AppSettings {
   Map<String, NetworkConnectionConfig> networkPageProfiles = {};
   Map<String, String> dataPageConnectionTypes = {};
 
-  /// Modbus页面协议参数和轮询任务。
+  /// Modbus页面协议参数、页面配置和全局表格布局。
   String modbusMode = ModbusMode.rtu.value;
   int modbusTimeoutMs = 1000;
-  int modbusPollingIntervalMs = 1000;
-  int modbusSendingIntervalMs = 1000;
-  List<ModbusPollingTask> modbusPollingTasks = const [];
-  List<ModbusSendTask> modbusSendTasks = const [];
+  int modbusLayoutMode = ModbusRegisterLayoutMode.columnMajor.value;
+  ModbusByteOrder modbusByteOrder = ModbusByteOrder.highByteFirst;
+  ModbusWordOrder modbusWordOrder = ModbusWordOrder.highWordFirst;
+  int modbusLogMaxLines = modbusDefaultLogMaxLines;
+  String modbusProfileId = '';
+  List<ModbusRegisterPage> modbusPages = const [];
 
   /// Flash编程配置完全独立于RTT探针配置。
   FlashConnectionConfig flashConnectionConfig = const FlashConnectionConfig();
@@ -145,7 +147,7 @@ class AppSettings {
 
   /// 大范围绘图 LOD 策略：performance、balanced 或 qualityHigh。
   /// quality 是两档版本遗留值，加载时迁移为 balanced。
-  String plotLodQuality = 'performance';
+  String plotLodQuality = 'balanced';
 
   /// 是否显示网格
   bool showGrid = true;
@@ -185,7 +187,7 @@ class AppSettings {
   /// 探针绘图历史内存预算，单位 MiB，范围 64~2048。
   int probePlotHistoryMemoryLimitMiB = 256;
 
-  String probePlotLodQuality = 'quality';
+  String probePlotLodQuality = 'balanced';
   bool probePlotShowGrid = true;
   String probePlotGridDensity = 'normal';
   String probePlotBackground = 'light';
@@ -413,10 +415,12 @@ class AppSettings {
     dataPageConnectionTypes = {};
     modbusMode = ModbusMode.rtu.value;
     modbusTimeoutMs = 1000;
-    modbusPollingIntervalMs = 1000;
-    modbusSendingIntervalMs = 1000;
-    modbusPollingTasks = const [];
-    modbusSendTasks = const [];
+    modbusLayoutMode = ModbusRegisterLayoutMode.columnMajor.value;
+    modbusByteOrder = ModbusByteOrder.highByteFirst;
+    modbusWordOrder = ModbusWordOrder.highWordFirst;
+    modbusLogMaxLines = modbusDefaultLogMaxLines;
+    modbusProfileId = '';
+    modbusPages = const [];
     flashConnectionConfig = const FlashConnectionConfig();
     flashOperationRiskWarningDismissed = false;
     visibleMainPages = const ['rawData', 'plot'];
@@ -446,7 +450,7 @@ class AppSettings {
     triggerToolbarEnabled = false;
     previewToolbarEnabled = false;
     plotReceiveAggregationEnabled = false;
-    plotLodQuality = 'performance';
+    plotLodQuality = 'balanced';
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
@@ -462,7 +466,7 @@ class AppSettings {
     followPositionRatio = 0.9;
     probePlotWindowPointLimit = 100000;
     probePlotHistoryMemoryLimitMiB = 256;
-    probePlotLodQuality = 'quality';
+    probePlotLodQuality = 'balanced';
     probePlotShowGrid = true;
     probePlotGridDensity = 'normal';
     probePlotBackground = 'light';
@@ -622,21 +626,19 @@ class AppSettings {
           ((json['modbusTimeoutMs'] as num?)?.toInt() ?? 1000)
               .clamp(100, 60000)
               .toInt();
-      modbusPollingIntervalMs =
-          ((json['modbusPollingIntervalMs'] as num?)?.toInt() ?? 1000)
-              .clamp(50, 3600000)
+      modbusLayoutMode =
+          ModbusRegisterLayoutMode.fromValue(json['modbusLayoutMode']).value;
+      modbusByteOrder = ModbusByteOrder.fromString(json['modbusByteOrder']);
+      modbusWordOrder = ModbusWordOrder.fromString(json['modbusWordOrder']);
+      modbusLogMaxLines =
+          ((json['modbusLogMaxLines'] as num?)?.toInt() ??
+                  modbusDefaultLogMaxLines)
+              .clamp(modbusMinLogMaxLines, modbusMaxLogMaxLines)
               .toInt();
-      modbusSendingIntervalMs =
-          ((json['modbusSendingIntervalMs'] as num?)?.toInt() ?? 1000)
-              .clamp(50, 3600000)
-              .toInt();
-      modbusPollingTasks = [
-        for (final value in (json['modbusPollingTasks'] as List? ?? const []))
-          if (ModbusPollingTask.fromJson(value) case final task?) task,
-      ];
-      modbusSendTasks = [
-        for (final value in (json['modbusSendTasks'] as List? ?? const []))
-          if (ModbusSendTask.fromJson(value) case final task?) task,
+      modbusProfileId = json['modbusProfileId'] as String? ?? '';
+      modbusPages = [
+        for (final value in (json['modbusPages'] as List? ?? const []))
+          if (ModbusRegisterPage.fromJson(value) case final page?) page,
       ];
       flashConnectionConfig = FlashConnectionConfig.fromJson(
         json['flashConnectionConfig'],
@@ -768,9 +770,10 @@ class AppSettings {
           json['plotReceiveAggregationEnabled'] as bool? ?? false;
       final savedLodQuality = json['plotLodQuality'] as String?;
       plotLodQuality = switch (savedLodQuality) {
+        'performance' => 'performance',
         'balanced' || 'quality' => 'balanced',
         'qualityHigh' => 'qualityHigh',
-        _ => 'performance',
+        _ => 'balanced',
       };
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
@@ -817,7 +820,8 @@ class AppSettings {
       probePlotLodQuality = switch (json['probePlotLodQuality'] as String?) {
         'performance' => 'performance',
         'balanced' => 'balanced',
-        _ => 'quality',
+        'quality' => 'quality',
+        _ => 'balanced',
       };
       probePlotShowGrid = json['probePlotShowGrid'] as bool? ?? true;
       probePlotGridDensity = switch (json['probePlotGridDensity'] as String?) {
@@ -1153,6 +1157,7 @@ class AppSettings {
       'refreshFps',
       'plotFontSizeDelta',
       'probePlotFontSizeDelta',
+      'modbusLayoutMode',
     };
     const numberKeys = <String>{
       'maxVisiblePoints',
@@ -1196,6 +1201,7 @@ class AppSettings {
       'xMax',
       'yMin',
       'yMax',
+      'modbusTimeoutMs',
     };
     const listKeys = <String>{
       'mainTabOrder',
@@ -1299,14 +1305,19 @@ class AppSettings {
         entry.key: entry.value.toJson(),
     },
     'dataPageConnectionTypes': dataPageConnectionTypes,
-    'modbusMode': modbusMode,
-    'modbusTimeoutMs': modbusTimeoutMs,
-    'modbusPollingIntervalMs': modbusPollingIntervalMs,
-    'modbusSendingIntervalMs': modbusSendingIntervalMs,
-    'modbusPollingTasks': [
-      for (final task in modbusPollingTasks) task.toJson(),
-    ],
-    'modbusSendTasks': [for (final task in modbusSendTasks) task.toJson()],
+    if (modbusMode != ModbusMode.rtu.value) 'modbusMode': modbusMode,
+    if (modbusTimeoutMs != 1000) 'modbusTimeoutMs': modbusTimeoutMs,
+    if (modbusLayoutMode != ModbusRegisterLayoutMode.columnMajor.value)
+      'modbusLayoutMode': modbusLayoutMode,
+    if (modbusByteOrder != ModbusByteOrder.highByteFirst)
+      'modbusByteOrder': modbusByteOrder.value,
+    if (modbusWordOrder != ModbusWordOrder.highWordFirst)
+      'modbusWordOrder': modbusWordOrder.value,
+    if (modbusLogMaxLines != modbusDefaultLogMaxLines)
+      'modbusLogMaxLines': modbusLogMaxLines,
+    if (modbusProfileId.isNotEmpty) 'modbusProfileId': modbusProfileId,
+    if (modbusPages.isNotEmpty)
+      'modbusPages': [for (final page in modbusPages) page.toSparseJson()],
     'flashConnectionConfig': flashConnectionConfig.toJson(),
     'flashOperationRiskWarningDismissed': flashOperationRiskWarningDismissed,
 
@@ -1481,10 +1492,12 @@ class AppSettings {
     // Modbus
     'modbusMode': ['modbus', 'connection', 'mode'],
     'modbusTimeoutMs': ['modbus', 'protocol', 'timeoutMs'],
-    'modbusPollingIntervalMs': ['modbus', 'polling', 'intervalMs'],
-    'modbusSendingIntervalMs': ['modbus', 'sending', 'intervalMs'],
-    'modbusPollingTasks': ['modbus', 'polling', 'tasks'],
-    'modbusSendTasks': ['modbus', 'sending', 'tasks'],
+    'modbusLayoutMode': ['modbus', 'view', 'layoutMode'],
+    'modbusByteOrder': ['modbus', 'protocol', 'byteOrder'],
+    'modbusWordOrder': ['modbus', 'protocol', 'wordOrder'],
+    'modbusLogMaxLines': ['modbus', 'logging', 'maxLines'],
+    'modbusProfileId': ['modbus', 'profiles', 'selectedId'],
+    'modbusPages': ['modbus', 'pages'],
 
     // Flash编程
     'flashConnectionConfig': ['flash', 'connection'],

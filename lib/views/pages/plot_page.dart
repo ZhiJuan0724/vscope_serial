@@ -41,6 +41,11 @@ part 'plot_page/plot_parser_config_dialog.dart';
 part 'plot_page/plot_overlay_widgets.dart';
 part 'plot_page/plot_preset_selector_dialog.dart';
 
+Future<Color?> showPlotCustomColorPicker(
+  BuildContext context,
+  Color initialColor,
+) => _showChannelCustomColorPicker(context, initialColor);
+
 /// 绘图页面入口
 ///
 /// PlotViewModel 已提升为全局 Provider（在 main.dart 中注册），
@@ -85,6 +90,7 @@ typedef _PlotToolbarSelection =
       bool triggerEnabled,
       bool observationPlacementActive,
       bool boxZoomEnabled,
+      bool boxZoomContinuous,
       bool xMeasurementEnabled,
       bool yMeasurementEnabled,
       bool statsToolbarEnabled,
@@ -251,6 +257,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       triggerEnabled: vm.triggerEnabled,
       observationPlacementActive: vm.observationPlacementActive,
       boxZoomEnabled: vm.boxZoomEnabled,
+      boxZoomContinuous: vm.boxZoomContinuous,
       xMeasurementEnabled: vm.xMeasurementEnabled,
       yMeasurementEnabled: vm.yMeasurementEnabled,
       statsToolbarEnabled: vm.statsToolbarEnabled,
@@ -1176,10 +1183,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ),
         ToolbarToggleIconButton(
           icon: const Icon(Icons.crop_free),
-          tooltip: AppStrings.plot.boxZoom,
+          tooltip: '${AppStrings.plot.boxZoom}（左键单次，右键连续）',
           selected: vm.boxZoomEnabled,
-          activeColor: Colors.blue,
+          activeColor: vm.boxZoomContinuous ? Colors.orange : Colors.blue,
           onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+          onSecondaryPressed:
+              () => vm.setBoxZoomEnabled(
+                !(vm.boxZoomEnabled && vm.boxZoomContinuous),
+                continuous: true,
+              ),
         ),
         ToolbarIconButton(
           icon: const AppIcon(AppIcons.plotZoomXIn),
@@ -1790,6 +1802,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     viewport: renderViewport,
                     vCursorEnabled: vm.vCursorEnabled,
                     boxZoomEnabled: vm.boxZoomEnabled,
+                    onBoxZoomCompleted: () {
+                      if (!vm.boxZoomContinuous) {
+                        vm.setBoxZoomEnabled(false);
+                      }
+                    },
                     refreshFps: vm.effectiveRefreshFps,
                     plotFontSizeDelta: vm.plotFontSizeDelta,
                     channels: displayChannels,

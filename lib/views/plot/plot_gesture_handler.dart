@@ -17,7 +17,7 @@ import 'plot_viewport.dart';
 /// 负责处理绘图区域的所有用户交互：
 /// - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，Shift+滚轮根据鼠标位置缩放 X/Y 轴
 /// - **触控板导航**：双指移动平移视口，捏合手势以指针位置为中心缩放
-/// - **拖拽平移**：鼠标左键拖动平移视口
+/// - **拖拽平移**：普通模式下鼠标左键拖动；框选模式下鼠标右键拖动
 /// - **框选放大**：开启框选模式后，鼠标左键拖拽框选区域并放大
 /// - **垂直光标悬停**：鼠标移动时更新垂直光标位置
 /// - **测量线拖动**：点击并拖动 X-X/Y-Y 测量线标签或统计范围标签
@@ -50,6 +50,9 @@ class PlotGestureHandler extends StatefulWidget {
 
   /// 框选放大模式开关
   final bool boxZoomEnabled;
+
+  /// 完成一次有效框选后的回调
+  final VoidCallback? onBoxZoomCompleted;
 
   /// 子组件（通常是 CustomPaint）
   final Widget child;
@@ -127,6 +130,7 @@ class PlotGestureHandler extends StatefulWidget {
     required this.onCursorChanged,
     this.vCursorEnabled = false,
     this.boxZoomEnabled = false,
+    this.onBoxZoomCompleted,
     this.onDragEnd,
     required this.child,
     this.data = const [],
@@ -664,6 +668,18 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 否则根据框选模式开始框选或平移。
   void _handlePointerDown(PointerDownEvent event) {
     if (event.buttons == kSecondaryButton) {
+      if (widget.boxZoomEnabled) {
+        final size = context.size ?? Size.zero;
+        if (size.isEmpty) return;
+        _isDragging = true;
+        _lastPosition = event.localPosition;
+        _initializeDragViewport();
+        AppLogger().trace(
+          '框选模式右键平移开始: pos=${event.localPosition}',
+          category: 'GESTURE',
+        );
+        return;
+      }
       final observationHit = _hitTestObservation(
         event.localPosition,
         includeLocked: false,
@@ -1345,6 +1361,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       );
 
       widget.onViewportChanged(newViewport, fromDrag: false);
+      widget.onBoxZoomCompleted?.call();
     }
 
     if (_isDragging &&

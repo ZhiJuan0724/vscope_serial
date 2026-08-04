@@ -8,6 +8,7 @@ import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
 import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
+import 'package:vscope_serial/views/widgets/common_widgets.dart';
 
 void main() {
   testWidgets('框选开关立即同步到绘图手势层', (tester) async {
@@ -30,11 +31,25 @@ void main() {
 
     PlotGestureHandler gestureHandler() =>
         tester.widget<PlotGestureHandler>(find.byType(PlotGestureHandler));
+    ToolbarToggleIconButton boxZoomButton() =>
+        tester.widget<ToolbarToggleIconButton>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is ToolbarToggleIconButton &&
+                widget.tooltip.startsWith('框选放大'),
+          ),
+        );
 
     expect(gestureHandler().boxZoomEnabled, isFalse);
     vm.setBoxZoomEnabled(true);
     await tester.pump();
     expect(gestureHandler().boxZoomEnabled, isTrue);
+    expect(boxZoomButton().activeColor, Colors.blue);
+
+    vm.setBoxZoomEnabled(true, continuous: true);
+    await tester.pump();
+    expect(gestureHandler().boxZoomEnabled, isTrue);
+    expect(boxZoomButton().activeColor, Colors.orange);
 
     vm.setBoxZoomEnabled(false);
     await tester.pump();

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/views/widgets/common_widgets.dart';
@@ -334,5 +335,37 @@ void main() {
           .selected,
       isTrue,
     );
+  });
+
+  testWidgets('工具栏切换按钮可分别响应左键和右键', (tester) async {
+    var primaryCount = 0;
+    var secondaryCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ToolbarToggleIconButton(
+            icon: const Icon(Icons.crop_free),
+            tooltip: '框选',
+            selected: false,
+            onPressed: () => primaryCount++,
+            onSecondaryPressed: () => secondaryCount++,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(ToolbarToggleIconButton));
+    final position = tester.getCenter(find.byType(ToolbarToggleIconButton));
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: position);
+    await secondary.down(position);
+    await secondary.up();
+    await tester.pump();
+
+    expect(primaryCount, 1);
+    expect(secondaryCount, 1);
   });
 }

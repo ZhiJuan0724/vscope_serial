@@ -31,11 +31,21 @@ flutter pub get
 
 ## 2. 运行与构建
 
-Debug 运行：
+推荐使用仓库脚本构建并运行 Debug：
 
 ```powershell
-flutter run -d windows
+python tools/build_debug.py
 ```
+
+脚本会先准备 Windows Debug 所需的附加内容，包括 `flutter run` 不会自动生成的内置 OpenOCD 压缩运行时，再执行构建并启动应用。不要把直接运行 `flutter run -d windows` 作为常规开发入口，否则 Debug 输出目录可能缺少这些额外打包内容，导致对应功能不可用或与实际发布环境不一致。
+
+只构建 Debug 而不启动应用：
+
+```powershell
+python tools/build_debug.py --build-only
+```
+
+需要向 `flutter run` 传递额外参数时，将参数放在 `--` 之后；具体选项见 `python tools/build_debug.py --help`。
 
 直接构建未打包的 Release：
 
@@ -50,7 +60,7 @@ flutter build windows --release "--dart-define=BUILD_TIME=$buildTime"
 build/windows/x64/runner/Release/
 ```
 
-`flutter run` 和直接 `flutter build` 不等同于发布打包；内置运行时、许可证、更新资产、符号归档和便携 ZIP 由发布脚本处理。
+Debug 脚本只补齐本地调试所需的附加运行时，并不等同于发布打包；许可证、更新资产、符号归档和便携 ZIP 仍由发布脚本处理。直接 `flutter build` 生成的 Release 也不是可发布的完整便携包。
 
 ## 3. 目录与职责
 
@@ -185,6 +195,7 @@ flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METR
 | 工具 | 用途 |
 | --- | --- |
 | `analyze_crash_dump.ps1` | 检查 Windows minidump、日志和 PDB 是否完整匹配，调用 CDB 生成中文分析报告 |
+| `build_debug.py` | 准备 Debug 附加运行时，构建并运行 Windows 应用；本地 Debug 的推荐入口 |
 | `build_release.py` | 清理旧产物，执行检查、测试和全新 Windows Release 构建，打包运行时、许可证、更新资产、便携包和符号包 |
 | `generate_update_assets.py` | 从 Release bundle 生成便携 ZIP、`app-files.json` 和带大小/SHA-256 的更新清单 |
 | `prepare_openocd_runtime.py` | 下载并校验固定版本的 xPack OpenOCD，将最小运行时、脚本和许可证打包为单一 ZIP 和校验清单 |

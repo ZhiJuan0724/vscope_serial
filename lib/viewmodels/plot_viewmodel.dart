@@ -375,7 +375,7 @@ class PlotViewModel extends BaseViewModel {
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
-  PlotLodQuality _lodQuality = PlotLodQuality.performance;
+  PlotLodQuality _lodQuality = PlotLodQuality.balanced;
   bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
@@ -435,6 +435,7 @@ class PlotViewModel extends BaseViewModel {
   // ========== 缩放按钮状态 ==========
   /// 框选放大模式开关
   bool _boxZoomEnabled = false;
+  bool _boxZoomContinuous = false;
 
   // ========== 数据源配置 ==========
   /// 数据源配置（串口/随机源切换、随机源频率等）
@@ -873,6 +874,7 @@ class PlotViewModel extends BaseViewModel {
       _liveValuesPanelTop ?? (legendVisible ? 240 : 96);
   bool get observationClickToPlace => _observationClickToPlace;
   bool get boxZoomEnabled => _boxZoomEnabled;
+  bool get boxZoomContinuous => _boxZoomContinuous;
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
   double get yFitDisplayRatio => _yFitDisplayRatio;

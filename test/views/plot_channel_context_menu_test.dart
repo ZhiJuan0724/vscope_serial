@@ -84,7 +84,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('高级设置可切换大范围绘图质量', (tester) async {
+  testWidgets('高级设置可切换绘图质量', (tester) async {
     final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 1000));
@@ -159,6 +159,11 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: PlotPage())),
       ),
     );
+
+    expect(AppStrings.plot.measureXxTooltip, contains('右键'));
+    expect(AppStrings.plot.measureYyTooltip, contains('右键'));
+    expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('plot-measure-x-button')),

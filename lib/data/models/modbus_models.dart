@@ -115,219 +115,393 @@ class ModbusResponse {
   bool get isException => exceptionCode != null;
 }
 
-class ModbusPollingTask {
-  const ModbusPollingTask({
-    required this.id,
-    required this.name,
-    required this.unitId,
-    required this.function,
-    required this.address,
-    required this.quantity,
-    this.intervalMs = 1000,
-    this.readRetries = 0,
-    this.enabled = true,
-  });
-
-  final String id;
-  final String name;
-  final int unitId;
-  final ModbusFunction function;
-  final int address;
-  final int quantity;
-  final int intervalMs;
-  final int readRetries;
-  final bool enabled;
-
-  ModbusPollingTask copyWith({bool? enabled}) => ModbusPollingTask(
-    id: id,
-    name: name,
-    unitId: unitId,
-    function: function,
-    address: address,
-    quantity: quantity,
-    intervalMs: intervalMs,
-    readRetries: readRetries,
-    enabled: enabled ?? this.enabled,
+enum ModbusRegisterArea {
+  coils('coils', '线圈', ModbusFunction.readCoils, true, true),
+  discreteInputs(
+    'discreteInputs',
+    '离散输入',
+    ModbusFunction.readDiscreteInputs,
+    false,
+    true,
+  ),
+  holdingRegisters(
+    'holdingRegisters',
+    '保持寄存器',
+    ModbusFunction.readHoldingRegisters,
+    true,
+    false,
+  ),
+  inputRegisters(
+    'inputRegisters',
+    '输入寄存器',
+    ModbusFunction.readInputRegisters,
+    false,
+    false,
   );
 
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'name': name,
-    'unitId': unitId,
-    'function': function.name,
-    'address': address,
-    'quantity': quantity,
-    'intervalMs': intervalMs,
-    'readRetries': readRetries,
-    'enabled': enabled,
-  };
+  const ModbusRegisterArea(
+    this.value,
+    this.label,
+    this.readFunction,
+    this.isWritable,
+    this.isBitArea,
+  );
 
-  static ModbusPollingTask? fromJson(Object? value) {
-    if (value is! Map) return null;
-    final id = '${value['id'] ?? ''}'.trim();
-    final name = '${value['name'] ?? ''}'.trim();
-    final unitId = (value['unitId'] as num?)?.toInt();
-    final address = (value['address'] as num?)?.toInt();
-    final quantity = (value['quantity'] as num?)?.toInt();
-    final intervalMs = (value['intervalMs'] as num?)?.toInt() ?? 1000;
-    if (id.isEmpty ||
-        name.isEmpty ||
-        unitId == null ||
-        unitId < 0 ||
-        unitId > 255 ||
-        address == null ||
-        address < 0 ||
-        address > 0xFFFF ||
-        quantity == null ||
-        quantity < 1 ||
-        quantity > 2000 ||
-        intervalMs < 50 ||
-        intervalMs > 3600000) {
-      return null;
+  final String value;
+  final String label;
+  final ModbusFunction readFunction;
+  final bool isWritable;
+  final bool isBitArea;
+
+  static ModbusRegisterArea? fromString(Object? value) {
+    for (final item in values) {
+      if (item.value == value || item.name == value) return item;
     }
-    final function = ModbusFunction.fromString(value['function'] as String?);
-    if (!function.isRead) return null;
-    return ModbusPollingTask(
-      id: id,
-      name: name,
-      unitId: unitId,
-      function: function,
-      address: address,
-      quantity: quantity,
-      intervalMs: intervalMs,
-      readRetries: ((value['readRetries'] as num?)?.toInt() ?? 0).clamp(0, 3),
-      enabled: value['enabled'] as bool? ?? true,
-    );
+    return null;
   }
 }
 
-/// 周期写任务每次生成待发送值的方式。
+enum ModbusVariableType {
+  boolean('bool', 'bool', 1),
+  u8('u8', 'u8', 1),
+  u16('u16', 'u16', 1),
+  u32('u32', 'u32', 2),
+  i8('i8', 'i8', 1),
+  i16('i16', 'i16', 1),
+  i32('i32', 'i32', 2),
+  i64('i64', 'i64', 4),
+  u64('u64', 'u64', 4),
+  floatValue('float', 'float', 2),
+  doubleValue('double', 'double', 4);
+
+  const ModbusVariableType(this.value, this.label, this.registerWidth);
+  final String value;
+  final String label;
+  final int registerWidth;
+
+  bool get isFloatingPoint => this == floatValue || this == doubleValue;
+  bool get isSigned => this == i8 || this == i16 || this == i32 || this == i64;
+  int get bitWidth => registerWidth * 16;
+
+  static ModbusVariableType? fromString(Object? value) {
+    for (final item in values) {
+      if (item.value == value || item.name == value) return item;
+    }
+    return null;
+  }
+
+  static ModbusVariableType defaultFor(ModbusRegisterArea area) =>
+      area.isBitArea ? boolean : u16;
+}
+
+enum ModbusByteOrder {
+  highByteFirst('highByteFirst', '高字节在前'),
+  lowByteFirst('lowByteFirst', '低字节在前');
+
+  const ModbusByteOrder(this.value, this.label);
+  final String value;
+  final String label;
+
+  static ModbusByteOrder fromString(Object? value) => values.firstWhere(
+    (item) => item.value == value || item.name == value,
+    orElse: () => highByteFirst,
+  );
+}
+
+enum ModbusWordOrder {
+  highWordFirst('highWordFirst', '高位寄存器在前'),
+  lowWordFirst('lowWordFirst', '低位寄存器在前');
+
+  const ModbusWordOrder(this.value, this.label);
+  final String value;
+  final String label;
+
+  static ModbusWordOrder fromString(Object? value) => values.firstWhere(
+    (item) => item.value == value || item.name == value,
+    orElse: () => highWordFirst,
+  );
+}
+
+enum ModbusDisplayRadix {
+  decimal('decimal', '十进制'),
+  hexadecimal('hexadecimal', '十六进制');
+
+  const ModbusDisplayRadix(this.value, this.label);
+  final String value;
+  final String label;
+
+  static ModbusDisplayRadix fromString(Object? value) => values.firstWhere(
+    (item) => item.value == value || item.name == value,
+    orElse: () => decimal,
+  );
+}
+
+enum ModbusRegisterLayoutMode {
+  columnMajor(1, '按列排列'),
+  rowMajor(2, '按行排列');
+
+  const ModbusRegisterLayoutMode(this.value, this.label);
+  final int value;
+  final String label;
+
+  static ModbusRegisterLayoutMode fromValue(Object? value) =>
+      value is num && value.toInt() == 2 ? rowMajor : columnMajor;
+}
+
 enum ModbusSendValueMode {
+  fixed('fixed', '固定值'),
   random('random', '随机值'),
-  increment('increment', '自增 N'),
-  decrement('decrement', '自减 N');
+  increment('increment', '自增'),
+  decrement('decrement', '自减');
 
   const ModbusSendValueMode(this.value, this.label);
   final String value;
   final String label;
 
-  static ModbusSendValueMode fromString(String? value) => switch (value) {
-    'increment' => increment,
-    'decrement' => decrement,
-    _ => random,
-  };
+  static ModbusSendValueMode fromString(Object? value) => values.firstWhere(
+    (item) => item.value == value || item.name == value,
+    orElse: () => fixed,
+  );
 }
 
-/// 周期发送只允许写功能码；初始值和步长均按16位无符号数循环。
-class ModbusSendTask {
-  const ModbusSendTask({
+const int modbusMinIntervalMs = 10;
+const int modbusMaxIntervalMs = 3600000;
+const int modbusDefaultIntervalMs = 1000;
+const int modbusDefaultLogMaxLines = 1000;
+const int modbusMinLogMaxLines = 100;
+const int modbusMaxLogMaxLines = 100000;
+
+class ModbusRegisterRow {
+  ModbusRegisterRow({
     required this.id,
-    required this.name,
-    required this.unitId,
-    required this.function,
     required this.address,
-    required this.quantity,
-    required this.valueMode,
-    this.initialValues = const [],
-    this.step = 1,
-    this.intervalMs = 1000,
-    this.enabled = true,
+    this.variableType = ModbusVariableType.u16,
+    this.displayRadix = ModbusDisplayRadix.decimal,
+    this.pollEnabled = false,
+    this.pollIntervalMs = modbusDefaultIntervalMs,
+    this.readRetries = 0,
+    this.sendEnabled = false,
+    this.sendIntervalMs = modbusDefaultIntervalMs,
+    this.sendMode = ModbusSendValueMode.fixed,
+    this.sendValue = '0',
+    this.sendStep = '1',
+    this.note = '',
+    this.backgroundArgb,
   });
 
   final String id;
-  final String name;
-  final int unitId;
-  final ModbusFunction function;
   final int address;
-  final int quantity;
-  final ModbusSendValueMode valueMode;
-  final List<int> initialValues;
-  final int step;
-  final int intervalMs;
-  final bool enabled;
+  final ModbusVariableType variableType;
+  final ModbusDisplayRadix displayRadix;
+  final bool pollEnabled;
+  final int pollIntervalMs;
+  final int readRetries;
+  final bool sendEnabled;
+  final int sendIntervalMs;
+  final ModbusSendValueMode sendMode;
+  final String sendValue;
+  final String sendStep;
+  final String note;
+  final int? backgroundArgb;
 
-  ModbusSendTask copyWith({bool? enabled}) => ModbusSendTask(
-    id: id,
-    name: name,
-    unitId: unitId,
-    function: function,
-    address: address,
-    quantity: quantity,
-    valueMode: valueMode,
-    initialValues: initialValues,
-    step: step,
-    intervalMs: intervalMs,
-    enabled: enabled ?? this.enabled,
+  ModbusRegisterRow copyWith({
+    String? id,
+    int? address,
+    ModbusVariableType? variableType,
+    ModbusDisplayRadix? displayRadix,
+    bool? pollEnabled,
+    int? pollIntervalMs,
+    int? readRetries,
+    bool? sendEnabled,
+    int? sendIntervalMs,
+    ModbusSendValueMode? sendMode,
+    String? sendValue,
+    String? sendStep,
+    String? note,
+    int? backgroundArgb,
+    bool clearBackground = false,
+  }) => ModbusRegisterRow(
+    id: id ?? this.id,
+    address: address ?? this.address,
+    variableType: variableType ?? this.variableType,
+    displayRadix: displayRadix ?? this.displayRadix,
+    pollEnabled: pollEnabled ?? this.pollEnabled,
+    pollIntervalMs: pollIntervalMs ?? this.pollIntervalMs,
+    readRetries: readRetries ?? this.readRetries,
+    sendEnabled: sendEnabled ?? this.sendEnabled,
+    sendIntervalMs: sendIntervalMs ?? this.sendIntervalMs,
+    sendMode: sendMode ?? this.sendMode,
+    sendValue: sendValue ?? this.sendValue,
+    sendStep: sendStep ?? this.sendStep,
+    note: note ?? this.note,
+    backgroundArgb:
+        clearBackground ? null : (backgroundArgb ?? this.backgroundArgb),
   );
 
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'name': name,
-    'unitId': unitId,
-    'function': function.name,
-    'address': address,
-    'quantity': quantity,
-    'valueMode': valueMode.value,
-    'initialValues': initialValues,
-    'step': step,
-    'intervalMs': intervalMs,
-    'enabled': enabled,
-  };
+  Map<String, Object?> toSparseJson(ModbusRegisterArea area) {
+    final result = <String, Object?>{'address': address};
+    final defaultType = ModbusVariableType.defaultFor(area);
+    if (!area.isBitArea && variableType != defaultType) {
+      result['variableType'] = variableType.value;
+    }
+    if (displayRadix != ModbusDisplayRadix.decimal) {
+      result['displayRadix'] = displayRadix.value;
+    }
+    if (pollEnabled ||
+        pollIntervalMs != modbusDefaultIntervalMs ||
+        readRetries != 0) {
+      final poll = <String, Object?>{};
+      if (pollEnabled) poll['enabled'] = true;
+      if (pollIntervalMs != modbusDefaultIntervalMs) {
+        poll['intervalMs'] = pollIntervalMs;
+      }
+      if (readRetries != 0) poll['readRetries'] = readRetries;
+      result['poll'] = poll;
+    }
+    if (sendEnabled ||
+        sendIntervalMs != modbusDefaultIntervalMs ||
+        sendMode != ModbusSendValueMode.fixed ||
+        sendValue != '0' ||
+        sendStep != '1') {
+      final send = <String, Object?>{};
+      if (sendEnabled) send['enabled'] = true;
+      if (sendIntervalMs != modbusDefaultIntervalMs) {
+        send['intervalMs'] = sendIntervalMs;
+      }
+      if (sendMode != ModbusSendValueMode.fixed) send['mode'] = sendMode.value;
+      if (sendValue != '0') send['value'] = sendValue;
+      if (sendStep != '1') send['step'] = sendStep;
+      result['send'] = send;
+    }
+    if (note.isNotEmpty) result['note'] = note;
+    if (backgroundArgb != null) result['backgroundArgb'] = backgroundArgb;
+    return result;
+  }
 
-  static ModbusSendTask? fromJson(Object? value) {
+  static ModbusRegisterRow? fromJson(
+    Object? value,
+    ModbusRegisterArea area, {
+    String? generatedId,
+  }) {
     if (value is! Map) return null;
-    final id = '${value['id'] ?? ''}'.trim();
-    final name = '${value['name'] ?? ''}'.trim();
-    final unitId = (value['unitId'] as num?)?.toInt();
     final address = (value['address'] as num?)?.toInt();
-    final quantity = (value['quantity'] as num?)?.toInt();
-    final intervalMs = (value['intervalMs'] as num?)?.toInt() ?? 1000;
-    final step = (value['step'] as num?)?.toInt() ?? 1;
-    final function = ModbusFunction.fromString(value['function'] as String?);
-    final maxQuantity = switch (function) {
-      ModbusFunction.writeSingleCoil || ModbusFunction.writeSingleRegister => 1,
-      ModbusFunction.writeMultipleCoils => 1968,
-      ModbusFunction.writeMultipleRegisters => 123,
-      _ => 0,
-    };
-    final initialValues = [
-      for (final item
-          in value['initialValues'] is List
-              ? value['initialValues'] as List
-              : const [])
-        if (item is num) item.toInt(),
-    ];
-    if (id.isEmpty ||
-        name.isEmpty ||
-        function.isRead ||
-        unitId == null ||
-        unitId < 0 ||
-        unitId > 255 ||
-        address == null ||
-        address < 0 ||
-        address > 0xFFFF ||
-        quantity == null ||
-        quantity < 1 ||
-        quantity > maxQuantity ||
-        intervalMs < 50 ||
-        intervalMs > 3600000 ||
-        step < 1 ||
-        step > 0xFFFF ||
-        initialValues.any((item) => item < 0 || item > 0xFFFF)) {
+    if (address == null || address < 0 || address > 0xFFFF) return null;
+    final defaultType = ModbusVariableType.defaultFor(area);
+    final parsedType = ModbusVariableType.fromString(value['variableType']);
+    final variableType =
+        area.isBitArea ? defaultType : (parsedType ?? defaultType);
+    final poll = value['poll'] is Map ? value['poll'] as Map : const {};
+    final send = value['send'] is Map ? value['send'] as Map : const {};
+    final pollInterval =
+        ((poll['intervalMs'] as num?)?.toInt() ?? modbusDefaultIntervalMs)
+            .clamp(modbusMinIntervalMs, modbusMaxIntervalMs)
+            .toInt();
+    final sendInterval =
+        ((send['intervalMs'] as num?)?.toInt() ?? modbusDefaultIntervalMs)
+            .clamp(modbusMinIntervalMs, modbusMaxIntervalMs)
+            .toInt();
+    final background = (value['backgroundArgb'] as num?)?.toInt();
+    return ModbusRegisterRow(
+      id: '${value['id'] ?? generatedId ?? DateTime.now().microsecondsSinceEpoch}',
+      address: address,
+      variableType: variableType,
+      displayRadix: ModbusDisplayRadix.fromString(value['displayRadix']),
+      pollEnabled: poll['enabled'] == true,
+      pollIntervalMs: pollInterval,
+      readRetries: ((poll['readRetries'] as num?)?.toInt() ?? 0).clamp(0, 3),
+      sendEnabled: area.isWritable && send['enabled'] == true,
+      sendIntervalMs: sendInterval,
+      sendMode: ModbusSendValueMode.fromString(send['mode']),
+      sendValue: '${send['value'] ?? '0'}',
+      sendStep: '${send['step'] ?? '1'}',
+      note: '${value['note'] ?? ''}',
+      backgroundArgb: background,
+    );
+  }
+}
+
+class ModbusRegisterPage {
+  ModbusRegisterPage({
+    required this.unitId,
+    required this.area,
+    this.enabled = false,
+    this.showVariableType = true,
+    this.byteOrder = ModbusByteOrder.highByteFirst,
+    this.wordOrder = ModbusWordOrder.highWordFirst,
+    this.rows = const [],
+  });
+
+  final int unitId;
+  final ModbusRegisterArea area;
+  final bool enabled;
+  final bool showVariableType;
+  final ModbusByteOrder byteOrder;
+  final ModbusWordOrder wordOrder;
+  final List<ModbusRegisterRow> rows;
+
+  String get key => '$unitId:${area.value}';
+
+  ModbusRegisterPage copyWith({
+    int? unitId,
+    ModbusRegisterArea? area,
+    bool? enabled,
+    bool? showVariableType,
+    ModbusByteOrder? byteOrder,
+    ModbusWordOrder? wordOrder,
+    List<ModbusRegisterRow>? rows,
+  }) => ModbusRegisterPage(
+    unitId: unitId ?? this.unitId,
+    area: area ?? this.area,
+    enabled: enabled ?? this.enabled,
+    showVariableType: showVariableType ?? this.showVariableType,
+    byteOrder: byteOrder ?? this.byteOrder,
+    wordOrder: wordOrder ?? this.wordOrder,
+    rows: List.unmodifiable(rows ?? this.rows),
+  );
+
+  Map<String, Object?> toSparseJson() {
+    final result = <String, Object?>{'unitId': unitId, 'area': area.value};
+    if (enabled) result['enabled'] = true;
+    if (!showVariableType) result['showVariableType'] = false;
+    if (byteOrder != ModbusByteOrder.highByteFirst) {
+      result['byteOrder'] = byteOrder.value;
+    }
+    if (wordOrder != ModbusWordOrder.highWordFirst) {
+      result['wordOrder'] = wordOrder.value;
+    }
+    if (rows.isNotEmpty) {
+      result['rows'] = [for (final row in rows) row.toSparseJson(area)];
+    }
+    return result;
+  }
+
+  static ModbusRegisterPage? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final unitId = (value['unitId'] as num?)?.toInt();
+    final area = ModbusRegisterArea.fromString(value['area']);
+    if (unitId == null || unitId < 0 || unitId > 255 || area == null) {
       return null;
     }
-    return ModbusSendTask(
-      id: id,
-      name: name,
+    final rowsValue = value['rows'];
+    final rows = <ModbusRegisterRow>[];
+    if (rowsValue is List) {
+      for (var index = 0; index < rowsValue.length; index++) {
+        final row = ModbusRegisterRow.fromJson(
+          rowsValue[index],
+          area,
+          generatedId: '$unitId:${area.value}:$index',
+        );
+        if (row != null) rows.add(row);
+      }
+    }
+    return ModbusRegisterPage(
       unitId: unitId,
-      function: function,
-      address: address,
-      quantity: quantity,
-      valueMode: ModbusSendValueMode.fromString(value['valueMode'] as String?),
-      initialValues: initialValues,
-      step: step,
-      intervalMs: intervalMs,
-      enabled: value['enabled'] as bool? ?? true,
+      area: area,
+      enabled: value['enabled'] == true,
+      showVariableType: value['showVariableType'] != false,
+      byteOrder: ModbusByteOrder.fromString(value['byteOrder']),
+      wordOrder: ModbusWordOrder.fromString(value['wordOrder']),
+      rows: List.unmodifiable(rows),
     );
   }
 }

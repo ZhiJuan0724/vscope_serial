@@ -164,7 +164,7 @@ void main() {
       expect(settings.triggerToolbarEnabled, isFalse);
       expect(settings.previewToolbarEnabled, isFalse);
       expect(settings.plotReceiveAggregationEnabled, isFalse);
-      expect(settings.plotLodQuality, 'performance');
+      expect(settings.plotLodQuality, 'balanced');
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');
@@ -180,7 +180,7 @@ void main() {
       expect(settings.followPositionRatio, 0.9);
       expect(settings.probePlotWindowPointLimit, 100000);
       expect(settings.probePlotHistoryMemoryLimitMiB, 256);
-      expect(settings.probePlotLodQuality, 'quality');
+      expect(settings.probePlotLodQuality, 'balanced');
       expect(settings.probePlotShowGrid, isTrue);
       expect(settings.probePlotGridDensity, 'normal');
       expect(settings.probePlotBackground, 'light');
@@ -281,6 +281,30 @@ void main() {
       if (await temporaryDirectory.exists()) {
         await temporaryDirectory.delete(recursive: true);
       }
+    });
+
+    test('新配置的串口与探针绘图质量默认使用均衡', () {
+      expect(settings.plotLodQuality, 'balanced');
+      expect(settings.probePlotLodQuality, 'balanced');
+    });
+
+    test('已有配置保留用户选择的绘图质量', () async {
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'performance': {'lodQuality': 'performance'},
+          },
+          'probePlot': {
+            'performance': {'lodQuality': 'quality'},
+          },
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.plotLodQuality, 'performance');
+      expect(settings.probePlotLodQuality, 'quality');
     });
 
     test('连续保存合并后写入完整的最新快照', () async {

@@ -127,7 +127,7 @@ final class _PlotStrings {
   String get verticalCursor => '左键开关垂直光标；右键输入 X 跳转';
   String get addObservation => '左键添加观察；右键管理观察；观察标签右键删除';
   String get observationManage => '管理观察';
-  String get placeObservation => '移动鼠标定位观察，左键固定';
+  String get placeObservation => '移动鼠标定位观察，左键固定；右键管理观察';
   String get observation => '观察';
   String get trigger => '触发';
   String get triggerConfig => '触发配置';
@@ -135,9 +135,9 @@ final class _PlotStrings {
   String get triggerObservationLimitHelp =>
       '观察最多支持 100 条；触发次数可以超过 100，但超出后不会继续新增观察。';
   String get measureXx => 'X测量';
-  String get measureXxTooltip => 'Delta X 测量';
+  String get measureXxTooltip => '左键开关 Delta X 测量；右键配置测量线';
   String get measureYy => 'Y测量';
-  String get measureYyTooltip => 'Delta Y 测量';
+  String get measureYyTooltip => '左键开关 Delta Y 测量；右键配置测量线和吸附';
   String get measureXSettings => 'Delta X 设置';
   String get measureYSettings => 'Delta Y 设置';
   String get measurementLineColor => '线条颜色';
@@ -225,7 +225,7 @@ final class _PlotStrings {
   String get densityNormal => '普通';
   String get densityDense => '密集';
   String get refreshFps => '绘图刷新帧率';
-  String get lodQuality => '大范围绘图质量';
+  String get lodQuality => '绘图质量';
   String get lodQualityPerformance => '性能优先';
   String get lodQualityBalanced => '均衡';
   String get lodQualityQuality => '质量优先';

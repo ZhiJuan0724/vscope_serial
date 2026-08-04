@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -473,30 +474,42 @@ class ToolbarIconButton extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.onSecondaryPressed,
   });
 
   final Widget icon;
   final String tooltip;
   final VoidCallback? onPressed;
+  final VoidCallback? onSecondaryPressed;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: kToolbarControlExtent,
-      height: kToolbarControlExtent,
-      child: IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        splashRadius: 14,
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints.tightFor(
-          width: kToolbarControlExtent,
-          height: kToolbarControlExtent,
-        ),
-        // 合并 IconButton 提供的前景色，确保自定义 SVG 图标同步普通、悬停和禁用状态。
-        icon: IconTheme.merge(
-          data: const IconThemeData(size: kToolbarIconSize),
-          child: icon,
+    return Listener(
+      onPointerDown:
+          onSecondaryPressed == null
+              ? null
+              : (event) {
+                if (event.buttons == kSecondaryMouseButton) {
+                  onSecondaryPressed!();
+                }
+              },
+      child: SizedBox(
+        width: kToolbarControlExtent,
+        height: kToolbarControlExtent,
+        child: IconButton(
+          tooltip: tooltip,
+          onPressed: onPressed,
+          splashRadius: 14,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(
+            width: kToolbarControlExtent,
+            height: kToolbarControlExtent,
+          ),
+          // 合并 IconButton 提供的前景色，确保自定义 SVG 图标同步普通、悬停和禁用状态。
+          icon: IconTheme.merge(
+            data: const IconThemeData(size: kToolbarIconSize),
+            child: icon,
+          ),
         ),
       ),
     );
@@ -511,6 +524,7 @@ class ToolbarToggleIconButton extends StatelessWidget {
     required this.tooltip,
     required this.selected,
     required this.onPressed,
+    this.onSecondaryPressed,
     this.activeColor,
   });
 
@@ -518,6 +532,7 @@ class ToolbarToggleIconButton extends StatelessWidget {
   final String tooltip;
   final bool selected;
   final VoidCallback? onPressed;
+  final VoidCallback? onSecondaryPressed;
   final Color? activeColor;
 
   @override
@@ -534,8 +549,145 @@ class ToolbarToggleIconButton extends StatelessWidget {
           icon: icon,
           tooltip: tooltip,
           onPressed: onPressed,
+          onSecondaryPressed: onSecondaryPressed,
         ),
       ),
+    );
+  }
+}
+
+/// 统一的预设色与自定义颜色入口。
+class AppColorSwatchPicker extends StatelessWidget {
+  const AppColorSwatchPicker({
+    super.key,
+    required this.selectedColor,
+    required this.presetColors,
+    required this.onChanged,
+    required this.onCustomColor,
+    this.allowClear = true,
+  });
+
+  final Color? selectedColor;
+  final List<Color> presetColors;
+  final ValueChanged<Color?> onChanged;
+  final Future<Color?> Function(Color initialColor) onCustomColor;
+  final bool allowClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedArgb = selectedColor?.toARGB32();
+    final usesCustomColor =
+        selectedColor != null &&
+        !presetColors.any((color) => color.toARGB32() == selectedArgb);
+
+    Widget swatch(Color color) {
+      final selected = color.toARGB32() == selectedArgb;
+      final foreground =
+          ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+              ? Colors.white
+              : Colors.black87;
+      return InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: () => onChanged(color),
+        child: Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+            border:
+                selected
+                    ? Border.all(color: foreground, width: 2)
+                    : Border.all(color: Theme.of(context).dividerColor),
+            boxShadow:
+                selected
+                    ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        blurRadius: 4,
+                      ),
+                    ]
+                    : null,
+          ),
+          child:
+              selected ? Icon(Icons.check, size: 16, color: foreground) : null,
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        if (allowClear)
+          Tooltip(
+            message: '无背景色',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(4),
+              onTap: () => onChanged(null),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color:
+                        selectedColor == null
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).dividerColor,
+                    width: selectedColor == null ? 2 : 1,
+                  ),
+                ),
+                child: const Icon(Icons.block, size: 16),
+              ),
+            ),
+          ),
+        for (final color in presetColors) swatch(color),
+        Tooltip(
+          message: '自定义颜色',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(4),
+            onTap: () async {
+              final initial =
+                  selectedColor ??
+                  (presetColors.isEmpty
+                      ? Theme.of(context).colorScheme.primary
+                      : presetColors.first);
+              final color = await onCustomColor(initial);
+              if (color != null) onChanged(color);
+            },
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: usesCustomColor ? selectedColor : Colors.white,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color:
+                      usesCustomColor
+                          ? Theme.of(context).colorScheme.primary
+                          : Colors.grey.shade400,
+                  width: usesCustomColor ? 2 : 1,
+                ),
+              ),
+              child: Icon(
+                Icons.palette_outlined,
+                size: 18,
+                color:
+                    usesCustomColor && selectedColor != null
+                        ? (ThemeData.estimateBrightnessForColor(
+                                  selectedColor!,
+                                ) ==
+                                Brightness.dark
+                            ? Colors.white
+                            : Colors.black87)
+                        : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -682,6 +834,8 @@ class ToolbarStartStopButton extends StatelessWidget {
     final style = ElevatedButton.styleFrom(
       backgroundColor: backgroundColor,
       foregroundColor: Colors.white,
+      elevation: 0,
+      shadowColor: Colors.transparent,
       padding:
           label == null
               ? const EdgeInsets.symmetric(horizontal: 6, vertical: 4)

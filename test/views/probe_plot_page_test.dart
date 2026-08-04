@@ -116,6 +116,7 @@ void main() {
     expect(rttCenter.dy, closeTo(modeRect.center.dy, 3.1));
     expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
     expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
+    expect(AppStrings.plot.placeObservation, contains('右键'));
     expect(find.text(AppStrings.plot.cursor), findsNothing);
     expect(find.text(AppStrings.plot.measureXx), findsNothing);
     expect(find.text(AppStrings.plot.measureYy), findsNothing);

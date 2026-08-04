@@ -753,7 +753,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
           children: [
             SizedBox(height: hexHeight, child: hexViewer),
             MouseRegion(
-              cursor: SystemMouseCursors.resizeUpDown,
+              cursor: SystemMouseCursors.resizeRow,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onVerticalDragStart: (details) {
@@ -781,11 +781,11 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                   height: splitterHeight,
                   child: Center(
                     child: Container(
-                      width: 42,
-                      height: 2,
+                      width: 40,
+                      height: 3,
                       decoration: BoxDecoration(
-                        color: Theme.of(context).dividerColor,
-                        borderRadius: BorderRadius.circular(1),
+                        color: Theme.of(context).colorScheme.outline,
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                   ),

@@ -100,7 +100,7 @@ void main() {
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
-      settings.plotLodQuality = 'performance';
+      settings.plotLodQuality = 'balanced';
       settings.plotHistoryMemoryLimitGiB = 2;
       settings.mathChannels = MathChannelConfig.createDefaults();
       settings.keepPlotOnRestart = false;
@@ -1791,7 +1791,7 @@ void main() {
     });
 
     test('LOD质量档位切换后保存到应用设置', () {
-      expect(vm.lodQuality, PlotLodQuality.performance);
+      expect(vm.lodQuality, PlotLodQuality.balanced);
 
       vm.setLodQuality(PlotLodQuality.balanced);
 

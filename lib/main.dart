@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +27,7 @@ import 'services/connection_owner_service.dart';
 import 'services/crash_dump_service.dart';
 import 'services/flash_programming_service.dart';
 import 'services/modbus_client_service.dart';
+import 'services/modbus_window_manager.dart';
 import 'services/native_serial_reader.dart';
 import 'services/probe_connection_service.dart';
 import 'services/ssh_connection_service.dart';
@@ -42,6 +45,7 @@ import 'viewmodels/rtt_viewmodel.dart';
 import 'viewmodels/shell_viewmodel.dart';
 import 'views/pages/plot_page.dart';
 import 'views/pages/modbus_page.dart';
+import 'views/pages/modbus_detached_page.dart';
 import 'views/pages/flash_programming_page.dart';
 import 'views/pages/probe_plot_page.dart';
 import 'views/pages/raw_data_page.dart';
@@ -51,8 +55,33 @@ import 'views/widgets/app_icon.dart';
 import 'views/widgets/openocd_runtime_preparation_overlay.dart';
 import 'views/widgets/status_bar.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (args.isNotEmpty && args.first == 'multi_window') {
+    final windowId = int.tryParse(args.elementAtOrNull(1) ?? '');
+    final payload =
+        args.length > 2 && args[2].isNotEmpty
+            ? jsonDecode(args[2]) as Map<String, dynamic>
+            : const <String, dynamic>{};
+    if (windowId == null || payload['business'] != 'modbusPage') return;
+    final controller = WindowController.fromWindowId(windowId);
+    final windowTitle = '${payload['windowTitle'] ?? 'Modbus页面'}';
+    await controller.setFrame(const ui.Rect.fromLTWH(120, 120, 1080, 720));
+    await controller.setTitle(windowTitle);
+    runApp(
+      MaterialApp(
+        title: 'Modbus页面',
+        theme: AppTheme.buildLightTheme(),
+        debugShowCheckedModeBanner: false,
+        home: ModbusDetachedPage(
+          windowId: windowId,
+          pageKey: '${payload['pageKey'] ?? ''}',
+        ),
+      ),
+    );
+    await controller.show();
+    return;
+  }
   Object? serialFfiWarmUpError;
   StackTrace? serialFfiWarmUpStackTrace;
   try {
@@ -145,32 +174,72 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: connectionService),
         ChangeNotifierProvider.value(value: sshService),
         ChangeNotifierProvider(
-          create:
-              (_) => ModbusClientService(
-                DataConnectionModbusLink(connectionService),
-                initialMode: ModbusMode.fromString(AppSettings().modbusMode),
-                timeoutMs: AppSettings().modbusTimeoutMs,
-                initialPollingIntervalMs: AppSettings().modbusPollingIntervalMs,
-                initialSendingIntervalMs: AppSettings().modbusSendingIntervalMs,
-                initialTasks: AppSettings().modbusPollingTasks,
-                initialSendTasks: AppSettings().modbusSendTasks,
-                onTasksChanged: (tasks) {
-                  AppSettings().modbusPollingTasks = List.of(tasks);
-                  unawaited(AppSettings().save());
-                },
-                onSendTasksChanged: (tasks) {
-                  AppSettings().modbusSendTasks = List.of(tasks);
-                  unawaited(AppSettings().save());
-                },
-                onPollingIntervalChanged: (value) {
-                  AppSettings().modbusPollingIntervalMs = value;
-                  unawaited(AppSettings().save());
-                },
-                onSendingIntervalChanged: (value) {
-                  AppSettings().modbusSendingIntervalMs = value;
-                  unawaited(AppSettings().save());
-                },
+          create: (_) {
+            final service = ModbusClientService(
+              DataConnectionModbusLink(connectionService),
+              initialMode: ModbusMode.fromString(AppSettings().modbusMode),
+              timeoutMs: AppSettings().modbusTimeoutMs,
+              initialLayoutMode: ModbusRegisterLayoutMode.fromValue(
+                AppSettings().modbusLayoutMode,
               ),
+              initialByteOrder: AppSettings().modbusByteOrder,
+              initialWordOrder: AppSettings().modbusWordOrder,
+              initialLogMaxLines: AppSettings().modbusLogMaxLines,
+              initialPages: AppSettings().modbusPages,
+              onPagesChanged: (pages) {
+                AppSettings().modbusPages = List.of(pages);
+                unawaited(AppSettings().save());
+              },
+              onLayoutModeChanged: (value) {
+                AppSettings().modbusLayoutMode = value.value;
+                unawaited(AppSettings().save());
+              },
+              onModeChanged: (value) {
+                AppSettings().modbusMode = value.value;
+                unawaited(AppSettings().save());
+              },
+              onTimeoutChanged: (value) {
+                AppSettings().modbusTimeoutMs = value;
+                unawaited(AppSettings().save());
+              },
+              onByteOrderChanged: (value) {
+                AppSettings().modbusByteOrder = value;
+                unawaited(AppSettings().save());
+              },
+              onWordOrderChanged: (value) {
+                AppSettings().modbusWordOrder = value;
+                unawaited(AppSettings().save());
+              },
+              onLogMaxLinesChanged: (value) {
+                AppSettings().modbusLogMaxLines = value;
+                unawaited(AppSettings().save());
+              },
+              onSelectedProfileChanged: (value) {
+                AppSettings().modbusProfileId = value;
+                unawaited(AppSettings().save());
+              },
+            );
+            unawaited(
+              service
+                  .initializeProfiles(
+                    selectedProfileId: AppSettings().modbusProfileId,
+                  )
+                  .catchError((Object error, StackTrace stackTrace) {
+                    AppLogger().error(
+                      '初始化Modbus配置库失败: $error',
+                      category: 'MODBUS',
+                      error: error,
+                      stackTrace: stackTrace,
+                    );
+                  }),
+            );
+            return service;
+          },
+        ),
+        ChangeNotifierProvider(
+          create:
+              (context) =>
+                  ModbusWindowManager(context.read<ModbusClientService>()),
         ),
         ChangeNotifierProvider.value(value: BundledOpenOcdRuntime()),
         ChangeNotifierProvider(create: (_) => FlashProgrammingService()),
@@ -1391,7 +1460,12 @@ class _WindowCloseListener extends WindowListener {
       context,
       listen: false,
     );
+    final modbusWindowManager = Provider.of<ModbusWindowManager>(
+      context,
+      listen: false,
+    );
     await AppSettings().flushPendingSave();
+    await modbusWindowManager.closeAll();
     await modbusService.stop();
     await flashProgrammingService.shutdown();
     await probeConnectionService.shutdown();

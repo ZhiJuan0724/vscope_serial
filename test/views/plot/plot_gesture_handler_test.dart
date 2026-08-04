@@ -116,6 +116,82 @@ void main() {
     expect(viewport.yMax, initialViewport.yMax);
   });
 
+  testWidgets('有效框选完成后通知调用方关闭单次模式', (tester) async {
+    var updateCount = 0;
+    var completionCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (_, {fromDrag = false}) => updateCount++,
+              onBoxZoomCompleted: () => completionCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(120, 80));
+    await gesture.up();
+    await tester.pump();
+
+    expect(updateCount, 1);
+    expect(completionCount, 1);
+  });
+
+  testWidgets('框选模式下右键拖动仍平移视口', (tester) async {
+    var viewport = initialViewport;
+    var completionCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+              },
+              onBoxZoomCompleted: () => completionCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(100, 60));
+    await gesture.up();
+    await tester.pump();
+
+    expect(viewport.xMin, lessThan(initialViewport.xMin));
+    expect(viewport.yMin, greaterThan(initialViewport.yMin));
+    expect(completionCount, 0);
+  });
+
   testWidgets('Y 测量关闭吸附后按指针数据位置拖动', (tester) async {
     double? draggedY;
     await tester.pumpWidget(
