@@ -6,9 +6,46 @@ import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/pages/plot_page.dart';
+import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 
 void main() {
+  testWidgets('框选开关立即同步到绘图手势层', (tester) async {
+    final connectionService = DataConnectionService();
+    final vm = PlotViewModel(connectionService);
+
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    vm.ingestParsedResultForTest(
+      ParseResult.ok([1, 2, 3, 4], bytesConsumed: 16),
+    );
+    vm.notifyListeners();
+    await tester.pump();
+
+    PlotGestureHandler gestureHandler() =>
+        tester.widget<PlotGestureHandler>(find.byType(PlotGestureHandler));
+
+    expect(gestureHandler().boxZoomEnabled, isFalse);
+    vm.setBoxZoomEnabled(true);
+    await tester.pump();
+    expect(gestureHandler().boxZoomEnabled, isTrue);
+
+    vm.setBoxZoomEnabled(false);
+    await tester.pump();
+    expect(gestureHandler().boxZoomEnabled, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    connectionService.dispose();
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
   testWidgets('绘图页面按数据、通道和覆盖状态隔离重建', (tester) async {
     final connectionService = DataConnectionService();
     final vm = PlotViewModel(connectionService);

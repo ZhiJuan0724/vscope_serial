@@ -27,7 +27,8 @@ extension PlotViewModelViewportControls on PlotViewModel {
     if (!fromDrag) {
       _saveViewport();
     }
-    _setViewport(_limitXRange(newViewport, previous: viewport).copy());
+    final normalizedViewport = newViewport.normalizedY(fallback: viewport);
+    _setViewport(_limitXRange(normalizedViewport, previous: viewport).copy());
     viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
     if (fromDrag) {
       _scheduleDragWindowLoad();

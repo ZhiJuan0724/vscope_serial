@@ -123,6 +123,56 @@ void main() {
       expect(modified.marginLeft, 96);
     });
 
+    test('框选放大同时限制X和Y轴最小范围', () {
+      final vp = PlotViewport(xMin: 0, xMax: 1000, yMin: 100, yMax: 200);
+
+      final zoomed = vp.zoomTo(50, 50.1, 123.4, 123.4);
+
+      expect(zoomed.xRange, PlotViewport.minXRange);
+      expect(zoomed.yRange, PlotViewport.minYRange);
+      expect((zoomed.yMin + zoomed.yMax) / 2, closeTo(123.4, 1e-9));
+    });
+
+    test('连续框选不会让Y轴范围坍缩', () {
+      var vp = PlotViewport(xMin: 0, xMax: 1000, yMin: -100, yMax: 100);
+
+      for (var i = 0; i < 100; i++) {
+        final center = (vp.yMin + vp.yMax) / 2;
+        final halfSelection = vp.yRange * 0.05;
+        vp = vp.zoomTo(
+          vp.xMin,
+          vp.xMin + vp.xRange * 0.1,
+          center - halfSelection,
+          center + halfSelection,
+        );
+      }
+
+      expect(vp.xRange, greaterThanOrEqualTo(PlotViewport.minXRange));
+      expect(vp.yRange, PlotViewport.minYRange);
+      expect(vp.yMin.isFinite, isTrue);
+      expect(vp.yMax.isFinite, isTrue);
+    });
+
+    test('归一化修复旧设置中的零范围并回退非有限值', () {
+      final collapsed =
+          PlotViewport(xMin: 20, xMax: 20, yMin: 42, yMax: 42).normalized();
+      expect(collapsed.xRange, PlotViewport.minXRange);
+      expect(collapsed.yRange, PlotViewport.minYRange);
+      expect((collapsed.yMin + collapsed.yMax) / 2, 42);
+
+      final fallback = PlotViewport(xMin: 10, xMax: 110, yMin: -5, yMax: 5);
+      final invalid = PlotViewport(
+        xMin: double.nan,
+        xMax: double.infinity,
+        yMin: double.negativeInfinity,
+        yMax: double.nan,
+      ).normalized(fallback: fallback);
+      expect(invalid.xMin, fallback.xMin);
+      expect(invalid.xMax, fallback.xMax);
+      expect(invalid.yMin, fallback.yMin);
+      expect(invalid.yMax, fallback.yMax);
+    });
+
     test('offset axis column widths adjust margin and survive copy', () {
       final vp = PlotViewport();
 

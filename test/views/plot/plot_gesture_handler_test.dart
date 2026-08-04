@@ -69,6 +69,53 @@ void main() {
     expect(viewport.yMax, initialViewport.yMax);
   });
 
+  testWidgets('框选模式忽略单击和过薄选区', (tester) async {
+    var viewport = initialViewport;
+    var updateCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                updateCount++;
+              },
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final click = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await click.addPointer(location: center);
+    await click.down(center);
+    await click.up();
+    await click.removePointer();
+
+    final thin = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await thin.addPointer(location: center);
+    await thin.down(center);
+    await thin.moveTo(center + const Offset(120, 2));
+    await thin.up();
+    await thin.removePointer();
+    await tester.pump();
+
+    expect(updateCount, 0);
+    expect(viewport.xMin, initialViewport.xMin);
+    expect(viewport.xMax, initialViewport.xMax);
+    expect(viewport.yMin, initialViewport.yMin);
+    expect(viewport.yMax, initialViewport.yMax);
+  });
+
   testWidgets('Y 测量关闭吸附后按指针数据位置拖动', (tester) async {
     double? draggedY;
     await tester.pumpWidget(

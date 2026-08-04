@@ -223,18 +223,95 @@ class PlotViewport {
 
   /// 缩放到指定的数据范围，返回新的视口
   ///
-  /// 用于框选放大功能。X 轴范围受 [minXRange] 和 [maxXRange] 限制。
+  /// 用于框选放大功能。X/Y 轴范围均受最小值和最大值限制。
   PlotViewport zoomTo(double x1, double x2, double y1, double y2) {
-    var newXRange = (x2 - x1).abs();
-    if (newXRange < minXRange) newXRange = minXRange;
-    if (newXRange > maxXRange) newXRange = maxXRange;
-
     return copyWith(
       xMin: x1 < x2 ? x1 : x2,
-      xMax: (x1 < x2 ? x1 : x2) + newXRange,
+      xMax: x1 < x2 ? x2 : x1,
       yMin: y1 < y2 ? y1 : y2,
       yMax: y1 < y2 ? y2 : y1,
+    ).normalized(fallback: this);
+  }
+
+  /// 修正无效、反向或过小的坐标范围。
+  ///
+  /// 已保存的旧视口可能包含框选产生的零 Y 范围；归一化时保留原中心，
+  /// 并扩展到允许的最小范围。非有限值则回退到 [fallback] 或默认视口。
+  PlotViewport normalized({PlotViewport? fallback}) =>
+      _normalized(fallback: fallback, constrainX: true);
+
+  /// 仅修正 Y 轴，保留调用方用于精确统计等场景的短 X 范围。
+  PlotViewport normalizedY({PlotViewport? fallback}) =>
+      _normalized(fallback: fallback, constrainX: false);
+
+  PlotViewport _normalized({
+    required PlotViewport? fallback,
+    required bool constrainX,
+  }) {
+    final defaultViewport = PlotViewport();
+    final fallbackViewport = fallback ?? defaultViewport;
+    final normalizedX =
+        constrainX
+            ? _normalizeAxis(
+              xMin,
+              xMax,
+              minXRange,
+              maxXRange,
+              fallbackViewport.xMin,
+              fallbackViewport.xMax,
+              defaultViewport.xMin,
+              defaultViewport.xMax,
+            )
+            : (xMin, xMax);
+    final normalizedY = _normalizeAxis(
+      yMin,
+      yMax,
+      minYRange,
+      maxYRange,
+      fallbackViewport.yMin,
+      fallbackViewport.yMax,
+      defaultViewport.yMin,
+      defaultViewport.yMax,
     );
+    final result = copyWith(
+      xMin: normalizedX.$1,
+      xMax: normalizedX.$2,
+      yMin: normalizedY.$1,
+      yMax: normalizedY.$2,
+    );
+    result.setOffsetAxisColumnWidths(_offsetAxisColumnWidths);
+    return result;
+  }
+
+  static (double, double) _normalizeAxis(
+    double first,
+    double second,
+    double minRange,
+    double maxRange,
+    double fallbackFirst,
+    double fallbackSecond,
+    double defaultFirst,
+    double defaultSecond,
+  ) {
+    if (!first.isFinite || !second.isFinite) {
+      if (fallbackFirst.isFinite && fallbackSecond.isFinite) {
+        first = fallbackFirst;
+        second = fallbackSecond;
+      } else {
+        first = defaultFirst;
+        second = defaultSecond;
+      }
+    }
+
+    final lower = first < second ? first : second;
+    final upper = first < second ? second : first;
+    final rawRange = upper - lower;
+    if (!rawRange.isFinite) return (defaultFirst, defaultSecond);
+
+    final range = rawRange.clamp(minRange, maxRange).toDouble();
+    final center = lower + rawRange / 2;
+    if (!center.isFinite) return (defaultFirst, defaultSecond);
+    return (center - range / 2, center + range / 2);
   }
 
   /// 将 X 轴限制在允许范围内，返回新的视口

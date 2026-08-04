@@ -701,7 +701,7 @@ class PlotViewModel extends BaseViewModel {
         xMax: settings.xMax,
         yMin: settings.yMin,
         yMax: settings.yMax,
-      ),
+      ).normalizedY(),
     );
     // 同步到 connectionService
     connectionService.setUseRandomSource(_useRandomSource, notify: false);

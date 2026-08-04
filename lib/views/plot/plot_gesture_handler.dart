@@ -186,6 +186,7 @@ enum _ShiftZoomAxis { none, pending, x, y, channelY }
 /// 管理拖动状态、框选状态、测量线拖动目标等。
 class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   static const int _maxSnapScanPoints = 4096;
+  static const double _minimumBoxZoomExtent = 4;
 
   /// 当前帧内最后一次垂直光标位置。
   ///
@@ -1298,6 +1299,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
 
+      final selectionDelta = _boxEnd! - _boxStart!;
+      if (selectionDelta.dx.abs() < _minimumBoxZoomExtent ||
+          selectionDelta.dy.abs() < _minimumBoxZoomExtent) {
+        _resetDragState();
+        return;
+      }
+
       // 计算框选区域的数据坐标
       final x1 = widget.viewport.screenToDataX(
         _boxStart!.dx.clamp(
@@ -1347,6 +1355,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       widget.onViewportChanged(_dragViewport!, fromDrag: true);
       widget.onDragEnd?.call();
     }
+    _resetDragState();
+  }
+
+  void _resetDragState() {
     _isDragging = false;
     _isBoxSelecting = false;
     _shiftZoomAxis = _ShiftZoomAxis.none;
