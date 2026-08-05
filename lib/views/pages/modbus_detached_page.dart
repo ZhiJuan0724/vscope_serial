@@ -567,10 +567,7 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
       builder:
           (dialogContext) => AlertDialog(
             title: Text('${row.address}[${row.variableType.label}] 一次性发送'),
-            content: TextField(
-              controller: controller,
-              decoration: const InputDecoration(labelText: '值'),
-            ),
+            content: AppDialogTextField(controller: controller, labelText: '值'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
