@@ -11,8 +11,10 @@ import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/widgets/common_widgets.dart';
 
 void main() {
+  final connectionService = DataConnectionService();
+  tearDownAll(connectionService.dispose);
+
   testWidgets('框选开关立即同步到绘图手势层', (tester) async {
-    final connectionService = DataConnectionService();
     final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -57,12 +59,10 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
-    connectionService.dispose();
     await tester.pump(const Duration(milliseconds: 100));
   });
 
   testWidgets('绘图页面按数据、通道和覆盖状态隔离重建', (tester) async {
-    final connectionService = DataConnectionService();
     final vm = PlotViewModel(connectionService);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
@@ -128,7 +128,6 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();
-    connectionService.dispose();
     await tester.pump(const Duration(milliseconds: 100));
   }, skip: !PlotPerformanceMetrics.enabled);
 }
