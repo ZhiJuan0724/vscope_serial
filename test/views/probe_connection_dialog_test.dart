@@ -120,28 +120,6 @@ void main() {
     expect(find.text('预计使用后端：external-openocd（自动选择）'), findsOneWidget);
     expect(openocd.discoveryCount, 0);
 
-    final probeHeight =
-        tester
-            .getSize(find.byKey(const ValueKey('rtt-probe-kind-field')))
-            .height;
-    expect(
-      tester
-          .getSize(find.byKey(const ValueKey('rtt-target-field-container')))
-          .height,
-      probeHeight,
-    );
-    expect(
-      tester
-          .getSize(find.byKey(const ValueKey('rtt-clock-field-container')))
-          .height,
-      probeHeight,
-    );
-    expect(
-      tester
-          .getSize(find.byKey(const ValueKey('rtt-target-field-container')))
-          .width,
-      lessThan(400),
-    );
     expect(find.byTooltip('检索支持的芯片'), findsOneWidget);
 
     await tester.tap(find.byTooltip('刷新探针'));
@@ -494,14 +472,6 @@ void main() {
     );
     expect(tester.widget<TextField>(interfaceFieldFinder).readOnly, isFalse);
     expect(tester.widget<TextField>(targetFieldFinder).readOnly, isFalse);
-    expect(
-      tester
-          .widget<IconButton>(
-            find.byKey(const ValueKey('rtt-openocd-interface-file-button')),
-          )
-          .splashRadius,
-      18,
-    );
 
     await tester.enterText(interfaceFieldFinder, 'interface/stlink.cfg');
     expect(

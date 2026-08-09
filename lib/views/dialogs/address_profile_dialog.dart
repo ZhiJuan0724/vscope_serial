@@ -13,6 +13,7 @@ import '../../services/app_notifications.dart';
 import '../../services/address_profile_csv_importer.dart';
 import '../../services/zobow_c_profile_importer.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../widgets/common_widgets.dart';
 
 /// 地址配置弹窗的协议差异策略。
 ///
@@ -268,10 +269,15 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
               decoration: InputDecoration(
                 isDense: true,
                 prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIconConstraints: const BoxConstraints.tightFor(
+                  width: kFieldIconButtonExtent,
+                  height: kFieldIconButtonExtent,
+                ),
                 suffixIcon:
                     _searchText.isEmpty
                         ? null
-                        : IconButton(
+                        : AppFieldIconButton(
+                          key: const ValueKey('address-profile-clear-search'),
                           tooltip: AppStrings.profile.clearSearch,
                           icon: const Icon(Icons.close, size: 16),
                           onPressed: () {

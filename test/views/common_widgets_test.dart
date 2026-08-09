@@ -368,4 +368,29 @@ void main() {
     expect(primaryCount, 1);
     expect(secondaryCount, 1);
   });
+
+  testWidgets('输入框尾部图标按钮统一使用紧凑点击反馈', (tester) async {
+    var pressed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AppFieldIconButton(
+            tooltip: '清空',
+            icon: const Icon(Icons.clear),
+            onPressed: () => pressed = true,
+          ),
+        ),
+      ),
+    );
+
+    final button = tester.widget<IconButton>(find.byType(IconButton));
+    expect(button.splashRadius, lessThanOrEqualTo(14));
+    expect(
+      tester.getSize(find.byType(AppFieldIconButton)),
+      const Size.square(kFieldIconButtonExtent),
+    );
+
+    await tester.tap(find.byType(AppFieldIconButton));
+    expect(pressed, isTrue);
+  });
 }

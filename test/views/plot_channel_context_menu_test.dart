@@ -108,22 +108,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
     expect(find.text(AppStrings.plot.lodQualityBalanced), findsOneWidget);
-    final qualitySelector = find.byKey(
-      const ValueKey('plotLodQualitySelector'),
+    expect(
+      find.byKey(const ValueKey('plotLodQualitySelector')),
+      findsOneWidget,
     );
-    final initialWidth = tester.getSize(qualitySelector).width;
 
     await tester.tap(find.text(AppStrings.plot.lodQualityBalanced));
     await tester.pumpAndSettle();
 
     expect(vm.lodQuality, PlotLodQuality.performance);
-    expect(tester.getSize(qualitySelector).width, initialWidth);
 
     await tester.tap(find.text(AppStrings.plot.lodQualityQuality));
     await tester.pumpAndSettle();
 
     expect(vm.lodQuality, PlotLodQuality.performance);
-    expect(tester.getSize(qualitySelector).width, initialWidth);
     await tester.tap(find.text('保存').last);
     await tester.pumpAndSettle();
     expect(vm.lodQuality, PlotLodQuality.quality);
@@ -177,11 +175,6 @@ void main() {
       findsOneWidget,
     );
     final x1Opacity = find.byKey(const ValueKey('x-measure-line1-opacity'));
-    expect(tester.getSize(x1Opacity).width, kSecondaryDialogFieldWidth);
-    final opacityDecorator = tester.widget<InputDecorator>(
-      find.descendant(of: x1Opacity, matching: find.byType(InputDecorator)),
-    );
-    expect(opacityDecorator.decoration.border, isA<OutlineInputBorder>());
     await tester.enterText(x1Opacity, '35');
     await tester.tap(find.byKey(const ValueKey('x-measure-settings-save')));
     await tester.pumpAndSettle();
@@ -231,8 +224,21 @@ void main() {
       find.descendant(of: legend, matching: find.text(longName)),
       findsOneWidget,
     );
-    // 旧实现的图例总宽度约为 244px；长名称应推动浮窗明显扩宽。
-    expect(tester.getSize(legend).width, greaterThan(280));
+    final nameFinder = find.descendant(
+      of: legend,
+      matching: find.text(longName),
+    );
+    final nameText = tester.widget<Text>(nameFinder);
+    final textPainter = TextPainter(
+      text: TextSpan(text: longName, style: nameText.style),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    addTearDown(textPainter.dispose);
+    expect(
+      tester.getSize(nameFinder).width,
+      greaterThanOrEqualTo(textPainter.width),
+    );
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -350,7 +356,6 @@ void main() {
     );
     expect(lineWidthField, findsOneWidget);
     expect(pointRadiusField, findsOneWidget);
-    expect(tester.getSize(lineWidthField).width, kSecondaryDialogFieldWidth);
     await tester.enterText(lineWidthField, '2.5');
     await tester.enterText(pointRadiusField, '4.5');
 

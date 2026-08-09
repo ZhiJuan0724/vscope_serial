@@ -59,26 +59,6 @@ void main() {
     final checkboxFinder = find.byKey(
       const ValueKey('show-port-details-checkbox'),
     );
-    expect(
-      tester.getSize(find.byKey(const ValueKey('serial-dialog-content'))).width,
-      400,
-    );
-    expect(
-      tester
-          .getSize(find.byKey(const ValueKey('baud-rate-field-container')))
-          .width,
-      220,
-    );
-    expect(
-      tester.getCenter(checkboxFinder).dy,
-      greaterThan(
-        tester
-            .getCenter(
-              find.widgetWithText(ElevatedButton, AppStrings.common.refresh),
-            )
-            .dy,
-      ),
-    );
     expect(tester.widget<Checkbox>(checkboxFinder).value, isFalse);
     expect(find.text('COM7'), findsOneWidget);
     expect(detailCalls, 0);

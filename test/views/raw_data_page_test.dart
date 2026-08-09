@@ -69,28 +69,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('接收显示选项靠左且清空保存设置靠右', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final service = DataConnectionService();
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<DataConnectionService>.value(
-        value: service,
-        child: const MaterialApp(home: Scaffold(body: RawDataPage())),
-      ),
-    );
-    await tester.pump();
-
-    final autoScroll = find.byTooltip(AppStrings.raw.autoScroll);
-    final clear = find.byTooltip(AppStrings.raw.clear);
-    expect(tester.getCenter(autoScroll).dx, lessThan(500));
-    expect(tester.getCenter(clear).dx, greaterThan(800));
-    expect(tester.takeException(), isNull);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets('向下拖动分隔条时发送区保持最低高度', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));

@@ -92,6 +92,9 @@ class _ModbusContextMenu extends StatelessWidget {
 }
 
 class _ModbusPageState extends State<ModbusPage> {
+  /// 与绘图工具栏保持相同的下拉框视觉基线。
+  static const double _toolbarDropdownOffsetY = 2;
+
   final _unitController = TextEditingController(text: '1');
   final _addressController = TextEditingController(text: '0');
   final _quantityController = TextEditingController(text: '1');
@@ -1236,6 +1239,7 @@ class _ModbusPageState extends State<ModbusPage> {
         extent: 110,
         child: ToolbarDropdown<ModbusMode>(
           width: 110,
+          visibleFieldOffsetY: _toolbarDropdownOffsetY,
           value: service.mode,
           hint: '协议',
           items: [
@@ -1255,6 +1259,7 @@ class _ModbusPageState extends State<ModbusPage> {
         child: ToolbarDropdown<String>(
           key: const ValueKey('modbus-profile-selector'),
           width: 160,
+          visibleFieldOffsetY: _toolbarDropdownOffsetY,
           value: service.selectedProfile?.id,
           hint: service.profilesInitialized ? '默认配置' : '加载配置…',
           items: [

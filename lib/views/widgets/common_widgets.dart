@@ -43,6 +43,9 @@ const double kToolbarHeight = 40;
 const double kToolbarControlExtent = 32;
 const double kToolbarIconSize = 18;
 
+/// 输入框尾部图标按钮的统一尺寸，避免默认按钮产生过大的悬停和点击反馈。
+const double kFieldIconButtonExtent = 32;
+
 /// Material分段按钮的文字基线统一略微上移，修正中文与英文视觉上偏下的问题。
 class AppSegmentedButtonLabel extends StatelessWidget {
   const AppSegmentedButtonLabel({super.key, required this.child});
@@ -511,6 +514,39 @@ class ToolbarIconButton extends StatelessWidget {
             child: icon,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 输入框尾部使用的紧凑图标按钮。
+class AppFieldIconButton extends StatelessWidget {
+  const AppFieldIconButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final Widget icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: kFieldIconButtonExtent,
+      height: kFieldIconButtonExtent,
+      child: IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        splashRadius: 14,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(
+          width: kFieldIconButtonExtent,
+          height: kFieldIconButtonExtent,
+        ),
+        icon: icon,
       ),
     );
   }

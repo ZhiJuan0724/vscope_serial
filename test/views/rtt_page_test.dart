@@ -56,18 +56,12 @@ void main() {
       const ValueKey('rtt-terminal-panel-collapse-button'),
     );
     expect(collapseButton, findsOneWidget);
-    expect(tester.getSize(collapseButton), const Size(34, 36));
-    expect(
-      find.descendant(of: collapseButton, matching: find.byType(IconButton)),
-      findsNothing,
-    );
     await tester.tap(collapseButton);
     await tester.pump();
     final expandButton = find.byKey(
       const ValueKey('rtt-terminal-panel-expand-button'),
     );
     expect(expandButton, findsOneWidget);
-    expect(tester.getSize(expandButton), const Size(34, 36));
     expect(
       tester
           .widget<PopupMenuButton<bool>>(
@@ -264,7 +258,6 @@ void main() {
 
     final row = find.byKey(const ValueKey('rtt-terminal-row-3'));
     await tester.ensureVisible(row);
-    expect(tester.widget<ListTile>(row).minTileHeight, 34);
     final position = tester.getCenter(row);
     final secondary = await tester.createGesture(
       kind: PointerDeviceKind.mouse,

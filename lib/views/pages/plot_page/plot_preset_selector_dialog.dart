@@ -141,10 +141,14 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                 isDense: true,
                 hintText: AppStrings.plot.searchNameOrAddress,
                 prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIconConstraints: const BoxConstraints.tightFor(
+                  width: kFieldIconButtonExtent,
+                  height: kFieldIconButtonExtent,
+                ),
                 suffixIcon:
                     _searchText.isEmpty
                         ? null
-                        : IconButton(
+                        : AppFieldIconButton(
                           tooltip: AppStrings.plot.selectAddressSearchClear,
                           icon: const Icon(Icons.clear, size: 16),
                           onPressed: () {

@@ -2369,7 +2369,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                 suffixIcon:
                     _symbolSearch.text.isEmpty
                         ? null
-                        : IconButton(
+                        : AppFieldIconButton(
                           tooltip: '清空搜索',
                           onPressed: () {
                             setState(() => _symbolSearch.clear());

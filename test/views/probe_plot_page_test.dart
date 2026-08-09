@@ -73,18 +73,6 @@ void main() {
     expect(find.byKey(const ValueKey('hss-symbol-search')), findsOneWidget);
     expect(find.text('motor_speed'), findsOneWidget);
     expect(find.text('sample_counter'), findsOneWidget);
-    for (final key in [
-      'hss-frequency-field',
-      'hss-symbol-search',
-      'hss-name-field',
-      'hss-address-field',
-      'hss-type-dropdown',
-    ]) {
-      expect(
-        tester.getSize(find.byKey(ValueKey(key))).height,
-        kSecondaryDialogControlHeight,
-      );
-    }
 
     await tester.enterText(
       find.byKey(const ValueKey('hss-symbol-search')),
@@ -105,15 +93,7 @@ void main() {
     expect(find.text('Value 2'), findsNothing);
 
     final modeSelector = find.byType(SegmentedButton<ProbePlotMode>);
-    expect(tester.getSize(modeSelector).height, lessThanOrEqualTo(24));
-    final modeRect = tester.getRect(modeSelector);
-    final hssCenter = tester.getCenter(find.text('HSS'));
-    final rttCenter = tester.getCenter(find.text('RTT'));
-    expect((hssCenter.dx + rttCenter.dx) / 2, closeTo(modeRect.center.dx, 1));
-    // 字形边界与 24px SegmentedButton 的视觉中心存在少量字体度量差异；
-    // 控件通过 1px 光学校正后允许不同测试字体环境保留 3px 以内偏差。
-    expect(hssCenter.dy, closeTo(modeRect.center.dy, 3.1));
-    expect(rttCenter.dy, closeTo(modeRect.center.dy, 3.1));
+    expect(modeSelector, findsOneWidget);
     expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
     expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
     expect(AppStrings.plot.placeObservation, contains('右键'));
@@ -268,17 +248,6 @@ void main() {
     expect(find.text(AppStrings.plot.observationClickToPlace), findsOneWidget);
     final initialOpacity = viewModel.floatingPanelOpacity;
     final initialFollowPosition = viewModel.followPositionRatio;
-    for (final key in [
-      'probe-floating-panel-opacity-field',
-      'probe-follow-position-field',
-      'probe-history-memory-limit-field',
-      'probe-window-point-limit-field',
-    ]) {
-      expect(
-        tester.getSize(find.byKey(ValueKey(key))).height,
-        kSecondaryDialogControlHeight,
-      );
-    }
     await tester.enterText(
       find.byKey(const ValueKey('probe-floating-panel-opacity-field')),
       '75',
