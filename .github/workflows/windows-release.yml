@@ -47,6 +47,9 @@ jobs:
       - name: Test restricted pyOCD worker
         run: python -m unittest test_tools/test_pyocd_worker.py -v
 
+      - name: Test Windows release bundle assembly
+        run: python -m unittest test_tools/test_prepare_windows_release_bundle.py -v
+
       - name: Run native serial time tests
         shell: pwsh
         run: |
@@ -164,34 +167,43 @@ jobs:
           path: build/vscope_serial-symbols-*.zip
           if-no-files-found: error
 
-      - name: Install third-party notices
+      - name: Prepare Windows release bundle
         shell: pwsh
         run: |
-          $bundle = "build/windows/x64/runner/Release"
-          Copy-Item "THIRD_PARTY_NOTICES.md" "$bundle/THIRD_PARTY_NOTICES.md"
+          python tools/prepare_windows_release_bundle.py `
+            --source "build/windows/x64/runner/Release" `
+            --output "build/windows-release-bundle"
 
-      - name: Install pinned OpenOCD runtime
+      - name: Verify Windows release bundle
         shell: pwsh
         run: |
-          python tools/prepare_openocd_runtime.py `
-            --bundle "build/windows/x64/runner/Release"
-
-      - name: Verify native serial reader DLL
-        shell: pwsh
-        run: |
-          $dll = "build/windows/x64/runner/Release/native_serial_reader.dll"
+          $bundle = "build/windows-release-bundle"
+          $dll = "$bundle/native_serial_reader.dll"
           if (-not (Test-Path $dll)) {
             throw "Missing native_serial_reader.dll in release bundle"
           }
-          $updater = "build/windows/x64/runner/Release/vscope_updater.exe"
+          $updater = "$bundle/vscope_updater.exe"
           if (-not (Test-Path $updater)) {
             throw "Missing vscope_updater.exe in release bundle"
           }
-          $openOcdArchive = "build/windows/x64/runner/Release/runtime/openocd/openocd-runtime.zip"
+          $runtimeDlls = @(
+            "MSVCP140.dll",
+            "VCRUNTIME140.dll",
+            "VCRUNTIME140_1.dll"
+          )
+          foreach ($name in $runtimeDlls) {
+            $path = Join-Path $bundle $name
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing VC++ runtime in release bundle: $name"
+            }
+            $version = (Get-Item -LiteralPath $path).VersionInfo.FileVersion
+            Write-Host "$name version=$version"
+          }
+          $openOcdArchive = "$bundle/runtime/openocd/openocd-runtime.zip"
           if (-not (Test-Path $openOcdArchive)) {
             throw "Missing bundled OpenOCD archive"
           }
-          $openOcdManifest = "build/windows/x64/runner/Release/runtime/openocd/openocd-runtime.json"
+          $openOcdManifest = "$bundle/runtime/openocd/openocd-runtime.json"
           if (-not (Test-Path $openOcdManifest)) {
             throw "Missing bundled OpenOCD manifest"
           }
@@ -201,14 +213,14 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}"
           if ("${{ github.ref_type }}" -ne "tag") {
-            $version = "v0.0.0-${{ github.sha }}"
+            $version = "v0.0.0-beta.0"
           }
           if (Test-Path -LiteralPath "dist") {
             Remove-Item -LiteralPath "dist" -Recurse -Force
           }
           New-Item -ItemType Directory -Path "dist" | Out-Null
           python tools/generate_update_assets.py `
-            --bundle "build/windows/x64/runner/Release" `
+            --bundle "build/windows-release-bundle" `
             --tag $version `
             --output dist
 

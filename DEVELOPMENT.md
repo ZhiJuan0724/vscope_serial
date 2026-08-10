@@ -62,6 +62,9 @@ build/windows/x64/runner/Release/
 
 Debug 脚本只补齐本地调试所需的附加运行时，并不等同于发布打包；许可证、更新资产、符号归档和便携 ZIP 仍由发布脚本处理。直接 `flutter build` 生成的 Release 也不是可发布的完整便携包。
 
+Debug 原生模块使用本机 Visual Studio 安装的 Debug CRT。`build_debug.py` 不复制
+Release Redistributable，也不调用发布目录组装器；Debug 输出不得作为便携包分发。
+
 ## 3. 目录与职责
 
 ```text
@@ -197,6 +200,7 @@ flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METR
 | `analyze_crash_dump.ps1` | 检查 Windows minidump、日志和 PDB 是否完整匹配，调用 CDB 生成中文分析报告 |
 | `build_debug.py` | 准备 Debug 附加运行时，构建并运行 Windows 应用；本地 Debug 的推荐入口 |
 | `build_release.py` | 清理旧产物，执行检查、测试和全新 Windows Release 构建，打包运行时、许可证、更新资产、便携包和符号包 |
+| `prepare_windows_release_bundle.py` | 统一组装本地和 CI 的 Windows 发布目录，部署匹配工具链的 VC++ Runtime 并校验附加运行时 |
 | `generate_update_assets.py` | 从 Release bundle 生成便携 ZIP、`app-files.json` 和带大小/SHA-256 的更新清单 |
 | `prepare_openocd_runtime.py` | 下载并校验固定版本的 xPack OpenOCD，将最小运行时、脚本和许可证打包为单一 ZIP 和校验清单 |
 
@@ -224,6 +228,8 @@ python tools/build_release.py --version 1.0.7-beta.5
 - 清理旧发布目录和 Windows 构建树。
 - 执行检查、测试和 Windows Release 构建。
 - 复制应用、原生 DLL、VC++ 运行时，并生成内置 OpenOCD 压缩运行时和校验清单。
+- 本地脚本与 GitHub Actions 必须共同调用 `prepare_windows_release_bundle.py`，不得另写一套发布目录复制步骤。
+- 当前所需 VC++ Runtime 必须来自 Visual Studio 工具链的 x64 Redistributable 目录；新增运行库依赖时同步扩展清单，缺失时打包失败，不得从 `System32` 静默取旧版本。
 - 收集第三方许可证并生成 `THIRD_PARTY_NOTICES`。
 - 生成更新资产和便携 ZIP。
 - 排除 `.lib`、`.exp`、`.pdb` 等中间文件；PDB 单独归档为匹配版本的符号包。
@@ -231,8 +237,12 @@ python tools/build_release.py --version 1.0.7-beta.5
 手动生成更新资产：
 
 ```powershell
+python tools/prepare_windows_release_bundle.py `
+  --source build/windows/x64/runner/Release `
+  --output build/windows-release-bundle
+
 python tools/generate_update_assets.py `
-  --bundle build/windows/x64/runner/Release `
+  --bundle build/windows-release-bundle `
   --tag v1.0.7-beta.5 `
   --output dist
 ```

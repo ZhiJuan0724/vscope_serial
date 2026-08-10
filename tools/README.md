@@ -8,6 +8,7 @@
 | --- | --- |
 | `build_debug.py` | 准备 Debug 附加运行时并构建、运行 Windows 应用 |
 | `build_release.py` | 执行完整 Windows Release 检查、构建和打包 |
+| `prepare_windows_release_bundle.py` | 组装本地与 CI 共用的完整 Windows 发布目录 |
 | `generate_update_assets.py` | 生成便携 ZIP、应用文件清单和更新清单 |
 | `prepare_openocd_runtime.py` | 准备固定版本的最小 OpenOCD 运行时 |
 | `analyze_crash_dump.ps1` | 检查并分析 Windows 原生崩溃转储 |
@@ -16,6 +17,9 @@
 ## `build_debug.py`
 
 本地 Debug 推荐入口。脚本会先准备 `flutter run` 不会自动生成的内置 OpenOCD 压缩运行时，再执行 Windows Debug 构建并启动应用。原生 DLL、崩溃转储支持和 updater 仍由 Flutter/CMake 构建链生成。
+
+Debug 构建使用本机 Visual Studio 提供的 Debug CRT，不复制 Release Redistributable，
+也不调用发布目录组装器。Debug 输出只用于开发机调试，不能作为便携包分发。
 
 ```powershell
 python tools/build_debug.py
@@ -38,6 +42,11 @@ python tools/build_debug.py
 4. 准备内置 OpenOCD、原生 DLL、VC++ 运行时和第三方许可证。
 5. 生成更新资产、便携 ZIP 和独立符号包。
 
+发布目录由 `prepare_windows_release_bundle.py` 统一组装，本地脚本与 GitHub
+Actions 不再分别维护运行库、许可证和 OpenOCD 的复制逻辑。VC++ Runtime
+从当前 Visual Studio 工具链的 x64 Redistributable 目录部署；缺少必要 DLL
+时直接终止打包，不回退到 `System32`。
+
 ```powershell
 python tools/build_release.py
 python tools/build_release.py --help
@@ -52,6 +61,23 @@ python tools/build_release.py --help
 
 脚本不提供 `--skip-build`，不得复用旧构建目录打包。输出位于 `build/releases/`。
 
+## `prepare_windows_release_bundle.py`
+
+从干净的 Flutter Windows Release 构建目录组装可发布目录，统一完成：
+
+- 排除 `.lib`、`.exp`、`.pdb` 和用户数据目录。
+- 部署当前 Visual Studio 工具链匹配且构建产物明确依赖的 x64 VC++ CRT。
+- 加入第三方许可证和固定版本 OpenOCD 运行时。
+- 验证主程序、更新器、原生串口 DLL、VC++ Runtime 和 OpenOCD 是否齐全。
+
+本地完整发布和 GitHub Actions 都调用该工具。通常不需要单独运行；诊断时可用：
+
+```powershell
+python tools/prepare_windows_release_bundle.py `
+  --source build/windows/x64/runner/Release `
+  --output build/windows-release-bundle
+```
+
 ## `generate_update_assets.py`
 
 从已构建的 Windows Release bundle 生成：
@@ -61,8 +87,12 @@ python tools/build_release.py --help
 - 包含版本、文件大小和 SHA-256 的更新清单。
 
 ```powershell
+python tools/prepare_windows_release_bundle.py `
+  --source build/windows/x64/runner/Release `
+  --output build/windows-release-bundle
+
 python tools/generate_update_assets.py `
-  --bundle build/windows/x64/runner/Release `
+  --bundle build/windows-release-bundle `
   --tag v1.0.7-beta.5 `
   --output build/releases
 ```
@@ -72,6 +102,8 @@ python tools/generate_update_assets.py `
 - `--bundle`：Windows Release bundle 目录。
 - `--tag`：完整发布 tag，必须以 `v` 开头。
 - `--output`：输出目录。
+
+生成器会再次校验完整发布目录，缺少 VC++ Runtime、许可证或 OpenOCD 时拒绝输出 ZIP。
 
 工具排除 `settings/`、`config/`、`logs/`、`exports/` 及 `.lib`、`.exp`、`.pdb`，避免把用户数据和中间文件纳入更新管理。
 

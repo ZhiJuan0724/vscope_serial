@@ -31,7 +31,6 @@ C++ DLL 说明：
 """
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -39,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from generate_update_assets import generate as generate_update_assets
+from prepare_windows_release_bundle import prepare_windows_release_bundle
 
 # ========== 配置 ==========
 
@@ -47,30 +47,6 @@ BUILD_DIR = PROJECT_ROOT / "build"
 RELEASE_DIR = BUILD_DIR / "releases"
 FLUTTER_BUILD_DIR = BUILD_DIR / "windows" / "x64" / "runner" / "Release"
 WINDOWS_BUILD_DIR = BUILD_DIR / "windows"
-
-# VC++ 运行时 DLL（x64）
-# native_serial_reader.dll 是 MSVC 编译的 C++ DLL，需要这些运行时
-VC_RUNTIME_DLLS = [
-    "MSVCP140.dll",
-    "VCRUNTIME140.dll",
-    "VCRUNTIME140_1.dll",
-]
-
-# 需要排除的文件（不打包）
-EXCLUDE_FILES = {
-    "logs",           # 日志目录
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    "native_assets.json",
-}
-
-# MSVC/CMake 生成的链接与调试中间产物，不属于可运行发布包。
-EXCLUDE_SUFFIXES = {
-    ".exp",
-    ".lib",
-    ".pdb",
-}
-
 
 # ========== 颜色输出 ==========
 
@@ -151,21 +127,6 @@ def get_build_time() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def copy_runtime_notices(bundle_dir: Path):
-    """把随内置 OpenOCD 发布的第三方许可说明放入发布目录。"""
-    shutil.copy2(PROJECT_ROOT / "THIRD_PARTY_NOTICES.md", bundle_dir)
-
-
-def install_openocd_runtime(bundle_dir: Path):
-    """下载、校验并安装发布包内置的轻量 OpenOCD 运行时。"""
-    run_cmd([
-        sys.executable,
-        str(PROJECT_ROOT / "tools" / "prepare_openocd_runtime.py"),
-        "--bundle",
-        str(bundle_dir),
-    ])
-
-
 def clean_release_dir():
     """清理旧的发布目录"""
     if RELEASE_DIR.exists():
@@ -179,51 +140,6 @@ def clean_windows_build_dir():
     if WINDOWS_BUILD_DIR.exists():
         shutil.rmtree(WINDOWS_BUILD_DIR)
         info("已清理旧的 Windows 构建目录")
-
-
-def find_vc_runtime_dlls() -> list[Path]:
-    """查找系统中的 VC++ 运行时 DLL"""
-    found = []
-    system32 = Path("C:/Windows/System32")
-    
-    for dll_name in VC_RUNTIME_DLLS:
-        dll_path = system32 / dll_name
-        if dll_path.exists():
-            found.append(dll_path)
-        else:
-            warn(f"未找到 VC++ 运行时 DLL: {dll_name}")
-    
-    return found
-
-
-def copy_build_output(dst_dir: Path):
-    """复制构建输出到目标目录（便携版：包含 VC++ 运行时）"""
-    if not FLUTTER_BUILD_DIR.exists():
-        raise FileNotFoundError(f"构建目录不存在: {FLUTTER_BUILD_DIR}")
-    
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 复制所有文件和目录
-    for item in FLUTTER_BUILD_DIR.iterdir():
-        if item.name in EXCLUDE_FILES or item.suffix.lower() in EXCLUDE_SUFFIXES:
-            continue
-        
-        dst_path = dst_dir / item.name
-        if item.is_dir():
-            if dst_path.exists():
-                shutil.rmtree(dst_path)
-            shutil.copytree(item, dst_path)
-        else:
-            shutil.copy2(item, dst_path)
-    
-    # 复制 VC++ 运行时 DLL（C++ DLL 依赖）
-    vc_dlls = find_vc_runtime_dlls()
-    for dll_path in vc_dlls:
-        shutil.copy2(dll_path, dst_dir / dll_path.name)
-        info(f"复制 VC++ DLL: {dll_path.name}")
-    
-    if not vc_dlls:
-        warn("未找到任何 VC++ 运行时 DLL，便携版可能无法在缺少 VC++ 的系统上运行")
 
 
 def package_debug_symbols(version: str) -> Path:
@@ -346,19 +262,22 @@ def main():
         error("Release 构建失败")
         sys.exit(1)
 
-    copy_runtime_notices(FLUTTER_BUILD_DIR)
-    install_openocd_runtime(FLUTTER_BUILD_DIR)
     symbols_zip = package_debug_symbols(version)
     success(f"调试符号归档完成: {symbols_zip}")
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")
 
-    # 便携版（含 VC++ 运行时）
+    # 本地与 CI 共用同一个发布目录组装器，避免附加运行时和校验规则漂移。
     portable_name = f"vscope_serial-{version}-portable"
     portable_dir = RELEASE_DIR / portable_name
     info(f"打包便携版: {portable_name}")
-    copy_build_output(portable_dir)
+    copied_runtime = prepare_windows_release_bundle(
+        FLUTTER_BUILD_DIR,
+        portable_dir,
+    )
+    for runtime_dll in copied_runtime:
+        info(f"复制 VC++ DLL: {runtime_dll.name}")
     success(f"便携版打包完成: {portable_dir}")
     
     # 生成自动更新兼容的 ZIP 和更新清单

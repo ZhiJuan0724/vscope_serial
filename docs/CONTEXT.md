@@ -164,6 +164,7 @@
 - `vscope_updater.exe` 在主程序安全退出后更新，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败自动回滚。
 - 稳定版和 Beta 各保留一个本地回退槽；按当前运行版本的通道写入，不按目标版本通道写入。
 - 本地和 CI 打包前必须清空旧发布目录与 Windows 构建树；禁止复用增量产物。发布包排除 `.lib`、`.exp`、`.pdb` 等中间文件，并包含所需许可证。
+- 本地 `build_release.py` 与 GitHub Actions 共用 `prepare_windows_release_bundle.py` 组装发布目录；只从当前 Visual Studio 工具链的 x64 Redistributable 目录部署构建产物明确依赖的 VC++ Runtime，新增依赖时同步扩展清单，缺少必要 DLL 时必须中止打包，不得回退复制 `System32` 版本。
 - `.github/workflows/windows-release.yml` 负责 PR 检查、手动构建和 tag 发布。PR 到 `main` 运行 analyze、test 和 Windows Release 构建；直接 push `main` 不发布。
 
 ## 8. 开发规则

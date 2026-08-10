@@ -16,19 +16,35 @@
 #include <cwctype>
 #include <iterator>
 #include <map>
-#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
+
+class ExclusiveSrwLockGuard {
+public:
+    explicit ExclusiveSrwLockGuard(SRWLOCK* lock) : lock_(lock) {
+        AcquireSRWLockExclusive(lock_);
+    }
+
+    ~ExclusiveSrwLockGuard() {
+        ReleaseSRWLockExclusive(lock_);
+    }
+
+    ExclusiveSrwLockGuard(const ExclusiveSrwLockGuard&) = delete;
+    ExclusiveSrwLockGuard& operator=(const ExclusiveSrwLockGuard&) = delete;
+
+private:
+    SRWLOCK* lock_;
+};
 
 // 连接周期共享状态；访问读取线程相关资源时必须遵循 stop/close 的同步顺序。
 static HANDLE g_hSerial = INVALID_HANDLE_VALUE;
 static std::thread g_readThread;
 static std::atomic<bool> g_running(false);
-static std::mutex g_stateMutex;
+static SRWLOCK g_stateLock = SRWLOCK_INIT;
 static std::atomic<int> g_lastOpenStage{0};
 static std::atomic<DWORD> g_lastOpenError{ERROR_SUCCESS};
-static std::mutex g_diagnosticLogMutex;
+static SRWLOCK g_diagnosticLogLock = SRWLOCK_INIT;
 static std::wstring g_diagnosticLogPath;
 static std::atomic<bool> g_diagnosticLogEnabled{false};
 
@@ -62,7 +78,7 @@ static void append_open_diagnostic(
     g_lastOpenError = error;
     if (!g_diagnosticLogEnabled.load()) return;
 
-    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    ExclusiveSrwLockGuard lock(&g_diagnosticLogLock);
     if (g_diagnosticLogPath.empty()) return;
     HANDLE file = CreateFileW(
         g_diagnosticLogPath.c_str(),
@@ -529,7 +545,7 @@ static void read_thread_func() {
         int64_t dartPort = 0;
         int timeoutMs = 0;
         {
-            std::lock_guard<std::mutex> lock(g_stateMutex);
+            ExclusiveSrwLockGuard lock(&g_stateLock);
             hSerial = g_hSerial;
             dartPort = g_dartPort;
             timeoutMs = g_timeoutMs;
@@ -735,7 +751,7 @@ int nsr_open_port(const char* portName, int baudRate) {
 
     append_open_diagnostic(9, "publish_handle_begin");
     {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
+        ExclusiveSrwLockGuard lock(&g_stateLock);
         g_hSerial = hSerial;
     }
     append_open_diagnostic(9, "publish_handle_complete");
@@ -753,7 +769,7 @@ uint32_t nsr_get_last_open_error() {
 }
 
 void nsr_configure_diagnostic_log(const char* logPath, int enabled) {
-    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    ExclusiveSrwLockGuard lock(&g_diagnosticLogLock);
     g_diagnosticLogPath = utf8_to_wide(logPath);
     g_diagnosticLogEnabled =
         enabled != 0 && !g_diagnosticLogPath.empty();
@@ -765,7 +781,7 @@ void nsr_close_port() {
 }
 
 int nsr_set_config(int dataBits, int stopBits, int parity) {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return -1;
     
     DCB dcb = {0};
@@ -792,19 +808,19 @@ int nsr_set_config(int dataBits, int stopBits, int parity) {
 }
 
 void nsr_set_rts(int on) {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return;
     EscapeCommFunction(g_hSerial, on ? SETRTS : CLRRTS);
 }
 
 void nsr_set_dtr(int on) {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return;
     EscapeCommFunction(g_hSerial, on ? SETDTR : CLRDTR);
 }
 
 int nsr_start_reading(int64_t dartPort, int timeoutMs) {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return -1;
     if (g_running.load()) return -1;
     
@@ -847,7 +863,7 @@ void nsr_stop_reading() {
     
     HANDLE hTemp = INVALID_HANDLE_VALUE;
     {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
+        ExclusiveSrwLockGuard lock(&g_stateLock);
         hTemp = g_hSerial;
     }
 
@@ -860,7 +876,7 @@ void nsr_stop_reading() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(g_stateMutex);
+        ExclusiveSrwLockGuard lock(&g_stateLock);
         if (g_hSerial != INVALID_HANDLE_VALUE) {
             CloseHandle(g_hSerial);
             g_hSerial = INVALID_HANDLE_VALUE;
@@ -870,7 +886,7 @@ void nsr_stop_reading() {
 }
 
 int nsr_write(const uint8_t* data, int length) {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return -1;
     
     DWORD bytesWritten = 0;
@@ -895,12 +911,12 @@ int nsr_write(const uint8_t* data, int length) {
 }
 
 int nsr_is_open() {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     return g_hSerial != INVALID_HANDLE_VALUE ? 1 : 0;
 }
 
 int nsr_is_connection_healthy() {
-    std::lock_guard<std::mutex> lock(g_stateMutex);
+    ExclusiveSrwLockGuard lock(&g_stateLock);
     if (g_hSerial == INVALID_HANDLE_VALUE) return 0;
 
     DWORD errors = 0;

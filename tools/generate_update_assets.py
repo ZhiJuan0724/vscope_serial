@@ -11,6 +11,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from prepare_windows_release_bundle import verify_windows_release_bundle
+
 
 EXCLUDED_TOP_LEVEL = {"settings", "config", "logs", "exports"}
 EXCLUDED_SUFFIXES = {".lib", ".exp", ".pdb"}
@@ -58,6 +60,7 @@ def generate(bundle: Path, tag: str, output_dir: Path) -> tuple[Path, Path]:
         raise FileNotFoundError("bundle is missing vscope_serial.exe")
     if not (bundle / "vscope_updater.exe").exists():
         raise FileNotFoundError("bundle is missing vscope_updater.exe")
+    verify_windows_release_bundle(bundle, require_openocd=True)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     package_name = f"vscope_serial-windows-{tag}.zip"
