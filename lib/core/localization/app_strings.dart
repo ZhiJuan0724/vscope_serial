@@ -610,6 +610,10 @@ final class _ProfileStrings {
   String get deleteProfile => '删除配置';
   String get exportProfile => '导出配置';
   String get importExternal => '导入配置';
+  String get importConflictHandling => '相同地址处理';
+  String get overwriteSameAddress => '覆盖同地址原项';
+  String get keepSameAddress => '保留同地址项';
+  String get importConflictHelp => '仅编辑已有配置时生效；未冲突的原有地址项会保留。';
   String deleteProfileTitle(String name) => '删除配置文件';
   String deleteProfileMessage(String name) => '确定删除“$name”吗？此操作无法撤销。';
   String get ignoreComments => '忽略注释';
@@ -634,6 +638,9 @@ final class _ProfileStrings {
   String importCFailed(String error) => '导入 C 配置失败: $error';
   String get pasteCCodeHint => '粘贴包含 ChxValueTable 的 C 代码';
   String get importAction => '导入';
+  String get editSequence => '编辑序号';
+  String get sequence => '序号';
+  String sequenceRangeHelp(int maximum) => '请输入 1～$maximum；超出范围会自动调整。';
   String get noCProfileSwitchFound => '未找到 ChxValueTable 内可导入的 switch 配置';
   String importedPresetCount(int count) => '已导入 $count 个地址预设';
   String presetName(int index) => '预设$index';

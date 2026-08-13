@@ -188,6 +188,8 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
   int? _selectedRowIndex;
   String _searchText = '';
   bool _ignoreCImportComments = false;
+  AddressImportConflictPolicy _importConflictPolicy =
+      AddressImportConflictPolicy.overwriteExisting;
 
   @override
   void initState() {
@@ -474,9 +476,14 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
               children: [
                 SizedBox(
                   width: 32,
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(fontSize: 12),
+                  child: GestureDetector(
+                    key: ValueKey('address-profile-row-sequence-$index'),
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: () => _editRowSequence(index),
+                    child: Text(
+                      '${index + 1}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -576,9 +583,16 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
               children: [
                 SizedBox(
                   width: 32,
-                  child: Text(
-                    '${rowIndex + 1}',
-                    style: const TextStyle(fontSize: 12),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTap: () async {
+                      _jumpToRow(rowIndex, clearSearch: true);
+                      await _editRowSequence(rowIndex);
+                    },
+                    child: Text(
+                      '${rowIndex + 1}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 32),
@@ -756,6 +770,43 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        if (widget.profile != null) ...[
+                          Text(AppStrings.profile.importConflictHandling),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: AppSegmentedSelector<
+                              AddressImportConflictPolicy
+                            >(
+                              value: _importConflictPolicy,
+                              minItemWidth: 130,
+                              items: {
+                                AddressImportConflictPolicy
+                                    .overwriteExisting: Text(
+                                  AppStrings.profile.overwriteSameAddress,
+                                ),
+                                AddressImportConflictPolicy.keepBoth: Text(
+                                  AppStrings.profile.keepSameAddress,
+                                ),
+                              },
+                              onChanged: (value) {
+                                setDialogState(
+                                  () => _importConflictPolicy = value,
+                                );
+                                setState(() => _importConflictPolicy = value);
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.profile.importConflictHelp,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         if (widget.behavior.supportsCImport)
                           CheckboxListTile(
                             value: _ignoreCImportComments,
@@ -852,25 +903,7 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
         throw FormatException(AppStrings.profile.emptyProfilePresets);
       }
 
-      for (final row in _rows) {
-        row.dispose();
-      }
-      setState(() {
-        _nameController.text = profile.name;
-        _rows
-          ..clear()
-          ..addAll(
-            profile.presets.map(
-              (preset) => _PresetRow(
-                nameController: TextEditingController(text: preset.name),
-                addressController: TextEditingController(
-                  text: widget.behavior.formatAddress(preset),
-                ),
-              ),
-            ),
-          );
-        _selectedRowIndex = null;
-      });
+      _applyImportedPresets(profile.presets, profileName: profile.name);
     } catch (error) {
       if (!mounted) return;
       AppNotifications.show(
@@ -1008,44 +1041,87 @@ class _AddressProfileDialogState extends State<_AddressProfileDialog> {
       return;
     }
 
-    for (final row in _rows) {
-      row.dispose();
-    }
-    setState(() {
-      if (profileName != null && profileName.trim().isNotEmpty) {
-        _nameController.text = profileName.trim();
-      }
-      _rows
-        ..clear()
-        ..addAll(imported.presets.map(_rowFromPreset));
-      _selectedRowIndex = null;
-    });
-    AppNotifications.show(
-      AppStrings.profile.importedPresetCount(imported.presets.length),
-      messenger: ScaffoldMessenger.of(context),
-    );
+    _applyImportedPresets(imported.presets, profileName: profileName);
   }
 
   void _applyImportedPresets(
     List<AddressChannelPreset> presets, {
     String? profileName,
   }) {
+    final mergedPresets =
+        widget.profile == null
+            ? presets.map((preset) => preset.copyWith()).toList()
+            : _mergeWithCurrentPresets(presets);
+    if (mergedPresets == null) return;
+
     for (final row in _rows) {
       row.dispose();
     }
     setState(() {
-      if (profileName != null && profileName.trim().isNotEmpty) {
+      if (widget.profile == null &&
+          profileName != null &&
+          profileName.trim().isNotEmpty) {
         _nameController.text = profileName.trim();
       }
       _rows
         ..clear()
-        ..addAll(presets.map(_rowFromPreset));
+        ..addAll(mergedPresets.map(_rowFromPreset));
       _selectedRowIndex = null;
     });
     AppNotifications.show(
       AppStrings.profile.importedPresetCount(presets.length),
       messenger: ScaffoldMessenger.of(context),
     );
+  }
+
+  List<AddressChannelPreset>? _mergeWithCurrentPresets(
+    List<AddressChannelPreset> imported,
+  ) {
+    final existing = <AddressChannelPreset>[];
+    for (final row in _rows) {
+      final name = row.nameController.text.trim();
+      if (name.isEmpty) continue;
+      final preset = widget.behavior.parsePreset(
+        name,
+        row.addressController.text.trim(),
+      );
+      if (preset == null) {
+        AppNotifications.show(
+          AppStrings.profile.invalidPresetAddress(name),
+          messenger: ScaffoldMessenger.of(context),
+        );
+        return null;
+      }
+      existing.add(preset);
+    }
+    return mergeImportedAddressPresets(
+      existing: existing,
+      imported: imported,
+      policy: _importConflictPolicy,
+    );
+  }
+
+  Future<void> _editRowSequence(int currentIndex) async {
+    if (currentIndex < 0 || currentIndex >= _rows.length) return;
+    final requested = await showDialog<int>(
+      context: context,
+      builder:
+          (_) => _SequenceEditDialog(
+            initialSequence: currentIndex + 1,
+            maximumSequence: _rows.length + 1,
+          ),
+    );
+    if (!mounted || requested == null) return;
+    final sequence = normalizeAddressPresetSequence(requested, _rows.length);
+    final targetIndex = (sequence - 1).clamp(0, _rows.length - 1);
+    if (targetIndex == currentIndex) return;
+    setState(() {
+      final row = _rows.removeAt(currentIndex);
+      final insertionIndex = targetIndex.clamp(0, _rows.length);
+      _rows.insert(insertionIndex, row);
+      _selectedRowIndex = insertionIndex;
+    });
+    _jumpToRow(_selectedRowIndex!);
   }
 
   void _addRow() {
@@ -1242,6 +1318,66 @@ class _PresetRow {
     nameController.dispose();
     addressController.dispose();
   }
+}
+
+/// 序号编辑弹窗自行持有输入控制器，确保退场动画结束后再释放资源。
+class _SequenceEditDialog extends StatefulWidget {
+  const _SequenceEditDialog({
+    required this.initialSequence,
+    required this.maximumSequence,
+  });
+
+  final int initialSequence;
+  final int maximumSequence;
+
+  @override
+  State<_SequenceEditDialog> createState() => _SequenceEditDialogState();
+}
+
+class _SequenceEditDialogState extends State<_SequenceEditDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: '${widget.initialSequence}');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, int.tryParse(_controller.text));
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(AppStrings.profile.editSequence),
+    content: SizedBox(
+      width: 280,
+      child: AppNumberField(
+        key: const ValueKey('address-profile-sequence-input'),
+        controller: _controller,
+        autofocus: true,
+        labelText: AppStrings.profile.sequence,
+        helperText: AppStrings.profile.sequenceRangeHelp(
+          widget.maximumSequence,
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(AppStrings.common.cancel),
+      ),
+      ElevatedButton(
+        onPressed: _submit,
+        child: Text(AppStrings.common.confirm),
+      ),
+    ],
+  );
 }
 
 class _ProfileProgressDialog extends StatelessWidget {

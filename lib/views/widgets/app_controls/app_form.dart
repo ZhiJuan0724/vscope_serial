@@ -126,6 +126,7 @@ class AppNumberField extends AppDialogTextField {
     super.errorText,
     super.suffixText,
     super.enabled,
+    super.autofocus,
     super.onChanged,
     super.onSubmitted,
     bool allowDecimal = false,

@@ -93,5 +93,40 @@ void main() {
       expect(restored.presets[0].formatAddress(), '16');
       expect(restored.presets[1].formatAddress(compactHex: true), '0x10');
     });
+
+    test('导入覆盖同地址旧项并保留未冲突项', () {
+      final merged = mergeImportedAddressPresets(
+        existing: [
+          AddressChannelPreset(name: '旧A', address: 1),
+          AddressChannelPreset(name: '保留', address: 2),
+          AddressChannelPreset(name: '旧A重复', address: 1),
+        ],
+        imported: [
+          AddressChannelPreset(name: '新A', address: 1),
+          AddressChannelPreset(name: '新增', address: 3),
+        ],
+        policy: AddressImportConflictPolicy.overwriteExisting,
+      );
+
+      expect(merged.map((preset) => preset.name), ['新A', '保留', '新增']);
+      expect(merged.map((preset) => preset.address), [1, 2, 3]);
+    });
+
+    test('导入保留同地址项时追加全部导入内容', () {
+      final merged = mergeImportedAddressPresets(
+        existing: [AddressChannelPreset(name: '旧A', address: 16)],
+        imported: [AddressChannelPreset(name: '新A', address: 16)],
+        policy: AddressImportConflictPolicy.keepBoth,
+      );
+
+      expect(merged.map((preset) => preset.name), ['旧A', '新A']);
+      expect(merged.map((preset) => preset.address), [16, 16]);
+    });
+
+    test('编辑序号限制到1至最大序号加1', () {
+      expect(normalizeAddressPresetSequence(-1, 3), 1);
+      expect(normalizeAddressPresetSequence(2, 3), 2);
+      expect(normalizeAddressPresetSequence(99, 3), 4);
+    });
   });
 }

@@ -127,7 +127,94 @@ void main() {
     await tester.pump();
     expect(tester.widget<TextField>(address).controller!.text, '0x10');
   });
+
+  testWidgets('双击序号后插入已有序号并将后续项顺延', (tester) async {
+    final profile = _sequenceProfile();
+    await _pumpDialog(
+      tester,
+      ZobowProfileDialog(vm: viewModel, profile: profile),
+    );
+
+    await _doubleTap(
+      tester,
+      find.byKey(const ValueKey('address-profile-row-sequence-2')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('address-profile-sequence-input')),
+      '2',
+    );
+    await tester.tap(find.text('确定').last);
+    await tester.pumpAndSettle();
+
+    expect(_rowName(tester, 0), '第一项');
+    expect(_rowName(tester, 1), '第三项');
+    expect(_rowName(tester, 2), '第二项');
+  });
+
+  testWidgets('序号超过最大值加一时移动到列表末尾', (tester) async {
+    final profile = _sequenceProfile();
+    await _pumpDialog(
+      tester,
+      RProtocolProfileDialog(vm: viewModel, profile: profile),
+    );
+
+    await _doubleTap(
+      tester,
+      find.byKey(const ValueKey('address-profile-row-sequence-0')),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('address-profile-sequence-input')),
+      '99',
+    );
+    await tester.tap(find.text('确定').last);
+    await tester.pumpAndSettle();
+
+    expect(_rowName(tester, 0), '第二项');
+    expect(_rowName(tester, 1), '第三项');
+    expect(_rowName(tester, 2), '第一项');
+  });
+
+  testWidgets('编辑已有配置时导入弹窗提供同地址合并策略', (tester) async {
+    await _pumpDialog(
+      tester,
+      RProtocolProfileDialog(vm: viewModel, profile: _sequenceProfile()),
+    );
+
+    await tester.tap(find.text('导入配置'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('相同地址处理'), findsOneWidget);
+    expect(find.text('覆盖同地址原项'), findsOneWidget);
+    expect(find.text('保留同地址项'), findsOneWidget);
+  });
 }
+
+Future<void> _doubleTap(WidgetTester tester, Finder finder) async {
+  await tester.tap(finder);
+  await tester.pump(const Duration(milliseconds: 50));
+  await tester.tap(finder);
+  await tester.pump();
+}
+
+String _rowName(WidgetTester tester, int index) =>
+    tester
+        .widget<TextField>(
+          find.byKey(ValueKey('address-profile-row-name-$index')),
+        )
+        .controller!
+        .text;
+
+AddressConfigProfile _sequenceProfile() => AddressConfigProfile(
+  id: 'sequence',
+  name: '序号测试',
+  presets: [
+    AddressChannelPreset(name: '第一项', address: 1),
+    AddressChannelPreset(name: '第二项', address: 2),
+    AddressChannelPreset(name: '第三项', address: 3),
+  ],
+);
 
 AddressConfigProfile _profile(
   AddressProfileProtocolType protocol,

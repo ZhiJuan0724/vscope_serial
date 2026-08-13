@@ -26,6 +26,15 @@ enum AddressValueFormat {
   }
 }
 
+/// 导入地址项与当前配置发生同地址冲突时的处理方式。
+enum AddressImportConflictPolicy {
+  /// 使用导入项替换当前配置中地址相同的全部旧项。
+  overwriteExisting,
+
+  /// 保留旧项，同时追加全部导入项，允许同地址重复。
+  keepBoth,
+}
+
 /// 地址通道预设：名称、地址数值及其文本进制。
 class AddressChannelPreset {
   /// 预设名称（如 "温度传感器"、"压力传感器"）
@@ -102,6 +111,56 @@ class AddressChannelPreset {
       addressFormat: addressFormat ?? this.addressFormat,
     );
   }
+}
+
+/// 合并导入的地址预设，并保持未冲突旧项的原有顺序。
+///
+/// 覆盖模式会在第一个同地址旧项的位置插入全部同地址导入项，再移除其余
+/// 同地址旧项；保留模式直接在旧项末尾追加全部导入项。
+List<AddressChannelPreset> mergeImportedAddressPresets({
+  required List<AddressChannelPreset> existing,
+  required List<AddressChannelPreset> imported,
+  required AddressImportConflictPolicy policy,
+}) {
+  if (policy == AddressImportConflictPolicy.keepBoth) {
+    return [
+      ...existing.map((preset) => preset.copyWith()),
+      ...imported.map((preset) => preset.copyWith()),
+    ];
+  }
+
+  final importedByAddress = <int, List<AddressChannelPreset>>{};
+  for (final preset in imported) {
+    importedByAddress
+        .putIfAbsent(preset.address, () => <AddressChannelPreset>[])
+        .add(preset);
+  }
+  final existingAddresses = existing.map((preset) => preset.address).toSet();
+  final emittedAddresses = <int>{};
+  final merged = <AddressChannelPreset>[];
+  for (final preset in existing) {
+    final replacements = importedByAddress[preset.address];
+    if (replacements == null) {
+      merged.add(preset.copyWith());
+      continue;
+    }
+    if (emittedAddresses.add(preset.address)) {
+      merged.addAll(replacements.map((item) => item.copyWith()));
+    }
+  }
+  for (final preset in imported) {
+    if (!existingAddresses.contains(preset.address)) {
+      merged.add(preset.copyWith());
+    }
+  }
+  return merged;
+}
+
+/// 将用户输入的 1 基序号限制到当前列表允许的插入范围。
+int normalizeAddressPresetSequence(int requested, int itemCount) {
+  if (requested < 1) return 1;
+  final maximum = itemCount + 1;
+  return requested > maximum ? maximum : requested;
 }
 
 /// Zobow/r 协议共用的地址配置文件。
