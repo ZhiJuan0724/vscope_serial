@@ -7,6 +7,7 @@ import '../../core/constants/plot_configuration.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/utils/app_logger.dart';
+import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_painter.dart';
@@ -15,7 +16,7 @@ import 'plot_viewport.dart';
 /// 绘图手势处理器
 ///
 /// 负责处理绘图区域的所有用户交互：
-/// - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，Shift+滚轮根据鼠标位置缩放 X/Y 轴
+/// - **鼠标滚轮缩放**：普通滚轮缩放 X 轴，修饰键+滚轮按位置缩放 X/Y 轴
 /// - **触控板导航**：双指移动平移视口，捏合手势以指针位置为中心缩放
 /// - **拖拽平移**：普通模式下鼠标左键拖动；框选模式下鼠标右键拖动
 /// - **框选放大**：开启框选模式后，鼠标左键拖拽框选区域并放大
@@ -114,8 +115,11 @@ class PlotGestureHandler extends StatefulWidget {
   /// 通道偏移拖动回调
   final void Function(int channelIndex, double yOffset)? onChannelOffsetDrag;
 
-  /// 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴区域时触发）
+  /// 通道 Y 轴缩放回调（修饰键+滚轮在偏置Y轴区域时触发）
   final void Function(int channelIndex, double scaleDelta)? onChannelYScaleZoom;
+
+  /// 轴向缩放手势使用的修饰键，默认保持原有 Shift 行为。
+  final PlotGestureModifier gestureModifier;
 
   /// 目标刷新帧率（fps），与高级设置中的绘图刷新帧率同步
   final int refreshFps;
@@ -157,6 +161,7 @@ class PlotGestureHandler extends StatefulWidget {
     int? activeChannelCount,
     this.onChannelOffsetDrag,
     this.onChannelYScaleZoom,
+    this.gestureModifier = PlotGestureModifier.shift,
     this.refreshFps = 60,
     this.plotFontSizeDelta = 0,
   }) : activeChannelCount = (activeChannelCount ?? channels.length).clamp(
@@ -192,6 +197,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   static const int _maxSnapScanPoints = 4096;
   static const double _minimumBoxZoomExtent = 4;
 
+  bool get _isZoomModifierPressed => switch (widget.gestureModifier) {
+    PlotGestureModifier.shift => HardwareKeyboard.instance.isShiftPressed,
+    PlotGestureModifier.control => HardwareKeyboard.instance.isControlPressed,
+  };
+
   /// 当前帧内最后一次垂直光标位置。
   ///
   /// 鼠标的 hover 事件频率可能明显高于绘图帧率；逐个注册
@@ -206,7 +216,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 是否正在框选
   bool _isBoxSelecting = false;
 
-  /// Shift + 拖动时锁定的缩放轴。
+  /// 修饰键 + 拖动时锁定的缩放轴。
   ///
   /// 按下时根据鼠标所在区域识别一次，后续即使斜向拖动也只缩放该轴。
   _ShiftZoomAxis _shiftZoomAxis = _ShiftZoomAxis.none;
@@ -228,13 +238,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 避免在快速拖动时依赖 widget.viewport 的实时更新。
   PlotViewport? _dragViewport;
 
-  /// Shift 拖动开始时鼠标对应的 X 轴数据坐标
+  /// 修饰键拖动开始时鼠标对应的 X 轴数据坐标
   double? _shiftZoomCenterX;
 
-  /// Shift 拖动开始时鼠标对应的 Y 轴数据坐标
+  /// 修饰键拖动开始时鼠标对应的 Y 轴数据坐标
   double? _shiftZoomCenterY;
 
-  /// Shift 拖动偏置 Y 轴时命中的通道。
+  /// 修饰键拖动偏置 Y 轴时命中的通道。
   int? _shiftZoomChannelIndex;
 
   /// 右侧偏置 Y 轴列拖动时使用相对位移，不把鼠标位置直接当作 0 点。
@@ -438,11 +448,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   /// 处理指针信号（鼠标滚轮缩放）
   ///
   /// - 普通滚轮：以鼠标位置为中心缩放 X 轴
-  /// - Shift+滚轮：根据鼠标所在区域（Y轴区/X轴区/绘图区）缩放对应轴
+  /// - 修饰键+滚轮：根据鼠标所在区域（Y轴区/X轴区/绘图区）缩放对应轴
   void _handlePointerSignal(PointerSignalEvent event) {
     // 鼠标滚轮与工具栏 X/Y 缩放共享视口限制，缩放中心固定在指针所在数据位置。
     if (event is PointerScrollEvent) {
-      final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+      final isZoomModifierPressed = _isZoomModifierPressed;
 
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
@@ -460,8 +470,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
       var newViewport = widget.viewport;
 
-      // Shift + 滚轮：根据鼠标位置决定缩放轴
-      if (isShiftPressed) {
+      // 修饰键 + 滚轮：根据鼠标位置决定缩放轴
+      if (isZoomModifierPressed) {
         if (offsetChannelIndex != null && widget.onChannelYScaleZoom != null) {
           // 鼠标在偏置 Y 轴列上 -> 单独缩放该通道的 yScale
           final scaleDelta = event.scrollDelta.dy > 0 ? 0.9 : 1.1;
@@ -740,7 +750,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     // 右侧偏置 Y 轴列也可直接上下拖动 offset。
     final offsetAxisHit = _hitTestOffsetAxisColumn(event.localPosition, size);
-    if (offsetAxisHit != null && !HardwareKeyboard.instance.isShiftPressed) {
+    if (offsetAxisHit != null && !_isZoomModifierPressed) {
       _dragTarget = _DragTarget.channelOffset;
       _offsetChannelIndex = offsetAxisHit;
       _offsetDragUsesDelta = true;
@@ -774,7 +784,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       return;
     }
 
-    if (HardwareKeyboard.instance.isShiftPressed) {
+    if (_isZoomModifierPressed) {
       _isDragging = true;
       _lastPosition = event.localPosition;
       _initializeShiftZoom(event.localPosition, size, offsetAxisHit);
@@ -830,7 +840,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _shiftZoomAxis = _ShiftZoomAxis.pending;
     }
     AppLogger().trace(
-      'Shift缩放开始: axis=$_shiftZoomAxis, channel=$_shiftZoomChannelIndex, pos=$position',
+      '${widget.gestureModifier.label}缩放开始: axis=$_shiftZoomAxis, channel=$_shiftZoomChannelIndex, pos=$position',
       category: 'GESTURE',
     );
   }
@@ -1134,7 +1144,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       if (dx.abs() < 2 && dy.abs() < 2) return;
       _shiftZoomAxis =
           dy.abs() > dx.abs() ? _ShiftZoomAxis.y : _ShiftZoomAxis.x;
-      AppLogger().trace('Shift缩放锁定: axis=$_shiftZoomAxis', category: 'GESTURE');
+      AppLogger().trace(
+        '${widget.gestureModifier.label}缩放锁定: axis=$_shiftZoomAxis',
+        category: 'GESTURE',
+      );
     }
     switch (_shiftZoomAxis) {
       case _ShiftZoomAxis.x:

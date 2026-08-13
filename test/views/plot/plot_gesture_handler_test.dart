@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/plot_data.dart';
+import 'package:vscope_serial/data/models/plot_gesture_modifier.dart';
 import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/plot/plot_viewport.dart';
@@ -21,6 +22,7 @@ void main() {
     required double deltaX,
     double deltaY = 0,
     Offset? localStart,
+    PlotGestureModifier modifier = PlotGestureModifier.shift,
   }) async {
     var viewport = initialViewport;
 
@@ -32,6 +34,7 @@ void main() {
             height: 600,
             child: PlotGestureHandler(
               viewport: initialViewport,
+              gestureModifier: modifier,
               onViewportChanged: (value, {fromDrag = false}) {
                 viewport = value;
               },
@@ -49,13 +52,17 @@ void main() {
         localStart == null
             ? tester.getCenter(find.byType(PlotGestureHandler))
             : topLeft + localStart;
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final modifierKey =
+        modifier == PlotGestureModifier.control
+            ? LogicalKeyboardKey.controlLeft
+            : LogicalKeyboardKey.shiftLeft;
+    await tester.sendKeyDownEvent(modifierKey);
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: plotCenter);
     await gesture.down(plotCenter);
     await gesture.moveTo(plotCenter + Offset(deltaX, deltaY));
     await gesture.up();
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(modifierKey);
     await tester.pump();
 
     return viewport;
@@ -63,6 +70,18 @@ void main() {
 
   testWidgets('Shift + right drag zooms in on the X axis', (tester) async {
     final viewport = await shiftDrag(tester, deltaX: 120);
+
+    expect(viewport.xRange, lessThan(initialViewport.xRange));
+    expect(viewport.yMin, initialViewport.yMin);
+    expect(viewport.yMax, initialViewport.yMax);
+  });
+
+  testWidgets('可切换为 Ctrl + 拖动执行轴向缩放', (tester) async {
+    final viewport = await shiftDrag(
+      tester,
+      deltaX: 120,
+      modifier: PlotGestureModifier.control,
+    );
 
     expect(viewport.xRange, lessThan(initialViewport.xRange));
     expect(viewport.yMin, initialViewport.yMin);
@@ -424,6 +443,44 @@ void main() {
       ),
     );
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    expect(viewport.xRange, lessThan(initialViewport.xRange));
+    expect(viewport.yRange, lessThan(initialViewport.yRange));
+  });
+
+  testWidgets('可切换为 Ctrl + 滚轮执行轴向缩放', (tester) async {
+    var viewport = initialViewport;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              gestureModifier: PlotGestureModifier.control,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+              },
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final plotCenter = tester.getCenter(find.byType(PlotGestureHandler));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: plotCenter,
+        scrollDelta: const Offset(0, -20),
+      ),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
     await tester.pump();
 
     expect(viewport.xRange, lessThan(initialViewport.xRange));

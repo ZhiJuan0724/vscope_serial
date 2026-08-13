@@ -24,6 +24,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       background: settings.plotBackground,
       opacity: settings.floatingPanelOpacity,
       observation: settings.observationClickToPlace,
+      gestureModifier: settings.plotGestureModifier,
       follow: settings.followPositionRatio,
       yFit: settings.yFitDisplayRatio,
     );
@@ -37,6 +38,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       follow: _followPositionRatio,
       yFit: _yFitDisplayRatio,
       observation: _observationClickToPlace,
+      gestureModifier: _gestureModifier,
       quality: _lodQuality,
       window: _maxVisiblePoints,
       history: _plotRetentionLimitBytes,
@@ -62,6 +64,8 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       0.95,
     );
     _observationClickToPlace = draft.observationClickToPlace;
+    _gestureModifier =
+        draft.gestureModifier as PlotGestureModifier? ?? _gestureModifier;
     _lodQuality = draft.quality as PlotLodQuality;
     _maxVisiblePoints = draft.windowPointLimit.clamp(
       PlotViewModel.minVisiblePoints,
@@ -112,6 +116,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
         ..plotBackground = oldSettings.background
         ..floatingPanelOpacity = oldSettings.opacity
         ..observationClickToPlace = oldSettings.observation
+        ..plotGestureModifier = oldSettings.gestureModifier
         ..followPositionRatio = oldSettings.follow
         ..yFitDisplayRatio = oldSettings.yFit;
       _showGrid = oldValues.showGrid;
@@ -123,6 +128,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _followPositionRatio = oldValues.follow;
       _yFitDisplayRatio = oldValues.yFit;
       _observationClickToPlace = oldValues.observation;
+      _gestureModifier = oldValues.gestureModifier;
       _lodQuality = oldValues.quality;
       _maxVisiblePoints = oldValues.window;
       _plotRetentionLimitBytes = oldValues.history;

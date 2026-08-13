@@ -288,6 +288,38 @@ void main() {
       expect(settings.probePlotLodQuality, 'balanced');
     });
 
+    test('串口绘图缩放修饰键默认Shift并持久化Ctrl选择', () async {
+      expect(settings.plotGestureModifier, 'shift');
+
+      settings.plotGestureModifier = 'control';
+      await settings.save();
+      await settings.flushPendingSave();
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.plotGestureModifier, 'control');
+      final decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      final serialPlot = decoded['serialPlot'] as Map<String, dynamic>;
+      final interaction = serialPlot['interaction'] as Map<String, dynamic>;
+      expect(interaction['zoomModifier'], 'control');
+    });
+
+    test('无效的串口绘图缩放修饰键回退为Shift', () async {
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'interaction': {'zoomModifier': 'alt'},
+          },
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.plotGestureModifier, 'shift');
+    });
+
     test('已有配置保留用户选择的绘图质量', () async {
       await File(settingsPath).writeAsString(
         const JsonEncoder.withIndent('  ').convert({

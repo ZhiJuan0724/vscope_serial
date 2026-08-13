@@ -22,6 +22,7 @@ import '../data/models/math_channel_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
+import '../data/models/plot_gesture_modifier.dart';
 import '../data/models/plot_lod_index.dart';
 import '../data/models/retention_usage.dart';
 import '../data/parser/data_parser.dart';
@@ -357,6 +358,7 @@ class PlotViewModel extends BaseViewModel {
 
   /// 添加观察时是否先跟随鼠标，再由左键固定。
   bool _observationClickToPlace = false;
+  PlotGestureModifier _gestureModifier = PlotGestureModifier.shift;
 
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
@@ -652,6 +654,9 @@ class PlotViewModel extends BaseViewModel {
     _liveValuesPanelRight = settings.plotLiveValuesPanelRight;
     _liveValuesPanelTop = settings.plotLiveValuesPanelTop;
     _observationClickToPlace = settings.observationClickToPlace;
+    _gestureModifier = PlotGestureModifier.fromString(
+      settings.plotGestureModifier,
+    );
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
@@ -798,6 +803,7 @@ class PlotViewModel extends BaseViewModel {
     settings.plotLiveValuesPanelRight = _liveValuesPanelRight;
     settings.plotLiveValuesPanelTop = _liveValuesPanelTop;
     settings.observationClickToPlace = _observationClickToPlace;
+    settings.plotGestureModifier = _gestureModifier.value;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -873,6 +879,7 @@ class PlotViewModel extends BaseViewModel {
   double liveValuesPanelTop({required bool legendVisible}) =>
       _liveValuesPanelTop ?? (legendVisible ? 240 : 96);
   bool get observationClickToPlace => _observationClickToPlace;
+  PlotGestureModifier get gestureModifier => _gestureModifier;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get boxZoomContinuous => _boxZoomContinuous;
   bool get followEnabled => _followEnabled;

@@ -18,6 +18,7 @@ import '../../core/theme/app_theme.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
+import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
 import '../../data/protocol/r_protocol_codec.dart';
@@ -1809,6 +1810,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     },
                     refreshFps: vm.effectiveRefreshFps,
                     plotFontSizeDelta: vm.plotFontSizeDelta,
+                    gestureModifier: vm.gestureModifier,
                     channels: displayChannels,
                     activeChannelCount: activeChannelCount,
                     data: displayDataPoints,
@@ -1869,7 +1871,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     onChannelOffsetDrag:
                         (index, yOffset) =>
                             vm.setChannelYOffset(index, yOffset),
-                    // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
+                    // 通道 Y 轴缩放回调（修饰键+滚轮在偏置Y轴列上）
                     onChannelYScaleZoom:
                         (index, scaleDelta) =>
                             vm.zoomChannelYScale(index, scaleDelta),
@@ -4016,6 +4018,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       fontBold: vm.plotFontBold,
       followPositionRatio: vm.followPositionRatio,
       observationClickToPlace: vm.observationClickToPlace,
+      gestureModifier: vm.gestureModifier,
       quality: vm.lodQuality,
       windowPointLimit: vm.maxVisiblePoints,
       historyLimit: vm.plotRetentionLimitGiB,
@@ -4112,6 +4115,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             '${(vm.yFitDisplayRatio * 100).round()}' ||
                         draft.observationClickToPlace !=
                             vm.observationClickToPlace ||
+                        draft.gestureModifier != vm.gestureModifier ||
                         draft.quality != vm.lodQuality ||
                         refreshFpsController.text != '${vm.refreshFps}' ||
                         draft.previewToolbarEnabled !=
@@ -4628,6 +4632,26 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             },
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text('轴向缩放修饰键', style: const TextStyle(fontSize: 14)),
+                      const SizedBox(height: 4),
+                      AppSegmentedSelector<PlotGestureModifier>(
+                        value:
+                            draft.gestureModifier as PlotGestureModifier? ??
+                            PlotGestureModifier.shift,
+                        items: const {
+                          PlotGestureModifier.shift: Text('Shift'),
+                          PlotGestureModifier.control: Text('Ctrl'),
+                        },
+                        onChanged:
+                            (value) =>
+                                setState(() => draft.gestureModifier = value),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '用于修饰键 + 滚轮和修饰键 + 拖动的 X/Y 轴缩放。',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const SizedBox(height: 12),
                       // 吸附点高亮

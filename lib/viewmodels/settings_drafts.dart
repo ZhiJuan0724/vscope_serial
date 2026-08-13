@@ -80,6 +80,7 @@ class PlotUiSettingsDraft {
     this.snapHighlightEnabled,
     this.snapHighlightDiameter,
     this.snapHighlightColorMode,
+    this.gestureModifier,
   });
 
   bool showGrid;
@@ -90,6 +91,7 @@ class PlotUiSettingsDraft {
   bool fontBold;
   double followPositionRatio;
   bool observationClickToPlace;
+  Object? gestureModifier;
   Object quality;
   int windowPointLimit;
   int historyLimit;
