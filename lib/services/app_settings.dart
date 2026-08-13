@@ -134,6 +134,8 @@ class AppSettings {
   double yMeasurementLine1Opacity = 1.0;
   double yMeasurementLine2Opacity = 1.0;
   bool yMeasurementSnapEnabled = true;
+  bool xMultiMeasurementEnabled = false;
+  bool yMultiMeasurementEnabled = false;
 
   bool statsToolbarEnabled = false;
   bool triggerToolbarEnabled = false;
@@ -452,6 +454,8 @@ class AppSettings {
     yMeasurementLine1Opacity = 1.0;
     yMeasurementLine2Opacity = 1.0;
     yMeasurementSnapEnabled = true;
+    xMultiMeasurementEnabled = false;
+    yMultiMeasurementEnabled = false;
     statsToolbarEnabled = false;
     triggerToolbarEnabled = false;
     previewToolbarEnabled = false;
@@ -771,6 +775,10 @@ class AppSettings {
           );
       yMeasurementSnapEnabled =
           json['yMeasurementSnapEnabled'] as bool? ?? true;
+      xMultiMeasurementEnabled =
+          json['xMultiMeasurementEnabled'] as bool? ?? false;
+      yMultiMeasurementEnabled =
+          json['yMultiMeasurementEnabled'] as bool? ?? false;
       statsToolbarEnabled = json['statsToolbarEnabled'] as bool? ?? false;
       triggerToolbarEnabled = json['triggerToolbarEnabled'] as bool? ?? false;
       previewToolbarEnabled = json['previewToolbarEnabled'] as bool? ?? false;
@@ -1134,6 +1142,8 @@ class AppSettings {
       'keepPlotOnRestart',
       'snapHighlightEnabled',
       'yMeasurementSnapEnabled',
+      'xMultiMeasurementEnabled',
+      'yMultiMeasurementEnabled',
       'statsToolbarEnabled',
       'triggerToolbarEnabled',
       'previewToolbarEnabled',
@@ -1355,6 +1365,8 @@ class AppSettings {
     'yMeasurementLine1Opacity': yMeasurementLine1Opacity,
     'yMeasurementLine2Opacity': yMeasurementLine2Opacity,
     'yMeasurementSnapEnabled': yMeasurementSnapEnabled,
+    'xMultiMeasurementEnabled': xMultiMeasurementEnabled,
+    'yMultiMeasurementEnabled': yMultiMeasurementEnabled,
     'statsToolbarEnabled': statsToolbarEnabled,
     'triggerToolbarEnabled': triggerToolbarEnabled,
     'previewToolbarEnabled': previewToolbarEnabled,
@@ -1680,6 +1692,16 @@ class AppSettings {
       'plotMeasurements',
       'deltaY',
       'snapEnabled',
+    ],
+    'xMultiMeasurementEnabled': [
+      'serialPlot',
+      'interaction',
+      'deltaXMultiMeasurement',
+    ],
+    'yMultiMeasurementEnabled': [
+      'serialPlot',
+      'interaction',
+      'deltaYMultiMeasurement',
     ],
 
     // 串口绘图：数据源、协议、通道和视口

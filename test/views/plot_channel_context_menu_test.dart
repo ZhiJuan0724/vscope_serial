@@ -84,6 +84,40 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('统计浮窗通道名称使用对应通道颜色', (tester) async {
+    final vm = PlotViewModel(connectionService);
+    vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 4));
+    vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 4));
+    vm.toggleStats();
+
+    await tester.binding.setSurfaceSize(const Size(1000, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    await tester.pump();
+
+    final expectedColor = vm.displayChannels.first.color;
+    final channelSpan = tester
+        .widgetList<RichText>(find.byType(RichText))
+        .expand(
+          (widget) =>
+              widget.text is TextSpan
+                  ? (widget.text as TextSpan).children ?? const <InlineSpan>[]
+                  : const <InlineSpan>[],
+        )
+        .whereType<TextSpan>()
+        .firstWhere((span) => span.text?.startsWith('Ch0:') ?? false);
+    expect(channelSpan.style?.color, expectedColor);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+    await tester.pump();
+  });
+
   testWidgets('高级设置可切换绘图质量', (tester) async {
     final vm = PlotViewModel(connectionService);
 

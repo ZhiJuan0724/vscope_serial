@@ -257,6 +257,18 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setMultiMeasurementEnabled({required bool isX, required bool value}) {
+    if (isX) {
+      if (_xMultiMeasurementEnabled == value) return;
+      _xMultiMeasurementEnabled = value;
+    } else {
+      if (_yMultiMeasurementEnabled == value) return;
+      _yMultiMeasurementEnabled = value;
+    }
+    _saveSettings();
+    Future.microtask(() => notifyListeners());
+  }
+
   Color _opaqueMeasurementColor(Color color) =>
       Color(0xFF000000 | (color.toARGB32() & 0x00FFFFFF));
 
@@ -526,9 +538,27 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _xCursor2 = null;
       _xCursor1SnapHighlights = const [];
       _xCursor2SnapHighlights = const [];
+      _extraXMeasurementGroups.clear();
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 按功能键追加一组 X 测量，最多 10 组。
+  void addXMeasurementGroup() {
+    if (!_xMultiMeasurementEnabled || !_xMeasurementEnabled) return;
+    if (xMeasurementGroups.length >= 10) return;
+    final range = viewport.xRange;
+    final center = viewport.xMin + range / 2;
+    final offset = xMeasurementGroups.length * range / 40;
+    _extraXMeasurementGroups.add(
+      PlotMeasurementGroup(
+        cursor1: _snapXToNearestVisiblePoint(center - range / 8 + offset),
+        cursor2: _snapXToNearestVisiblePoint(center + range / 8 + offset),
+      ),
+    );
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }
@@ -550,9 +580,27 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _yCursor2 = null;
       _yCursor1SnapHighlights = const [];
       _yCursor2SnapHighlights = const [];
+      _extraYMeasurementGroups.clear();
       // 如果垂直光标也关闭，清除 cursor
       if (!_vCursorEnabled) _cursor = null;
     }
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  /// 按功能键追加一组 Y 测量，最多 10 组。
+  void addYMeasurementGroup() {
+    if (!_yMultiMeasurementEnabled || !_yMeasurementEnabled) return;
+    if (yMeasurementGroups.length >= 10) return;
+    final range = viewport.yRange;
+    final center = viewport.yMin + range / 2;
+    final offset = yMeasurementGroups.length * range / 40;
+    _extraYMeasurementGroups.add(
+      PlotMeasurementGroup(
+        cursor1: center - range / 8 + offset,
+        cursor2: center + range / 8 + offset,
+      ),
+    );
     _markOverlayChanged();
     Future.microtask(() => notifyListeners());
   }

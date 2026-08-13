@@ -375,6 +375,8 @@ class PlotViewModel extends BaseViewModel {
   double _yMeasurementLine1Opacity = 1.0;
   double _yMeasurementLine2Opacity = 1.0;
   bool _yMeasurementSnapEnabled = true;
+  bool _xMultiMeasurementEnabled = false;
+  bool _yMultiMeasurementEnabled = false;
   bool _statsToolbarEnabled = false;
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
@@ -456,6 +458,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
+  final List<PlotMeasurementGroup> _extraXMeasurementGroups = [];
+  final List<PlotMeasurementGroup> _extraYMeasurementGroups = [];
   List<SnapHighlightPoint> _xCursor1SnapHighlights = const [];
   List<SnapHighlightPoint> _xCursor2SnapHighlights = const [];
   List<SnapHighlightPoint> _yCursor1SnapHighlights = const [];
@@ -679,6 +683,8 @@ class PlotViewModel extends BaseViewModel {
     _yMeasurementLine1Opacity = settings.yMeasurementLine1Opacity;
     _yMeasurementLine2Opacity = settings.yMeasurementLine2Opacity;
     _yMeasurementSnapEnabled = settings.yMeasurementSnapEnabled;
+    _xMultiMeasurementEnabled = settings.xMultiMeasurementEnabled;
+    _yMultiMeasurementEnabled = settings.yMultiMeasurementEnabled;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
     _triggerToolbarEnabled = settings.triggerToolbarEnabled;
     _previewToolbarEnabled = settings.previewToolbarEnabled;
@@ -787,6 +793,8 @@ class PlotViewModel extends BaseViewModel {
     settings.yMeasurementLine1Opacity = _yMeasurementLine1Opacity;
     settings.yMeasurementLine2Opacity = _yMeasurementLine2Opacity;
     settings.yMeasurementSnapEnabled = _yMeasurementSnapEnabled;
+    settings.xMultiMeasurementEnabled = _xMultiMeasurementEnabled;
+    settings.yMultiMeasurementEnabled = _yMultiMeasurementEnabled;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
     settings.triggerToolbarEnabled = _triggerToolbarEnabled;
     settings.previewToolbarEnabled = _previewToolbarEnabled;
@@ -1069,6 +1077,20 @@ class PlotViewModel extends BaseViewModel {
   double get yMeasurementLine1Opacity => _yMeasurementLine1Opacity;
   double get yMeasurementLine2Opacity => _yMeasurementLine2Opacity;
   bool get yMeasurementSnapEnabled => _yMeasurementSnapEnabled;
+  bool get xMultiMeasurementEnabled => _xMultiMeasurementEnabled;
+  bool get yMultiMeasurementEnabled => _yMultiMeasurementEnabled;
+
+  List<PlotMeasurementGroup> get xMeasurementGroups => [
+    if (_xCursor1 != null && _xCursor2 != null)
+      PlotMeasurementGroup(cursor1: _xCursor1!, cursor2: _xCursor2!),
+    ..._extraXMeasurementGroups,
+  ];
+
+  List<PlotMeasurementGroup> get yMeasurementGroups => [
+    if (_yCursor1 != null && _yCursor2 != null)
+      PlotMeasurementGroup(cursor1: _yCursor1!, cursor2: _yCursor2!),
+    ..._extraYMeasurementGroups,
+  ];
   bool get statsEnabled => _statsEnabled;
   bool get statsRangeEnabled => _statsRangeEnabled;
   bool get statsToolbarEnabled => _statsToolbarEnabled;
@@ -3084,6 +3106,8 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _extraXMeasurementGroups.clear();
+    _extraYMeasurementGroups.clear();
     _statsX1 = null;
     _statsX2 = null;
     _clearSnapHighlights();
@@ -3133,12 +3157,76 @@ class PlotViewModel extends BaseViewModel {
     Future.microtask(() => notifyListeners());
   }
 
+  void setXMeasurementCursor(int groupIndex, int lineIndex, double value) {
+    if (groupIndex == 0) {
+      lineIndex == 0 ? setXCursor1(value) : setXCursor2(value);
+      return;
+    }
+    final index = groupIndex - 1;
+    if (index < 0 || index >= _extraXMeasurementGroups.length) return;
+    final group = _extraXMeasurementGroups[index];
+    _extraXMeasurementGroups[index] =
+        lineIndex == 0
+            ? group.copyWith(cursor1: _snapXToNearestVisiblePoint(value))
+            : group.copyWith(cursor2: _snapXToNearestVisiblePoint(value));
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void setYMeasurementCursor(int groupIndex, int lineIndex, double value) {
+    if (groupIndex == 0) {
+      lineIndex == 0 ? setYCursor1(value) : setYCursor2(value);
+      return;
+    }
+    final index = groupIndex - 1;
+    if (index < 0 || index >= _extraYMeasurementGroups.length) return;
+    final group = _extraYMeasurementGroups[index];
+    _extraYMeasurementGroups[index] =
+        lineIndex == 0
+            ? group.copyWith(cursor1: value)
+            : group.copyWith(cursor2: value);
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
+  void removeMeasurementGroup({required bool isX, required int groupIndex}) {
+    if (groupIndex < 0) return;
+    final groups = isX ? xMeasurementGroups : yMeasurementGroups;
+    if (groupIndex >= groups.length) return;
+    if (groups.length == 1 || groupIndex == 0) {
+      if (groupIndex == 0 && groups.length > 1) {
+        final replacement = groups[1];
+        if (isX) {
+          _xCursor1 = replacement.cursor1;
+          _xCursor2 = replacement.cursor2;
+          _extraXMeasurementGroups.removeAt(0);
+        } else {
+          _yCursor1 = replacement.cursor1;
+          _yCursor2 = replacement.cursor2;
+          _extraYMeasurementGroups.removeAt(0);
+        }
+      } else {
+        isX ? toggleXMeasurement() : toggleYMeasurement();
+        return;
+      }
+    } else if (isX) {
+      _extraXMeasurementGroups.removeAt(groupIndex - 1);
+    } else {
+      _extraYMeasurementGroups.removeAt(groupIndex - 1);
+    }
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    Future.microtask(() => notifyListeners());
+  }
+
   /// 清除所有光标和测量线
   void clearCursors() {
     _xCursor1 = null;
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _extraXMeasurementGroups.clear();
+    _extraYMeasurementGroups.clear();
     _clearSnapHighlights();
     _cursor = null;
     _markOverlayChanged();
@@ -3150,21 +3238,40 @@ class PlotViewModel extends BaseViewModel {
     final buffer = StringBuffer();
     bool hasData = false;
 
-    if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
-      final dx = _xCursor2! - _xCursor1!;
-      buffer.writeln('X1 = ${_formatDisplayNumber(_xCursor1!)}');
-      buffer.writeln('X2 = ${_formatDisplayNumber(_xCursor2!)}');
-      buffer.writeln('ΔX = ${_formatDisplayNumber(dx)}');
-      hasData = true;
+    if (_xMeasurementEnabled) {
+      final groups = xMeasurementGroups;
+      for (var i = 0; i < groups.length; i++) {
+        final group = groups[i];
+        final first = i * 2 + 1;
+        final deltaSuffix = groups.length > 1 ? '${i + 1}' : '';
+        if (hasData) buffer.writeln('---');
+        buffer.writeln('X$first = ${_formatDisplayNumber(group.cursor1)}');
+        buffer.writeln(
+          'X${first + 1} = ${_formatDisplayNumber(group.cursor2)}',
+        );
+        buffer.writeln(
+          'ΔX$deltaSuffix = ${_formatDisplayNumber(group.cursor2 - group.cursor1)}',
+        );
+        hasData = true;
+      }
     }
 
-    if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
-      final dy = _yCursor2! - _yCursor1!;
-      if (hasData) buffer.writeln('---');
-      buffer.writeln('Y1 = ${_formatDisplayNumber(_yCursor1!)}');
-      buffer.writeln('Y2 = ${_formatDisplayNumber(_yCursor2!)}');
-      buffer.writeln('ΔY = ${_formatDisplayNumber(dy)}');
-      hasData = true;
+    if (_yMeasurementEnabled) {
+      final groups = yMeasurementGroups;
+      for (var i = 0; i < groups.length; i++) {
+        final group = groups[i];
+        final first = i * 2 + 1;
+        final deltaSuffix = groups.length > 1 ? '${i + 1}' : '';
+        if (hasData) buffer.writeln('---');
+        buffer.writeln('Y$first = ${_formatDisplayNumber(group.cursor1)}');
+        buffer.writeln(
+          'Y${first + 1} = ${_formatDisplayNumber(group.cursor2)}',
+        );
+        buffer.writeln(
+          'ΔY$deltaSuffix = ${_formatDisplayNumber(group.cursor2 - group.cursor1)}',
+        );
+        hasData = true;
+      }
     }
 
     return hasData ? buffer.toString().trim() : null;

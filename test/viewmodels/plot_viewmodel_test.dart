@@ -1881,6 +1881,28 @@ void main() {
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
     });
 
+    test('多测量按设置追加至十组且普通开关一次清空', () {
+      vm.toggleXMeasurement();
+      expect(vm.xMeasurementGroups, hasLength(1));
+
+      vm.addXMeasurementGroup();
+      expect(vm.xMeasurementGroups, hasLength(1));
+
+      vm.setMultiMeasurementEnabled(isX: true, value: true);
+      for (var i = 0; i < 12; i++) {
+        vm.addXMeasurementGroup();
+      }
+      expect(vm.xMeasurementGroups, hasLength(10));
+      expect(vm.measurementText, contains('X20'));
+
+      vm.removeMeasurementGroup(isX: true, groupIndex: 4);
+      expect(vm.xMeasurementGroups, hasLength(9));
+
+      vm.toggleXMeasurement();
+      expect(vm.xMeasurementEnabled, isFalse);
+      expect(vm.xMeasurementGroups, isEmpty);
+    });
+
     test('开始绘图仅保留垂直光标开关', () async {
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);

@@ -74,6 +74,10 @@ class PlotLayerPainter extends CustomPainter {
   double? get xCursor2 => snapshot.xCursor2;
   double? get yCursor1 => snapshot.yCursor1;
   double? get yCursor2 => snapshot.yCursor2;
+  List<PlotMeasurementGroup> get xMeasurementGroups =>
+      snapshot.xMeasurementGroups;
+  List<PlotMeasurementGroup> get yMeasurementGroups =>
+      snapshot.yMeasurementGroups;
   Color? get xMeasurementLine1Color => snapshot.xMeasurementLine1Color;
   Color? get xMeasurementLine2Color => snapshot.xMeasurementLine2Color;
   Color? get yMeasurementLine1Color => snapshot.yMeasurementLine1Color;
@@ -416,22 +420,48 @@ class PlotLayerPainter extends CustomPainter {
         PlotPerformanceMetrics.instance.increment(
           PlotPerformanceMetric.overlayPainterPaint,
         );
-        if (xCursor1 != null || xCursor2 != null) {
+        if (xMeasurementGroups.isNotEmpty) {
+          for (var i = 0; i < xMeasurementGroups.length; i++) {
+            final group = xMeasurementGroups[i];
+            _drawXMeasurement(
+              canvas,
+              size,
+              group.cursor1,
+              group.cursor2,
+              viewport.plotHeight(size.height),
+              i,
+            );
+          }
+        } else if (xCursor1 != null || xCursor2 != null) {
           _drawXMeasurement(
             canvas,
             size,
             xCursor1,
             xCursor2,
             viewport.plotHeight(size.height),
+            0,
           );
         }
-        if (yCursor1 != null || yCursor2 != null) {
+        if (yMeasurementGroups.isNotEmpty) {
+          for (var i = 0; i < yMeasurementGroups.length; i++) {
+            final group = yMeasurementGroups[i];
+            _drawYMeasurement(
+              canvas,
+              size,
+              group.cursor1,
+              group.cursor2,
+              viewport.plotWidth(size.width),
+              i,
+            );
+          }
+        } else if (yCursor1 != null || yCursor2 != null) {
           _drawYMeasurement(
             canvas,
             size,
             yCursor1,
             yCursor2,
             viewport.plotWidth(size.width),
+            0,
           );
         }
         _drawSnapHighlights(canvas, size);
@@ -2074,6 +2104,7 @@ class PlotLayerPainter extends CustomPainter {
     double? x1,
     double? x2,
     double plotH,
+    int groupIndex,
   ) {
     if (x1 == null && x2 == null) return;
 
@@ -2104,7 +2135,7 @@ class PlotLayerPainter extends CustomPainter {
         );
         _drawMeasurementLabel(
           canvas,
-          'X1',
+          'X${groupIndex * 2 + 1}',
           sx1,
           PlotViewport().marginTop + 12,
           color1,
@@ -2124,7 +2155,7 @@ class PlotLayerPainter extends CustomPainter {
         );
         _drawMeasurementLabel(
           canvas,
-          'X2',
+          'X${groupIndex * 2 + 2}',
           sx2,
           PlotViewport().marginTop + 12,
           color2,
@@ -2140,6 +2171,7 @@ class PlotLayerPainter extends CustomPainter {
     double? y1,
     double? y2,
     double plotW,
+    int groupIndex,
   ) {
     if (y1 == null && y2 == null) return;
 
@@ -2170,7 +2202,7 @@ class PlotLayerPainter extends CustomPainter {
         );
         _drawMeasurementLabel(
           canvas,
-          'Y1',
+          'Y${groupIndex * 2 + 1}',
           viewport.marginLeft - 18,
           sy1,
           color1,
@@ -2190,7 +2222,7 @@ class PlotLayerPainter extends CustomPainter {
         );
         _drawMeasurementLabel(
           canvas,
-          'Y2',
+          'Y${groupIndex * 2 + 2}',
           viewport.marginLeft - 18,
           sy2,
           color2,

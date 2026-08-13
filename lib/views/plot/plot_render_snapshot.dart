@@ -60,6 +60,21 @@ class SnapHighlightPoint {
   });
 }
 
+/// 一组 Delta X 或 Delta Y 测量线。
+class PlotMeasurementGroup {
+  final double cursor1;
+  final double cursor2;
+
+  const PlotMeasurementGroup({required this.cursor1, required this.cursor2});
+
+  PlotMeasurementGroup copyWith({double? cursor1, double? cursor2}) {
+    return PlotMeasurementGroup(
+      cursor1: cursor1 ?? this.cursor1,
+      cursor2: cursor2 ?? this.cursor2,
+    );
+  }
+}
+
 enum GridDensity { sparse, normal, dense }
 
 enum PlotBackgroundStyle { dark, light }
@@ -91,6 +106,8 @@ class PlotRenderSnapshot {
     this.xCursor2,
     this.yCursor1,
     this.yCursor2,
+    this.xMeasurementGroups = const [],
+    this.yMeasurementGroups = const [],
     this.xMeasurementLine1Color,
     this.xMeasurementLine2Color,
     this.yMeasurementLine1Color,
@@ -134,6 +151,8 @@ class PlotRenderSnapshot {
   final double? xCursor2;
   final double? yCursor1;
   final double? yCursor2;
+  final List<PlotMeasurementGroup> xMeasurementGroups;
+  final List<PlotMeasurementGroup> yMeasurementGroups;
   final Color? xMeasurementLine1Color;
   final Color? xMeasurementLine2Color;
   final Color? yMeasurementLine1Color;

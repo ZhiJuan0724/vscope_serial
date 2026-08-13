@@ -261,6 +261,51 @@ void main() {
     expect(draggedY, closeTo(30, 0.001));
   });
 
+  testWidgets('右键多测量标签只删除命中的一组', (tester) async {
+    int? deletedGroup;
+    const groups = [
+      PlotMeasurementGroup(cursor1: 10, cursor2: 20),
+      PlotMeasurementGroup(cursor1: 40, cursor2: 50),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              channels: const [],
+              xMeasurementGroups: groups,
+              onXMeasurementDelete: (index) => deletedGroup = index,
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final handler = find.byType(PlotGestureHandler);
+    final position =
+        tester.getTopLeft(handler) +
+        Offset(
+          initialViewport.dataToScreenX(groups[1].cursor1, 800),
+          PlotViewport().marginTop + 12,
+        );
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.addPointer(location: position);
+    await gesture.down(position);
+    await gesture.up();
+    await tester.pump();
+
+    expect(deletedGroup, 1);
+  });
+
   testWidgets('Shift + left drag zooms out on the X axis', (tester) async {
     final viewport = await shiftDrag(tester, deltaX: -120);
 

@@ -135,15 +135,17 @@ final class _PlotStrings {
   String get triggerObservationLimitHelp =>
       '观察最多支持 100 条；触发次数可以超过 100，但超出后不会继续新增观察。';
   String get measureXx => 'X测量';
-  String get measureXxTooltip => '左键开关 Delta X 测量；右键配置测量线';
+  String get measureXxTooltip => '左键开关测量；右键配置';
   String get measureYy => 'Y测量';
-  String get measureYyTooltip => '左键开关 Delta Y 测量；右键配置测量线和吸附';
+  String get measureYyTooltip => '左键开关测量；右键配置';
   String get measureXSettings => 'Delta X 设置';
   String get measureYSettings => 'Delta Y 设置';
   String get measurementLineColor => '线条颜色';
   String get measurementLineOpacity => '不透明度';
   String get measurementSnap => '吸附到波形';
   String get measurementSnapHelp => '拖动 Y1/Y2 时吸附到当前窗口内最近的可见波形点';
+  String get multiMeasurement => '允许多组测量';
+  String get multiMeasurementHelp => '开启后按住绘图功能键并左键点击测量按钮，可追加测量组，最多 10 组';
   String get stats => '统计';
   String get statsTooltip => '统计测量（Max/Min/Avg）';
   String get statsRange => '范围';

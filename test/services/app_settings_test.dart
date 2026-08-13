@@ -368,6 +368,8 @@ void main() {
       settings.xMeasurementLine1Color = 0xFF123456;
       settings.yMeasurementLine2Opacity = 0.45;
       settings.yMeasurementSnapEnabled = false;
+      settings.xMultiMeasurementEnabled = true;
+      settings.yMultiMeasurementEnabled = true;
       settings.mainTabOrder = const [
         'plot',
         'rawData',
@@ -390,6 +392,9 @@ void main() {
       final navigation = global['navigation'] as Map<String, dynamic>;
       final behavior = global['behavior'] as Map<String, dynamic>;
       final serial = decoded['serial'] as Map<String, dynamic>;
+      final serialPlot = decoded['serialPlot'] as Map<String, dynamic>;
+      final serialPlotInteraction =
+          serialPlot['interaction'] as Map<String, dynamic>;
       final connection = serial['connection'] as Map<String, dynamic>;
       final measurements = global['plotMeasurements'] as Map<String, dynamic>;
       final deltaX = measurements['deltaX'] as Map<String, dynamic>;
@@ -411,6 +416,8 @@ void main() {
       expect(deltaX['line1Color'], 0xFF123456);
       expect(deltaY['line2Opacity'], 0.45);
       expect(deltaY['snapEnabled'], isFalse);
+      expect(serialPlotInteraction['deltaXMultiMeasurement'], isTrue);
+      expect(serialPlotInteraction['deltaYMultiMeasurement'], isTrue);
       expect(navigation['pageOrder'], [
         'plot',
         'rawData',

@@ -165,6 +165,19 @@ String _formatCompactCount(int value) {
 }
 
 class _PlotPageContentState extends State<_PlotPageContent> {
+  bool _measurementModifierPressed(PlotViewModel vm) =>
+      vm.gestureModifier == PlotGestureModifier.shift
+          ? HardwareKeyboard.instance.isShiftPressed
+          : HardwareKeyboard.instance.isControlPressed;
+
+  void _handleMeasurementButton(PlotViewModel vm, {required bool isX}) {
+    if (_measurementModifierPressed(vm)) {
+      isX ? vm.addXMeasurementGroup() : vm.addYMeasurementGroup();
+      return;
+    }
+    isX ? vm.toggleXMeasurement() : vm.toggleYMeasurement();
+  }
+
   /// 绘图首层工具栏较密集，下拉框边框需要比公共默认位置再低 1px。
   static const double _toolbarDropdownOffsetY = 2;
 
@@ -634,13 +647,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         icon: const AppIcon(AppIcons.plotMeasureXx),
         label: AppStrings.plot.measureXx,
         selected: vm.xMeasurementEnabled,
-        onPressed: vm.toggleXMeasurement,
+        onPressed: () => _handleMeasurementButton(vm, isX: true),
       ),
       ToolbarOverflowAction(
         icon: const AppIcon(AppIcons.plotMeasureYy),
         label: AppStrings.plot.measureYy,
         selected: vm.yMeasurementEnabled,
-        onPressed: vm.toggleYMeasurement,
+        onPressed: () => _handleMeasurementButton(vm, isX: false),
       ),
       if (vm.previewToolbarEnabled)
         ToolbarOverflowAction(
@@ -1096,7 +1109,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             tooltip: AppStrings.plot.measureXxTooltip,
             selected: vm.xMeasurementEnabled,
             activeColor: Colors.blue,
-            onPressed: vm.toggleXMeasurement,
+            onPressed: () => _handleMeasurementButton(vm, isX: true),
           ),
         ),
         Listener(
@@ -1112,7 +1125,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             tooltip: AppStrings.plot.measureYyTooltip,
             selected: vm.yMeasurementEnabled,
             activeColor: Colors.blue,
-            onPressed: vm.toggleYMeasurement,
+            onPressed: () => _handleMeasurementButton(vm, isX: false),
           ),
         ),
         if (vm.previewToolbarEnabled)
@@ -1768,6 +1781,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           xCursor2: vm.xCursor2,
           yCursor1: vm.yCursor1,
           yCursor2: vm.yCursor2,
+          xMeasurementGroups: vm.xMeasurementGroups,
+          yMeasurementGroups: vm.yMeasurementGroups,
           xMeasurementLine1Color: vm.xMeasurementLine1Color,
           xMeasurementLine2Color: vm.xMeasurementLine2Color,
           yMeasurementLine1Color: vm.yMeasurementLine1Color,
@@ -1841,7 +1856,27 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     xCursor2: vm.xCursor2,
                     yCursor1: vm.yCursor1,
                     yCursor2: vm.yCursor2,
+                    xMeasurementGroups: vm.xMeasurementGroups,
+                    yMeasurementGroups: vm.yMeasurementGroups,
                     yMeasurementSnapEnabled: vm.yMeasurementSnapEnabled,
+                    onXMeasurementDrag:
+                        vm.xMeasurementEnabled
+                            ? vm.setXMeasurementCursor
+                            : null,
+                    onYMeasurementDrag:
+                        vm.yMeasurementEnabled
+                            ? vm.setYMeasurementCursor
+                            : null,
+                    onXMeasurementDelete:
+                        (index) => vm.removeMeasurementGroup(
+                          isX: true,
+                          groupIndex: index,
+                        ),
+                    onYMeasurementDelete:
+                        (index) => vm.removeMeasurementGroup(
+                          isX: false,
+                          groupIndex: index,
+                        ),
                     // 测量线拖动回调
                     onXCursor1Drag:
                         vm.xMeasurementEnabled
@@ -3748,16 +3783,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         .clamp(1, 4);
 
     if (columnCount == 1) {
-      return Text(
-        text,
-        style: TextStyle(
-          color: _floatingTextColor(vm),
-          fontSize: _plotFontSize(vm, 11),
-          fontFamily: 'SarasaUiSC',
-          fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
-          height: 1.5,
-        ),
-      );
+      return _buildColoredStatsText(lines, vm);
     }
 
     // 多列布局
@@ -3770,26 +3796,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       if (start >= end) break;
 
       final colBlocks = channelBlocks.sublist(start, end);
-      final colText = StringBuffer();
+      final colLines = <String>[];
       for (int i = 0; i < colBlocks.length; i++) {
-        if (i > 0) colText.writeln('---');
-        for (final line in colBlocks[i]) {
-          colText.writeln(line);
-        }
+        if (i > 0) colLines.add('---');
+        colLines.addAll(colBlocks[i]);
       }
 
-      columns.add(
-        Text(
-          colText.toString().trim(),
-          style: TextStyle(
-            color: _floatingTextColor(vm),
-            fontSize: _plotFontSize(vm, 11),
-            fontFamily: 'SarasaUiSC',
-            fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
-            height: 1.5,
-          ),
-        ),
-      );
+      columns.add(_buildColoredStatsText(colLines, vm));
 
       if (col < columnCount - 1) {
         columns.add(const SizedBox(width: 16));
@@ -3801,6 +3814,47 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: columns,
     );
+  }
+
+  Widget _buildColoredStatsText(List<String> lines, PlotViewModel vm) {
+    final baseStyle = TextStyle(
+      color: _floatingTextColor(vm),
+      fontSize: _plotFontSize(vm, 11),
+      fontFamily: 'SarasaUiSC',
+      fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+      height: 1.5,
+    );
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      Color? channelColor;
+      if (line.endsWith(':')) {
+        final name = line.substring(0, line.length - 1);
+        for (
+          var channelIndex = 0;
+          channelIndex < vm.displayChannels.length;
+          channelIndex++
+        ) {
+          final channel = vm.displayChannels[channelIndex];
+          final channelName =
+              channel.alias.isNotEmpty ? channel.alias : 'Ch$channelIndex';
+          if (channelName == name) {
+            channelColor = channel.color;
+            break;
+          }
+        }
+      }
+      spans.add(
+        TextSpan(
+          text: i == lines.length - 1 ? line : '$line\n',
+          style:
+              channelColor == null
+                  ? baseStyle
+                  : baseStyle.copyWith(color: channelColor),
+        ),
+      );
+    }
+    return RichText(text: TextSpan(children: spans));
   }
 
   Future<void> _showMeasurementSettingsDialog(
@@ -3817,6 +3871,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     var line2Opacity =
         isX ? vm.xMeasurementLine2Opacity : vm.yMeasurementLine2Opacity;
     var snapEnabled = vm.yMeasurementSnapEnabled;
+    var multiEnabled =
+        isX ? vm.xMultiMeasurementEnabled : vm.yMultiMeasurementEnabled;
     final opacityInputFormatter = TextInputFormatter.withFunction((
       oldValue,
       newValue,
@@ -3950,12 +4006,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         onChooseColor: () => chooseColor(false),
                         onOpacityChanged: (value) => line2Opacity = value,
                       ),
+                      const Divider(height: 20),
+                      AppSwitchRow(
+                        key: ValueKey('$prefix-multi-measure-toggle'),
+                        title: Text(AppStrings.plot.multiMeasurement),
+                        subtitle: Text(
+                          AppStrings.plot.multiMeasurementHelp,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        value: multiEnabled,
+                        onChanged:
+                            (value) =>
+                                setDialogState(() => multiEnabled = value),
+                      ),
                       if (!isX) ...[
                         const Divider(height: 20),
-                        SwitchListTile(
+                        AppSwitchRow(
                           key: const ValueKey('y-measure-snap-toggle'),
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
                           title: Text(AppStrings.plot.measurementSnap),
                           subtitle: Text(
                             AppStrings.plot.measurementSnapHelp,
@@ -3994,6 +4061,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         );
                         vm.setYMeasurementSnapEnabled(snapEnabled);
                       }
+                      vm.setMultiMeasurementEnabled(
+                        isX: isX,
+                        value: multiEnabled,
+                      );
                       Navigator.pop(dialogContext);
                     },
                     child: Text(AppStrings.common.save),

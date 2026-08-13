@@ -72,6 +72,8 @@ class PlotGestureHandler extends StatefulWidget {
 
   /// Y-Y 测量第二条线位置
   final double? yCursor2;
+  final List<PlotMeasurementGroup> xMeasurementGroups;
+  final List<PlotMeasurementGroup> yMeasurementGroups;
 
   /// Y1/Y2 拖动时是否吸附到最近可见波形点。
   final bool yMeasurementSnapEnabled;
@@ -93,6 +95,12 @@ class PlotGestureHandler extends StatefulWidget {
 
   /// Y2 测量线拖动回调
   final void Function(double y)? onYCursor2Drag;
+  final void Function(int groupIndex, int lineIndex, double value)?
+  onXMeasurementDrag;
+  final void Function(int groupIndex, int lineIndex, double value)?
+  onYMeasurementDrag;
+  final void Function(int groupIndex)? onXMeasurementDelete;
+  final void Function(int groupIndex)? onYMeasurementDelete;
 
   /// S1 统计范围拖动回调
   final void Function(double x)? onStatsX1Drag;
@@ -142,6 +150,8 @@ class PlotGestureHandler extends StatefulWidget {
     this.xCursor2,
     this.yCursor1,
     this.yCursor2,
+    this.xMeasurementGroups = const [],
+    this.yMeasurementGroups = const [],
     this.yMeasurementSnapEnabled = true,
     this.statsX1,
     this.statsX2,
@@ -149,6 +159,10 @@ class PlotGestureHandler extends StatefulWidget {
     this.onXCursor2Drag,
     this.onYCursor1Drag,
     this.onYCursor2Drag,
+    this.onXMeasurementDrag,
+    this.onYMeasurementDrag,
+    this.onXMeasurementDelete,
+    this.onYMeasurementDelete,
     this.onStatsX1Drag,
     this.onStatsX2Drag,
     this.observations = const [],
@@ -196,6 +210,7 @@ enum _ShiftZoomAxis { none, pending, x, y, channelY }
 class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   static const int _maxSnapScanPoints = 4096;
   static const double _minimumBoxZoomExtent = 4;
+  int _measurementGroupIndex = 0;
 
   bool get _isZoomModifierPressed => switch (widget.gestureModifier) {
     PlotGestureModifier.shift => HardwareKeyboard.instance.isShiftPressed,
@@ -696,6 +711,15 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       );
       if (observationHit != null) {
         widget.onObservationDelete?.call(observationHit);
+        return;
+      }
+      final measurementHit = _hitTestMeasurementLabel(event.localPosition);
+      if (measurementHit == _DragTarget.xCursor1 ||
+          measurementHit == _DragTarget.xCursor2) {
+        widget.onXMeasurementDelete?.call(_measurementGroupIndex);
+      } else if (measurementHit == _DragTarget.yCursor1 ||
+          measurementHit == _DragTarget.yCursor2) {
+        widget.onYMeasurementDelete?.call(_measurementGroupIndex);
       }
       return;
     }
@@ -863,51 +887,113 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (size.isEmpty) return _DragTarget.none;
 
     // X-X 测量：检测 X1/X2 标签（标签在绘图区顶部内侧）
-    if (widget.xCursor1 != null || widget.xCursor2 != null) {
+    final xGroups =
+        widget.xMeasurementGroups.isNotEmpty
+            ? widget.xMeasurementGroups
+            : [
+              if (widget.xCursor1 != null && widget.xCursor2 != null)
+                PlotMeasurementGroup(
+                  cursor1: widget.xCursor1!,
+                  cursor2: widget.xCursor2!,
+                ),
+            ];
+    if (xGroups.isNotEmpty) {
       final topY = PlotViewport().marginTop + 12;
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
-        if (widget.xCursor1 != null) {
-          final sx1 = widget.viewport.dataToScreenX(
-            widget.xCursor1!,
-            size.width,
-          );
+        for (var i = xGroups.length - 1; i >= 0; i--) {
+          final group = xGroups[i];
+          final sx1 = widget.viewport.dataToScreenX(group.cursor1, size.width);
           if ((pos.dx - sx1).abs() < _labelWidth / 2 + 6) {
+            _measurementGroupIndex = i;
             return _DragTarget.xCursor1;
           }
-        }
-        if (widget.xCursor2 != null) {
-          final sx2 = widget.viewport.dataToScreenX(
-            widget.xCursor2!,
-            size.width,
-          );
+          final sx2 = widget.viewport.dataToScreenX(group.cursor2, size.width);
           if ((pos.dx - sx2).abs() < _labelWidth / 2 + 6) {
+            _measurementGroupIndex = i;
             return _DragTarget.xCursor2;
           }
+        }
+      }
+    } else {
+      final topY = PlotViewport().marginTop + 12;
+      if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
+        if (widget.xCursor1 != null &&
+            (pos.dx -
+                        widget.viewport.dataToScreenX(
+                          widget.xCursor1!,
+                          size.width,
+                        ))
+                    .abs() <
+                _labelWidth / 2 + 6) {
+          _measurementGroupIndex = 0;
+          return _DragTarget.xCursor1;
+        }
+        if (widget.xCursor2 != null &&
+            (pos.dx -
+                        widget.viewport.dataToScreenX(
+                          widget.xCursor2!,
+                          size.width,
+                        ))
+                    .abs() <
+                _labelWidth / 2 + 6) {
+          _measurementGroupIndex = 0;
+          return _DragTarget.xCursor2;
         }
       }
     }
 
     // Y-Y 测量：检测 Y1/Y2 标签（标签在测量线左侧）
-    if (widget.yCursor1 != null || widget.yCursor2 != null) {
+    final yGroups =
+        widget.yMeasurementGroups.isNotEmpty
+            ? widget.yMeasurementGroups
+            : [
+              if (widget.yCursor1 != null && widget.yCursor2 != null)
+                PlotMeasurementGroup(
+                  cursor1: widget.yCursor1!,
+                  cursor2: widget.yCursor2!,
+                ),
+            ];
+    if (yGroups.isNotEmpty) {
       final leftX = widget.viewport.marginLeft - 18;
       if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
-        if (widget.yCursor1 != null) {
-          final sy1 = widget.viewport.dataToScreenY(
-            widget.yCursor1!,
-            size.height,
-          );
+        for (var i = yGroups.length - 1; i >= 0; i--) {
+          final group = yGroups[i];
+          final sy1 = widget.viewport.dataToScreenY(group.cursor1, size.height);
           if ((pos.dy - sy1).abs() < _labelHeight / 2 + 6) {
+            _measurementGroupIndex = i;
             return _DragTarget.yCursor1;
           }
-        }
-        if (widget.yCursor2 != null) {
-          final sy2 = widget.viewport.dataToScreenY(
-            widget.yCursor2!,
-            size.height,
-          );
+          final sy2 = widget.viewport.dataToScreenY(group.cursor2, size.height);
           if ((pos.dy - sy2).abs() < _labelHeight / 2 + 6) {
+            _measurementGroupIndex = i;
             return _DragTarget.yCursor2;
           }
+        }
+      }
+    } else {
+      final leftX = widget.viewport.marginLeft - 18;
+      if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
+        if (widget.yCursor1 != null &&
+            (pos.dy -
+                        widget.viewport.dataToScreenY(
+                          widget.yCursor1!,
+                          size.height,
+                        ))
+                    .abs() <
+                _labelHeight / 2 + 6) {
+          _measurementGroupIndex = 0;
+          return _DragTarget.yCursor1;
+        }
+        if (widget.yCursor2 != null &&
+            (pos.dy -
+                        widget.viewport.dataToScreenY(
+                          widget.yCursor2!,
+                          size.height,
+                        ))
+                    .abs() <
+                _labelHeight / 2 + 6) {
+          _measurementGroupIndex = 0;
+          return _DragTarget.yCursor2;
         }
       }
     }
@@ -1186,7 +1272,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   void _handleMeasurementDrag(Offset pos, Size size) {
     switch (_dragTarget) {
       case _DragTarget.xCursor1:
-        if (widget.onXCursor1Drag != null && widget.xCursor1 != null) {
+        if (widget.onXMeasurementDrag != null ||
+            widget.onXCursor1Drag != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               widget.viewport.marginLeft,
@@ -1194,11 +1281,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onXCursor1Drag!(_snapXToNearestVisiblePoint(x));
+          final value = _snapXToNearestVisiblePoint(x);
+          if (widget.onXMeasurementDrag != null) {
+            widget.onXMeasurementDrag!(_measurementGroupIndex, 0, value);
+          } else {
+            widget.onXCursor1Drag!(value);
+          }
         }
         break;
       case _DragTarget.xCursor2:
-        if (widget.onXCursor2Drag != null && widget.xCursor2 != null) {
+        if (widget.onXMeasurementDrag != null ||
+            widget.onXCursor2Drag != null) {
           final x = widget.viewport.screenToDataX(
             pos.dx.clamp(
               widget.viewport.marginLeft,
@@ -1206,41 +1299,56 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
             ),
             size.width,
           );
-          widget.onXCursor2Drag!(_snapXToNearestVisiblePoint(x));
+          final value = _snapXToNearestVisiblePoint(x);
+          if (widget.onXMeasurementDrag != null) {
+            widget.onXMeasurementDrag!(_measurementGroupIndex, 1, value);
+          } else {
+            widget.onXCursor2Drag!(value);
+          }
         }
         break;
       case _DragTarget.yCursor1:
-        if (widget.onYCursor1Drag != null && widget.yCursor1 != null) {
-          widget.onYCursor1Drag!(
-            widget.yMeasurementSnapEnabled
-                ? _snapYToNearestVisiblePoint(pos, size)
-                : widget.viewport.screenToDataY(
-                  pos.dy
-                      .clamp(
-                        widget.viewport.marginTop,
-                        size.height - widget.viewport.marginBottom,
-                      )
-                      .toDouble(),
-                  size.height,
-                ),
-          );
+        if (widget.onYMeasurementDrag != null ||
+            widget.onYCursor1Drag != null) {
+          final value =
+              widget.yMeasurementSnapEnabled
+                  ? _snapYToNearestVisiblePoint(pos, size)
+                  : widget.viewport.screenToDataY(
+                    pos.dy
+                        .clamp(
+                          widget.viewport.marginTop,
+                          size.height - widget.viewport.marginBottom,
+                        )
+                        .toDouble(),
+                    size.height,
+                  );
+          if (widget.onYMeasurementDrag != null) {
+            widget.onYMeasurementDrag!(_measurementGroupIndex, 0, value);
+          } else {
+            widget.onYCursor1Drag!(value);
+          }
         }
         break;
       case _DragTarget.yCursor2:
-        if (widget.onYCursor2Drag != null && widget.yCursor2 != null) {
-          widget.onYCursor2Drag!(
-            widget.yMeasurementSnapEnabled
-                ? _snapYToNearestVisiblePoint(pos, size)
-                : widget.viewport.screenToDataY(
-                  pos.dy
-                      .clamp(
-                        widget.viewport.marginTop,
-                        size.height - widget.viewport.marginBottom,
-                      )
-                      .toDouble(),
-                  size.height,
-                ),
-          );
+        if (widget.onYMeasurementDrag != null ||
+            widget.onYCursor2Drag != null) {
+          final value =
+              widget.yMeasurementSnapEnabled
+                  ? _snapYToNearestVisiblePoint(pos, size)
+                  : widget.viewport.screenToDataY(
+                    pos.dy
+                        .clamp(
+                          widget.viewport.marginTop,
+                          size.height - widget.viewport.marginBottom,
+                        )
+                        .toDouble(),
+                    size.height,
+                  );
+          if (widget.onYMeasurementDrag != null) {
+            widget.onYMeasurementDrag!(_measurementGroupIndex, 1, value);
+          } else {
+            widget.onYCursor2Drag!(value);
+          }
         }
         break;
       case _DragTarget.statsX1:
