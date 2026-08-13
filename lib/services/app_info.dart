@@ -46,7 +46,7 @@ class AppInfo {
     }
 
     try {
-      return File(Platform.resolvedExecutable).lastModified();
+      return await File(Platform.resolvedExecutable).lastModified();
     } catch (_) {
       return null;
     }

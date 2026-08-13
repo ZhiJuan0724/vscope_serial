@@ -94,8 +94,14 @@ void main() {
 
     final modeSelector = find.byType(SegmentedButton<ProbePlotMode>);
     expect(modeSelector, findsOneWidget);
-    expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
-    expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('probe-plot-measure-x-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('probe-plot-measure-y-button')),
+      findsOneWidget,
+    );
     expect(AppStrings.plot.placeObservation, contains('右键'));
     expect(find.text(AppStrings.plot.cursor), findsNothing);
     expect(find.text(AppStrings.plot.measureXx), findsNothing);

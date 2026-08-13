@@ -194,8 +194,8 @@ void main() {
 
     expect(AppStrings.plot.measureXxTooltip, contains('右键'));
     expect(AppStrings.plot.measureYyTooltip, contains('右键'));
-    expect(find.byTooltip(AppStrings.plot.measureXxTooltip), findsOneWidget);
-    expect(find.byTooltip(AppStrings.plot.measureYyTooltip), findsOneWidget);
+    expect(find.byKey(const ValueKey('plot-measure-x-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('plot-measure-y-button')), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('plot-measure-x-button')),

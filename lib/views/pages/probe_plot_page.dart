@@ -239,6 +239,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                     ],
                     child: Listener(
+                      key: const ValueKey('probe-plot-measure-x-button'),
                       onPointerDown: (event) {
                         if (event.buttons == kSecondaryMouseButton) {
                           unawaited(
@@ -268,6 +269,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                     ],
                     child: Listener(
+                      key: const ValueKey('probe-plot-measure-y-button'),
                       onPointerDown: (event) {
                         if (event.buttons == kSecondaryMouseButton) {
                           unawaited(
