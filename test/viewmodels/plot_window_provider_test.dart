@@ -89,5 +89,59 @@ void main() {
       expect(commits, 1);
       expect(stateChanges, greaterThanOrEqualTo(3));
     });
+
+    test(
+      'asynchronous tail load preserves live points received while loading',
+      () async {
+        provider.loadTail(
+          total: 5000,
+          materializedPointLimit: 5000,
+          allocatedBytes: 0,
+          retentionLimitBytes: 4 * 1024 * 1024,
+          valuesAt: (index) => [index.toDouble()],
+        );
+
+        for (var index = 5000; index < 5020; index++) {
+          provider.appendLive(
+            PlotDataPoint(
+              index: index,
+              timestamp: index.toDouble(),
+              values: [index.toDouble()],
+            ),
+          );
+        }
+        while (provider.isLoading) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        expect(provider.visibleStartIndex, 20);
+        expect(provider.visibleEndIndex, 5020);
+        expect(provider.points, hasLength(5000));
+        expect(provider.points.last.index, 5019);
+        expect(provider.hasLiveEdgeTarget, isTrue);
+      },
+    );
+
+    test('historical asynchronous window ignores live points', () async {
+      provider.rebuild(
+        start: 1000,
+        count: 5000,
+        allocatedBytes: 0,
+        retentionLimitBytes: 4 * 1024 * 1024,
+        valuesAt: (index) => [index.toDouble()],
+      );
+
+      provider.appendLive(
+        PlotDataPoint(index: 9000, timestamp: 9000, values: [9000]),
+      );
+      while (provider.isLoading) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(provider.visibleStartIndex, 1000);
+      expect(provider.visibleEndIndex, 6000);
+      expect(provider.points.last.index, 5999);
+      expect(provider.hasLiveEdgeTarget, isFalse);
+    });
   });
 }

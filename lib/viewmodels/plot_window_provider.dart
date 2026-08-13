@@ -33,20 +33,46 @@ class PlotWindowProvider {
   int _pendingPointCount = 0;
   int? _pendingStartIndex;
   int? _pendingEndIndex;
+  bool _tracksLiveEdge = true;
+  bool _pendingTracksLiveEdge = false;
+  final List<PlotDataPoint> _pendingLivePoints = <PlotDataPoint>[];
   Timer? _dragLoadTimer;
 
   int get visibleStartIndex => _visibleStartIndex;
   int get visibleEndIndex => _visibleStartIndex + _points.length;
   bool get isLoading => _isLoading;
   int get pendingPointCount => _pendingPointCount;
+  bool get hasLiveEdgeTarget =>
+      _tracksLiveEdge || (_isLoading && _pendingTracksLiveEdge);
 
   void clear() {
     cancelLoad();
     _points.clear();
     _visibleStartIndex = 0;
+    _tracksLiveEdge = true;
   }
 
-  void append(PlotDataPoint point) => _points.add(point);
+  /// 将实时增量追加到当前尾部窗口，并同步保留给正在构建的尾部窗口。
+  ///
+  /// 历史窗口不接收实时点；异步尾部窗口完成时会把加载期间到达的点合并
+  /// 进去，避免旧快照覆盖实时增量后被误判为历史窗口。
+  bool appendLive(PlotDataPoint point) {
+    var visibleChanged = false;
+    if (_tracksLiveEdge &&
+        (_points.isEmpty || visibleEndIndex == point.index)) {
+      _points.add(point);
+      visibleChanged = true;
+    }
+
+    if (_isLoading && _pendingTracksLiveEdge) {
+      final expectedIndex =
+          (_pendingEndIndex ?? point.index) + _pendingLivePoints.length;
+      if (point.index == expectedIndex) {
+        _pendingLivePoints.add(point);
+      }
+    }
+    return visibleChanged;
+  }
 
   void trimToLimit({required int limit, required int trimBatchSize}) {
     if (_points.length <= limit) {
@@ -72,6 +98,7 @@ class PlotWindowProvider {
     final requestedStart = xMin.floor().clamp(0, total).toInt();
     final requestedEnd = xMax.floor().toInt().clamp(0, total - 1) + 1;
     // 命中预取窗口时不重建；短距离拖动只交换视口，避免重复物化同一批点。
+    final tracksLiveEdge = requestedEnd >= total;
     if (!force &&
         _hasPrefetchedRange(
           requestedStart: requestedStart,
@@ -79,6 +106,9 @@ class PlotWindowProvider {
           total: total,
           materializedPointLimit: materializedPointLimit,
         )) {
+      if (tracksLiveEdge && visibleEndIndex == total) {
+        _tracksLiveEdge = true;
+      }
       return;
     }
     final (start, end) = _materializedWindowForRange(
@@ -93,6 +123,8 @@ class PlotWindowProvider {
       allocatedBytes: allocatedBytes,
       retentionLimitBytes: retentionLimitBytes,
       valuesAt: valuesAt,
+      tracksLiveEdge: tracksLiveEdge,
+      pointLimit: materializedPointLimit,
     );
   }
 
@@ -111,6 +143,8 @@ class PlotWindowProvider {
       allocatedBytes: allocatedBytes,
       retentionLimitBytes: retentionLimitBytes,
       valuesAt: valuesAt,
+      tracksLiveEdge: true,
+      pointLimit: materializedPointLimit,
     );
   }
 
@@ -120,7 +154,10 @@ class PlotWindowProvider {
     required int allocatedBytes,
     required int retentionLimitBytes,
     required List<double> Function(int pointIndex) valuesAt,
+    bool tracksLiveEdge = false,
+    int? pointLimit,
   }) {
+    final effectivePointLimit = pointLimit ?? count;
     if (count <= 4096) {
       cancelLoad();
       _commit(start, <PlotDataPoint>[
@@ -130,7 +167,7 @@ class PlotWindowProvider {
             timestamp: (start + offset).toDouble(),
             values: valuesAt(start + offset),
           ),
-      ]);
+      ], tracksLiveEdge: tracksLiveEdge);
       return;
     }
 
@@ -149,16 +186,29 @@ class PlotWindowProvider {
     _pendingPointCount = count;
     _pendingStartIndex = start;
     _pendingEndIndex = start + count;
+    _pendingTracksLiveEdge = tracksLiveEdge;
+    _pendingLivePoints.clear();
     _onStateChanged();
-    unawaited(_buildChunked(generation, start, count, valuesAt));
+    unawaited(
+      _buildChunked(
+        generation,
+        start,
+        count,
+        valuesAt,
+        tracksLiveEdge: tracksLiveEdge,
+        pointLimit: effectivePointLimit,
+      ),
+    );
   }
 
   Future<void> _buildChunked(
     int generation,
     int start,
     int count,
-    List<double> Function(int pointIndex) valuesAt,
-  ) async {
+    List<double> Function(int pointIndex) valuesAt, {
+    required bool tracksLiveEdge,
+    required int pointLimit,
+  }) async {
     try {
       final next = <PlotDataPoint>[];
       for (var offset = 0; offset < count; offset++) {
@@ -177,7 +227,16 @@ class PlotWindowProvider {
         }
       }
       if (_isDisposed() || generation != _generation) return;
-      _commit(start, next);
+      if (tracksLiveEdge && _pendingLivePoints.isNotEmpty) {
+        next.addAll(_pendingLivePoints);
+      }
+      var committedStart = start;
+      if (next.length > pointLimit) {
+        final removeCount = next.length - pointLimit;
+        next.removeRange(0, removeCount);
+        committedStart = next.first.index;
+      }
+      _commit(committedStart, next, tracksLiveEdge: tracksLiveEdge);
     } catch (error, stackTrace) {
       AppLogger().error('精确窗口加载失败: $error\n$stackTrace', category: 'PLOT');
     } finally {
@@ -186,14 +245,20 @@ class PlotWindowProvider {
         _pendingPointCount = 0;
         _pendingStartIndex = null;
         _pendingEndIndex = null;
+        _pendingTracksLiveEdge = false;
+        _pendingLivePoints.clear();
         _onStateChanged();
       }
     }
   }
 
-  void replaceSynchronously(int start, Iterable<PlotDataPoint> next) {
+  void replaceSynchronously(
+    int start,
+    Iterable<PlotDataPoint> next, {
+    bool tracksLiveEdge = false,
+  }) {
     cancelLoad();
-    _commit(start, next);
+    _commit(start, next, tracksLiveEdge: tracksLiveEdge);
   }
 
   void scheduleDragLoad(void Function() load) {
@@ -218,17 +283,24 @@ class PlotWindowProvider {
     _pendingPointCount = 0;
     _pendingStartIndex = null;
     _pendingEndIndex = null;
+    _pendingTracksLiveEdge = false;
+    _pendingLivePoints.clear();
   }
 
   void dispose() {
     cancelLoad();
   }
 
-  void _commit(int start, Iterable<PlotDataPoint> next) {
+  void _commit(
+    int start,
+    Iterable<PlotDataPoint> next, {
+    required bool tracksLiveEdge,
+  }) {
     _points
       ..clear()
       ..addAll(next);
     _visibleStartIndex = start;
+    _tracksLiveEdge = tracksLiveEdge;
     _pendingStartIndex = null;
     _pendingEndIndex = null;
     _onCommitted();

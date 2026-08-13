@@ -206,6 +206,60 @@ void main() {
       expect(smallVm.latestDisplayDataPoint?.values, [900, 901, 902, 903]);
     });
 
+    test(
+      'fixed live viewport keeps points received during async tail load',
+      () async {
+        final liveVm = PlotViewModel(
+          DataConnectionService(),
+          materializedPointLimit: 5000,
+        );
+        liveVm.setParserType(ParserType.zobow);
+        addTearDown(liveVm.dispose);
+        for (var i = 0; i < 6000; i++) {
+          final frame = _zobowFrame(i);
+          liveVm.ingestParsedResultForTest(
+            ParseResult.ok(
+              ZobowParser.decodeFrameValues(frame, liveVm.parserConfig),
+              bytesConsumed: 10,
+              rawBytes: frame,
+            ),
+          );
+        }
+
+        liveVm.updateViewport(liveVm.viewport.copyWith(xMin: 1000, xMax: 6500));
+        expect(liveVm.isWindowLoading, isTrue);
+        for (var i = 6000; i < 6020; i++) {
+          final frame = _zobowFrame(i);
+          liveVm.ingestParsedResultForTest(
+            ParseResult.ok(
+              ZobowParser.decodeFrameValues(frame, liveVm.parserConfig),
+              bytesConsumed: 10,
+              rawBytes: frame,
+            ),
+          );
+        }
+        while (liveVm.isWindowLoading) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        expect(liveVm.followEnabled, isFalse);
+        expect(liveVm.dataPoints.last.index, 6019);
+        final revisionAfterLoad = liveVm.dataRevision;
+
+        final nextFrame = _zobowFrame(6020);
+        liveVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(nextFrame, liveVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: nextFrame,
+          ),
+        );
+
+        expect(liveVm.dataPoints.last.index, 6020);
+        expect(liveVm.dataRevision, greaterThan(revisionAfterLoad));
+      },
+    );
+
     test('clearData clears LOD index', () {
       for (int i = 0; i < 512; i++) {
         final frame = _zobowFrame(i);

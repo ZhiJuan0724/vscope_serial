@@ -2425,7 +2425,7 @@ class PlotViewModel extends BaseViewModel {
               ? math.min(values.length, PlotLodIndex.maxChannels)
               : PlotLodIndex.maxChannels,
     );
-    if ((_isViewingTail || _followEnabled) &&
+    if ((_windowProvider.hasLiveEdgeTarget || _followEnabled) &&
         _dataPoints.length < PlotConfiguration.maxMaterializedPointCount) {
       additional += 192;
     }
@@ -2648,11 +2648,14 @@ class PlotViewModel extends BaseViewModel {
     _appendReadyLodPoint(point.index, point.values);
     _updatePlotRetentionWarning();
 
-    final appendToVisibleWindow = _isViewingTail || _followEnabled;
+    final appendToVisibleWindow =
+        _followEnabled || _windowProvider.hasLiveEdgeTarget;
     if (appendToVisibleWindow) {
-      _windowProvider.append(visiblePoint);
-      _trimVisibleWindowToLimit();
-      _dataRevision++;
+      final visibleChanged = _windowProvider.appendLive(visiblePoint);
+      if (visibleChanged) {
+        _trimVisibleWindowToLimit();
+        _dataRevision++;
+      }
     }
 
     // 统计接收字节数
@@ -2728,11 +2731,6 @@ class PlotViewModel extends BaseViewModel {
         Future.microtask(() => notifyListeners());
       });
     }
-  }
-
-  bool get _isViewingTail {
-    if (_dataPoints.isEmpty) return true;
-    return _visibleEndIndex >= _historyPointCount - 1;
   }
 
   int get _historyPointCount {
