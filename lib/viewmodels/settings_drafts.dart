@@ -81,6 +81,7 @@ class PlotUiSettingsDraft {
     this.snapHighlightDiameter,
     this.snapHighlightColorMode,
     this.gestureModifier,
+    this.showPlotSendDataInRaw,
   });
 
   bool showGrid;
@@ -92,6 +93,7 @@ class PlotUiSettingsDraft {
   double followPositionRatio;
   bool observationClickToPlace;
   Object? gestureModifier;
+  bool? showPlotSendDataInRaw;
   Object quality;
   int windowPointLimit;
   int historyLimit;

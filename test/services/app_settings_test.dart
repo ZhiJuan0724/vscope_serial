@@ -320,6 +320,23 @@ void main() {
       expect(settings.plotGestureModifier, 'shift');
     });
 
+    test('串口绘图发送默认显示在数据收发并可持久化关闭', () async {
+      expect(settings.showPlotSendDataInRaw, isTrue);
+
+      settings.showPlotSendDataInRaw = false;
+      await settings.save();
+      await settings.flushPendingSave();
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.showPlotSendDataInRaw, isFalse);
+      final decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      final serialPlot = decoded['serialPlot'] as Map<String, dynamic>;
+      final interaction = serialPlot['interaction'] as Map<String, dynamic>;
+      expect(interaction['showSentDataInRaw'], isFalse);
+    });
+
     test('已有配置保留用户选择的绘图质量', () async {
       await File(settingsPath).writeAsString(
         const JsonEncoder.withIndent('  ').convert({

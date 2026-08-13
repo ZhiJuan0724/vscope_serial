@@ -221,6 +221,10 @@ final class _PlotStrings {
   String get floatingPanelOpacity => '悬浮窗透明度';
   String get observationClickToPlace => '点击定位观察';
   String get observationClickToPlaceHelp => '开启后点击工具栏“观察”会先显示跟随鼠标的观察线，左键固定位置。';
+  String get showPlotSendDataInRaw => '打印绘图发送数据';
+  String get showPlotSendDataInRawHelp => '在数据收发界面打印发送的数据。';
+  String get axisZoomModifier => '功能键选择';
+  String get axisZoomModifierHelp => '用于功能键 + 滚轮，功能键 + 拖动的 X/Y 轴缩放。';
   String get densitySparse => '稀疏';
   String get densityNormal => '普通';
   String get densityDense => '密集';

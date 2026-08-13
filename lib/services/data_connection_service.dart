@@ -1195,12 +1195,24 @@ class DataConnectionService extends ChangeNotifier {
   void debugAddPlotSendDataForTest(
     Uint8List data, {
     required bool displayAsHex,
+    bool showInRawData = true,
   }) {
-    _addSendDataLine(
+    _displaySendData(
       data,
       source: SendDisplaySource.plot,
       displayAsHex: displayAsHex,
+      showInRawData: showInRawData,
     );
+  }
+
+  void _displaySendData(
+    Uint8List data, {
+    required SendDisplaySource source,
+    required bool showInRawData,
+    bool? displayAsHex,
+  }) {
+    if (!showInRawData) return;
+    _addSendDataLine(data, source: source, displayAsHex: displayAsHex);
   }
 
   void _addSendDataLine(
@@ -1421,10 +1433,16 @@ class DataConnectionService extends ChangeNotifier {
     Uint8List data, {
     SendDisplaySource displaySource = SendDisplaySource.user,
     bool? displayAsHex,
+    bool showInRawData = true,
   }) async {
     await _writeBytes(data);
-    // 发送的数据也显示在数据窗口
-    _addSendDataLine(data, source: displaySource, displayAsHex: displayAsHex);
+    // 用户发送和允许显示的绘图发送共用数据收发缓冲区及清除操作。
+    _displaySendData(
+      data,
+      source: displaySource,
+      displayAsHex: displayAsHex,
+      showInRawData: showInRawData,
+    );
   }
 
   Future<void> sendRawBytes(Uint8List data) => _writeBytes(data);

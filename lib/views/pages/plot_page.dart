@@ -4019,6 +4019,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       followPositionRatio: vm.followPositionRatio,
       observationClickToPlace: vm.observationClickToPlace,
       gestureModifier: vm.gestureModifier,
+      showPlotSendDataInRaw: vm.showPlotSendDataInRaw,
       quality: vm.lodQuality,
       windowPointLimit: vm.maxVisiblePoints,
       historyLimit: vm.plotRetentionLimitGiB,
@@ -4116,6 +4117,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         draft.observationClickToPlace !=
                             vm.observationClickToPlace ||
                         draft.gestureModifier != vm.gestureModifier ||
+                        draft.showPlotSendDataInRaw !=
+                            vm.showPlotSendDataInRaw ||
                         draft.quality != vm.lodQuality ||
                         refreshFpsController.text != '${vm.refreshFps}' ||
                         draft.previewToolbarEnabled !=
@@ -4634,7 +4637,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      Text('轴向缩放修饰键', style: const TextStyle(fontSize: 14)),
+                      AppSwitchRow(
+                        title: Text(AppStrings.plot.showPlotSendDataInRaw),
+                        subtitle: Text(
+                          AppStrings.plot.showPlotSendDataInRawHelp,
+                        ),
+                        value: draft.showPlotSendDataInRaw ?? true,
+                        onChanged:
+                            (value) => setState(
+                              () => draft.showPlotSendDataInRaw = value,
+                            ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        AppStrings.plot.axisZoomModifier,
+                        style: const TextStyle(fontSize: 14),
+                      ),
                       const SizedBox(height: 4),
                       AppSegmentedSelector<PlotGestureModifier>(
                         value:
@@ -4649,9 +4667,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 setState(() => draft.gestureModifier = value),
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        '用于修饰键 + 滚轮和修饰键 + 拖动的 X/Y 轴缩放。',
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      Text(
+                        AppStrings.plot.axisZoomModifierHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       // 吸附点高亮

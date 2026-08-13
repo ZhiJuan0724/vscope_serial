@@ -290,6 +290,24 @@ void main() {
       expect(service.receivedLines.single, '[绘图发送] r 1 2');
     });
 
+    test('绘图发送可隐藏且已显示内容由数据收发清除按钮统一清空', () {
+      service.debugAddPlotSendDataForTest(
+        Uint8List.fromList(utf8.encode('hidden\n')),
+        displayAsHex: false,
+        showInRawData: false,
+      );
+      expect(service.receivedLines, isEmpty);
+
+      service.debugAddPlotSendDataForTest(
+        Uint8List.fromList(utf8.encode('visible\n')),
+        displayAsHex: false,
+      );
+      expect(service.receivedLines.single, '[绘图发送] visible');
+
+      service.clearReceivedData();
+      expect(service.receivedLines, isEmpty);
+    });
+
     test('high frequency send logs are batched', () {
       for (var i = 0; i < 10; i++) {
         service.debugRecordSendLogForTest(1029);

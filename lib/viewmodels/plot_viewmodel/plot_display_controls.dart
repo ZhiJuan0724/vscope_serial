@@ -25,6 +25,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       opacity: settings.floatingPanelOpacity,
       observation: settings.observationClickToPlace,
       gestureModifier: settings.plotGestureModifier,
+      showPlotSendDataInRaw: settings.showPlotSendDataInRaw,
       follow: settings.followPositionRatio,
       yFit: settings.yFitDisplayRatio,
     );
@@ -39,6 +40,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       yFit: _yFitDisplayRatio,
       observation: _observationClickToPlace,
       gestureModifier: _gestureModifier,
+      showPlotSendDataInRaw: _showPlotSendDataInRaw,
       quality: _lodQuality,
       window: _maxVisiblePoints,
       history: _plotRetentionLimitBytes,
@@ -66,6 +68,8 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _observationClickToPlace = draft.observationClickToPlace;
     _gestureModifier =
         draft.gestureModifier as PlotGestureModifier? ?? _gestureModifier;
+    _showPlotSendDataInRaw =
+        draft.showPlotSendDataInRaw ?? _showPlotSendDataInRaw;
     _lodQuality = draft.quality as PlotLodQuality;
     _maxVisiblePoints = draft.windowPointLimit.clamp(
       PlotViewModel.minVisiblePoints,
@@ -117,6 +121,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
         ..floatingPanelOpacity = oldSettings.opacity
         ..observationClickToPlace = oldSettings.observation
         ..plotGestureModifier = oldSettings.gestureModifier
+        ..showPlotSendDataInRaw = oldSettings.showPlotSendDataInRaw
         ..followPositionRatio = oldSettings.follow
         ..yFitDisplayRatio = oldSettings.yFit;
       _showGrid = oldValues.showGrid;
@@ -129,6 +134,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _yFitDisplayRatio = oldValues.yFit;
       _observationClickToPlace = oldValues.observation;
       _gestureModifier = oldValues.gestureModifier;
+      _showPlotSendDataInRaw = oldValues.showPlotSendDataInRaw;
       _lodQuality = oldValues.quality;
       _maxVisiblePoints = oldValues.window;
       _plotRetentionLimitBytes = oldValues.history;

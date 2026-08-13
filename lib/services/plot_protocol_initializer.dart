@@ -26,9 +26,12 @@ class PlotProtocolInitializer {
 
   final DataConnectionService _connectionService;
 
-  Future<PlotProtocolInitializationResult> initialize<
-    TConfig extends SendProtocolInitializationConfig
-  >({required SendProtocol<TConfig> protocol, required TConfig config}) async {
+  Future<PlotProtocolInitializationResult>
+  initialize<TConfig extends SendProtocolInitializationConfig>({
+    required SendProtocol<TConfig> protocol,
+    required TConfig config,
+    bool showInRawData = true,
+  }) async {
     if (!_connectionService.isConnected) {
       final message = '${protocol.initializationName}初始化失败：数据连接未建立，无法发送初始化数据。';
       AppLogger().debug(message, category: 'PLOT');
@@ -41,6 +44,7 @@ class PlotProtocolInitializer {
         bytes,
         displaySource: SendDisplaySource.plot,
         displayAsHex: protocol.displayAsHex,
+        showInRawData: showInRawData,
       );
       AppLogger().info(
         '${protocol.initializationName}初始化数据已发送: '

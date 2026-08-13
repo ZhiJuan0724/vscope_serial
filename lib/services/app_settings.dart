@@ -171,6 +171,9 @@ class AppSettings {
   /// 串口绘图轴向缩放手势使用的修饰键：shift 或 control。
   String plotGestureModifier = 'shift';
 
+  /// 是否在数据收发页面显示串口绘图发送的协议初始化数据。
+  bool showPlotSendDataInRaw = true;
+
   /// 是否使用随机数据源（而非串口）
   bool useRandomSource = false;
 
@@ -464,6 +467,7 @@ class AppSettings {
     plotLiveValuesPanelTop = null;
     observationClickToPlace = false;
     plotGestureModifier = 'shift';
+    showPlotSendDataInRaw = true;
     useRandomSource = false;
     randomFrequency = 1000.0;
     followEnabled = false;
@@ -804,6 +808,7 @@ class AppSettings {
           json['observationClickToPlace'] as bool? ?? false;
       plotGestureModifier =
           json['plotGestureModifier'] == 'control' ? 'control' : 'shift';
+      showPlotSendDataInRaw = json['showPlotSendDataInRaw'] as bool? ?? true;
       useRandomSource = json['useRandomSource'] as bool? ?? false;
       randomFrequency = ((json['randomFrequency'] as num?)?.toDouble() ??
               1000.0)
@@ -1365,6 +1370,7 @@ class AppSettings {
     'plotLiveValuesPanelTop': plotLiveValuesPanelTop,
     'observationClickToPlace': observationClickToPlace,
     'plotGestureModifier': plotGestureModifier,
+    'showPlotSendDataInRaw': showPlotSendDataInRaw,
     'useRandomSource': useRandomSource,
     'randomFrequency': randomFrequency,
     'followEnabled': followEnabled,
@@ -1612,6 +1618,7 @@ class AppSettings {
       'observationClickToPlace',
     ],
     'plotGestureModifier': ['serialPlot', 'interaction', 'zoomModifier'],
+    'showPlotSendDataInRaw': ['serialPlot', 'interaction', 'showSentDataInRaw'],
     'followEnabled': ['serialPlot', 'interaction', 'followEnabled'],
     'followPositionRatio': ['serialPlot', 'interaction', 'followPositionRatio'],
     'yFitDisplayRatio': ['serialPlot', 'interaction', 'yFitDisplayRatio'],

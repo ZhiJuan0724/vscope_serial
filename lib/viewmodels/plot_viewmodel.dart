@@ -359,6 +359,7 @@ class PlotViewModel extends BaseViewModel {
   /// 添加观察时是否先跟随鼠标，再由左键固定。
   bool _observationClickToPlace = false;
   PlotGestureModifier _gestureModifier = PlotGestureModifier.shift;
+  bool _showPlotSendDataInRaw = true;
 
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
@@ -657,6 +658,7 @@ class PlotViewModel extends BaseViewModel {
     _gestureModifier = PlotGestureModifier.fromString(
       settings.plotGestureModifier,
     );
+    _showPlotSendDataInRaw = settings.showPlotSendDataInRaw;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
@@ -804,6 +806,7 @@ class PlotViewModel extends BaseViewModel {
     settings.plotLiveValuesPanelTop = _liveValuesPanelTop;
     settings.observationClickToPlace = _observationClickToPlace;
     settings.plotGestureModifier = _gestureModifier.value;
+    settings.showPlotSendDataInRaw = _showPlotSendDataInRaw;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -880,6 +883,7 @@ class PlotViewModel extends BaseViewModel {
       _liveValuesPanelTop ?? (legendVisible ? 240 : 96);
   bool get observationClickToPlace => _observationClickToPlace;
   PlotGestureModifier get gestureModifier => _gestureModifier;
+  bool get showPlotSendDataInRaw => _showPlotSendDataInRaw;
   bool get boxZoomEnabled => _boxZoomEnabled;
   bool get boxZoomContinuous => _boxZoomContinuous;
   bool get followEnabled => _followEnabled;
@@ -2860,6 +2864,7 @@ class PlotViewModel extends BaseViewModel {
       case SendProtocolType.zobowBuiltIn:
         result = await _protocolInitializer.initialize(
           protocol: zobowDeviceSendProtocol,
+          showInRawData: _showPlotSendDataInRaw,
           config: ZobowDeviceProtocolInitializationConfig(
             _parserConfig.zobowChannelIds
                 .take(_parserConfig.zobowChannelCount)
@@ -2870,6 +2875,7 @@ class PlotViewModel extends BaseViewModel {
       case SendProtocolType.rProtocol:
         result = await _protocolInitializer.initialize(
           protocol: rSendProtocol,
+          showInRawData: _showPlotSendDataInRaw,
           config: RProtocolInitializationConfig(
             addresses: _normalizedRProtocolAddressesForStartup(),
             requiredChannelCount:
