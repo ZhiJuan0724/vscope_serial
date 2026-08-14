@@ -166,7 +166,8 @@ void main() {
       expect(settings.previewToolbarEnabled, isFalse);
       expect(settings.plotReceiveAggregationEnabled, isFalse);
       expect(settings.plotLodQuality, 'balanced');
-      expect(settings.plotRenderEngine, 'canvas');
+      expect(settings.plotRenderEngine, 'd3d11');
+      expect(settings.plotRenderEngineDefaultApplied, isTrue);
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');
@@ -285,10 +286,11 @@ void main() {
       }
     });
 
-    test('新配置的串口与探针绘图质量默认使用均衡', () {
+    test('新配置的串口与探针绘图质量默认使用均衡且启用D3D11', () {
       expect(settings.plotLodQuality, 'balanced');
       expect(settings.probePlotLodQuality, 'balanced');
-      expect(settings.plotRenderEngine, 'canvas');
+      expect(settings.plotRenderEngine, 'd3d11');
+      expect(settings.plotRenderEngineDefaultApplied, isTrue);
     });
 
     test('串口绘图目标刷新率可持久化到120并限制越界值', () async {
@@ -310,7 +312,7 @@ void main() {
       expect(settings.refreshFps, 120);
     });
 
-    test('串口绘图引擎可持久化D3D11且无效值回退Canvas', () async {
+    test('串口绘图引擎可持久化D3D11且无效值回退D3D11', () async {
       settings.plotRenderEngine = 'd3d11';
       await settings.save();
       await settings.flushPendingSave();
@@ -323,6 +325,7 @@ void main() {
       final serialPlot = decoded['serialPlot'] as Map<String, dynamic>;
       final performance = serialPlot['performance'] as Map<String, dynamic>;
       expect(performance['renderEngine'], 'd3d11');
+      expect(performance['renderEngineDefaultApplied'], isTrue);
 
       await File(settingsPath).writeAsString(
         const JsonEncoder.withIndent('  ').convert({
@@ -333,7 +336,49 @@ void main() {
         }),
       );
       await settings.debugInitializeAt(settingsPath);
+      expect(settings.plotRenderEngine, 'd3d11');
+    });
+
+    test('旧用户首次升级强制迁移D3D11，之后手动选择Canvas保持不变', () async {
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'performance': {'renderEngine': 'canvas'},
+          },
+        }),
+      );
+
+      await settings.debugInitializeAt(settingsPath);
+      await settings.flushPendingSave();
+      expect(settings.plotRenderEngine, 'd3d11');
+      expect(settings.plotRenderEngineDefaultApplied, isTrue);
+
+      var decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      var performance =
+          (decoded['serialPlot'] as Map<String, dynamic>)['performance']
+              as Map<String, dynamic>;
+      expect(performance['renderEngine'], 'd3d11');
+      expect(performance['renderEngineDefaultApplied'], isTrue);
+
+      settings.plotRenderEngine = 'canvas';
+      await settings.save();
+      await settings.flushPendingSave();
+      await settings.debugInitializeAt(settingsPath);
+
       expect(settings.plotRenderEngine, 'canvas');
+      expect(settings.plotRenderEngineDefaultApplied, isTrue);
+
+      decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      performance =
+          (decoded['serialPlot'] as Map<String, dynamic>)['performance']
+              as Map<String, dynamic>;
+      expect(performance['renderEngine'], 'canvas');
+      expect(performance['renderEngineDefaultApplied'], isTrue);
     });
 
     test('串口绘图缩放修饰键默认Shift并持久化Ctrl选择', () async {
@@ -402,6 +447,46 @@ void main() {
 
       expect(settings.plotLodQuality, 'performance');
       expect(settings.probePlotLodQuality, 'quality');
+    });
+
+    test('旧配置未记录串口绘图质量时迁移并写回均衡', () async {
+      for (final legacyValue in <Object?>[null, '']) {
+        await File(settingsPath).writeAsString(
+          const JsonEncoder.withIndent('  ').convert({
+            'schemaVersion': 2,
+            'serialPlot': {
+              'performance': {
+                'renderEngine': 'd3d11',
+                'renderEngineDefaultApplied': true,
+              },
+            },
+          }),
+        );
+        if (legacyValue != null) {
+          final decoded =
+              jsonDecode(await File(settingsPath).readAsString())
+                  as Map<String, dynamic>;
+          final performance =
+              (decoded['serialPlot'] as Map<String, dynamic>)['performance']
+                  as Map<String, dynamic>;
+          performance['lodQuality'] = legacyValue;
+          await File(
+            settingsPath,
+          ).writeAsString(const JsonEncoder.withIndent('  ').convert(decoded));
+        }
+
+        await settings.debugInitializeAt(settingsPath);
+        await settings.flushPendingSave();
+
+        expect(settings.plotLodQuality, 'balanced');
+        final migrated =
+            jsonDecode(await File(settingsPath).readAsString())
+                as Map<String, dynamic>;
+        final performance =
+            (migrated['serialPlot'] as Map<String, dynamic>)['performance']
+                as Map<String, dynamic>;
+        expect(performance['lodQuality'], 'balanced');
+      }
     });
 
     test('连续保存合并后写入完整的最新快照', () async {

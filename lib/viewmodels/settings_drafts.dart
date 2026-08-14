@@ -83,6 +83,7 @@ class PlotUiSettingsDraft {
     this.snapHighlightColorMode,
     this.gestureModifier,
     this.showPlotSendDataInRaw,
+    this.receiveAggregationEnabled,
   });
 
   bool showGrid;
@@ -95,6 +96,7 @@ class PlotUiSettingsDraft {
   bool observationClickToPlace;
   Object? gestureModifier;
   bool? showPlotSendDataInRaw;
+  bool? receiveAggregationEnabled;
   Object quality;
   Object? renderEngine;
   int windowPointLimit;

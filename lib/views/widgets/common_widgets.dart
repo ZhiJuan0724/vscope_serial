@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -266,6 +268,7 @@ class ToolbarOverflowAction {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.onSecondaryPressed,
     this.selected = false,
   });
 
@@ -273,6 +276,7 @@ class ToolbarOverflowAction {
   final Widget icon;
   final String label;
   final VoidCallback? onPressed;
+  final VoidCallback? onSecondaryPressed;
   final bool selected;
 }
 
@@ -414,60 +418,205 @@ List<Widget> _spacedToolbarChildren(List<Widget> children) {
   ];
 }
 
-class _ToolbarMoreButton extends StatelessWidget {
+class _ToolbarMoreButton extends StatefulWidget {
   const _ToolbarMoreButton({required this.actions});
 
   final List<ToolbarOverflowAction> actions;
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: kToolbarControlExtent,
-      height: kToolbarControlExtent,
-      child: PopupMenuButton<int>(
-        key: const ValueKey('toolbar-more-button'),
-        tooltip: '更多',
-        padding: EdgeInsets.zero,
-        iconSize: kToolbarIconSize,
-        icon: const Icon(Icons.more_vert),
-        onSelected: (index) => actions[index].onPressed?.call(),
-        itemBuilder:
-            (context) => [
-              for (var index = 0; index < actions.length; index++)
-                PopupMenuItem<int>(
-                  key: actions[index].key,
-                  value: index,
-                  enabled: actions[index].onPressed != null,
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 24,
-                        child: IconTheme.merge(
-                          data: IconThemeData(
-                            size: kToolbarIconSize,
-                            color:
-                                actions[index].selected
-                                    ? Theme.of(context).colorScheme.primary
-                                    : null,
-                          ),
-                          child: actions[index].icon,
-                        ),
+  State<_ToolbarMoreButton> createState() => _ToolbarMoreButtonState();
+}
+
+class _ToolbarMoreButtonState extends State<_ToolbarMoreButton> {
+  static const double _menuWidth = 252;
+  static const double _itemHeight = 40;
+
+  OverlayEntry? _overlayEntry;
+
+  void _toggleMenu() {
+    if (_overlayEntry == null) {
+      _showMenu();
+    } else {
+      _removeMenu();
+    }
+  }
+
+  void _showMenu() {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null || !renderBox.hasSize) return;
+    final position = renderBox.localToGlobal(Offset.zero);
+    final screenSize = MediaQuery.sizeOf(context);
+    final desiredHeight = (widget.actions.length * _itemHeight + 8).clamp(
+      48.0,
+      360.0,
+    );
+    final availableBelow =
+        screenSize.height - position.dy - renderBox.size.height;
+    final availableAbove = position.dy;
+    final opensUp =
+        availableBelow < desiredHeight && availableAbove > availableBelow;
+    final availableHeight = math.max(
+      48.0,
+      (opensUp ? availableAbove : availableBelow) - 6,
+    );
+    final menuHeight = math.min(desiredHeight, availableHeight);
+    final menuWidth = math.min(_menuWidth, math.max(48, screenSize.width - 8));
+    final menuLeft = (position.dx + renderBox.size.width - menuWidth).clamp(
+      4.0,
+      math.max(4, screenSize.width - menuWidth - 4),
+    );
+    final preferredTop =
+        opensUp
+            ? position.dy - menuHeight - 2
+            : position.dy + renderBox.size.height + 2;
+    final menuTop = preferredTop.clamp(
+      4.0,
+      math.max(4, screenSize.height - menuHeight - 4),
+    );
+
+    _overlayEntry = OverlayEntry(
+      builder:
+          (overlayContext) => Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _removeMenu,
+                  child: const ColoredBox(color: Colors.transparent),
+                ),
+              ),
+              Positioned(
+                left: menuLeft.toDouble(),
+                top: menuTop.toDouble(),
+                width: menuWidth.toDouble(),
+                height: menuHeight,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Theme.of(overlayContext).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color:
+                          Theme.of(overlayContext).colorScheme.outlineVariant,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.14),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(child: Text(actions[index].label)),
-                      if (actions[index].selected)
-                        Icon(
-                          Icons.check,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
                     ],
                   ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final action in widget.actions)
+                              _buildMenuItem(overlayContext, action),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
+              ),
             ],
+          ),
+    );
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  Widget _buildMenuItem(BuildContext context, ToolbarOverflowAction action) {
+    final colors = Theme.of(context).colorScheme;
+    final enabled =
+        action.onPressed != null || action.onSecondaryPressed != null;
+    final foreground =
+        !enabled
+            ? colors.onSurface.withValues(alpha: 0.38)
+            : action.selected
+            ? colors.primary
+            : colors.onSurface;
+    return Listener(
+      key: action.key,
+      onPointerDown:
+          action.onSecondaryPressed == null
+              ? null
+              : (event) {
+                if (event.buttons != kSecondaryMouseButton) return;
+                _removeMenu();
+                action.onSecondaryPressed?.call();
+              },
+      child: InkWell(
+        onTap:
+            action.onPressed == null
+                ? null
+                : () {
+                  _removeMenu();
+                  action.onPressed?.call();
+                },
+        child: SizedBox(
+          height: _itemHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 24,
+                  child: IconTheme.merge(
+                    data: IconThemeData(
+                      size: kToolbarIconSize,
+                      color: foreground,
+                    ),
+                    child: action.icon,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    action.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: foreground),
+                  ),
+                ),
+                if (action.selected)
+                  Icon(Icons.check, size: 16, color: colors.primary),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
+
+  void _removeMenu() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ToolbarMoreButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _overlayEntry?.markNeedsBuild();
+  }
+
+  @override
+  void dispose() {
+    _removeMenu();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ToolbarIconButton(
+    key: const ValueKey('toolbar-more-button'),
+    tooltip: '更多',
+    onPressed: _toggleMenu,
+    icon: const Icon(Icons.more_vert),
+  );
 }
 
 /// 无状态的单图标工具栏按钮。

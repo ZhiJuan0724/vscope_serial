@@ -171,6 +171,12 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                 ? null
                                 : () =>
                                     vm.setVCursorEnabled(!vm.vCursorEnabled),
+                        onSecondaryPressed:
+                            vm.maxJumpPacketIndex == null
+                                ? null
+                                : () => unawaited(
+                                  _showCursorJumpDialog(context, vm),
+                                ),
                       ),
                     ],
                     child: Listener(
@@ -204,6 +210,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             vm.pointCount == 0
                                 ? null
                                 : () => _addObservation(vm),
+                        onSecondaryPressed:
+                            () =>
+                                unawaited(_showObservationManager(context, vm)),
                       ),
                     ],
                     child: Listener(
@@ -236,6 +245,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         selected: vm.xMeasurementEnabled,
                         onPressed:
                             vm.pointCount == 0 ? null : vm.toggleXMeasurement,
+                        onSecondaryPressed:
+                            () => unawaited(
+                              _showMeasurementSettings(context, vm, isX: true),
+                            ),
                       ),
                     ],
                     child: Listener(
@@ -266,6 +279,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         selected: vm.yMeasurementEnabled,
                         onPressed:
                             vm.pointCount == 0 ? null : vm.toggleYMeasurement,
+                        onSecondaryPressed:
+                            () => unawaited(
+                              _showMeasurementSettings(context, vm, isX: false),
+                            ),
                       ),
                     ],
                     child: Listener(
@@ -1299,9 +1316,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                       if (!isX) ...[
                         const Divider(height: 24),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
+                        AppSwitchRow(
                           title: Text(AppStrings.plot.measurementSnap),
                           value: snapEnabled,
                           onChanged:

@@ -1414,16 +1414,8 @@ class _ShellPageState extends State<ShellPage> {
                           AppSwitchRow(
                             key: sshSectionKey,
                             title: const Text('启用 SSH Keepalive'),
-                            subtitle: Text(
+                            subtitle: const Text(
                               '默认每 10 秒发送一次 OpenSSH keepalive 请求；不兼容的嵌入式 SSH 服务端可关闭，下次连接生效。',
-                              style: Theme.of(
-                                context,
-                              ).textTheme.bodySmall?.copyWith(
-                                color:
-                                    Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                              ),
                             ),
                             value: sshKeepAliveEnabled,
                             onChanged:

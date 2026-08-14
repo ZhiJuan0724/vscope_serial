@@ -295,9 +295,13 @@ class ProbeConnectionService extends ChangeNotifier {
     return resolved.displayName;
   }
 
-  /// 检测设置页展示的三个后端，不触发探针连接。
-  Future<Map<String, ProbeBackendAvailability>>
-  checkBackendAvailability() async {
+  /// 检测设置页展示的后端，不触发探针连接。
+  ///
+  /// [prepareBundledOpenOcd] 为 false 时，内置 OpenOCD 只检查已解压缓存；
+  /// 用户主动检测或实际使用后端时才允许准备压缩运行时。
+  Future<Map<String, ProbeBackendAvailability>> checkBackendAvailability({
+    bool prepareBundledOpenOcd = true,
+  }) async {
     final result = <String, ProbeBackendAvailability>{};
     for (final backend in _backends) {
       final kind = switch (backend.id) {
@@ -309,9 +313,20 @@ class ProbeConnectionService extends ChangeNotifier {
       };
       try {
         AppLogger().info('检测探针后端：${backend.displayName}', category: 'RTT');
-        final available = await backend.isAvailable(kind);
-        String? version;
-        if (available && backend is ProbeBackendVersionProvider) {
+        ProbeBackendAvailability? passiveStatus;
+        if (!prepareBundledOpenOcd && backend.id == 'bundled-openocd') {
+          passiveStatus =
+              backend is PassiveProbeBackendAvailabilityProvider
+                  ? await (backend as PassiveProbeBackendAvailabilityProvider)
+                      .checkAvailabilityWithoutPreparation(kind)
+                  : const ProbeBackendAvailability(available: false);
+        }
+        final available =
+            passiveStatus?.available ?? await backend.isAvailable(kind);
+        String? version = passiveStatus?.version;
+        if (passiveStatus == null &&
+            available &&
+            backend is ProbeBackendVersionProvider) {
           try {
             version = await (backend as ProbeBackendVersionProvider)
                 .detectVersion(kind);

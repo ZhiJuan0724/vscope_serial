@@ -151,8 +151,14 @@ class AppSettings {
   /// quality 是两档版本遗留值，加载时迁移为 balanced。
   String plotLodQuality = 'balanced';
 
-  /// 串口绘图数据层后端：canvas 或 d3d11。
-  String plotRenderEngine = 'canvas';
+  /// 串口绘图数据层后端：canvas 或 d3d11，新安装默认使用 D3D11。
+  String plotRenderEngine = 'd3d11';
+
+  /// 是否已应用过 D3D11 默认引擎迁移。
+  ///
+  /// 旧配置首次由支持该字段的版本加载时统一切换到 D3D11；标记写入后，
+  /// 用户再手动选择 Canvas 或 D3D11 都会被长期保留，不再由升级覆盖。
+  bool plotRenderEngineDefaultApplied = true;
 
   /// 是否显示网格
   bool showGrid = true;
@@ -464,7 +470,8 @@ class AppSettings {
     previewToolbarEnabled = false;
     plotReceiveAggregationEnabled = false;
     plotLodQuality = 'balanced';
-    plotRenderEngine = 'canvas';
+    plotRenderEngine = 'd3d11';
+    plotRenderEngineDefaultApplied = true;
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
@@ -602,6 +609,8 @@ class AppSettings {
     if (sourceSnapshot == null) return;
     final requiresFormatMigration = sourceSnapshot['schemaVersion'] != 2;
     final json = _flattenSettingsSnapshot(sourceSnapshot);
+    final requiresRenderEngineDefaultMigration =
+        json['plotRenderEngineDefaultApplied'] != true;
     if (result.recoveredFromBackup) {
       _recoveryNotice = '应用设置文件损坏，已自动恢复上一份有效设置。';
       AppLogger().warning(
@@ -794,14 +803,23 @@ class AppSettings {
       plotReceiveAggregationEnabled =
           json['plotReceiveAggregationEnabled'] as bool? ?? false;
       final savedLodQuality = json['plotLodQuality'] as String?;
+      final requiresPlotLodQualityDefaultMigration =
+          savedLodQuality == null || savedLodQuality.trim().isEmpty;
       plotLodQuality = switch (savedLodQuality) {
         'performance' => 'performance',
         'balanced' || 'quality' => 'balanced',
         'qualityHigh' => 'qualityHigh',
         _ => 'balanced',
       };
-      plotRenderEngine =
-          json['plotRenderEngine'] == 'd3d11' ? 'd3d11' : 'canvas';
+      if (requiresRenderEngineDefaultMigration) {
+        // 只迁移一次：让升级用户同样启用 D3D11，之后尊重用户手动选择。
+        plotRenderEngine = 'd3d11';
+        plotRenderEngineDefaultApplied = true;
+      } else {
+        plotRenderEngine =
+            json['plotRenderEngine'] == 'canvas' ? 'canvas' : 'd3d11';
+        plotRenderEngineDefaultApplied = true;
+      }
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       final background = json['plotBackground'] as String?;
@@ -1084,6 +1102,8 @@ class AppSettings {
           (json['yMax'] as num?)?.toDouble() ??
           PlotConfiguration.viewportDefaultYMax;
       if (requiresFormatMigration ||
+          requiresPlotLodQualityDefaultMigration ||
+          requiresRenderEngineDefaultMigration ||
           storedMaxVisiblePoints != maxVisiblePoints) {
         await save();
       }
@@ -1160,6 +1180,7 @@ class AppSettings {
       'triggerToolbarEnabled',
       'previewToolbarEnabled',
       'plotReceiveAggregationEnabled',
+      'plotRenderEngineDefaultApplied',
       'showGrid',
       'observationClickToPlace',
       'useRandomSource',
@@ -1385,6 +1406,7 @@ class AppSettings {
     'plotReceiveAggregationEnabled': plotReceiveAggregationEnabled,
     'plotLodQuality': plotLodQuality,
     'plotRenderEngine': plotRenderEngine,
+    'plotRenderEngineDefaultApplied': plotRenderEngineDefaultApplied,
     'showGrid': showGrid,
     'gridDensity': gridDensity,
     'plotBackground': plotBackground,
@@ -1596,6 +1618,11 @@ class AppSettings {
     ],
     'plotLodQuality': ['serialPlot', 'performance', 'lodQuality'],
     'plotRenderEngine': ['serialPlot', 'performance', 'renderEngine'],
+    'plotRenderEngineDefaultApplied': [
+      'serialPlot',
+      'performance',
+      'renderEngineDefaultApplied',
+    ],
 
     // 串口绘图：外观
     'plotFontSizeDelta': ['serialPlot', 'appearance', 'fontSizeDelta'],

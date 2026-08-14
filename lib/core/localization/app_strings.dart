@@ -240,6 +240,9 @@ final class _PlotStrings {
   String get lodQualityBalanced => '均衡';
   String get lodQualityQuality => '质量优先';
   String get lodQualityHelp => '更高的绘图质量会增加绘图性能开销。';
+  String get receiveAggregation => '绘图高频接收合并';
+  String get receiveAggregationHelp =>
+      '仅绘图接收时短暂合并连续小块数据，降低高频大量数据的处理开销；可能轻微增加绘图显示延迟。';
   String get plotFontSize => '绘图字体大小';
   String get plotFontBold => '加粗绘图字体';
   String get defaultValue => '默认';
@@ -542,10 +545,6 @@ final class _AppInfoStrings {
   String get triggerTestCrashMessage =>
       '应用将立即发生真实的原生访问冲突并退出，不会执行正常断开和数据保存流程。'
       '请先停止串口、探针及其他重要任务；重新启动后应看到崩溃转储提示。';
-  String get receivePerformance => '接收性能';
-  String get plotReceiveAggregation => '绘图高频接收合并';
-  String get plotReceiveAggregationHelp =>
-      '仅绘图接收时短暂合并连续小块数据，降低高频大量数据的处理开销；可能轻微增加绘图显示延迟。';
   String get memoryLimits => '内存上限';
   String get plotHistoryMemoryLimit => '绘图历史';
   String get plotHistoryMemoryLimitSummary => '达到上限后停止绘图并保留已有历史';

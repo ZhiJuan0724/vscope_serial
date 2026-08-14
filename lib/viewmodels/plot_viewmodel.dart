@@ -382,7 +382,7 @@ class PlotViewModel extends BaseViewModel {
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
   PlotLodQuality _lodQuality = PlotLodQuality.balanced;
-  PlotRenderEngine _renderEngine = PlotRenderEngine.canvas;
+  PlotRenderEngine _renderEngine = PlotRenderEngine.d3d11;
   bool _plotInteractionActive = false;
   bool _keepPlotOnRestart = false;
 

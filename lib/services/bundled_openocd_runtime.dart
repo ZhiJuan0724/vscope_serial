@@ -63,6 +63,30 @@ class BundledOpenOcdRuntime extends ChangeNotifier {
 
   BundledOpenOcdPreparationState get state => _state;
 
+  /// 只查找当前程序已经完整解压的运行时，不创建目录也不触发解压。
+  Future<String?> findPreparedExecutable() async {
+    final ready = _readyExecutable;
+    if (ready != null && _isRuntimeCompleteSync(File(ready).parent.parent)) {
+      return ready;
+    }
+    final bundleDirectory = await _findBundleDirectory();
+    if (bundleDirectory == null) return null;
+    final manifest = await _readManifest(bundleDirectory);
+    final cacheRoot = _cacheRootOverride ?? _currentExecutableCacheRoot();
+    final cacheDirectory = Directory(
+      _join(
+        cacheRoot.path,
+        '${_safeSegment(manifest.version)}-${manifest.sha256.substring(0, 12)}',
+      ),
+    );
+    final executable = await _validatedExecutable(
+      cacheDirectory,
+      manifest.sha256,
+    );
+    if (executable != null) _readyExecutable = executable;
+    return executable;
+  }
+
   /// 返回可执行文件路径；发布包没有压缩运行时时返回 null，由调用方继续查找
   /// 开发环境或旧版本的已解压目录。
   Future<String?> ensureReady() {

@@ -32,6 +32,7 @@ void main() {
     settings.rChannelAddresses = List.filled(16, '');
     settings.rProtocolLooseChannelSettings = false;
     settings.plotLodQuality = 'performance';
+    settings.plotReceiveAggregationEnabled = false;
     settings.plotHistoryMemoryLimitGiB = 2;
     settings.xMeasurementLine1Color = null;
     settings.xMeasurementLine2Color = null;
@@ -152,6 +153,18 @@ void main() {
       find.byKey(const ValueKey('plotRenderEngineSelector')),
       findsOneWidget,
     );
+    final receiveAggregationToggle = find.byKey(
+      const ValueKey('plot-receive-aggregation-toggle'),
+    );
+    expect(receiveAggregationToggle, findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: receiveAggregationToggle,
+        matching: find.byType(Switch),
+      ),
+    );
+    await tester.pump();
+    expect(AppSettings().plotReceiveAggregationEnabled, isFalse);
 
     await tester.tap(find.text(AppStrings.plot.lodQualityBalanced));
     await tester.pumpAndSettle();
@@ -178,6 +191,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(vm.lodQuality, PlotLodQuality.quality);
     expect(vm.renderEngine, PlotRenderEngine.d3d11);
+    expect(AppSettings().plotReceiveAggregationEnabled, isTrue);
 
     await tester.tap(find.byTooltip(AppStrings.plot.advancedSettings).last);
     await tester.pumpAndSettle();
@@ -242,7 +256,9 @@ void main() {
     final snapToggle = find.byKey(const ValueKey('y-measure-snap-toggle'));
     expect(snapToggle, findsOneWidget);
     expect(vm.yMeasurementSnapEnabled, isTrue);
-    await tester.tap(snapToggle);
+    await tester.tap(
+      find.descendant(of: snapToggle, matching: find.byType(Switch)),
+    );
     await tester.tap(find.byKey(const ValueKey('y-measure-settings-save')));
     await tester.pumpAndSettle();
     expect(vm.yMeasurementSnapEnabled, isFalse);
@@ -321,6 +337,32 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('toolbar-more-button')).last);
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.plot.fitAll), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
+  testWidgets('折叠到更多菜单的测量工具仍响应右键设置', (tester) async {
+    final vm = PlotViewModel(connectionService);
+    await tester.binding.setSurfaceSize(const Size(500, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: const MaterialApp(home: Scaffold(body: PlotPage())),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('toolbar-more-button')).last);
+    await tester.pump();
+    await tester.tap(
+      find.text(AppStrings.plot.measureXx),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.plot.measureXSettings), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     vm.dispose();

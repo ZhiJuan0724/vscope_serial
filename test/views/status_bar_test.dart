@@ -10,6 +10,7 @@ import 'package:vscope_serial/services/probe_backend.dart';
 import 'package:vscope_serial/services/probe_connection_service.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/views/widgets/common_widgets.dart';
 import 'package:vscope_serial/views/widgets/status_bar.dart';
 
 void main() {
@@ -115,17 +116,14 @@ void main() {
         _VersionBackend('bundled-openocd', 'v0.12.0-bundled'),
       ],
     );
-    final previousAggregation = AppSettings().plotReceiveAggregationEnabled;
     final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;
     final previousShortcuts = AppSettings().connectionShortcutsEnabled;
     final previousCrashDump = AppSettings().crashDumpEnabled;
-    AppSettings().plotReceiveAggregationEnabled = false;
     AppSettings().diagnosticLoggingEnabled = false;
     AppSettings().connectionShortcutsEnabled = true;
     AppSettings().crashDumpEnabled = true;
     AppLogger().setDiagnosticEnabled(false);
     addTearDown(() {
-      AppSettings().plotReceiveAggregationEnabled = previousAggregation;
       AppSettings().diagnosticLoggingEnabled = previousDiagnostic;
       AppSettings().connectionShortcutsEnabled = previousShortcuts;
       AppSettings().crashDumpEnabled = previousCrashDump;
@@ -198,7 +196,6 @@ void main() {
     expect(find.text('快捷键'), findsOneWidget);
     expect(find.text('页面'), findsOneWidget);
     expect(find.text('探针后端'), findsOneWidget);
-    expect(find.text(AppStrings.appInfo.receivePerformance), findsOneWidget);
     expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
     expect(find.text('版本回退'), findsWidgets);
     final settingsNavigation = find.byKey(
@@ -225,32 +222,26 @@ void main() {
     );
     final shortcutToggle = find.ancestor(
       of: find.text('启用连接快捷键'),
-      matching: find.byType(SwitchListTile),
+      matching: find.byType(AppSwitchRow),
     );
     expect(shortcutToggle, findsOneWidget);
-    await tester.tap(shortcutToggle);
+    await tester.tap(
+      find.descendant(of: shortcutToggle, matching: find.byType(Switch)),
+    );
     await tester.pump();
     expect(AppSettings().connectionShortcutsEnabled, isTrue);
     final diagnosticToggle = find.ancestor(
       of: find.text(AppStrings.appInfo.diagnosticLogging),
-      matching: find.byType(SwitchListTile),
+      matching: find.byType(AppSwitchRow),
     );
     expect(diagnosticToggle, findsOneWidget);
     expect(AppSettings().diagnosticLoggingEnabled, isFalse);
-    await tester.tap(diagnosticToggle);
+    await tester.tap(
+      find.descendant(of: diagnosticToggle, matching: find.byType(Switch)),
+    );
     await tester.pump();
     expect(AppSettings().diagnosticLoggingEnabled, isFalse);
     expect(AppLogger().diagnosticEnabled, isFalse);
-    final aggregationToggle = find.ancestor(
-      of: find.text(AppStrings.appInfo.plotReceiveAggregation),
-      matching: find.byType(SwitchListTile),
-    );
-    expect(aggregationToggle, findsOneWidget);
-    expect(AppSettings().plotReceiveAggregationEnabled, isFalse);
-    await tester.ensureVisible(aggregationToggle);
-    await tester.tap(aggregationToggle);
-    await tester.pump();
-    expect(AppSettings().plotReceiveAggregationEnabled, isFalse);
     final plotMemoryField = find.byKey(
       const ValueKey('app-plot-history-memory-limit'),
     );
@@ -280,14 +271,17 @@ void main() {
     expect(AppSettings().connectionShortcutsEnabled, isFalse);
     expect(AppSettings().diagnosticLoggingEnabled, isTrue);
     expect(AppLogger().diagnosticEnabled, isTrue);
-    expect(AppSettings().plotReceiveAggregationEnabled, isTrue);
 
     await tester.pumpWidget(const SizedBox.shrink());
     plotViewModel.dispose();
   });
 }
 
-class _VersionBackend implements ProbeBackend, ProbeBackendVersionProvider {
+class _VersionBackend
+    implements
+        ProbeBackend,
+        ProbeBackendVersionProvider,
+        PassiveProbeBackendAvailabilityProvider {
   const _VersionBackend(this.id, this.version);
 
   @override
@@ -310,6 +304,10 @@ class _VersionBackend implements ProbeBackend, ProbeBackendVersionProvider {
   Future<bool> isAvailable(ProbeKind kind) async => true;
   @override
   Future<String?> detectVersion(ProbeKind kind) async => version;
+  @override
+  Future<ProbeBackendAvailability> checkAvailabilityWithoutPreparation(
+    ProbeKind kind,
+  ) async => ProbeBackendAvailability(available: true, version: version);
   @override
   Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
   @override

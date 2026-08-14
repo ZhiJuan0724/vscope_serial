@@ -230,8 +230,7 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
                             labelText: '寄存器备注',
                           ),
                           const SizedBox(height: 14),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
+                          AppSwitchRow(
                             title: const Text('轮询查询'),
                             value: pollEnabled,
                             onChanged:
@@ -253,8 +252,7 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
                             ),
                           ],
                           if (page.area.isWritable) ...[
-                            SwitchListTile(
-                              contentPadding: EdgeInsets.zero,
+                            AppSwitchRow(
                               title: const Text('周期发送'),
                               value: sendEnabled,
                               onChanged:

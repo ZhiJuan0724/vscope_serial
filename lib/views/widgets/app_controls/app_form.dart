@@ -229,13 +229,41 @@ class AppSwitchRow extends StatelessWidget {
   final ValueChanged<bool>? onChanged;
 
   @override
-  Widget build(BuildContext context) => SwitchListTile.adaptive(
-    contentPadding: EdgeInsets.zero,
-    dense: true,
-    title: title,
-    subtitle: subtitle,
-    value: value,
-    onChanged: onChanged,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              DefaultTextStyle.merge(
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  fontSize: 14,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+                child: title,
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                DefaultTextStyle.merge(
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontSize: 11,
+                    color: Colors.grey,
+                  ),
+                  child: subtitle!,
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        // 文本只负责说明，不能切换设置；避免用户滚动或选择文字时误触。
+        Switch.adaptive(value: value, onChanged: onChanged),
+      ],
+    ),
   );
 }
 

@@ -27,6 +27,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       observation: settings.observationClickToPlace,
       gestureModifier: settings.plotGestureModifier,
       showPlotSendDataInRaw: settings.showPlotSendDataInRaw,
+      receiveAggregation: settings.plotReceiveAggregationEnabled,
       follow: settings.followPositionRatio,
       yFit: settings.yFitDisplayRatio,
     );
@@ -72,6 +73,9 @@ extension PlotViewModelDisplayControls on PlotViewModel {
         draft.gestureModifier as PlotGestureModifier? ?? _gestureModifier;
     _showPlotSendDataInRaw =
         draft.showPlotSendDataInRaw ?? _showPlotSendDataInRaw;
+    settings.plotReceiveAggregationEnabled =
+        draft.receiveAggregationEnabled ??
+        settings.plotReceiveAggregationEnabled;
     _lodQuality = draft.quality as PlotLodQuality;
     _renderEngine = draft.renderEngine as PlotRenderEngine? ?? _renderEngine;
     _maxVisiblePoints = draft.windowPointLimit.clamp(
@@ -129,6 +133,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
         ..observationClickToPlace = oldSettings.observation
         ..plotGestureModifier = oldSettings.gestureModifier
         ..showPlotSendDataInRaw = oldSettings.showPlotSendDataInRaw
+        ..plotReceiveAggregationEnabled = oldSettings.receiveAggregation
         ..followPositionRatio = oldSettings.follow
         ..yFitDisplayRatio = oldSettings.yFit;
       _showGrid = oldValues.showGrid;
@@ -157,6 +162,9 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _snapHighlightColorMode = oldValues.snapColor;
       rethrow;
     }
+    connectionService.setPlotReceiveAggregationEnabled(
+      settings.plotReceiveAggregationEnabled,
+    );
     _applyPlotBackgroundPalette();
     _refreshSnapHighlightColors();
     _markChannelConfigChanged();

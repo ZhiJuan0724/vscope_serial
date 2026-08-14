@@ -801,8 +801,7 @@ class _ModbusPageState extends State<ModbusPage> {
                         ),
                         const SizedBox(height: 18),
                         _settingsSectionTitle(pollingKey, '轮询与发送'),
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
+                        AppSwitchRow(
                           title: const Text('轮询查询'),
                           value: pollEnabled,
                           onChanged:
@@ -824,8 +823,7 @@ class _ModbusPageState extends State<ModbusPage> {
                           ),
                         ],
                         if (page.area.isWritable) ...[
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
+                          AppSwitchRow(
                             title: const Text('周期发送'),
                             value: sendEnabled,
                             onChanged:
@@ -1689,8 +1687,7 @@ class _ModbusPageState extends State<ModbusPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
+                        AppSwitchRow(
                           title: const Text('启用这些寄存器的轮询功能'),
                           value: enabled,
                           onChanged:

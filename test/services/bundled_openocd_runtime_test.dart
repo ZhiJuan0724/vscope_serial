@@ -59,6 +59,22 @@ void main() {
     expect(cache.listSync().whereType<Directory>(), hasLength(1));
   });
 
+  test('被动检测只查找现有缓存且不会触发解压', () async {
+    final archiveFile = await _writeRuntimeArchive(bundle);
+    await _writeManifest(bundle, archiveFile);
+    final runtime = BundledOpenOcdRuntime.forTesting(bundleDirectory: bundle);
+    final states = <BundledOpenOcdPreparationState>[];
+    runtime.addListener(() => states.add(runtime.state));
+
+    expect(await runtime.findPreparedExecutable(), isNull);
+    expect(await cache.exists(), isFalse);
+    expect(states.any((state) => state.preparing), isFalse);
+
+    final executable = await runtime.ensureReady();
+    expect(executable, isNotNull);
+    expect(await runtime.findPreparedExecutable(), executable);
+  });
+
   test('归档哈希不匹配时拒绝解压且恢复空闲状态', () async {
     final archiveFile = await _writeRuntimeArchive(bundle);
     await _writeManifest(

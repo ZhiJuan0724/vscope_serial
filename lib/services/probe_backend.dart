@@ -30,6 +30,16 @@ abstract interface class ProbeBackendVersionProvider {
   Future<String?> detectVersion(ProbeKind kind);
 }
 
+/// 可在不安装、解压或初始化运行时的前提下报告后端可用性。
+///
+/// 设置页首次展示等被动检测必须使用该接口，避免用户尚未选择内置工具时
+/// 就产生耗时且会写入磁盘的准备操作。
+abstract interface class PassiveProbeBackendAvailabilityProvider {
+  Future<ProbeBackendAvailability> checkAvailabilityWithoutPreparation(
+    ProbeKind kind,
+  );
+}
+
 /// 枚举行为依赖连接配置的后端扩展。
 abstract interface class ConfiguredProbeDiscovery {
   Future<List<ProbeInfo>> listProbesForConfig(ProbeConnectionConfig config);

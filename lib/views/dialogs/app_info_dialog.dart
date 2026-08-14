@@ -868,13 +868,17 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     StateSetter setDialogState,
   ) {
     final settings = AppSettings();
-    _rttBackendAvailability ??=
-        context.read<ProbeConnectionService>().checkBackendAvailability();
+    _rttBackendAvailability ??= context
+        .read<ProbeConnectionService>()
+        .checkBackendAvailability(prepareBundledOpenOcd: false);
 
-    void refreshAvailability() {
+    void refreshAvailability({bool prepareBundledOpenOcd = false}) {
       setDialogState(() {
-        _rttBackendAvailability =
-            context.read<ProbeConnectionService>().checkBackendAvailability();
+        _rttBackendAvailability = context
+            .read<ProbeConnectionService>()
+            .checkBackendAvailability(
+              prepareBundledOpenOcd: prepareBundledOpenOcd,
+            );
       });
     }
 
@@ -942,7 +946,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
-            onPressed: refreshAvailability,
+            onPressed: () => refreshAvailability(prepareBundledOpenOcd: true),
             icon: const Icon(Icons.refresh),
             label: const Text('重新检测'),
           ),
@@ -961,14 +965,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     final sshService = dialogContext.read<SshConnectionService?>();
     // 探针后端属于连接能力设置，即使当前未显示探针页面也允许预先配置。
     const rttEnabled = true;
-    var plotReceiveAggregationEnabled =
-        AppSettings().plotReceiveAggregationEnabled;
     final notificationSectionKey = GlobalKey();
     final diagnosticsSectionKey = GlobalKey();
     final shortcutsSectionKey = GlobalKey();
     final pageSectionKey = GlobalKey();
     final probeBackendSectionKey = GlobalKey();
-    final receivePerformanceSectionKey = GlobalKey();
     final memorySectionKey = GlobalKey();
     final rollbackSectionKey = GlobalKey();
     final resetSectionKey = GlobalKey();
@@ -990,8 +991,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         AppSettings().networkConnectionsEnabled ||
                     separateSerialProfiles !=
                         AppSettings().separateSerialProfiles ||
-                    plotReceiveAggregationEnabled !=
-                        AppSettings().plotReceiveAggregationEnabled ||
                     _plotHistoryLimitController.text !=
                         '${AppSettings().plotHistoryMemoryLimitGiB}',
             onSave: () async {
@@ -1026,8 +1025,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 for (final entry in settings.serialPageProfiles.entries)
                   entry.key: entry.value.copyWith(),
               };
-              final oldReceiveAggregation =
-                  settings.plotReceiveAggregationEnabled;
               final oldPlotLimit = settings.plotHistoryMemoryLimitGiB;
               try {
                 if (crashDumpEnabled != oldCrashDump) {
@@ -1040,8 +1037,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ..connectionShortcutsEnabled = connectionShortcutsEnabled
                   ..networkConnectionsEnabled = networkConnectionsEnabled
                   ..setSeparateSerialProfiles(separateSerialProfiles)
-                  ..plotReceiveAggregationEnabled =
-                      plotReceiveAggregationEnabled
                   ..plotHistoryMemoryLimitGiB = plotLimit;
                 await settings.save();
               } catch (_) {
@@ -1053,7 +1048,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ..networkConnectionsEnabled = oldNetworkConnections
                   ..separateSerialProfiles = oldSeparateProfiles
                   ..serialPageProfiles = oldSerialProfiles
-                  ..plotReceiveAggregationEnabled = oldReceiveAggregation
                   ..plotHistoryMemoryLimitGiB = oldPlotLimit;
                 if (crashDumpEnabled != oldCrashDump) {
                   try {
@@ -1066,11 +1060,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               }
               setState(() => _disableNotifications = disableNotifications);
               AppLogger().setDiagnosticEnabled(diagnosticLoggingEnabled);
-              dataService
-                ..setNetworkConnectionsEnabled(networkConnectionsEnabled)
-                ..setPlotReceiveAggregationEnabled(
-                  plotReceiveAggregationEnabled,
-                );
+              dataService.setNetworkConnectionsEnabled(
+                networkConnectionsEnabled,
+              );
               dataService.selectSerialProfile('rawData', forceReload: true);
               plotViewModel.syncPlotRetentionLimitFromSettings(plotLimit);
               if (!networkConnectionsEnabled) {
@@ -1109,10 +1101,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     anchorKey: probeBackendSectionKey,
                   ),
                 SettingsNavigationItem(
-                  label: AppStrings.appInfo.receivePerformance,
-                  anchorKey: receivePerformanceSectionKey,
-                ),
-                SettingsNavigationItem(
                   label: AppStrings.appInfo.memoryLimits,
                   anchorKey: memorySectionKey,
                 ),
@@ -1131,18 +1119,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                 children: [
                   AppSwitchRow(
                     key: notificationSectionKey,
-                    title: Text(
-                      AppStrings.appInfo.disableNotifications,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      AppStrings.appInfo.disableNotificationsHelp,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
+                    title: Text(AppStrings.appInfo.disableNotifications),
+                    subtitle: Text(AppStrings.appInfo.disableNotificationsHelp),
                     value: disableNotifications,
                     onChanged: (value) {
                       setDialogState(() => disableNotifications = value);
@@ -1151,36 +1129,16 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   const Divider(height: 16),
                   AppSwitchRow(
                     key: diagnosticsSectionKey,
-                    title: Text(
-                      AppStrings.appInfo.diagnosticLogging,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      AppStrings.appInfo.diagnosticLoggingHelp,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
+                    title: Text(AppStrings.appInfo.diagnosticLogging),
+                    subtitle: Text(AppStrings.appInfo.diagnosticLoggingHelp),
                     value: diagnosticLoggingEnabled,
                     onChanged: (value) {
                       setDialogState(() => diagnosticLoggingEnabled = value);
                     },
                   ),
                   AppSwitchRow(
-                    title: Text(
-                      AppStrings.appInfo.crashDump,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      AppStrings.appInfo.crashDumpHelp,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
+                    title: Text(AppStrings.appInfo.crashDump),
+                    subtitle: Text(AppStrings.appInfo.crashDumpHelp),
                     value: crashDumpEnabled,
                     onChanged:
                         (value) =>
@@ -1223,18 +1181,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   const Divider(height: 16),
                   AppSwitchRow(
                     key: shortcutsSectionKey,
-                    title: Text(
-                      '启用连接快捷键',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                    title: const Text('启用连接快捷键'),
                     subtitle: Text(
                       'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；'
                       '关闭后全部不响应。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
                     ),
                     value: connectionShortcutsEnabled,
                     onChanged: (value) {
@@ -1244,17 +1194,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   const Divider(height: 16),
                   AppSwitchRow(
                     key: pageSectionKey,
-                    title: Text(
-                      '启用网络连接',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
+                    title: const Text('启用网络连接'),
+                    subtitle: const Text(
                       '允许数据收发、绘图和Modbus使用TCP/UDP，并允许Shell选择SSH。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
                     ),
                     value: networkConnectionsEnabled,
                     onChanged:
@@ -1270,18 +1212,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             },
                   ),
                   AppSwitchRow(
-                    title: Text(
-                      '按页面独立保存串口参数',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
+                    title: const Text('按页面独立保存串口参数'),
+                    subtitle: const Text('关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。'),
                     value: separateSerialProfiles,
                     onChanged:
                         DataConnectionService().isConnectionBusy
@@ -1300,28 +1232,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     const Divider(height: 16),
                   ],
-                  AppSwitchRow(
-                    key: receivePerformanceSectionKey,
-                    title: Text(
-                      AppStrings.appInfo.plotReceiveAggregation,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      AppStrings.appInfo.plotReceiveAggregationHelp,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    value: plotReceiveAggregationEnabled,
-                    onChanged: (value) {
-                      setDialogState(
-                        () => plotReceiveAggregationEnabled = value,
-                      );
-                    },
-                  ),
-                  const Divider(height: 16),
                   KeyedSubtree(
                     key: memorySectionKey,
                     child: StreamBuilder<int>(
@@ -1390,8 +1300,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                                 AppSettings().networkConnectionsEnabled;
                             separateSerialProfiles =
                                 AppSettings().separateSerialProfiles;
-                            plotReceiveAggregationEnabled =
-                                AppSettings().plotReceiveAggregationEnabled;
                             _plotHistoryLimitController.text =
                                 resetPlotLimit.toString();
                           });

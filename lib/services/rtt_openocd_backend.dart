@@ -15,6 +15,7 @@ import 'rtt_process_backend_base.dart';
 class ExternalOpenOcdBackend extends TcpProcessProbeBackend
     implements
         ProbeBackendVersionProvider,
+        PassiveProbeBackendAvailabilityProvider,
         ProbePlotBackend,
         RttChannelMetadataProvider {
   ExternalOpenOcdBackend({
@@ -82,6 +83,29 @@ class ExternalOpenOcdBackend extends TcpProcessProbeBackend
       '--version',
     ]).timeout(const Duration(seconds: 3));
     return parseOpenOcdVersion('${result.stdout}\n${result.stderr}');
+  }
+
+  @override
+  Future<ProbeBackendAvailability> checkAvailabilityWithoutPreparation(
+    ProbeKind kind,
+  ) async {
+    if (kind != ProbeKind.cmsisDap) {
+      return const ProbeBackendAvailability(available: false);
+    }
+    final executable =
+        bundledRuntime
+            ? await findPreparedBundledOpenOcdExecutable()
+            : await findExternalOpenOcdExecutable(configuredPath());
+    if (executable == null) {
+      return const ProbeBackendAvailability(available: false);
+    }
+    final result = await Process.run(executable, const [
+      '--version',
+    ]).timeout(const Duration(seconds: 3));
+    return ProbeBackendAvailability(
+      available: true,
+      version: parseOpenOcdVersion('${result.stdout}\n${result.stderr}'),
+    );
   }
 
   @override
@@ -631,6 +655,27 @@ Future<String?> findOpenOcdExecutable(String configuredPath) async {
 
 Future<String?> findBundledOpenOcdExecutable() async {
   final prepared = await BundledOpenOcdRuntime().ensureReady();
+  if (prepared != null) return prepared;
+  final separator = Platform.pathSeparator;
+  final executableDirectory = File(Platform.resolvedExecutable).parent.path;
+  for (final candidate in [
+    '$executableDirectory${separator}runtime${separator}openocd'
+        '${separator}bin${separator}openocd.exe',
+    'build${separator}windows${separator}x64${separator}runner'
+        '${separator}Release${separator}runtime${separator}openocd'
+        '${separator}bin${separator}openocd.exe',
+    'build${separator}tool_cache${separator}openocd'
+        '${separator}xpack-openocd-0.12.0-7${separator}bin'
+        '${separator}openocd.exe',
+  ]) {
+    if (await File(candidate).exists()) return File(candidate).absolute.path;
+  }
+  return null;
+}
+
+/// 查找已经准备完成的内置 OpenOCD，不因检测动作解压压缩运行时。
+Future<String?> findPreparedBundledOpenOcdExecutable() async {
+  final prepared = await BundledOpenOcdRuntime().findPreparedExecutable();
   if (prepared != null) return prepared;
   final separator = Platform.pathSeparator;
   final executableDirectory = File(Platform.resolvedExecutable).parent.path;

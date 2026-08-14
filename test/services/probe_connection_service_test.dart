@@ -343,6 +343,25 @@ void main() {
     service.dispose();
   });
 
+  test('静默检测不会调用不支持被动检查的内置OpenOCD后端', () async {
+    final bundled = _FakeBackend('bundled-openocd', version: 'v0.12.0-bundled');
+    final external = _FakeBackend('external-openocd', version: 'v0.12.0');
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [bundled, external],
+    );
+
+    final result = await service.checkBackendAvailability(
+      prepareBundledOpenOcd: false,
+    );
+
+    expect(bundled.availabilityCheckCount, 0);
+    expect(result['bundled-openocd']?.available, isFalse);
+    expect(external.availabilityCheckCount, 1);
+    expect(result['external-openocd']?.version, 'v0.12.0');
+    service.dispose();
+  });
+
   test('OpenOCD 不可用时预期后端报告不可用', () async {
     final service = ProbeConnectionService(
       connectionOwners: owners,
@@ -489,6 +508,7 @@ class _FakeBackend
   final Completer<void>? connectGate;
   final Completer<void>? disposeGate;
   int connectCount = 0;
+  int availabilityCheckCount = 0;
   int disconnectCount = 0;
   bool disposeStarted = false;
   bool _connected = false;
@@ -527,7 +547,11 @@ class _FakeBackend
   @override
   bool get supportsAutomaticControlBlock => true;
   @override
-  Future<bool> isAvailable(ProbeKind kind) async => available;
+  Future<bool> isAvailable(ProbeKind kind) async {
+    availabilityCheckCount++;
+    return available;
+  }
+
   @override
   Future<String?> detectVersion(ProbeKind kind) async => version;
   @override

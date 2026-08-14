@@ -174,6 +174,90 @@ void main() {
     expect(value, 'dense');
   });
 
+  testWidgets('开关行只有开关本体可切换', (tester) async {
+    var value = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder:
+                (context, setState) => AppSwitchRow(
+                  title: const Text('测试开关'),
+                  subtitle: const Text('点击说明文字不应切换'),
+                  value: value,
+                  onChanged: (next) => setState(() => value = next),
+                ),
+          ),
+        ),
+      ),
+    );
+
+    final titleContext = tester.element(find.text('测试开关'));
+    final subtitleContext = tester.element(find.text('点击说明文字不应切换'));
+    expect(DefaultTextStyle.of(titleContext).style.fontSize, 14);
+    expect(DefaultTextStyle.of(subtitleContext).style.fontSize, 11);
+    expect(DefaultTextStyle.of(subtitleContext).style.color, Colors.grey);
+
+    await tester.tap(find.text('测试开关'));
+    await tester.pump();
+    expect(value, isFalse);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pump();
+    expect(value, isTrue);
+  });
+
+  testWidgets('窄工具栏使用无动画自绘更多菜单', (tester) async {
+    var invoked = false;
+    var secondaryInvoked = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 70,
+              child: UnifiedToolbar(
+                leadingItems: [
+                  ToolbarLayoutItem(
+                    extent: 100,
+                    child: const SizedBox(width: 100),
+                    overflowActions: [
+                      ToolbarOverflowAction(
+                        icon: const Icon(Icons.tune),
+                        label: '自绘操作',
+                        onPressed: () => invoked = true,
+                        onSecondaryPressed: () => secondaryInvoked = true,
+                      ),
+                    ],
+                  ),
+                ],
+                trailingItems: const [],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(PopupMenuButton), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('toolbar-more-button')));
+    await tester.pump();
+    expect(find.text('自绘操作'), findsOneWidget);
+
+    await tester.tap(find.text('自绘操作'));
+    await tester.pump();
+    expect(invoked, isTrue);
+    expect(find.text('自绘操作'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('toolbar-more-button')));
+    await tester.pump();
+    await tester.tap(find.text('自绘操作'), buttons: kSecondaryMouseButton);
+    await tester.pump();
+    expect(secondaryInvoked, isTrue);
+    expect(find.text('自绘操作'), findsNothing);
+  });
+
   testWidgets('弹窗输入和下拉的标题固定显示在控件外部', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

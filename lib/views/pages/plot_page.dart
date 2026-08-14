@@ -632,6 +632,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         label: AppStrings.plot.cursor,
         selected: vm.vCursorEnabled,
         onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+        onSecondaryPressed:
+            vm.pointCount == 0
+                ? null
+                : () => _showCursorJumpDialog(context, vm),
       ),
       ToolbarOverflowAction(
         icon: const Icon(Icons.add_location_alt),
@@ -647,18 +651,23 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     vm.addObservation();
                   }
                 },
+        onSecondaryPressed: () => _showObservationManagerDialog(context, vm),
       ),
       ToolbarOverflowAction(
         icon: const AppIcon(AppIcons.plotMeasureXx),
         label: AppStrings.plot.measureXx,
         selected: vm.xMeasurementEnabled,
         onPressed: () => _handleMeasurementButton(vm, isX: true),
+        onSecondaryPressed:
+            () => _showMeasurementSettingsDialog(context, vm, isX: true),
       ),
       ToolbarOverflowAction(
         icon: const AppIcon(AppIcons.plotMeasureYy),
         label: AppStrings.plot.measureYy,
         selected: vm.yMeasurementEnabled,
         onPressed: () => _handleMeasurementButton(vm, isX: false),
+        onSecondaryPressed:
+            () => _showMeasurementSettingsDialog(context, vm, isX: false),
       ),
       if (vm.previewToolbarEnabled)
         ToolbarOverflowAction(
@@ -716,6 +725,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         label: AppStrings.plot.boxZoom,
         selected: vm.boxZoomEnabled,
         onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+        onSecondaryPressed:
+            () => vm.setBoxZoomEnabled(
+              !(vm.boxZoomEnabled && vm.boxZoomContinuous),
+              continuous: true,
+            ),
       ),
       ToolbarOverflowAction(
         icon: const AppIcon(AppIcons.plotZoomXIn),
@@ -2495,9 +2509,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                       ? StatefulBuilder(
                         builder:
-                            (context, setDialogState) => SwitchListTile(
+                            (context, setDialogState) => AppSwitchRow(
                               value: vm.rProtocolLooseChannelSettings,
-                              contentPadding: EdgeInsets.zero,
                               title: Text(
                                 AppStrings.plot.rProtocolLooseChannelSettings,
                               ),
@@ -4019,10 +4032,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       AppSwitchRow(
                         key: ValueKey('$prefix-multi-measure-toggle'),
                         title: Text(AppStrings.plot.multiMeasurement),
-                        subtitle: Text(
-                          AppStrings.plot.multiMeasurementHelp,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                        subtitle: Text(AppStrings.plot.multiMeasurementHelp),
                         value: multiEnabled,
                         onChanged:
                             (value) =>
@@ -4033,10 +4043,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         AppSwitchRow(
                           key: const ValueKey('y-measure-snap-toggle'),
                           title: Text(AppStrings.plot.measurementSnap),
-                          subtitle: Text(
-                            AppStrings.plot.measurementSnapHelp,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
+                          subtitle: Text(AppStrings.plot.measurementSnapHelp),
                           value: snapEnabled,
                           onChanged:
                               (value) =>
@@ -4100,6 +4107,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       observationClickToPlace: vm.observationClickToPlace,
       gestureModifier: vm.gestureModifier,
       showPlotSendDataInRaw: vm.showPlotSendDataInRaw,
+      receiveAggregationEnabled: AppSettings().plotReceiveAggregationEnabled,
       quality: vm.lodQuality,
       renderEngine: vm.renderEngine,
       windowPointLimit: vm.maxVisiblePoints,
@@ -4200,6 +4208,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         draft.gestureModifier != vm.gestureModifier ||
                         draft.showPlotSendDataInRaw !=
                             vm.showPlotSendDataInRaw ||
+                        draft.receiveAggregationEnabled !=
+                            AppSettings().plotReceiveAggregationEnabled ||
                         draft.quality != vm.lodQuality ||
                         draft.renderEngine != vm.renderEngine ||
                         refreshFpsController.text != '${vm.refreshFps}' ||
@@ -4394,7 +4404,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         key: const ValueKey('plotRenderEngineSelector'),
                         value:
                             draft.renderEngine as PlotRenderEngine? ??
-                            PlotRenderEngine.canvas,
+                            PlotRenderEngine.d3d11,
                         items: {
                           PlotRenderEngine.canvas: Text(
                             AppStrings.plot.renderEngineCanvas,
@@ -4500,6 +4510,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       Text(
                         AppStrings.plot.refreshFpsHelp,
                         style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 8),
+                      AppSwitchRow(
+                        key: const ValueKey('plot-receive-aggregation-toggle'),
+                        title: Text(AppStrings.plot.receiveAggregation),
+                        subtitle: Text(AppStrings.plot.receiveAggregationHelp),
+                        value: draft.receiveAggregationEnabled ?? false,
+                        onChanged:
+                            (value) => setState(
+                              () => draft.receiveAggregationEnabled = value,
+                            ),
                       ),
                       const Divider(),
                       Text(
@@ -4717,37 +4738,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ],
                       ),
                       const Divider(),
-                      Row(
+                      AppSwitchRow(
                         key: interactionSectionKey,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppStrings.plot.observationClickToPlace,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  AppStrings.plot.observationClickToPlaceHelp,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Switch(
-                            value: draft.observationClickToPlace,
-                            onChanged: (value) {
-                              setState(
-                                () => draft.observationClickToPlace = value,
-                              );
-                            },
-                          ),
-                        ],
+                        title: Text(AppStrings.plot.observationClickToPlace),
+                        subtitle: Text(
+                          AppStrings.plot.observationClickToPlaceHelp,
+                        ),
+                        value: draft.observationClickToPlace,
+                        onChanged: (value) {
+                          setState(() => draft.observationClickToPlace = value);
+                        },
                       ),
                       const SizedBox(height: 12),
                       AppSwitchRow(
