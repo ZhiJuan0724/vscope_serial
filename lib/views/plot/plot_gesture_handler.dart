@@ -43,6 +43,9 @@ class PlotGestureHandler extends StatefulWidget {
   /// 平移拖动结束时调用，用于保存视口配置和历史记录。
   final VoidCallback? onDragEnd;
 
+  /// 连续视口交互开始/结束回调，用于切换有界 LOD 预览。
+  final ValueChanged<bool>? onInteractionChanged;
+
   /// 光标变化回调（悬停、测量线拖动）
   final void Function(CursorState? cursor) onCursorChanged;
 
@@ -144,6 +147,7 @@ class PlotGestureHandler extends StatefulWidget {
     this.boxZoomEnabled = false,
     this.onBoxZoomCompleted,
     this.onDragEnd,
+    this.onInteractionChanged,
     required this.child,
     this.data = const [],
     this.xCursor1,
@@ -284,6 +288,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   double _trackpadLastScale = 1;
   bool _trackpadDidPan = false;
   bool _trackpadDidChange = false;
+  bool _viewportInteractionActive = false;
+
+  void _setViewportInteractionActive(bool value) {
+    if (_viewportInteractionActive == value) return;
+    _viewportInteractionActive = value;
+    widget.onInteractionChanged?.call(value);
+  }
 
   double _fontSize(double base) {
     return (base + 1 + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -445,6 +456,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         onPointerDown: _handlePointerDown,
         onPointerMove: _handlePointerMove,
         onPointerUp: _handlePointerUp,
+        onPointerCancel: _handlePointerCancel,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -558,6 +570,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final panDelta = event.localPanDelta;
     final hasPan = panDelta.distanceSquared > panThresholdSquared;
     if (hasPan) {
+      _setViewportInteractionActive(true);
       viewport = viewport.panX(panDelta.dx, size.width);
       viewport = viewport.panY(panDelta.dy, size.height);
       _trackpadDidPan = true;
@@ -629,6 +642,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (viewport != null && _trackpadDidChange) {
       widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
       if (_trackpadDidPan) {
+        _setViewportInteractionActive(false);
         widget.onDragEnd?.call();
       }
     }
@@ -874,7 +888,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     _dragViewport = widget.viewport.copy();
     _lastNotifiedViewport = _dragViewport!.copy();
     _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-    _targetFps = widget.refreshFps.clamp(30, 60);
+    _targetFps = widget.refreshFps.clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
+    _setViewportInteractionActive(true);
   }
 
   /// 检测点击位置是否在测量标签上
@@ -1491,12 +1509,18 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         _shiftZoomAxis != _ShiftZoomAxis.channelY) {
       // 平移拖动结束，确保最终视口被应用并保存
       widget.onViewportChanged(_dragViewport!, fromDrag: true);
+      _setViewportInteractionActive(false);
       widget.onDragEnd?.call();
     }
     _resetDragState();
   }
 
+  void _handlePointerCancel(PointerCancelEvent event) {
+    _resetDragState();
+  }
+
   void _resetDragState() {
+    _setViewportInteractionActive(false);
     _isDragging = false;
     _isBoxSelecting = false;
     _shiftZoomAxis = _ShiftZoomAxis.none;

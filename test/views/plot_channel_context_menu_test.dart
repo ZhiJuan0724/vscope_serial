@@ -12,6 +12,7 @@ import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
+import 'package:vscope_serial/data/models/plot_render_engine.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -27,6 +28,7 @@ void main() {
     final settings = AppSettings();
     settings.parserType = 'fireWater';
     settings.sendProtocolType = 'none';
+    settings.plotRenderEngine = 'canvas';
     settings.rChannelAddresses = List.filled(16, '');
     settings.rProtocolLooseChannelSettings = false;
     settings.plotLodQuality = 'performance';
@@ -146,6 +148,10 @@ void main() {
       find.byKey(const ValueKey('plotLodQualitySelector')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('plotRenderEngineSelector')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text(AppStrings.plot.lodQualityBalanced));
     await tester.pumpAndSettle();
@@ -153,12 +159,25 @@ void main() {
     expect(vm.lodQuality, PlotLodQuality.performance);
 
     await tester.tap(find.text(AppStrings.plot.lodQualityQuality));
+    final renderEngineSelector = find.byKey(
+      const ValueKey('plotRenderEngineSelector'),
+    );
+    await tester.ensureVisible(renderEngineSelector);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: renderEngineSelector,
+        matching: find.text(AppStrings.plot.renderEngineD3d11),
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(vm.lodQuality, PlotLodQuality.performance);
+    expect(vm.renderEngine, PlotRenderEngine.canvas);
     await tester.tap(find.text('保存').last);
     await tester.pumpAndSettle();
     expect(vm.lodQuality, PlotLodQuality.quality);
+    expect(vm.renderEngine, PlotRenderEngine.d3d11);
 
     await tester.tap(find.byTooltip(AppStrings.plot.advancedSettings).last);
     await tester.pumpAndSettle();

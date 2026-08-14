@@ -18,6 +18,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       trigger: settings.triggerToolbarEnabled,
       preview: settings.previewToolbarEnabled,
       quality: settings.plotLodQuality,
+      renderEngine: settings.plotRenderEngine,
       keep: settings.keepPlotOnRestart,
       showGrid: settings.showGrid,
       gridDensity: settings.gridDensity,
@@ -42,6 +43,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       gestureModifier: _gestureModifier,
       showPlotSendDataInRaw: _showPlotSendDataInRaw,
       quality: _lodQuality,
+      renderEngine: _renderEngine,
       window: _maxVisiblePoints,
       history: _plotRetentionLimitBytes,
       refresh: _refreshFps,
@@ -71,6 +73,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _showPlotSendDataInRaw =
         draft.showPlotSendDataInRaw ?? _showPlotSendDataInRaw;
     _lodQuality = draft.quality as PlotLodQuality;
+    _renderEngine = draft.renderEngine as PlotRenderEngine? ?? _renderEngine;
     _maxVisiblePoints = draft.windowPointLimit.clamp(
       PlotViewModel.minVisiblePoints,
       PlotViewModel.maxVisiblePointsLimit,
@@ -81,7 +84,10 @@ extension PlotViewModelDisplayControls on PlotViewModel {
           PlotConfiguration.maxHistoryMemoryLimitGiB,
         ) *
         PlotConfiguration.bytesPerGiB;
-    _refreshFps = (draft.refreshFps ?? _refreshFps).clamp(30, 60);
+    _refreshFps = (draft.refreshFps ?? _refreshFps).clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
     _keepPlotOnRestart = draft.keepPlotOnRestart ?? _keepPlotOnRestart;
     _discardInitialPacketCount = (draft.discardInitialPacketCount ??
             _discardInitialPacketCount)
@@ -114,6 +120,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
         ..triggerToolbarEnabled = oldSettings.trigger
         ..previewToolbarEnabled = oldSettings.preview
         ..plotLodQuality = oldSettings.quality
+        ..plotRenderEngine = oldSettings.renderEngine
         ..keepPlotOnRestart = oldSettings.keep
         ..showGrid = oldSettings.showGrid
         ..gridDensity = oldSettings.gridDensity
@@ -136,6 +143,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _gestureModifier = oldValues.gestureModifier;
       _showPlotSendDataInRaw = oldValues.showPlotSendDataInRaw;
       _lodQuality = oldValues.quality;
+      _renderEngine = oldValues.renderEngine;
       _maxVisiblePoints = oldValues.window;
       _plotRetentionLimitBytes = oldValues.history;
       _refreshFps = oldValues.refresh;
@@ -177,9 +185,12 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     Future.microtask(() => notifyListeners());
   }
 
-  /// 设置 UI 刷新帧率（30~60 fps）
+  /// 设置 UI 刷新帧率（30~120 fps）。
   void setRefreshFps(int fps) {
-    _refreshFps = fps.clamp(30, 60);
+    _refreshFps = fps.clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
     _saveSettings();
     Future.microtask(() => notifyListeners());
   }

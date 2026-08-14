@@ -18,6 +18,7 @@ import '../../core/theme/app_theme.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
+import '../../data/models/plot_render_engine.dart';
 import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
@@ -133,6 +134,8 @@ typedef _PlotAreaSelection =
       String plotBackground,
       double floatingPanelOpacity,
       PlotLodQuality lodQuality,
+      PlotRenderEngine renderEngine,
+      bool interactionActive,
     });
 
 int? _parseCompactCount(String input) {
@@ -315,6 +318,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       plotBackground: vm.plotBackground,
       floatingPanelOpacity: vm.floatingPanelOpacity,
       lodQuality: vm.lodQuality,
+      renderEngine: vm.renderEngine,
+      interactionActive: vm.plotInteractionActive,
     );
   }
 
@@ -1770,6 +1775,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           overlayRevision: vm.overlayRevision,
           lodIndex: vm.lodIndex,
           lodQuality: vm.lodQuality,
+          renderEngine: vm.renderEngine,
+          interactionActive: vm.plotInteractionActive,
+          devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
           channels: displayChannels,
           activeChannelCount: activeChannelCount,
           showGrid: vm.showGrid,
@@ -1840,6 +1848,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         (viewport, {fromDrag = false}) =>
                             vm.updateViewport(viewport, fromDrag: fromDrag),
                     onDragEnd: vm.saveDragViewport,
+                    onInteractionChanged: vm.setPlotInteractionActive,
                     onCursorChanged: (cursor) {
                       if (cursor != null) {
                         vm.updateFollowCursor(
@@ -4092,6 +4101,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       gestureModifier: vm.gestureModifier,
       showPlotSendDataInRaw: vm.showPlotSendDataInRaw,
       quality: vm.lodQuality,
+      renderEngine: vm.renderEngine,
       windowPointLimit: vm.maxVisiblePoints,
       historyLimit: vm.plotRetentionLimitGiB,
       refreshFps: vm.refreshFps,
@@ -4191,6 +4201,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         draft.showPlotSendDataInRaw !=
                             vm.showPlotSendDataInRaw ||
                         draft.quality != vm.lodQuality ||
+                        draft.renderEngine != vm.renderEngine ||
                         refreshFpsController.text != '${vm.refreshFps}' ||
                         draft.previewToolbarEnabled !=
                             vm.previewToolbarEnabled ||
@@ -4227,8 +4238,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     discardInitialPacketController.text.trim(),
                   );
                   if (fps == null ||
-                      fps < 30 ||
-                      fps > 60 ||
+                      fps < PlotConfiguration.minRefreshFps ||
+                      fps > PlotConfiguration.maxRefreshFps ||
                       diameter == null ||
                       diameter < 6 ||
                       diameter > 12 ||
@@ -4374,6 +4385,37 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ],
                       ),
                       const Divider(),
+                      Text(
+                        AppStrings.plot.renderEngine,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      AppSegmentedSelector<PlotRenderEngine>(
+                        key: const ValueKey('plotRenderEngineSelector'),
+                        value:
+                            draft.renderEngine as PlotRenderEngine? ??
+                            PlotRenderEngine.canvas,
+                        items: {
+                          PlotRenderEngine.canvas: Text(
+                            AppStrings.plot.renderEngineCanvas,
+                          ),
+                          PlotRenderEngine.d3d11: Text(
+                            AppStrings.plot.renderEngineD3d11,
+                          ),
+                        },
+                        onChanged:
+                            (value) =>
+                                setState(() => draft.renderEngine = value),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.renderEngineHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       Text(
                         key: performanceSectionKey,
                         AppStrings.plot.lodQuality,

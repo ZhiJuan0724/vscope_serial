@@ -10,10 +10,48 @@ import '../../core/utils/plot_performance_metrics.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_lod_index.dart';
 import '../../data/models/plot_data.dart';
+import '../../data/models/plot_viewport_query.dart';
+import 'plot_data_renderer.dart';
 import 'plot_render_snapshot.dart';
 import 'plot_viewport.dart';
 
 export 'plot_render_snapshot.dart';
+
+/// 绘图层跨帧复用的 TypedData 缓冲区。
+///
+/// Canvas 在 drawRawPoints 返回前已经消费数据，因此各通道可以顺序复用同一组
+/// 缓冲；容量只增不减，停止采样后的连续拖动不会再为每帧创建大数组。
+class PlotGeometryBuffers {
+  final PlotGeometryWorkspace viewportQuery = PlotGeometryWorkspace();
+  Float32List _points = Float32List(0);
+  Float32List _trend = Float32List(0);
+  Float32List _extrema = Float32List(0);
+
+  Float32List points(int requiredLength) =>
+      _ensure(_points, requiredLength, (value) => _points = value);
+  Float32List trend(int requiredLength) =>
+      _ensure(_trend, requiredLength, (value) => _trend = value);
+  Float32List extrema(int requiredLength) =>
+      _ensure(_extrema, requiredLength, (value) => _extrema = value);
+
+  Float32List _ensure(
+    Float32List current,
+    int requiredLength,
+    void Function(Float32List value) replace,
+  ) {
+    if (current.length >= requiredLength) return current;
+    var capacity = math.max(256, current.length);
+    while (capacity < requiredLength) {
+      capacity *= 2;
+    }
+    final next = Float32List(capacity);
+    replace(next);
+    PlotPerformanceMetrics.instance.increment(
+      PlotPerformanceMetric.geometryBufferGrowth,
+    );
+    return next;
+  }
+}
 
 class _PlotPalette {
   final Color background;
@@ -51,9 +89,14 @@ class _PlotPalette {
 class PlotLayerPainter extends CustomPainter {
   static const double _denseLinePointThresholdRatio = 0.5;
   static const double _invalidPointThresholdRatio = 0.5;
+  static const PlotDataRenderer _dataRenderer = CanvasPlotDataRenderer();
 
   final PlotPaintLayer layer;
   final PlotRenderSnapshot snapshot;
+  final PlotGeometryBuffers? geometryBuffers;
+  final bool externalDataClip;
+  final double dataQueryPadding;
+  final PlotGeometryWorkspace _fallbackQueryWorkspace = PlotGeometryWorkspace();
 
   PlotViewport get viewport => snapshot.viewport;
   List<PlotDataPoint> get data => snapshot.data;
@@ -63,6 +106,8 @@ class PlotLayerPainter extends CustomPainter {
   int get overlayRevision => snapshot.overlayRevision;
   PlotLodSource? get lodIndex => snapshot.lodIndex;
   PlotLodQuality get lodQuality => snapshot.lodQuality;
+  bool get interactionActive => snapshot.interactionActive;
+  double get devicePixelRatio => snapshot.devicePixelRatio;
   List<ChannelConfig> get channels => snapshot.channels;
   int get activeChannelCount => snapshot.activeChannelCount;
   bool get showGrid => snapshot.showGrid;
@@ -138,6 +183,9 @@ class PlotLayerPainter extends CustomPainter {
     bool yValuesAreInteger = false,
     int plotFontSizeDelta = 0,
     bool plotFontBold = false,
+    this.geometryBuffers,
+    this.externalDataClip = false,
+    this.dataQueryPadding = 0,
   }) : snapshot = PlotRenderSnapshot(
          viewport: viewport,
          data: data,
@@ -179,7 +227,13 @@ class PlotLayerPainter extends CustomPainter {
          plotFontBold: plotFontBold,
        );
 
-  PlotLayerPainter.fromSnapshot({required this.layer, required this.snapshot});
+  PlotLayerPainter.fromSnapshot({
+    required this.layer,
+    required this.snapshot,
+    this.geometryBuffers,
+    this.externalDataClip = false,
+    this.dataQueryPadding = 0,
+  });
 
   double _fontSize(double base) {
     return (base + 1 + plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -727,10 +781,13 @@ class PlotLayerPainter extends CustomPainter {
 
     // 降采样：缩小时按像素桶保留 min/max，避免构建超长 Path。
     final plotW = viewport.plotWidth(size.width);
-    final viewportDataCount = math.max(0.0, viewport.xRange);
+    final historyLength =
+        lodIndex?.length ?? (data.isEmpty ? 0 : data.last.index + 1);
+    final viewportDataCount = _visibleHistoryPointCount(historyLength);
 
     // 三档只改变绘制阶段的数据选择，不改变接收阶段的增量 LOD 索引：
-    // - 性能优先：密度超过 1 点/逻辑像素后直接查询标准 LOD。
+    // - 性能优先：精确窗口在 8 点/逻辑像素以内时保持像素桶，
+    //   更高密度查询标准 LOD。
     // - 均衡：完整精确窗口在 32 点/逻辑像素以内时按像素聚合；
     //   其余范围查询细一级 LOD，在绘制质量与输出点数间折中。
     // - 质量优先：精确窗口处理与均衡相同；查询历史时比均衡再细一级
@@ -757,10 +814,12 @@ class PlotLayerPainter extends CustomPainter {
 
     // LOD 换窗预览会保留视口两侧的桶边界点用于连线，
     // 数据层必须裁剪在主绘图矩形内，避免线段画入坐标轴或通道面板。
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTWH(viewport.marginLeft, viewport.marginTop, plotW, plotH),
-    );
+    if (!externalDataClip) {
+      canvas.save();
+      canvas.clipRect(
+        Rect.fromLTWH(viewport.marginLeft, viewport.marginTop, plotW, plotH),
+      );
+    }
 
     // 批量绘制：先收集所有通道的 Path，减少 Canvas 状态切换
     for (int ch = 0; ch < channels.length && ch < activeChannelCount; ch++) {
@@ -782,7 +841,7 @@ class PlotLayerPainter extends CustomPainter {
         canUseLod,
       );
     }
-    canvas.restore();
+    if (!externalDataClip) canvas.restore();
   }
 
   bool _canUseExactQualityBuckets(
@@ -790,10 +849,12 @@ class PlotLayerPainter extends CustomPainter {
     double viewportDataCount,
     double plotWidth,
   ) {
-    if (lodQuality == PlotLodQuality.performance ||
-        plotWidth <= 0 ||
-        viewportDataCount >
-            plotWidth * PlotConfiguration.lodQualityExactMaxPointsPerPixel ||
+    final maxPointsPerPixel =
+        lodQuality == PlotLodQuality.performance
+            ? PlotConfiguration.lodPerformanceExactMaxPointsPerPixel
+            : PlotConfiguration.lodQualityExactMaxPointsPerPixel;
+    if (plotWidth <= 0 ||
+        viewportDataCount > plotWidth * maxPointsPerPixel ||
         !_exactWindowCoversViewport(visibleRange)) {
       return false;
     }
@@ -818,11 +879,20 @@ class PlotLayerPainter extends CustomPainter {
   }
 
   bool debugUsesExactQualityBuckets(Size size) {
+    final historyLength =
+        lodIndex?.length ?? (data.isEmpty ? 0 : data.last.index + 1);
     return _canUseExactQualityBuckets(
       _findVisibleRange(),
-      math.max(0.0, viewport.xRange),
+      _visibleHistoryPointCount(historyLength),
       viewport.plotWidth(size.width),
     );
+  }
+
+  double _visibleHistoryPointCount(int historyLength) {
+    if (historyLength <= 0) return 0;
+    final start = viewport.xMin.ceil().clamp(0, historyLength - 1);
+    final end = viewport.xMax.floor().clamp(0, historyLength - 1);
+    return end < start ? 0 : (end - start + 1).toDouble();
   }
 
   /// 获取可见数据范围（带缓存）
@@ -855,6 +925,38 @@ class PlotLayerPainter extends CustomPainter {
         canUseLod
             ? math.max(0, viewport.xRange.round())
             : visibleRange.end - visibleRange.start;
+    PlotGeometryBatch? sharedGeometry;
+    var geometryQueried = false;
+
+    PlotGeometryBatch? querySharedGeometry() {
+      if (geometryQueried) return sharedGeometry;
+      geometryQueried = true;
+      final buffers = geometryBuffers;
+      final geometryStopwatch =
+          PlotPerformanceMetrics.enabled ? (Stopwatch()..start()) : null;
+      final queryPadding = viewport.xRange * dataQueryPadding;
+      final queryWidthScale = 1 + dataQueryPadding * 2;
+      sharedGeometry = PlotViewportQuery.queryChannel(
+        exactData: data,
+        rangeIndex: lodIndex,
+        channelIndex: channelIndex,
+        xMin: viewport.xMin - queryPadding,
+        xMax: viewport.xMax + queryPadding,
+        logicalPlotWidth: viewport.plotWidth(size.width) * queryWidthScale,
+        devicePixelRatio: devicePixelRatio,
+        quality: lodQuality,
+        workspace: buffers?.viewportQuery ?? _fallbackQueryWorkspace,
+      );
+      if (geometryStopwatch != null) {
+        geometryStopwatch.stop();
+        PlotPerformanceMetrics.instance.record(
+          PlotPerformanceMetric.geometryBuildMicros,
+          geometryStopwatch.elapsedMicroseconds,
+        );
+      }
+      return sharedGeometry;
+    }
+
     if (channel.showLine && visibleCount > 1) {
       final channelColor = _plotChannelColor(channel.color);
       final linePaint =
@@ -862,31 +964,39 @@ class PlotLayerPainter extends CustomPainter {
             ..color = channelColor
             ..strokeWidth = channel.lineWidth
             ..style = PaintingStyle.stroke
-            ..isAntiAlias = antiAliasEnabled;
+            // 高密度折线的拖动瓶颈位于 Raster，而不是查询或几何生成。
+            // 交互期间关闭抗锯齿只影响边缘平滑，不改变 M4 点序、峰谷、
+            // 阶跃和脉冲宽度；松开后由最终质量帧立即恢复用户设置。
+            ..isAntiAlias = antiAliasEnabled && !interactionActive;
 
-      final lodSeries = canUseLod ? _queryLodSeries(channel.index, size) : null;
-      if (lodSeries != null && lodSeries.isNotEmpty) {
-        if (lodQuality == PlotLodQuality.quality) {
-          _drawChannelQualityLodSeries(
-            canvas,
-            size,
-            channel,
-            lodSeries,
-            linePaint,
-          );
-        } else {
-          _drawChannelLodSeries(canvas, size, channel, lodSeries, linePaint);
-        }
-      } else if (useMinMaxBuckets) {
-        _drawChannelMinMaxBuckets(
-          canvas,
-          size,
-          channelIndex,
-          channel,
-          visibleRange,
-          linePaint,
+      final buffers = geometryBuffers;
+      final geometry = querySharedGeometry();
+      if (geometry != null && geometry.length > 1) {
+        final stopwatch =
+            PlotPerformanceMetrics.enabled ? (Stopwatch()..start()) : null;
+        _dataRenderer.drawLineBatch(
+          canvas: canvas,
+          size: size,
+          viewport: viewport,
+          channel: channel,
+          batch: geometry,
+          paint: linePaint,
+          acquirePoints:
+              buffers?.points ??
+              (requiredLength) => Float32List(requiredLength),
         );
+        if (stopwatch != null) {
+          stopwatch.stop();
+          PlotPerformanceMetrics.instance
+            ..record(
+              PlotPerformanceMetric.canvasSubmitMicros,
+              stopwatch.elapsedMicroseconds,
+            )
+            ..record(PlotPerformanceMetric.geometryPointCount, geometry.length);
+        }
       } else {
+        // 测试构造或旧调用未提供共享工作区时保留精确原始路径；正式页面
+        // 始终通过 PlotViewportQuery 生成几何。
         _drawChannelRawPath(
           canvas,
           size,
@@ -903,33 +1013,63 @@ class PlotLayerPainter extends CustomPainter {
         channel.showLine &&
         visibleCount >
             math.max(1, plotW * _denseLinePointThresholdRatio).round();
-    if (!hidePointsForDenseLine && !canUseLod) {
+    if (!hidePointsForDenseLine) {
       final channelColor = _plotChannelColor(channel.color);
       final pointPaint =
           Paint()
             ..color = channelColor
-            ..style = PaintingStyle.fill;
-
-      _drawChannelPoints(
-        canvas,
-        size,
-        channelIndex,
-        channel,
-        visibleRange,
-        pointPaint,
-      );
-    } else if (canUseLod && !channel.showLine) {
-      final lodSeries = _queryLodSeries(channel.index, size);
-      if (lodSeries != null && lodSeries.isNotEmpty) {
-        final channelColor = _plotChannelColor(channel.color);
-        final pointPaint =
-            Paint()
-              ..color = channelColor
-              ..style = PaintingStyle.fill
-              ..strokeWidth = channel.pointSize;
-        _drawChannelLodPoints(canvas, size, channel, lodSeries, pointPaint);
+            ..style = PaintingStyle.fill
+            ..strokeWidth = channel.pointSize;
+      final geometry = querySharedGeometry();
+      if (geometry != null && !geometry.isEmpty) {
+        _drawGeometryPoints(canvas, size, channel, geometry, pointPaint);
+      } else if (!canUseLod) {
+        _drawChannelPoints(
+          canvas,
+          size,
+          channelIndex,
+          channel,
+          visibleRange,
+          pointPaint,
+        );
+      } else {
+        final lodSeries = _queryLodSeries(channel.index, size);
+        if (lodSeries != null && lodSeries.isNotEmpty) {
+          _drawChannelLodPoints(canvas, size, channel, lodSeries, pointPaint);
+        }
       }
     }
+  }
+
+  /// 点与折线必须消费同一份视口几何；精确窗口换页期间若分别读取原始
+  /// 窗口和LOD摘要，会在拖动尚未结束时出现点线错位。
+  void _drawGeometryPoints(
+    Canvas canvas,
+    Size size,
+    ChannelConfig channel,
+    PlotGeometryBatch geometry,
+    Paint paint,
+  ) {
+    final buffers = geometryBuffers;
+    final rawPoints =
+        buffers?.points(geometry.length * 2) ??
+        Float32List(geometry.length * 2);
+    var outputLength = 0;
+    for (var point = 0; point < geometry.length; point++) {
+      final value = geometry.values[point] * channel.yScale + channel.yOffset;
+      if (!value.isFinite) continue;
+      rawPoints[outputLength++] = viewport.dataToScreenX(
+        geometry.indices[point].toDouble(),
+        size.width,
+      );
+      rawPoints[outputLength++] = viewport.dataToScreenY(value, size.height);
+    }
+    if (outputLength == 0) return;
+    canvas.drawRawPoints(
+      ui.PointMode.points,
+      Float32List.sublistView(rawPoints, 0, outputLength),
+      paint,
+    );
   }
 
   PlotLodSeries? _queryLodSeries(int channelIndex, Size size) {
@@ -942,6 +1082,10 @@ class PlotLayerPainter extends CustomPainter {
           xMax: viewport.xMax,
           plotWidth: plotWidth,
           quality: lodQuality,
+          useViewportCache: true,
+          // 拖动时保持用户选择的摘要层级。形状正确是硬约束，性能优化只能
+          // 来自缓存、缓冲复用和静态纹理平移，不能通过放粗桶换取帧率。
+          targetBucketScale: 1,
         ) ??
         source.queryCoarse(
           channelIndex: channelIndex,
@@ -951,41 +1095,13 @@ class PlotLayerPainter extends CustomPainter {
         );
   }
 
-  void _drawChannelLodSeries(
-    Canvas canvas,
-    Size size,
-    ChannelConfig channel,
-    PlotLodSeries series,
-    Paint paint,
-  ) {
-    if (series.length < 2) return;
-
-    final rawPoints = Float32List(series.length * 2);
-    var rawIndex = 0;
-    final marginTop = viewport.marginTop;
-    final marginBottom = size.height - viewport.marginBottom;
-
-    for (int i = 0; i < series.length; i++) {
-      rawPoints[rawIndex++] = viewport.dataToScreenX(
-        series.indices[i].toDouble(),
-        size.width,
-      );
-      rawPoints[rawIndex++] = viewport
-          .dataToScreenY(
-            series.values[i] * channel.yScale + channel.yOffset,
-            size.height,
-          )
-          .clamp(marginTop, marginBottom);
-    }
-
-    canvas.drawRawPoints(ui.PointMode.polygon, rawPoints, paint);
-  }
-
-  /// 质量优先使用“趋势线 + 极值包络”绘制 LOD。
+  /// 三档统一使用“趋势线 + 极值包络”绘制 LOD。
   ///
   /// 各桶的 first/last 只参与连续趋势；min/max 在各自实际 X 位置绘制
   /// 到桶内线性趋势的竖直线。这样单点脉冲不会再由
   /// first -> max -> last 展开成覆盖整个桶宽的三角形。
+  // TODO(plot-renderer): 新视口查询稳定后删除旧固定桶兼容实现。
+  // ignore: unused_element
   void _drawChannelQualityLodSeries(
     Canvas canvas,
     Size size,
@@ -995,8 +1111,14 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (series.isEmpty || series.bucketCount <= 0) return;
 
-    final trendPoints = Float32List(series.length * 2);
-    final extremaLines = Float32List(series.bucketCount * 8);
+    final geometryStopwatch =
+        PlotPerformanceMetrics.enabled ? (Stopwatch()..start()) : null;
+    final trendCapacity = math.max(series.length * 2, series.bucketCount * 8);
+    final trendPoints =
+        geometryBuffers?.trend(trendCapacity) ?? Float32List(trendCapacity);
+    final extremaLines =
+        geometryBuffers?.extrema(series.bucketCount * 8) ??
+        Float32List(series.bucketCount * 8);
     var trendOut = 0;
     var extremaOut = 0;
     final marginTop = viewport.marginTop;
@@ -1049,23 +1171,6 @@ class PlotLayerPainter extends CustomPainter {
         }
       }
 
-      final valueRange = maxValue - minValue;
-      final endpointDelta = (lastValue - firstValue).abs();
-      final endpointsShareTrend =
-          valueRange > 0 && endpointDelta <= valueRange * 0.25;
-      if (endpointsShareTrend) {
-        appendTrendPoint(firstIndex, firstValue);
-        if (lastIndex != firstIndex) {
-          appendTrendPoint(lastIndex, lastValue);
-        }
-      } else {
-        for (var sample = start; sample < end; sample++) {
-          final value = displayValueAt(sample);
-          if (!value.isFinite) continue;
-          appendTrendPoint(series.indices[sample], value);
-        }
-      }
-
       double trendValueAt(int pointIndex) {
         if (lastIndex <= firstIndex) return firstValue;
         final ratio =
@@ -1086,12 +1191,69 @@ class PlotLayerPainter extends CustomPainter {
         extremaLines[extremaOut++] = valueY;
       }
 
-      appendExtremum(minSample, minValue);
-      if (maxSample != minSample) {
-        appendExtremum(maxSample, maxValue);
+      bool isSignificantExtremum(int sample, double value) {
+        final pointIndex = series.indices[sample];
+        return (screenY(trendValueAt(pointIndex)) - screenY(value)).abs() >=
+            0.5;
+      }
+
+      final minIsSignificant = isSignificantExtremum(minSample, minValue);
+      final maxIsSignificant =
+          maxSample != minSample && isSignificantExtremum(maxSample, maxValue);
+      final stepKind = series.bucketStepKinds[bucket];
+      if (stepKind != 0) {
+        // 只有桶内始终保持两个精确平台值时才绘制垂直阶跃；连续正弦
+        // 即使端点跨度很大也不会被误判成台阶。
+        final transitionSample = stepKind == 1 ? maxSample : minSample;
+        final transitionIndex = series.indices[transitionSample];
+        appendTrendPoint(firstIndex, firstValue);
+        if (transitionIndex != firstIndex) {
+          appendTrendPoint(transitionIndex, firstValue);
+        }
+        appendTrendPoint(transitionIndex, lastValue);
+        if (lastIndex != transitionIndex) {
+          appendTrendPoint(lastIndex, lastValue);
+        }
+      } else if (minIsSignificant && maxIsSignificant) {
+        // 正弦等连续周期波形通常同时出现上下极值。按真实 X 顺序把两者
+        // 并入趋势，比两组独立竖线更接近原波形，也显著减少 Raster 线段。
+        final samples = <int>[first, minSample, maxSample, last]..sort(
+          (left, right) =>
+              series.indices[left].compareTo(series.indices[right]),
+        );
+        var previousIndex = -1;
+        for (final sample in samples) {
+          final pointIndex = series.indices[sample];
+          if (pointIndex == previousIndex) continue;
+          appendTrendPoint(pointIndex, displayValueAt(sample));
+          previousIndex = pointIndex;
+        }
+      } else {
+        appendTrendPoint(firstIndex, firstValue);
+        if (lastIndex != firstIndex) {
+          appendTrendPoint(lastIndex, lastValue);
+        }
+        if (minIsSignificant) appendExtremum(minSample, minValue);
+        if (maxIsSignificant) {
+          appendExtremum(maxSample, maxValue);
+        }
       }
     }
 
+    if (geometryStopwatch != null) {
+      geometryStopwatch.stop();
+      PlotPerformanceMetrics.instance
+        ..record(
+          PlotPerformanceMetric.geometryBuildMicros,
+          geometryStopwatch.elapsedMicroseconds,
+        )
+        ..record(
+          PlotPerformanceMetric.geometryPointCount,
+          (trendOut + extremaOut) ~/ 2,
+        );
+    }
+    final canvasStopwatch =
+        PlotPerformanceMetrics.enabled ? (Stopwatch()..start()) : null;
     if (trendOut >= 4) {
       canvas.drawRawPoints(
         ui.PointMode.polygon,
@@ -1106,6 +1268,13 @@ class PlotLayerPainter extends CustomPainter {
         paint,
       );
     }
+    if (canvasStopwatch != null) {
+      canvasStopwatch.stop();
+      PlotPerformanceMetrics.instance.record(
+        PlotPerformanceMetric.canvasSubmitMicros,
+        canvasStopwatch.elapsedMicroseconds,
+      );
+    }
   }
 
   void _drawChannelLodPoints(
@@ -1117,7 +1286,9 @@ class PlotLayerPainter extends CustomPainter {
   ) {
     if (series.isEmpty) return;
 
-    final rawPoints = Float32List(series.length * 2);
+    final rawPoints =
+        geometryBuffers?.points(series.length * 2) ??
+        Float32List(series.length * 2);
     var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
@@ -1146,7 +1317,9 @@ class PlotLayerPainter extends CustomPainter {
     _Range visibleRange,
     Paint paint,
   ) {
-    final rawPoints = Float32List((visibleRange.end - visibleRange.start) * 2);
+    final rawPoints =
+        geometryBuffers?.points((visibleRange.end - visibleRange.start) * 2) ??
+        Float32List((visibleRange.end - visibleRange.start) * 2);
     var rawIndex = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
@@ -1190,7 +1363,13 @@ class PlotLayerPainter extends CustomPainter {
     }
   }
 
-  void _drawChannelMinMaxBuckets(
+  /// 三档的精确像素桶统一使用“趋势线 + 真实 X 极值线”。
+  ///
+  /// 与历史 LOD 语义保持一致，缩放跨越精确窗口和 LOD 边界时，孤立峰值
+  /// 不会从窄竖线突然变成覆盖整个像素桶的三角形。
+  // TODO(plot-renderer): 新视口查询稳定后删除旧精确桶兼容实现。
+  // ignore: unused_element
+  void _drawChannelQualityMinMaxBuckets(
     Canvas canvas,
     Size size,
     int channelIndex,
@@ -1203,58 +1382,130 @@ class PlotLayerPainter extends CustomPainter {
     if (dataCount <= 0 || plotW <= 0) return;
 
     final bucketCount = math.min(plotW.ceil(), dataCount);
-    final rawPoints = Float32List(bucketCount * 8);
-    var rawIndex = 0;
+    final trendPoints =
+        geometryBuffers?.trend(bucketCount * 8) ?? Float32List(bucketCount * 8);
+    final extremaLines =
+        geometryBuffers?.extrema(bucketCount * 8) ??
+        Float32List(bucketCount * 8);
+    var trendOut = 0;
+    var extremaOut = 0;
     final marginTop = viewport.marginTop;
     final marginBottom = size.height - viewport.marginBottom;
 
-    for (int bucket = 0; bucket < bucketCount; bucket++) {
+    double screenX(int pointIndex) =>
+        viewport.dataToScreenX(pointIndex.toDouble(), size.width);
+    double screenY(double value) =>
+        viewport
+            .dataToScreenY(value, size.height)
+            .clamp(marginTop, marginBottom)
+            .toDouble();
+    void appendTrend(int pointIndex, double value) {
+      trendPoints[trendOut++] = screenX(pointIndex);
+      trendPoints[trendOut++] = screenY(value);
+    }
+
+    final stopwatch =
+        PlotPerformanceMetrics.enabled ? (Stopwatch()..start()) : null;
+    for (var bucket = 0; bucket < bucketCount; bucket++) {
       final start = visibleRange.start + (bucket * dataCount ~/ bucketCount);
       var end = visibleRange.start + ((bucket + 1) * dataCount ~/ bucketCount);
       if (end <= start) end = start + 1;
 
-      _BucketPoint? firstPoint;
-      _BucketPoint? lastPoint;
-      _BucketPoint? minPoint;
-      _BucketPoint? maxPoint;
-      for (int i = start; i < end && i < visibleRange.end; i++) {
+      var firstIndex = -1;
+      var lastIndex = -1;
+      var minIndex = -1;
+      var maxIndex = -1;
+      var firstValue = double.nan;
+      var lastValue = double.nan;
+      var minValue = double.infinity;
+      var maxValue = double.negativeInfinity;
+      for (var i = start; i < end && i < visibleRange.end; i++) {
         final point = data[i];
         if (channelIndex >= point.values.length) continue;
         final value = _displayValue(point, channelIndex, channel);
         if (!value.isFinite) continue;
-        final x = viewport.dataToScreenX(point.index.toDouble(), size.width);
-        final y = viewport
-            .dataToScreenY(value, size.height)
-            .clamp(marginTop, marginBottom);
+        firstIndex = firstIndex < 0 ? point.index : firstIndex;
+        firstValue = firstValue.isNaN ? value : firstValue;
+        lastIndex = point.index;
+        lastValue = value;
+        if (value < minValue) {
+          minValue = value;
+          minIndex = point.index;
+        }
+        if (value > maxValue) {
+          maxValue = value;
+          maxIndex = point.index;
+        }
+      }
+      if (firstIndex < 0 || lastIndex < 0) continue;
 
-        final bucketPoint = _BucketPoint(point.index, x, y);
-        firstPoint ??= bucketPoint;
-        lastPoint = bucketPoint;
-        if (minPoint == null || y < minPoint.y) minPoint = bucketPoint;
-        if (maxPoint == null || y > maxPoint.y) maxPoint = bucketPoint;
+      double trendAt(int pointIndex) {
+        if (lastIndex <= firstIndex) return firstValue;
+        final ratio =
+            (pointIndex - firstIndex) / (lastIndex - firstIndex).toDouble();
+        return firstValue + (lastValue - firstValue) * ratio.clamp(0.0, 1.0);
       }
 
-      if (firstPoint == null || lastPoint == null) continue;
-      final ordered = <_BucketPoint>[
-        firstPoint,
-        if (minPoint != null) minPoint,
-        if (maxPoint != null) maxPoint,
-        lastPoint,
-      ]..sort((a, b) => a.index.compareTo(b.index));
+      void appendExtremum(int pointIndex, double value) {
+        final x = screenX(pointIndex);
+        final baselineY = screenY(trendAt(pointIndex));
+        final valueY = screenY(value);
+        if ((baselineY - valueY).abs() < 0.5) return;
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = baselineY;
+        extremaLines[extremaOut++] = x;
+        extremaLines[extremaOut++] = valueY;
+      }
 
-      var previousIndex = -1;
-      for (final point in ordered) {
-        if (point.index == previousIndex) continue;
-        rawPoints[rawIndex++] = point.x;
-        rawPoints[rawIndex++] = point.y;
-        previousIndex = point.index;
+      bool isSignificantExtremum(int pointIndex, double value) =>
+          (screenY(trendAt(pointIndex)) - screenY(value)).abs() >= 0.5;
+      final minIsSignificant = isSignificantExtremum(minIndex, minValue);
+      final maxIsSignificant =
+          maxIndex != minIndex && isSignificantExtremum(maxIndex, maxValue);
+      if (minIsSignificant && maxIsSignificant) {
+        final samples = <(int, double)>[
+          (firstIndex, firstValue),
+          (minIndex, minValue),
+          (maxIndex, maxValue),
+          (lastIndex, lastValue),
+        ]..sort((left, right) => left.$1.compareTo(right.$1));
+        var previousIndex = -1;
+        for (final sample in samples) {
+          if (sample.$1 == previousIndex) continue;
+          appendTrend(sample.$1, sample.$2);
+          previousIndex = sample.$1;
+        }
+      } else {
+        appendTrend(firstIndex, firstValue);
+        if (lastIndex != firstIndex) appendTrend(lastIndex, lastValue);
+        if (minIsSignificant) appendExtremum(minIndex, minValue);
+        if (maxIsSignificant) appendExtremum(maxIndex, maxValue);
       }
     }
+    if (stopwatch != null) {
+      stopwatch.stop();
+      PlotPerformanceMetrics.instance
+        ..record(
+          PlotPerformanceMetric.geometryBuildMicros,
+          stopwatch.elapsedMicroseconds,
+        )
+        ..record(
+          PlotPerformanceMetric.geometryPointCount,
+          (trendOut + extremaOut) ~/ 2,
+        );
+    }
 
-    if (rawIndex >= 4) {
+    if (trendOut >= 4) {
       canvas.drawRawPoints(
         ui.PointMode.polygon,
-        Float32List.sublistView(rawPoints, 0, rawIndex),
+        Float32List.sublistView(trendPoints, 0, trendOut),
+        paint,
+      );
+    }
+    if (extremaOut >= 4) {
+      canvas.drawRawPoints(
+        ui.PointMode.lines,
+        Float32List.sublistView(extremaLines, 0, extremaOut),
         paint,
       );
     }
@@ -2473,9 +2724,13 @@ class PlotLayerPainter extends CustomPainter {
             oldDelegate.channelConfigRevision != channelConfigRevision ||
             oldDelegate.lodIndex != lodIndex ||
             oldDelegate.lodQuality != lodQuality ||
+            oldDelegate.interactionActive != interactionActive ||
+            oldDelegate.devicePixelRatio != devicePixelRatio ||
             oldDelegate.activeChannelCount != activeChannelCount ||
             oldDelegate.backgroundStyle != backgroundStyle ||
-            oldDelegate.antiAliasEnabled != antiAliasEnabled,
+            oldDelegate.antiAliasEnabled != antiAliasEnabled ||
+            oldDelegate.externalDataClip != externalDataClip ||
+            oldDelegate.dataQueryPadding != dataQueryPadding,
       PlotPaintLayer.axis =>
         viewportChanged ||
             oldDelegate.viewportRevision != viewportRevision ||
@@ -2514,14 +2769,6 @@ class _Range {
   final int start;
   final int end;
   _Range(this.start, this.end);
-}
-
-class _BucketPoint {
-  final int index;
-  final double x;
-  final double y;
-
-  const _BucketPoint(this.index, this.x, this.y);
 }
 
 class _CursorValueRow {

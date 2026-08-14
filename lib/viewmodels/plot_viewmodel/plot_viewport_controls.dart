@@ -73,7 +73,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
   /// 连续移动时由 LOD 提供有界预览，避免每个指针事件都解析
   /// 一整块精确数据；停住不松手也会自动补齐当前位置。
   void _scheduleDragWindowLoad() {
-    if (_historyPointCount == 0) return;
+    if (_historyPointCount == 0 || _plotInteractionActive) return;
     _windowProvider.scheduleDragLoad(_loadWindowForViewport);
   }
 

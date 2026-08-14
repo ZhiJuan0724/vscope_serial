@@ -231,6 +231,10 @@ final class _PlotStrings {
   String get densityNormal => '普通';
   String get densityDense => '密集';
   String get refreshFps => '绘图刷新帧率';
+  String get renderEngine => '绘图引擎';
+  String get renderEngineCanvas => 'Canvas';
+  String get renderEngineD3d11 => 'D3D11';
+  String get renderEngineHelp => 'D3D11仅加速Windows曲线数据层；不可用时自动回退Canvas。';
   String get lodQuality => '绘图质量';
   String get lodQualityPerformance => '性能优先';
   String get lodQualityBalanced => '均衡';
@@ -263,7 +267,7 @@ final class _PlotStrings {
   String get unitPacket => '包';
   String get unitGiB => 'GiB';
 
-  String get refreshFpsHelp => '范围: 30~60 fps，默认 60 fps\n值越高绘图越流畅，但可能降低数据接收速率';
+  String get refreshFpsHelp => '范围: 30~120 fps，默认 60 fps\n值越高绘图越流畅，但可能增加界面渲染压力';
   String get plotFontSizeHelp => '范围: -3~+6，影响绘图区坐标轴及所有悬浮窗字体大小';
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
   String get plotHistoryMemoryLimitHelp =>

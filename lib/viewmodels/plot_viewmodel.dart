@@ -24,6 +24,7 @@ import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
 import '../data/models/plot_gesture_modifier.dart';
 import '../data/models/plot_lod_index.dart';
+import '../data/models/plot_render_engine.dart';
 import '../data/models/retention_usage.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
@@ -176,7 +177,7 @@ class PlotExportCancelToken {
 /// - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
 /// - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
 /// - 管理通道配置（可见性、颜色、缩放、偏移）
-/// - 控制 UI 刷新频率（30~60 fps），实现数据接收与 UI 刷新解耦
+/// - 控制 UI 刷新频率（30~120 fps），实现数据接收与 UI 刷新解耦
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
@@ -334,8 +335,8 @@ class PlotViewModel extends BaseViewModel {
   bool _useRandomSource = false;
 
   // ========== 高级设置 ==========
-  /// UI 刷新帧率 (fps)，范围 30~60，默认 60
-  int _refreshFps = 60;
+  /// UI 刷新帧率 (fps)，范围 30~120，默认60。
+  int _refreshFps = PlotConfiguration.defaultRefreshFps;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int _plotFontSizeDelta = 0;
@@ -381,6 +382,8 @@ class PlotViewModel extends BaseViewModel {
   bool _triggerToolbarEnabled = false;
   bool _previewToolbarEnabled = false;
   PlotLodQuality _lodQuality = PlotLodQuality.balanced;
+  PlotRenderEngine _renderEngine = PlotRenderEngine.canvas;
+  bool _plotInteractionActive = false;
   bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
@@ -693,6 +696,10 @@ class PlotViewModel extends BaseViewModel {
       'qualityHigh' => PlotLodQuality.quality,
       _ => PlotLodQuality.performance,
     };
+    _renderEngine =
+        settings.plotRenderEngine == 'd3d11'
+            ? PlotRenderEngine.d3d11
+            : PlotRenderEngine.canvas;
     _keepPlotOnRestart = settings.keepPlotOnRestart;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
@@ -803,6 +810,7 @@ class PlotViewModel extends BaseViewModel {
       PlotLodQuality.balanced => 'balanced',
       PlotLodQuality.quality => 'qualityHigh',
     };
+    settings.plotRenderEngine = _renderEngine.name;
     settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
     settings.gridDensity = _gridDensity;
@@ -1097,6 +1105,7 @@ class PlotViewModel extends BaseViewModel {
   bool get triggerToolbarEnabled => _triggerToolbarEnabled;
   bool get previewToolbarEnabled => _previewToolbarEnabled;
   PlotLodQuality get lodQuality => _lodQuality;
+  PlotRenderEngine get renderEngine => _renderEngine;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
@@ -1231,6 +1240,17 @@ class PlotViewModel extends BaseViewModel {
   int get channelConfigRevision => _channelConfigRevision;
   int get viewportRevision => _viewportRevision;
   int get overlayRevision => _overlayRevision;
+  bool get plotInteractionActive => _plotInteractionActive;
+
+  /// 连续拖动期间停用精确窗口重建，并让 Painter 使用有界 LOD 预览。
+  void setPlotInteractionActive(bool value) {
+    if (_plotInteractionActive == value) return;
+    _plotInteractionActive = value;
+    if (value) _cancelDragWindowLoad();
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+  }
 
   bool get displayYValuesAreInteger {
     final currentChannels = displayChannels;

@@ -2291,16 +2291,27 @@ void main() {
     });
 
     test('高频接收强制使用30fps但不修改用户刷新帧率', () {
-      vm.setRefreshFps(60);
+      vm.setRefreshFps(120);
 
       for (int ms = 500; ms <= 1000; ms += 250) {
         vm.recordRateSampleForTest(ms * 20, ms);
       }
 
       expect(vm.highRateMode, true);
-      expect(vm.refreshFps, 60);
+      expect(vm.refreshFps, 120);
       expect(vm.effectiveRefreshFps, 30);
       expect(vm.statusText, contains('高频模式 30fps'));
+    });
+
+    test('绘图目标刷新率允许30至120fps', () {
+      vm.setRefreshFps(120);
+      expect(vm.refreshFps, 120);
+
+      vm.setRefreshFps(121);
+      expect(vm.refreshFps, 120);
+
+      vm.setRefreshFps(1);
+      expect(vm.refreshFps, 30);
     });
 
     test('高频模式在10K附近不会反复切换并在低于8K后延迟退出', () {
@@ -2648,7 +2659,7 @@ void main() {
     });
 
     test('stopPlotting后高频模式恢复用户配置刷新帧率', () async {
-      vm.setRefreshFps(60);
+      vm.setRefreshFps(120);
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);
       await vm.startPlotting();
@@ -2662,8 +2673,8 @@ void main() {
       await vm.stopPlotting();
 
       expect(vm.highRateMode, false);
-      expect(vm.refreshFps, 60);
-      expect(vm.effectiveRefreshFps, 60);
+      expect(vm.refreshFps, 120);
+      expect(vm.effectiveRefreshFps, 120);
     });
 
     test('canUndoZoom初始为false', () {

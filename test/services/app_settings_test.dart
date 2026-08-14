@@ -45,6 +45,7 @@ void main() {
             ..previewToolbarEnabled = true
             ..plotReceiveAggregationEnabled = true
             ..plotLodQuality = 'quality'
+            ..plotRenderEngine = 'd3d11'
             ..showGrid = false
             ..gridDensity = 'dense'
             ..plotBackground = 'light'
@@ -165,6 +166,7 @@ void main() {
       expect(settings.previewToolbarEnabled, isFalse);
       expect(settings.plotReceiveAggregationEnabled, isFalse);
       expect(settings.plotLodQuality, 'balanced');
+      expect(settings.plotRenderEngine, 'canvas');
       expect(settings.showGrid, isTrue);
       expect(settings.gridDensity, 'normal');
       expect(settings.plotBackground, 'dark');
@@ -286,6 +288,52 @@ void main() {
     test('新配置的串口与探针绘图质量默认使用均衡', () {
       expect(settings.plotLodQuality, 'balanced');
       expect(settings.probePlotLodQuality, 'balanced');
+      expect(settings.plotRenderEngine, 'canvas');
+    });
+
+    test('串口绘图目标刷新率可持久化到120并限制越界值', () async {
+      settings.refreshFps = 120;
+      await settings.save();
+      await settings.flushPendingSave();
+      await settings.debugInitializeAt(settingsPath);
+      expect(settings.refreshFps, 120);
+
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'performance': {'refreshFps': 240},
+          },
+        }),
+      );
+      await settings.debugInitializeAt(settingsPath);
+      expect(settings.refreshFps, 120);
+    });
+
+    test('串口绘图引擎可持久化D3D11且无效值回退Canvas', () async {
+      settings.plotRenderEngine = 'd3d11';
+      await settings.save();
+      await settings.flushPendingSave();
+      await settings.debugInitializeAt(settingsPath);
+
+      expect(settings.plotRenderEngine, 'd3d11');
+      final decoded =
+          jsonDecode(await File(settingsPath).readAsString())
+              as Map<String, dynamic>;
+      final serialPlot = decoded['serialPlot'] as Map<String, dynamic>;
+      final performance = serialPlot['performance'] as Map<String, dynamic>;
+      expect(performance['renderEngine'], 'd3d11');
+
+      await File(settingsPath).writeAsString(
+        const JsonEncoder.withIndent('  ').convert({
+          'schemaVersion': 2,
+          'serialPlot': {
+            'performance': {'renderEngine': 'unknown'},
+          },
+        }),
+      );
+      await settings.debugInitializeAt(settingsPath);
+      expect(settings.plotRenderEngine, 'canvas');
     });
 
     test('串口绘图缩放修饰键默认Shift并持久化Ctrl选择', () async {

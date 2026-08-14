@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import '../../data/models/plot_lod_index.dart';
+import '../../data/models/plot_render_engine.dart';
 import 'plot_viewport.dart';
 
 /// 垂直光标状态（鼠标悬停跟随）。
@@ -96,6 +97,9 @@ class PlotRenderSnapshot {
     this.overlayRevision = 0,
     this.lodIndex,
     this.lodQuality = PlotLodQuality.performance,
+    this.renderEngine = PlotRenderEngine.canvas,
+    this.interactionActive = false,
+    this.devicePixelRatio = 1,
     int? activeChannelCount,
     this.showGrid = true,
     this.gridDensity = GridDensity.normal,
@@ -140,6 +144,13 @@ class PlotRenderSnapshot {
   final int overlayRevision;
   final PlotLodSource? lodIndex;
   final PlotLodQuality lodQuality;
+  final PlotRenderEngine renderEngine;
+
+  /// 当前绘图区的设备像素比；屏幕级 M4 必须按物理像素而非逻辑像素分桶。
+  final double devicePixelRatio;
+
+  /// 视口正在连续平移或拖动缩放；绘制层使用有界预览，松手后恢复最终质量。
+  final bool interactionActive;
   final List<ChannelConfig> channels;
   final int activeChannelCount;
   final bool showGrid;
@@ -172,4 +183,54 @@ class PlotRenderSnapshot {
   final bool yValuesAreInteger;
   final int plotFontSizeDelta;
   final bool plotFontBold;
+
+  PlotRenderSnapshot copyWith({
+    PlotViewport? viewport,
+    bool? interactionActive,
+    PlotRenderEngine? renderEngine,
+  }) => PlotRenderSnapshot(
+    viewport: viewport ?? this.viewport,
+    data: data,
+    channels: channels,
+    dataRevision: dataRevision,
+    channelConfigRevision: channelConfigRevision,
+    viewportRevision: viewportRevision,
+    overlayRevision: overlayRevision,
+    lodIndex: lodIndex,
+    lodQuality: lodQuality,
+    renderEngine: renderEngine ?? this.renderEngine,
+    interactionActive: interactionActive ?? this.interactionActive,
+    devicePixelRatio: devicePixelRatio,
+    activeChannelCount: activeChannelCount,
+    showGrid: showGrid,
+    gridDensity: gridDensity,
+    backgroundStyle: backgroundStyle,
+    floatingPanelOpacity: floatingPanelOpacity,
+    cursor: cursor,
+    xCursor1: xCursor1,
+    xCursor2: xCursor2,
+    yCursor1: yCursor1,
+    yCursor2: yCursor2,
+    xMeasurementGroups: xMeasurementGroups,
+    yMeasurementGroups: yMeasurementGroups,
+    xMeasurementLine1Color: xMeasurementLine1Color,
+    xMeasurementLine2Color: xMeasurementLine2Color,
+    yMeasurementLine1Color: yMeasurementLine1Color,
+    yMeasurementLine2Color: yMeasurementLine2Color,
+    xMeasurementLine1Opacity: xMeasurementLine1Opacity,
+    xMeasurementLine2Opacity: xMeasurementLine2Opacity,
+    yMeasurementLine1Opacity: yMeasurementLine1Opacity,
+    yMeasurementLine2Opacity: yMeasurementLine2Opacity,
+    statsEnabled: statsEnabled,
+    statsRangeEnabled: statsRangeEnabled,
+    statsX1: statsX1,
+    statsX2: statsX2,
+    snapHighlights: snapHighlights,
+    snapHighlightEnabled: snapHighlightEnabled,
+    snapHighlightDiameter: snapHighlightDiameter,
+    antiAliasEnabled: antiAliasEnabled,
+    yValuesAreInteger: yValuesAreInteger,
+    plotFontSizeDelta: plotFontSizeDelta,
+    plotFontBold: plotFontBold,
+  );
 }

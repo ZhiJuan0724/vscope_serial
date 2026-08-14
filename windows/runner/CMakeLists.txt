@@ -10,6 +10,7 @@ add_executable(${BINARY_NAME} WIN32
   "crash_dump_handler.cpp"
   "flutter_window.cpp"
   "main.cpp"
+  "plot_gpu_renderer_plugin.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -34,9 +35,10 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 
 # Add dependency libraries and include directories. Add any application-specific
 # dependencies here.
-target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
+target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app flutter_wrapper_plugin)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "dbghelp.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib" "dxgi.lib" "d3dcompiler.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "${CMAKE_BINARY_DIR}/runner/$<CONFIG>/native_serial_reader.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_options(${BINARY_NAME} PRIVATE

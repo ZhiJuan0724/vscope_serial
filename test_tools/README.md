@@ -352,6 +352,28 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label optimized
 pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 ```
 
+运行静态历史 LOD 拖动基准：
+
+```bash
+# 8 万/50 万、五类固定波形、三档质量、完整/1/8 视口，分别测试
+# 常规 X、斜向、大幅度全范围扫动和快速左右往返；不包含单独 Y 拖动
+# 大幅扫动每连续两次后停留约 1 秒，模拟用户查看后续波形再继续拖动
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-quick -Label lod-quick
+
+# 只快速复测最差的 50 万噪声场景
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate-quick -Label lod-gate-quick
+
+# 对筛出的最差 50 万噪声场景执行三轮、每种拖动 8 秒的正式门禁
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate -Label lod-gate
+
+# 使用Windows D3D11数据层执行相同门禁
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate -Engine d3d11 -Label lod-gate-d3d11
+```
+
+`lod` 会对上述全部组合执行三轮正式测量，耗时较长；`lod-gate-quick` 和 `lod-gate` 用于在
+全覆盖快速筛查后复验最差场景。LOD 报告额外记录查询、几何生成、Canvas
+提交、缓存命中和缓冲扩容，用于判断 Canvas 是否达标以及是否需要 GPU 原型。
+
 `soak` 包含以下容量场景：
 
 - `1M-16CH`：实际采集达到 1M 点后验收，精确对象不得超过 250k。
@@ -369,8 +391,9 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 
 参数：
 
-- `-Preset`：测试场景集合，支持 `quick`（默认，快速覆盖典型负载）和 `soak`（长时间高负载测试）。
+- `-Preset`：测试场景集合，支持 `quick`（默认）、`soak`、`lod-quick`、`lod-gate-quick`、`lod-gate` 和 `lod`。
 - `-Label`：报告文件名标签，默认 `optimized`；只允许字母、数字、点、下划线和连字符。
+- `-Engine`：LOD基准的数据层引擎，支持 `canvas`（默认）和Windows `d3d11`。
 
 <a id="sec-p1"></a>
 

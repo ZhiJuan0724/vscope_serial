@@ -453,6 +453,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                             overlayRevision: vm.overlayRevision,
                                             lodIndex: vm.lodIndex,
                                             lodQuality: vm.lodQuality,
+                                            devicePixelRatio:
+                                                MediaQuery.devicePixelRatioOf(
+                                                  context,
+                                                ),
                                             channels: vm.channels,
                                             activeChannelCount:
                                                 vm.activeChannelCount,

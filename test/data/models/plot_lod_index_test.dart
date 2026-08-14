@@ -53,6 +53,33 @@ void main() {
       }
     });
 
+    test('连续正弦桶不标记为阶跃，二值阶跃保留边沿类型', () {
+      final sine = PlotLodIndex();
+      final step = PlotLodIndex();
+      for (var i = 0; i < 2048; i++) {
+        sine.add(i, [math.sin(i * 0.07)]);
+        step.add(i, [i < 1030 ? 0.0 : 1.0]);
+      }
+
+      final sineSeries = sine.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 2047,
+        plotWidth: 128,
+      );
+      final stepSeries = step.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 2047,
+        plotWidth: 128,
+      );
+
+      expect(sineSeries, isNotNull);
+      expect(sineSeries!.bucketStepKinds, everyElement(0));
+      expect(stepSeries, isNotNull);
+      expect(stepSeries!.bucketStepKinds, contains(1));
+    });
+
     test(
       'query exposes contiguous sample ranges for each populated bucket',
       () {
@@ -97,6 +124,22 @@ void main() {
       );
     });
 
+    test('late channel uses its own first and last sample indices', () {
+      final index = PlotLodIndex();
+      index.add(0, [1.0]);
+      index.add(1, [2.0]);
+      index.add(2, [3.0, 20.0]);
+      index.add(3, [4.0, 30.0]);
+
+      final series = index.queryFinest(channelIndex: 1, xMin: 0, xMax: 7);
+
+      expect(series, isNotNull);
+      expect(series!.indices.first, 2);
+      expect(series.indices.last, 3);
+      expect(series.values.first, 20);
+      expect(series.values.last, 30);
+    });
+
     test('sampled updates do not allocate skipped buckets', () {
       final index = PlotLodIndex();
       for (var i = 0; i < 100000; i++) {
@@ -125,7 +168,9 @@ void main() {
       );
 
       expect(series, isNotNull);
-      expect(series!.length, lessThan(2000));
+      // 范围摘要最多保留每个显示列的 first/min/max/last 候选，不能为
+      // 追求旧的更小点数重新牺牲峰值和时序信息。
+      expect(series!.length, lessThanOrEqualTo(1200 * 4));
     });
 
     test('balanced and quality select progressively finer LOD levels', () {
@@ -182,6 +227,42 @@ void main() {
     });
 
     test(
+      'viewport cache prefetches nearby buckets and invalidates on append',
+      () {
+        final index = PlotLodIndex();
+        for (var i = 0; i < 4096; i++) {
+          index.add(i, [math.sin(i / 13)]);
+        }
+
+        final first = index.query(
+          channelIndex: 0,
+          xMin: 1000,
+          xMax: 2000,
+          plotWidth: 200,
+          useViewportCache: true,
+        );
+        final nearby = index.query(
+          channelIndex: 0,
+          xMin: 1050,
+          xMax: 2050,
+          plotWidth: 200,
+          useViewportCache: true,
+        );
+        expect(nearby, same(first));
+
+        index.add(4096, [1]);
+        final afterAppend = index.query(
+          channelIndex: 0,
+          xMin: 1050,
+          xMax: 2050,
+          plotWidth: 200,
+          useViewportCache: true,
+        );
+        expect(afterAppend, isNot(same(first)));
+      },
+    );
+
+    test(
       'coarse query bypasses density threshold during exact window load',
       () {
         final index = PlotLodIndex();
@@ -201,8 +282,32 @@ void main() {
         );
 
         expect(coarse, isNotNull);
-        expect(coarse!.length, lessThanOrEqualTo(8));
+        expect(coarse!.length, lessThanOrEqualTo(32));
       },
     );
+
+    test('interaction bucket scale selects a coarser bounded preview', () {
+      final index = PlotLodIndex();
+      for (var i = 0; i < 500000; i++) {
+        index.add(i, [math.sin(i / 17)]);
+      }
+      final settled = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 499999,
+        plotWidth: 1000,
+      );
+      final preview = index.query(
+        channelIndex: 0,
+        xMin: 0,
+        xMax: 499999,
+        plotWidth: 1000,
+        targetBucketScale: 8,
+      );
+
+      expect(preview, isNotNull);
+      expect(preview!.bucketCount, lessThan(settled!.bucketCount));
+      expect(preview.bucketCount, lessThanOrEqualTo(160));
+    });
   });
 }

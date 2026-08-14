@@ -761,6 +761,39 @@ void main() {
     expect(dragEndCount, 1);
   });
 
+  testWidgets('鼠标平移只在开始和结束切换交互预览', (tester) async {
+    final states = <bool>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onInteractionChanged: states.add,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(20, 0));
+    await gesture.moveTo(center + const Offset(40, 0));
+    await gesture.up();
+    await tester.pump();
+
+    expect(states, <bool>[true, false]);
+  });
+
   testWidgets('触控板累计捏合比例按增量缩放且不标记为拖动', (tester) async {
     var viewport = initialViewport;
     final fromDragValues = <bool>[];

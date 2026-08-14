@@ -92,8 +92,8 @@ class AppSettings {
   List<String> visibleMainPages = const ['rawData', 'plot'];
 
   // ========== 绘图设置 ==========
-  /// UI 刷新帧率 (fps)，范围 30~60
-  int refreshFps = 60;
+  /// UI 刷新帧率 (fps)，范围 30~120。
+  int refreshFps = PlotConfiguration.defaultRefreshFps;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int plotFontSizeDelta = 0;
@@ -150,6 +150,9 @@ class AppSettings {
   /// 大范围绘图 LOD 策略：performance、balanced 或 qualityHigh。
   /// quality 是两档版本遗留值，加载时迁移为 balanced。
   String plotLodQuality = 'balanced';
+
+  /// 串口绘图数据层后端：canvas 或 d3d11。
+  String plotRenderEngine = 'canvas';
 
   /// 是否显示网格
   bool showGrid = true;
@@ -433,7 +436,7 @@ class AppSettings {
     flashOperationRiskWarningDismissed = false;
     visibleMainPages = const ['rawData', 'plot'];
 
-    refreshFps = 60;
+    refreshFps = PlotConfiguration.defaultRefreshFps;
     plotFontSizeDelta = 0;
     plotFontBold = false;
     lastMainPage = 'rawData';
@@ -461,6 +464,7 @@ class AppSettings {
     previewToolbarEnabled = false;
     plotReceiveAggregationEnabled = false;
     plotLodQuality = 'balanced';
+    plotRenderEngine = 'canvas';
     showGrid = true;
     gridDensity = 'normal';
     plotBackground = 'dark';
@@ -659,7 +663,12 @@ class AppSettings {
           json['flashOperationRiskWarningDismissed'] as bool? ?? false;
 
       // 绘图设置
-      refreshFps = (json['refreshFps'] as int? ?? 60).clamp(30, 60);
+      refreshFps = (json['refreshFps'] as int? ??
+              PlotConfiguration.defaultRefreshFps)
+          .clamp(
+            PlotConfiguration.minRefreshFps,
+            PlotConfiguration.maxRefreshFps,
+          );
       plotFontSizeDelta = (json['plotFontSizeDelta'] as int? ?? 0).clamp(-3, 6);
       plotFontBold = json['plotFontBold'] as bool? ?? false;
       final savedMainPage = json['lastMainPage'] as String?;
@@ -791,6 +800,8 @@ class AppSettings {
         'qualityHigh' => 'qualityHigh',
         _ => 'balanced',
       };
+      plotRenderEngine =
+          json['plotRenderEngine'] == 'd3d11' ? 'd3d11' : 'canvas';
       showGrid = json['showGrid'] as bool? ?? true;
       gridDensity = json['gridDensity'] as String? ?? 'normal';
       final background = json['plotBackground'] as String?;
@@ -1095,6 +1106,7 @@ class AppSettings {
       'lastMainPage',
       'snapHighlightColorMode',
       'plotLodQuality',
+      'plotRenderEngine',
       'gridDensity',
       'plotBackground',
       'probePlotLodQuality',
@@ -1372,6 +1384,7 @@ class AppSettings {
     'previewToolbarEnabled': previewToolbarEnabled,
     'plotReceiveAggregationEnabled': plotReceiveAggregationEnabled,
     'plotLodQuality': plotLodQuality,
+    'plotRenderEngine': plotRenderEngine,
     'showGrid': showGrid,
     'gridDensity': gridDensity,
     'plotBackground': plotBackground,
@@ -1582,6 +1595,7 @@ class AppSettings {
       'receiveAggregation',
     ],
     'plotLodQuality': ['serialPlot', 'performance', 'lodQuality'],
+    'plotRenderEngine': ['serialPlot', 'performance', 'renderEngine'],
 
     // 串口绘图：外观
     'plotFontSizeDelta': ['serialPlot', 'appearance', 'fontSizeDelta'],

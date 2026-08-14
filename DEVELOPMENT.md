@@ -146,6 +146,62 @@ flowchart LR
     probeVm --> probePage["探针绘图"]
 ```
 
+### 3.2 绘图渲染数据流向
+
+Canvas与D3D11只允许在“如何提交几何”上不同。两种引擎必须读取同一个`PlotRenderSnapshot`，通过同一个`PlotViewportQuery`生成`PlotGeometryBatch`；LOD选择、M4聚合、点序、断点、通道缩放和偏置不得在渲染后端中另写一套。
+
+公共查询链路：
+
+```mermaid
+flowchart LR
+    history["PlotViewModel 原始历史"] --> snapshot["PlotRenderSnapshot"]
+    lod["PlotLodIndex 分层范围摘要"] --> snapshot
+    snapshot --> query["PlotViewportQuery"]
+    query --> raw["低密度：原始采样点"]
+    query --> m4["高密度：屏幕列 M4"]
+    raw --> batch["PlotGeometryBatch / 有序 run"]
+    m4 --> batch
+    batch --> canvas["Canvas 提交"]
+    batch --> d3d["D3D11 提交"]
+```
+
+Canvas路径：
+
+```mermaid
+flowchart LR
+    batch["PlotGeometryBatch"] --> painter["PlotLayerPainter / PlotDataRenderer"]
+    painter --> points["复用 TypedData 生成线与点"]
+    points --> canvas["Flutter Canvas 数据层"]
+    canvas --> cache["静态拖动时可生成带预取的位图缓存"]
+    cache --> composite["PlotLayerStack 裁剪并与坐标轴、光标、测量层合成"]
+```
+
+Canvas静态拖动缓存只移动已经生成的数据层位图；数据revision、通道配置、DPR、缩放或预取越界时必须废弃缓存并重新查询。快速大幅拖动期间允许暂缓缓存生成，但必须继续显示当前Canvas结果，不能清空历史。
+
+D3D11路径：
+
+```mermaid
+flowchart LR
+    batch["PlotGeometryBatch"] --> dart["D3d11PlotSurface / Dart图元编码"]
+    dart --> channel["MethodChannel / latest request wins"]
+    channel --> plugin["Windows D3D11插件"]
+    plugin --> buffer["实例化线段与方形点缓冲"]
+    buffer --> texture["DXGI共享纹理"]
+    texture --> flutter["Flutter Texture数据层"]
+    flutter --> composite["PlotLayerStack与坐标轴、光标、测量层合成"]
+```
+
+D3D11只接收屏幕坐标、线宽、点大小和颜色，不得读取原始历史或自行降采样。零长度图元表示方形点，普通相邻点表示抗锯齿线段；`runOffsets`之间不得连接。初始化、提交、纹理重建或设备异常时必须回退Canvas，保留历史且不修改用户选择的质量档。
+
+维护两种引擎时遵守以下规则：
+
+- 波形语义只在`PlotViewportQuery`和`PlotGeometryBatch`中修改；禁止在Painter、D3D11 Dart层或HLSL中改变点序、补趋势线或重新选择LOD。
+- 点与线必须消费同一次查询得到的批次。新增通道显示变换时，Canvas与D3D11必须使用相同的scale、offset、可见性、线宽、点大小和物理像素比例。
+- 新增断点、无效值或分段语义时，先扩展`runOffsets`及其单元测试，再分别验证Canvas不会跨run画线、D3D11不会跨run生成实例。
+- 坐标轴、网格、光标、测量和观察继续由Flutter叠加层绘制，不应复制到D3D11插件；这些功能不得改变数据层几何。
+- 修改任何公共查询或渲染属性后，至少运行视口查询、Painter和完整测试，并在Windows Profile下运行D3D11正确性测试。测试必须同时覆盖平滑波形、孤立尖峰、低密度点标记和纹理尺寸变化。
+- 性能优化只有在两种引擎的正确性结果一致后才有效；不得以隐藏尖峰、跨通道连接、点线错位或改变阶跃宽度换取帧率。
+
 ## 4. 代码检查与测试
 
 提交前至少执行：

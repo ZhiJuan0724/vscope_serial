@@ -1,5 +1,14 @@
 /// 绘图页面、视口和数据模型之间共用的配置。
 abstract final class PlotConfiguration {
+  /// 用户可设置的绘图界面目标刷新率下限。
+  static const int minRefreshFps = 30;
+
+  /// 用户可设置的绘图界面目标刷新率上限。
+  static const int maxRefreshFps = 120;
+
+  /// 新配置使用的绘图界面目标刷新率。
+  static const int defaultRefreshFps = 60;
+
   // 通道面板布局。
 
   /// 常规协议下通道面板允许缩放到的最小宽度。
@@ -148,6 +157,10 @@ abstract final class PlotConfiguration {
   ///
   /// 该限制让精确扫描量继续受绘图区宽度约束，避免大范围视口拖慢绘制。
   static const double lodQualityExactMaxPointsPerPixel = 32;
+
+  /// 性能优先仍应优先保持波形拓扑；只有精确窗口密度明显超过屏幕承载能力
+  /// 时才切换到历史 LOD，避免轻微缩小时 64 点桶破坏周期波形。
+  static const double lodPerformanceExactMaxPointsPerPixel = 8;
 
   /// 均衡模式查询大范围历史时相对性能优先细化的 LOD 层数。
   static const int lodBalancedFinerLevelCount = 1;

@@ -68,6 +68,7 @@ class PlotUiSettingsDraft {
     required this.followPositionRatio,
     required this.observationClickToPlace,
     required this.quality,
+    this.renderEngine,
     required this.windowPointLimit,
     required this.historyLimit,
     this.refreshFps,
@@ -95,6 +96,7 @@ class PlotUiSettingsDraft {
   Object? gestureModifier;
   bool? showPlotSendDataInRaw;
   Object quality;
+  Object? renderEngine;
   int windowPointLimit;
   int historyLimit;
   int? refreshFps;
