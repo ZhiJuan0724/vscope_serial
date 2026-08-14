@@ -53,23 +53,47 @@ void main() {
     // 低密度数据应同时绘制细线和方形点。水平线本身在采样位置附近
     // 只有一条窄带，因此可以通过局部着色面积确认点图元确实存在。
     final markers = _buildIndex(17, (_) => 0);
+    final markerData = List<PlotDataPoint>.generate(
+      17,
+      (index) => PlotDataPoint(
+        index: index,
+        timestamp: index.toDouble(),
+        values: const <double>[0],
+      ),
+    );
     final markerFrame = await _renderAndCapture(
       tester,
       name: 'd3d11-point-markers-correctness',
       index: markers,
-      data: List<PlotDataPoint>.generate(
-        17,
-        (index) => PlotDataPoint(
-          index: index,
-          timestamp: index.toDouble(),
-          values: const <double>[0],
-        ),
-      ),
+      data: markerData,
       viewport: PlotViewport(xMin: 0, xMax: 16, yMin: -10, yMax: 10),
       lineWidth: 1,
       pointSize: 7,
     );
     _expectSquarePointMarkers(markerFrame, 17);
+
+    final statsBefore = await _channel.invokeMapMethod<String, Object?>(
+      'stats',
+    );
+    await _renderAndCapture(
+      tester,
+      name: 'd3d11-resident-y-zoom',
+      index: markers,
+      data: markerData,
+      viewport: PlotViewport(xMin: 0, xMax: 16, yMin: -5, yMax: 5),
+      lineWidth: 1,
+      pointSize: 7,
+    );
+    final statsAfter = await _channel.invokeMapMethod<String, Object?>('stats');
+    expect(
+      statsAfter?['geometryUploadCount'],
+      statsBefore?['geometryUploadCount'],
+      reason: '仅改变Y视口不得重新上传常驻几何',
+    );
+    expect(
+      statsAfter?['presentCount'] as int,
+      greaterThan(statsBefore?['presentCount'] as int),
+    );
 
     // 反复改变外部纹理尺寸，覆盖窗口拉伸时的共享句柄重建路径。
     for (final size in const <Size>[

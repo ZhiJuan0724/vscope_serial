@@ -6,26 +6,48 @@ import '../../core/utils/plot_performance_metrics.dart';
 
 /// 主绘图区使用 LOD 历史时的质量策略。
 enum PlotLodQuality {
-  /// 性能优先：精确窗口密度较低时继续使用像素桶，超过上限后使用标准
-  /// LOD 层级；只降低摘要密度，不允许改变波形拓扑。
+  /// 性能优先：每个物理像素最多直接绘制一个原始点；高密度时允许把
+  /// 相邻两个物理像素列合并为一个 M4 列。
   ///
-  /// 最终按物理像素列最多合并相邻两列，并保留真实时序的 M4 包络；
-  /// 分层桶只提供查询候选，不直接决定最终几何。
+  /// 只降低屏幕级摘要密度，不允许改变真实时序、丢失显著峰谷或跨段连线。
   performance,
 
-  /// 均衡：优先使用完整精确窗口，并适度提高大范围 LOD 细节。
+  /// 均衡：每个物理像素最多直接绘制两个原始点；高密度时按每个物理
+  /// 像素列生成一个 M4 列。
   ///
-  /// 精确窗口完整覆盖视口且密度不超过配置上限时，由 Painter 按逻辑
-  /// 像素生成 min/max 桶；超过上限或窗口不完整时仍查询 LOD，但相对
-  /// 性能优先选择更细一级已有层级。不会新增索引层或回扫全量历史。
+  /// 这是默认档位，在完整走势还原与几何数量之间折中。
   balanced,
 
-  /// 质量优先：使用精确像素桶，并进一步提高大范围 LOD 细节。
+  /// 质量优先：每个物理像素最多直接绘制四个原始点；高密度时与均衡
+  /// 一样按每个物理像素列生成一个 M4 列。
   ///
-  /// 精确窗口的绘制方式与均衡档相同；必须查询历史 LOD 时，相对性能
-  /// 优先选择更细两级、即比均衡档再细一级的已有层级。输出点数增加，
-  /// 但仍受 LOD 桶约束，不会扫描全量历史或增加接收阶段的索引开销。
+  /// 因而它主要在放大到中低密度时比均衡档更早恢复完整原始折线；在
+  /// 高密度 M4 场景中二者可能得到相同几何。
   quality,
+}
+
+/// 三档绘图质量唯一的几何密度策略。
+///
+/// 分层 LOD 只负责加速候选查询；最终图形始终由视口查询器按这里定义的
+/// 物理像素密度生成，渲染后端不得再次解释质量档位。
+extension PlotLodQualityPolicy on PlotLodQuality {
+  int get rawPointsPerPhysicalPixel => switch (this) {
+    PlotLodQuality.performance => 1,
+    PlotLodQuality.balanced => 2,
+    PlotLodQuality.quality => 4,
+  };
+
+  int get physicalPixelsPerM4Column => switch (this) {
+    PlotLodQuality.performance => 2,
+    PlotLodQuality.balanced || PlotLodQuality.quality => 1,
+  };
+
+  /// 旧式固定桶查询仍供自动 Y 范围等辅助功能使用；它不决定主曲线几何。
+  int get auxiliaryFinerLevelCount => switch (this) {
+    PlotLodQuality.performance => 0,
+    PlotLodQuality.balanced => 1,
+    PlotLodQuality.quality => 2,
+  };
 }
 
 /// Painter 查询普通与派生通道 LOD 的统一入口。
@@ -200,14 +222,9 @@ class PlotLodIndex implements PlotLodSource {
       minBucketSize,
       (visibleCount / plotWidth * targetBucketScale.clamp(1, 16)).ceil(),
     );
-    final finerLevelCount = switch (quality) {
-      PlotLodQuality.performance => 0,
-      PlotLodQuality.balanced => PlotConfiguration.lodBalancedFinerLevelCount,
-      PlotLodQuality.quality => PlotConfiguration.lodQualityFinerLevelCount,
-    };
     final level = _selectLevel(
       targetBucketSize,
-      finerLevelCount: finerLevelCount,
+      finerLevelCount: quality.auxiliaryFinerLevelCount,
     );
     PlotLodSeries? result;
     if (useViewportCache) {

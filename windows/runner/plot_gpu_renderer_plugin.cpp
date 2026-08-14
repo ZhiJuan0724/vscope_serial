@@ -23,19 +23,25 @@ using flutter::EncodableMap;
 using flutter::EncodableValue;
 
 constexpr char kChannelName[] = "vscope_serial/plot_gpu_renderer";
-constexpr UINT kSegmentStride = sizeof(float) * 9;
+constexpr UINT kPrimitiveStride = sizeof(float) * 6;
+constexpr size_t kMaxChannels = 20;
 
 constexpr char kShaderSource[] = R"(
 cbuffer FrameData : register(b0) {
   float2 targetSize;
+  float2 xTransform;
+  float2 yTransform;
   float2 padding;
+  float4 channelGeometry[20];
+  float4 channelColor[20];
+  float4 channelFlags[20];
 };
 
-struct Segment {
+struct Primitive {
   float2 p0 : POSITION0;
   float2 p1 : POSITION1;
-  float width : TEXCOORD0;
-  float4 color : COLOR0;
+  float kind : TEXCOORD0;
+  float channel : TEXCOORD1;
 };
 
 struct VertexOutput {
@@ -43,24 +49,36 @@ struct VertexOutput {
   float2 localPosition : TEXCOORD0;
   nointerpolation float segmentLength : TEXCOORD1;
   nointerpolation float radius : TEXCOORD2;
+  nointerpolation float visible : TEXCOORD3;
   float4 color : COLOR0;
 };
 
-VertexOutput vertexMain(Segment input, uint vertexId : SV_VertexID) {
+VertexOutput vertexMain(Primitive input, uint vertexId : SV_VertexID) {
   VertexOutput output;
-  float2 delta = input.p1 - input.p0;
+  uint channelIndex = min((uint)round(input.channel), 19u);
+  float4 geometry = channelGeometry[channelIndex];
+  float4 flags = channelFlags[channelIndex];
+  bool isPoint = input.kind > 0.5;
+  float enabled = flags.x * (isPoint ? flags.z : flags.y);
+  float2 p0 = float2(input.p0.x * xTransform.x + xTransform.y,
+                     (input.p0.y * geometry.x + geometry.y) * yTransform.x +
+                         yTransform.y);
+  float2 p1 = float2(input.p1.x * xTransform.x + xTransform.y,
+                     (input.p1.y * geometry.x + geometry.y) * yTransform.x +
+                         yTransform.y);
+  float2 delta = p1 - p0;
   float rawLength = length(delta);
-  bool isPoint = rawLength < 0.0001;
   float lengthValue = isPoint ? 0.0 : rawLength;
   // 点仍复用实例化线段缓冲，但以零长度图元编码。为零长度指定稳定的
   // 基向量，避免四个顶点全部塌缩到同一位置。
   float2 direction = isPoint ? float2(1.0, 0.0) : delta / rawLength;
   float2 normal = float2(-direction.y, direction.x);
-  float radius = max(input.width * 0.5, 0.5);
+  float width = isPoint ? geometry.w : geometry.z;
+  float radius = max(width * 0.5, 0.5);
   float expansion = radius + 1.0;
   float along = vertexId >= 2 ? lengthValue + expansion : -expansion;
   float side = (vertexId & 1) == 0 ? -expansion : expansion;
-  float2 pixelPosition = input.p0 + direction * along + normal * side;
+  float2 pixelPosition = p0 + direction * along + normal * side;
   output.position = float4(
       pixelPosition.x * 2.0 / targetSize.x - 1.0,
       1.0 - pixelPosition.y * 2.0 / targetSize.y,
@@ -69,11 +87,13 @@ VertexOutput vertexMain(Segment input, uint vertexId : SV_VertexID) {
   output.localPosition = float2(along, side);
   output.segmentLength = lengthValue;
   output.radius = radius;
-  output.color = input.color;
+  output.visible = enabled;
+  output.color = channelColor[channelIndex];
   return output;
 }
 
 float4 pixelMain(VertexOutput input) : SV_TARGET {
+  clip(input.visible - 0.5);
   float beyond = max(max(-input.localPosition.x,
                          input.localPosition.x - input.segmentLength), 0.0);
   // 普通线段保持圆帽抗锯齿；零长度实例绘制为与Canvas点一致的方形。
@@ -103,6 +123,21 @@ int64_t ReadInt(const EncodableMap& map, const char* key, int64_t fallback) {
   return fallback;
 }
 
+double ReadDouble(const EncodableMap& map, const char* key, double fallback) {
+  const EncodableValue* value = FindValue(map, key);
+  if (value == nullptr) return fallback;
+  if (const auto* double_value = std::get_if<double>(value)) {
+    return *double_value;
+  }
+  if (const auto* int32_value = std::get_if<int32_t>(value)) {
+    return static_cast<double>(*int32_value);
+  }
+  if (const auto* int64_value = std::get_if<int64_t>(value)) {
+    return static_cast<double>(*int64_value);
+  }
+  return fallback;
+}
+
 class PlotGpuRendererPlugin final : public flutter::Plugin {
  public:
   static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar) {
@@ -126,10 +161,17 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
 
  private:
   struct FrameConstants {
-    float width;
-    float height;
+    float target_width;
+    float target_height;
+    float x_scale;
+    float x_offset;
+    float y_scale;
+    float y_offset;
     float padding_x;
     float padding_y;
+    std::array<float, kMaxChannels * 4> channel_geometry;
+    std::array<float, kMaxChannels * 4> channel_color;
+    std::array<float, kMaxChannels * 4> channel_flags;
   };
 
   bool Initialize(std::string* error) {
@@ -193,7 +235,7 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
          D3D11_INPUT_PER_INSTANCE_DATA, 1},
         {"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 16,
          D3D11_INPUT_PER_INSTANCE_DATA, 1},
-        {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 20,
+        {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 20,
          D3D11_INPUT_PER_INSTANCE_DATA, 1},
     };
     if (FAILED(device_->CreateInputLayout(
@@ -315,24 +357,23 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
     return true;
   }
 
-  bool Render(const EncodableMap& arguments, std::string* error) {
+  bool UploadGeometry(const EncodableMap& arguments, std::string* error) {
     if (!Initialize(error)) return false;
-    const UINT width = static_cast<UINT>(
-        std::max<int64_t>(1, ReadInt(arguments, "width", 1)));
-    const UINT height = static_cast<UINT>(
-        std::max<int64_t>(1, ReadInt(arguments, "height", 1)));
-    if (!EnsureTargets(width, height, error)) return false;
-    const EncodableValue* segment_value = FindValue(arguments, "segments");
-    const auto* segments =
-        segment_value == nullptr
-            ? nullptr
-            : std::get_if<std::vector<float>>(segment_value);
-    if (segments == nullptr || segments->size() % 9 != 0) {
-      *error = "D3D11 线段数据格式无效";
+    if (ReadInt(arguments, "clientId", 0) != active_client_id_) {
+      *error = "D3D11绘图客户端已失效";
       return false;
     }
-    const size_t segment_count = segments->size() / 9;
-    const size_t byte_length = segments->size() * sizeof(float);
+    const EncodableValue* primitive_value =
+        FindValue(arguments, "primitives");
+    const auto* primitives =
+        primitive_value == nullptr
+            ? nullptr
+            : std::get_if<std::vector<float>>(primitive_value);
+    if (primitives == nullptr || primitives->size() % 6 != 0) {
+      *error = "D3D11 常驻几何数据格式无效";
+      return false;
+    }
+    const size_t byte_length = primitives->size() * sizeof(float);
     if (byte_length > 0 && !EnsureSegmentBuffer(byte_length, error)) {
       return false;
     }
@@ -340,11 +381,43 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       if (FAILED(context_->Map(segment_buffer_.Get(), 0,
                                D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        *error = "D3D11 线段上传失败";
+        *error = "D3D11 常驻几何上传失败";
         return false;
       }
-      memcpy(mapped.pData, segments->data(), byte_length);
+      memcpy(mapped.pData, primitives->data(), byte_length);
       context_->Unmap(segment_buffer_.Get(), 0);
+    }
+    primitive_count_ = primitives->size() / 6;
+    geometry_generation_ = ReadInt(arguments, "generation", 0);
+    geometry_upload_count_++;
+    return true;
+  }
+
+  bool Present(const EncodableMap& arguments, int64_t* frame_id,
+               std::string* error) {
+    if (!Initialize(error)) return false;
+    if (ReadInt(arguments, "clientId", 0) != active_client_id_) {
+      *error = "D3D11绘图客户端已失效";
+      return false;
+    }
+    const int64_t requested_generation =
+        ReadInt(arguments, "generation", 0);
+    if (requested_generation != geometry_generation_) {
+      *error = "D3D11 几何代次已失效";
+      return false;
+    }
+    const UINT width = static_cast<UINT>(
+        std::max<int64_t>(1, ReadInt(arguments, "width", 1)));
+    const UINT height = static_cast<UINT>(
+        std::max<int64_t>(1, ReadInt(arguments, "height", 1)));
+    if (!EnsureTargets(width, height, error)) return false;
+    const EncodableValue* style_value = FindValue(arguments, "styles");
+    const auto* styles = style_value == nullptr
+                             ? nullptr
+                             : std::get_if<std::vector<float>>(style_value);
+    if (styles == nullptr || styles->size() != kMaxChannels * 12) {
+      *error = "D3D11 通道样式数据格式无效";
+      return false;
     }
 
     D3D11_MAPPED_SUBRESOURCE constants_mapped = {};
@@ -354,7 +427,20 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
       return false;
     }
     auto* frame = static_cast<FrameConstants*>(constants_mapped.pData);
-    *frame = {static_cast<float>(width), static_cast<float>(height), 0, 0};
+    frame->target_width = static_cast<float>(width);
+    frame->target_height = static_cast<float>(height);
+    frame->x_scale = static_cast<float>(ReadDouble(arguments, "xScale", 1));
+    frame->x_offset = static_cast<float>(ReadDouble(arguments, "xOffset", 0));
+    frame->y_scale = static_cast<float>(ReadDouble(arguments, "yScale", 1));
+    frame->y_offset = static_cast<float>(ReadDouble(arguments, "yOffset", 0));
+    frame->padding_x = 0;
+    frame->padding_y = 0;
+    std::copy_n(styles->data(), kMaxChannels * 4,
+                frame->channel_geometry.data());
+    std::copy_n(styles->data() + kMaxChannels * 4, kMaxChannels * 4,
+                frame->channel_color.data());
+    std::copy_n(styles->data() + kMaxChannels * 8, kMaxChannels * 4,
+                frame->channel_flags.data());
     context_->Unmap(constants_.Get(), 0);
 
     int render_index;
@@ -386,8 +472,8 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
     context_->RSSetScissorRects(1, &scissor);
     context_->IASetInputLayout(input_layout_.Get());
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-    if (segment_count > 0) {
-      const UINT stride = kSegmentStride;
+    if (primitive_count_ > 0) {
+      const UINT stride = kPrimitiveStride;
       const UINT offset = 0;
       ID3D11Buffer* raw_buffer = segment_buffer_.Get();
       context_->IASetVertexBuffers(0, 1, &raw_buffer, &stride, &offset);
@@ -396,8 +482,8 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
     ID3D11Buffer* raw_constants = constants_.Get();
     context_->VSSetConstantBuffers(0, 1, &raw_constants);
     context_->PSSetShader(pixel_shader_.Get(), nullptr, 0);
-    if (segment_count > 0) {
-      context_->DrawInstanced(4, static_cast<UINT>(segment_count), 0, 0);
+    if (primitive_count_ > 0) {
+      context_->DrawInstanced(4, static_cast<UINT>(primitive_count_), 0, 0);
     }
     context_->Flush();
     {
@@ -407,6 +493,8 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
     if (texture_id_ >= 0) {
       texture_registrar_->MarkTextureFrameAvailable(texture_id_);
     }
+    *frame_id = ReadInt(arguments, "frameId", 0);
+    present_count_++;
     return true;
   }
 
@@ -509,32 +597,61 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
       const flutter::MethodCall<EncodableValue>& call,
       std::unique_ptr<flutter::MethodResult<EncodableValue>> result) {
     if (call.method_name() == "initialize") {
+      const auto* arguments =
+          call.arguments() == nullptr
+              ? nullptr
+              : std::get_if<EncodableMap>(call.arguments());
       std::string error;
       if (!Initialize(&error) || !EnsureTextureRegistered(&error)) {
         result->Error("d3d11_unavailable", error);
         return;
       }
+      active_client_id_ =
+          arguments == nullptr ? 0 : ReadInt(*arguments, "clientId", 0);
       EncodableMap response;
       response[EncodableValue("textureId")] = EncodableValue(texture_id_);
       response[EncodableValue("backend")] = EncodableValue("D3D11");
       result->Success(EncodableValue(response));
       return;
     }
-    if (call.method_name() == "render") {
+    if (call.method_name() == "uploadGeometry") {
       const auto* arguments =
           call.arguments() == nullptr
               ? nullptr
               : std::get_if<EncodableMap>(call.arguments());
       if (arguments == nullptr) {
-        result->Error("invalid_arguments", "缺少 D3D11 绘图参数");
+        result->Error("invalid_arguments", "缺少 D3D11 常驻几何参数");
         return;
       }
       std::string error;
-      if (!EnsureTextureRegistered(&error) || !Render(*arguments, &error)) {
-        result->Error("d3d11_render_failed", error);
+      if (!UploadGeometry(*arguments, &error)) {
+        result->Error("d3d11_upload_failed", error);
         return;
       }
       result->Success();
+      return;
+    }
+    if (call.method_name() == "present") {
+      const auto* arguments =
+          call.arguments() == nullptr
+              ? nullptr
+              : std::get_if<EncodableMap>(call.arguments());
+      if (arguments == nullptr) {
+        result->Error("invalid_arguments", "缺少 D3D11 呈现参数");
+        return;
+      }
+      std::string error;
+      int64_t frame_id = 0;
+      if (!EnsureTextureRegistered(&error) ||
+          !Present(*arguments, &frame_id, &error)) {
+        result->Error("d3d11_present_failed", error);
+        return;
+      }
+      EncodableMap response;
+      response[EncodableValue("frameId")] = EncodableValue(frame_id);
+      response[EncodableValue("generation")] =
+          EncodableValue(geometry_generation_);
+      result->Success(EncodableValue(response));
       return;
     }
     if (call.method_name() == "capture") {
@@ -547,8 +664,34 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
       result->Success(EncodableValue(response));
       return;
     }
+    if (call.method_name() == "stats") {
+      EncodableMap response;
+      response[EncodableValue("geometryUploadCount")] =
+          EncodableValue(geometry_upload_count_);
+      response[EncodableValue("presentCount")] =
+          EncodableValue(present_count_);
+      response[EncodableValue("geometryBytes")] = EncodableValue(
+          static_cast<int64_t>(primitive_count_ * kPrimitiveStride));
+      response[EncodableValue("generation")] =
+          EncodableValue(geometry_generation_);
+      result->Success(EncodableValue(response));
+      return;
+    }
     if (call.method_name() == "dispose") {
-      DisposeTexture();
+      const auto* arguments =
+          call.arguments() == nullptr
+              ? nullptr
+              : std::get_if<EncodableMap>(call.arguments());
+      const int64_t client_id =
+          arguments == nullptr ? 0 : ReadInt(*arguments, "clientId", 0);
+      if (client_id == active_client_id_) {
+        DisposeTexture();
+        segment_buffer_.Reset();
+        segment_buffer_size_ = 0;
+        primitive_count_ = 0;
+        geometry_generation_ = 0;
+        active_client_id_ = 0;
+      }
       result->Success();
       return;
     }
@@ -571,6 +714,11 @@ class PlotGpuRendererPlugin final : public flutter::Plugin {
   ComPtr<ID3D11BlendState> blend_state_;
   ComPtr<ID3D11RasterizerState> rasterizer_state_;
   size_t segment_buffer_size_ = 0;
+  size_t primitive_count_ = 0;
+  int64_t geometry_generation_ = 0;
+  int64_t geometry_upload_count_ = 0;
+  int64_t present_count_ = 0;
+  int64_t active_client_id_ = 0;
 
   std::mutex texture_mutex_;
   std::array<ComPtr<ID3D11Texture2D>, 2> targets_;

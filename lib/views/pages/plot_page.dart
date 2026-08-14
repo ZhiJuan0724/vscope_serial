@@ -31,6 +31,7 @@ import '../plot/plot_gesture_handler.dart';
 import '../plot/plot_draggable_info_box.dart';
 import '../plot/plot_layer_stack.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_presentation_coordinator.dart';
 import '../plot/plot_locator_bar.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
@@ -168,6 +169,8 @@ String _formatCompactCount(int value) {
 }
 
 class _PlotPageContentState extends State<_PlotPageContent> {
+  final PlotPresentationCoordinator _plotPresentation =
+      PlotPresentationCoordinator();
   bool _measurementModifierPressed(PlotViewModel vm) =>
       vm.gestureModifier == PlotGestureModifier.shift
           ? HardwareKeyboard.instance.isShiftPressed
@@ -208,6 +211,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   @override
   void dispose() {
     _hideChannelContextMenu();
+    _plotPresentation.dispose();
     super.dispose();
   }
 
@@ -1825,6 +1829,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           plotFontSizeDelta: vm.plotFontSizeDelta,
           plotFontBold: vm.plotFontBold,
         );
+        if (vm.renderEngine == PlotRenderEngine.canvas ||
+            _plotPresentation.presentedSnapshot == null) {
+          _plotPresentation.present(
+            renderSnapshot,
+            frameId: vm.viewportRevision,
+            notify: false,
+          );
+        }
 
         final previewPanelHeight =
             _previewVisible && vm.previewToolbarEnabled
@@ -1838,6 +1850,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 children: [
                   PlotGestureHandler(
                     viewport: renderViewport,
+                    presentationCoordinator: _plotPresentation,
                     vCursorEnabled: vm.vCursorEnabled,
                     boxZoomEnabled: vm.boxZoomEnabled,
                     onBoxZoomCompleted: () {
@@ -1933,20 +1946,35 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     onChannelYScaleZoom:
                         (index, scaleDelta) =>
                             vm.zoomChannelYScale(index, scaleDelta),
-                    child: PlotLayerStack(snapshot: renderSnapshot),
+                    child: PlotLayerStack(
+                      snapshot: renderSnapshot,
+                      presentationCoordinator: _plotPresentation,
+                    ),
                   ),
                   Positioned.fill(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        return Stack(
-                          children: _buildObservationWidgets(
-                            context,
-                            vm,
-                            renderViewport,
-                            Size(constraints.maxWidth, constraints.maxHeight),
+                    child: AnimatedBuilder(
+                      animation: _plotPresentation,
+                      builder:
+                          (context, _) => LayoutBuilder(
+                            builder: (context, constraints) {
+                              final presentedViewport =
+                                  _plotPresentation
+                                      .presentedSnapshot
+                                      ?.viewport ??
+                                  renderViewport;
+                              return Stack(
+                                children: _buildObservationWidgets(
+                                  context,
+                                  vm,
+                                  presentedViewport,
+                                  Size(
+                                    constraints.maxWidth,
+                                    constraints.maxHeight,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
-                        );
-                      },
                     ),
                   ),
                   // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）

@@ -96,11 +96,7 @@ abstract final class PlotViewportQuery {
         exactData[exactRange.$1].index <= xMin.ceil() &&
         exactData[exactRange.$2 - 1].index >= xMax.floor();
     final visiblePointCount = math.max(0, xMax.floor() - xMin.ceil() + 1);
-    final rawLimit = switch (quality) {
-      PlotLodQuality.performance => physicalWidth,
-      PlotLodQuality.balanced => physicalWidth * 2,
-      PlotLodQuality.quality => physicalWidth * 4,
-    };
+    final rawLimit = physicalWidth * quality.rawPointsPerPhysicalPixel;
 
     if (exactCoversViewport && visiblePointCount <= rawLimit) {
       return _buildRaw(exactData, exactRange, channelIndex, workspace);
@@ -119,7 +115,7 @@ abstract final class PlotViewportQuery {
       );
     }
 
-    final columnSpan = quality == PlotLodQuality.performance ? 2 : 1;
+    final columnSpan = quality.physicalPixelsPerM4Column;
     final maxBucketSize = math.max(
       PlotLodIndex.minBucketSize,
       (((xMax - xMin) / physicalWidth) * columnSpan).floor(),
@@ -285,7 +281,7 @@ abstract final class PlotViewportQuery {
     required PlotLodQuality quality,
     required PlotGeometryWorkspace workspace,
   }) {
-    final columnSpan = quality == PlotLodQuality.performance ? 2 : 1;
+    final columnSpan = quality.physicalPixelsPerM4Column;
     final columnCount = math.max(1, (physicalWidth / columnSpan).ceil());
     final maxPoints = columnCount * 4;
     final indices = workspace.ensureIndices(maxPoints);

@@ -239,7 +239,8 @@ final class _PlotStrings {
   String get lodQualityPerformance => '性能优先';
   String get lodQualityBalanced => '均衡';
   String get lodQualityQuality => '质量优先';
-  String get lodQualityHelp => '更高的绘图质量会增加绘图性能开销。';
+  String get lodQualityHelp =>
+      '性能优先最多合并相邻两个物理像素列；均衡和质量优先按单个物理像素列保留峰谷，质量优先在放大后更早恢复完整原始点。';
   String get receiveAggregation => '绘图高频接收合并';
   String get receiveAggregationHelp =>
       '仅绘图接收时短暂合并连续小块数据，降低高频大量数据的处理开销；可能轻微增加绘图显示延迟。';

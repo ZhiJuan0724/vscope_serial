@@ -11,6 +11,7 @@ import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_painter.dart';
+import 'plot_presentation_coordinator.dart';
 import 'plot_viewport.dart';
 
 /// 绘图手势处理器
@@ -32,6 +33,9 @@ import 'plot_viewport.dart';
 class PlotGestureHandler extends StatefulWidget {
   /// 当前绘图视口
   final PlotViewport viewport;
+
+  /// D3D11异步呈现时，坐标命中使用真正显示在屏幕上的视口。
+  final PlotPresentationCoordinator? presentationCoordinator;
 
   /// 视口变化回调（缩放、平移、框选放大）
   ///
@@ -141,6 +145,7 @@ class PlotGestureHandler extends StatefulWidget {
   PlotGestureHandler({
     super.key,
     required this.viewport,
+    this.presentationCoordinator,
     required this.onViewportChanged,
     required this.onCursorChanged,
     this.vCursorEnabled = false,
@@ -215,6 +220,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   static const int _maxSnapScanPoints = 4096;
   static const double _minimumBoxZoomExtent = 4;
   int _measurementGroupIndex = 0;
+
+  PlotViewport get _presentedViewport =>
+      widget.presentationCoordinator?.presentedSnapshot?.viewport ??
+      widget.viewport;
 
   bool get _isZoomModifierPressed => switch (widget.gestureModifier) {
     PlotGestureModifier.shift => HardwareKeyboard.instance.isShiftPressed,
@@ -305,7 +314,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
     final index = _nearestPointListIndexByX(x);
     return index == null
-        ? x.clamp(widget.viewport.xMin, widget.viewport.xMax).toDouble()
+        ? x.clamp(_presentedViewport.xMin, _presentedViewport.xMax).toDouble()
         : widget.data[index].index.toDouble();
   }
 
@@ -343,6 +352,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   ({int start, int end})? _visibleDataRange() {
     if (widget.data.isEmpty) return null;
+    final viewport = _presentedViewport;
 
     int start = 0;
     int end = widget.data.length;
@@ -350,7 +360,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     var right = widget.data.length;
     while (left < right) {
       final mid = (left + right) ~/ 2;
-      if (widget.data[mid].index < widget.viewport.xMin) {
+      if (widget.data[mid].index < viewport.xMin) {
         left = mid + 1;
       } else {
         right = mid;
@@ -362,7 +372,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     right = widget.data.length;
     while (left < right) {
       final mid = (left + right) ~/ 2;
-      if (widget.data[mid].index <= widget.viewport.xMax) {
+      if (widget.data[mid].index <= viewport.xMax) {
         left = mid + 1;
       } else {
         right = mid;
@@ -375,6 +385,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   }
 
   double _snapYToNearestVisiblePoint(Offset pos, Size size) {
+    final viewport = _presentedViewport;
     final targetScreenY =
         pos.dy
             .clamp(
@@ -382,7 +393,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
               size.height - PlotViewport().marginBottom,
             )
             .toDouble();
-    var bestY = widget.viewport.screenToDataY(targetScreenY, size.height);
+    var bestY = viewport.screenToDataY(targetScreenY, size.height);
     if (widget.data.isEmpty) return bestY;
 
     final range = _visibleDataRange();
@@ -431,7 +442,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       if (!channel.visible) continue;
 
       final pointY = point.values[i] * channel.yScale + channel.yOffset;
-      final pointScreenY = widget.viewport.dataToScreenY(pointY, size.height);
+      final pointScreenY = _presentedViewport.dataToScreenY(
+        pointY,
+        size.height,
+      );
       visit((pointScreenY - targetScreenY).abs(), pointY);
     }
   }
@@ -660,11 +674,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return;
 
-    final x = widget.viewport.screenToDataX(event.localPosition.dx, size.width);
-    final y = widget.viewport.screenToDataY(
-      event.localPosition.dy,
-      size.height,
-    );
+    final viewport = _presentedViewport;
+    final x = viewport.screenToDataX(event.localPosition.dx, size.width);
+    final y = viewport.screenToDataY(event.localPosition.dy, size.height);
 
     if (widget.observationPlacementActive) {
       widget.onObservationPlacementHover?.call(x);
@@ -744,7 +756,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     if (widget.observationPlacementActive) {
       final size = context.size ?? Size.zero;
       if (size.isEmpty) return;
-      final x = widget.viewport.screenToDataX(
+      final x = _presentedViewport.screenToDataX(
         event.localPosition.dx,
         size.width,
       );
@@ -792,7 +804,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       _dragTarget = _DragTarget.channelOffset;
       _offsetChannelIndex = offsetAxisHit;
       _offsetDragUsesDelta = true;
-      _offsetDragStartDataY = widget.viewport.screenToDataY(
+      _offsetDragStartDataY = _presentedViewport.screenToDataY(
         event.localPosition.dy.clamp(
           PlotViewport().marginTop,
           size.height - PlotViewport().marginBottom,
@@ -903,6 +915,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   _DragTarget _hitTestMeasurementLabel(Offset pos) {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return _DragTarget.none;
+    final viewport = _presentedViewport;
 
     // X-X 测量：检测 X1/X2 标签（标签在绘图区顶部内侧）
     final xGroups =
@@ -920,12 +933,12 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
         for (var i = xGroups.length - 1; i >= 0; i--) {
           final group = xGroups[i];
-          final sx1 = widget.viewport.dataToScreenX(group.cursor1, size.width);
+          final sx1 = viewport.dataToScreenX(group.cursor1, size.width);
           if ((pos.dx - sx1).abs() < _labelWidth / 2 + 6) {
             _measurementGroupIndex = i;
             return _DragTarget.xCursor1;
           }
-          final sx2 = widget.viewport.dataToScreenX(group.cursor2, size.width);
+          final sx2 = viewport.dataToScreenX(group.cursor2, size.width);
           if ((pos.dx - sx2).abs() < _labelWidth / 2 + 6) {
             _measurementGroupIndex = i;
             return _DragTarget.xCursor2;
@@ -936,22 +949,14 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final topY = PlotViewport().marginTop + 12;
       if ((pos.dy - topY).abs() < _labelHeight / 2 + 6) {
         if (widget.xCursor1 != null &&
-            (pos.dx -
-                        widget.viewport.dataToScreenX(
-                          widget.xCursor1!,
-                          size.width,
-                        ))
+            (pos.dx - viewport.dataToScreenX(widget.xCursor1!, size.width))
                     .abs() <
                 _labelWidth / 2 + 6) {
           _measurementGroupIndex = 0;
           return _DragTarget.xCursor1;
         }
         if (widget.xCursor2 != null &&
-            (pos.dx -
-                        widget.viewport.dataToScreenX(
-                          widget.xCursor2!,
-                          size.width,
-                        ))
+            (pos.dx - viewport.dataToScreenX(widget.xCursor2!, size.width))
                     .abs() <
                 _labelWidth / 2 + 6) {
           _measurementGroupIndex = 0;
@@ -972,16 +977,16 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
                 ),
             ];
     if (yGroups.isNotEmpty) {
-      final leftX = widget.viewport.marginLeft - 18;
+      final leftX = viewport.marginLeft - 18;
       if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
         for (var i = yGroups.length - 1; i >= 0; i--) {
           final group = yGroups[i];
-          final sy1 = widget.viewport.dataToScreenY(group.cursor1, size.height);
+          final sy1 = viewport.dataToScreenY(group.cursor1, size.height);
           if ((pos.dy - sy1).abs() < _labelHeight / 2 + 6) {
             _measurementGroupIndex = i;
             return _DragTarget.yCursor1;
           }
-          final sy2 = widget.viewport.dataToScreenY(group.cursor2, size.height);
+          final sy2 = viewport.dataToScreenY(group.cursor2, size.height);
           if ((pos.dy - sy2).abs() < _labelHeight / 2 + 6) {
             _measurementGroupIndex = i;
             return _DragTarget.yCursor2;
@@ -989,25 +994,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         }
       }
     } else {
-      final leftX = widget.viewport.marginLeft - 18;
+      final leftX = viewport.marginLeft - 18;
       if ((pos.dx - leftX).abs() < _labelWidth / 2 + 6) {
         if (widget.yCursor1 != null &&
-            (pos.dy -
-                        widget.viewport.dataToScreenY(
-                          widget.yCursor1!,
-                          size.height,
-                        ))
+            (pos.dy - viewport.dataToScreenY(widget.yCursor1!, size.height))
                     .abs() <
                 _labelHeight / 2 + 6) {
           _measurementGroupIndex = 0;
           return _DragTarget.yCursor1;
         }
         if (widget.yCursor2 != null &&
-            (pos.dy -
-                        widget.viewport.dataToScreenY(
-                          widget.yCursor2!,
-                          size.height,
-                        ))
+            (pos.dy - viewport.dataToScreenY(widget.yCursor2!, size.height))
                     .abs() <
                 _labelHeight / 2 + 6) {
           _measurementGroupIndex = 0;
@@ -1021,19 +1018,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final bottomY = size.height - PlotViewport().marginBottom - 10;
       if ((pos.dy - bottomY).abs() < _labelHeight / 2 + 6) {
         if (widget.statsX1 != null) {
-          final sx1 = widget.viewport.dataToScreenX(
-            widget.statsX1!,
-            size.width,
-          );
+          final sx1 = viewport.dataToScreenX(widget.statsX1!, size.width);
           if ((pos.dx - sx1).abs() < _labelWidth / 2 + 6) {
             return _DragTarget.statsX1;
           }
         }
         if (widget.statsX2 != null) {
-          final sx2 = widget.viewport.dataToScreenX(
-            widget.statsX2!,
-            size.width,
-          );
+          final sx2 = viewport.dataToScreenX(widget.statsX2!, size.width);
           if ((pos.dx - sx2).abs() < _labelWidth / 2 + 6) {
             return _DragTarget.statsX2;
           }
@@ -1050,19 +1041,17 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   int? _hitTestObservation(Offset pos, {bool includeLocked = true}) {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return null;
+    final viewport = _presentedViewport;
 
     final plotTop = PlotViewport().marginTop;
     final plotBottom = size.height - PlotViewport().marginBottom;
-    final plotLeft = widget.viewport.marginLeft;
-    final plotRight = size.width - widget.viewport.marginRight;
+    final plotLeft = viewport.marginLeft;
+    final plotRight = size.width - viewport.marginRight;
     if (pos.dx < plotLeft || pos.dx > plotRight) return null;
 
     for (int i = widget.observations.length - 1; i >= 0; i--) {
       if (!includeLocked && widget.observations[i].locked) continue;
-      final sx = widget.viewport.dataToScreenX(
-        widget.observations[i].x,
-        size.width,
-      );
+      final sx = viewport.dataToScreenX(widget.observations[i].x, size.width);
       final onHandle =
           pos.dy >= plotTop - 24 &&
           pos.dy <= plotTop &&
@@ -1288,14 +1277,15 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   ///
   /// X 轴测量线、统计范围线和 Y-Y 测量线都吸附到当前显示窗口内的可见数据点。
   void _handleMeasurementDrag(Offset pos, Size size) {
+    final viewport = _presentedViewport;
     switch (_dragTarget) {
       case _DragTarget.xCursor1:
         if (widget.onXMeasurementDrag != null ||
             widget.onXCursor1Drag != null) {
-          final x = widget.viewport.screenToDataX(
+          final x = viewport.screenToDataX(
             pos.dx.clamp(
-              widget.viewport.marginLeft,
-              size.width - widget.viewport.marginRight,
+              viewport.marginLeft,
+              size.width - viewport.marginRight,
             ),
             size.width,
           );
@@ -1310,10 +1300,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       case _DragTarget.xCursor2:
         if (widget.onXMeasurementDrag != null ||
             widget.onXCursor2Drag != null) {
-          final x = widget.viewport.screenToDataX(
+          final x = viewport.screenToDataX(
             pos.dx.clamp(
-              widget.viewport.marginLeft,
-              size.width - widget.viewport.marginRight,
+              viewport.marginLeft,
+              size.width - viewport.marginRight,
             ),
             size.width,
           );
@@ -1331,11 +1321,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final value =
               widget.yMeasurementSnapEnabled
                   ? _snapYToNearestVisiblePoint(pos, size)
-                  : widget.viewport.screenToDataY(
+                  : viewport.screenToDataY(
                     pos.dy
                         .clamp(
-                          widget.viewport.marginTop,
-                          size.height - widget.viewport.marginBottom,
+                          viewport.marginTop,
+                          size.height - viewport.marginBottom,
                         )
                         .toDouble(),
                     size.height,
@@ -1353,11 +1343,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           final value =
               widget.yMeasurementSnapEnabled
                   ? _snapYToNearestVisiblePoint(pos, size)
-                  : widget.viewport.screenToDataY(
+                  : viewport.screenToDataY(
                     pos.dy
                         .clamp(
-                          widget.viewport.marginTop,
-                          size.height - widget.viewport.marginBottom,
+                          viewport.marginTop,
+                          size.height - viewport.marginBottom,
                         )
                         .toDouble(),
                     size.height,
@@ -1371,10 +1361,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         break;
       case _DragTarget.statsX1:
         if (widget.onStatsX1Drag != null && widget.statsX1 != null) {
-          final x = widget.viewport.screenToDataX(
+          final x = viewport.screenToDataX(
             pos.dx.clamp(
-              widget.viewport.marginLeft,
-              size.width - widget.viewport.marginRight,
+              viewport.marginLeft,
+              size.width - viewport.marginRight,
             ),
             size.width,
           );
@@ -1383,10 +1373,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         break;
       case _DragTarget.statsX2:
         if (widget.onStatsX2Drag != null && widget.statsX2 != null) {
-          final x = widget.viewport.screenToDataX(
+          final x = viewport.screenToDataX(
             pos.dx.clamp(
-              widget.viewport.marginLeft,
-              size.width - widget.viewport.marginRight,
+              viewport.marginLeft,
+              size.width - viewport.marginRight,
             ),
             size.width,
           );
@@ -1395,7 +1385,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         break;
       case _DragTarget.channelOffset:
         if (widget.onChannelOffsetDrag != null && _offsetChannelIndex >= 0) {
-          final y = widget.viewport.screenToDataY(
+          final y = viewport.screenToDataY(
             pos.dy.clamp(
               PlotViewport().marginTop,
               size.height - PlotViewport().marginBottom,
@@ -1411,10 +1401,10 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         break;
       case _DragTarget.observation:
         if (widget.onObservationDrag != null && _observationIndex >= 0) {
-          final x = widget.viewport.screenToDataX(
+          final x = viewport.screenToDataX(
             pos.dx.clamp(
-              widget.viewport.marginLeft,
-              size.width - widget.viewport.marginRight,
+              viewport.marginLeft,
+              size.width - viewport.marginRight,
             ),
             size.width,
           );

@@ -150,6 +150,8 @@ flowchart LR
 
 Canvas与D3D11只允许在“如何提交几何”上不同。两种引擎必须读取同一个`PlotRenderSnapshot`，通过同一个`PlotViewportQuery`生成`PlotGeometryBatch`；LOD选择、M4聚合、点序、断点、通道缩放和偏置不得在渲染后端中另写一套。
 
+三档质量只定义几何密度，不定义渲染特效：性能、均衡、质量档直接绘制原始点的阈值分别为每物理像素1、2、4点，高密度M4的列跨度分别为2、1、1个物理像素。均衡与质量档在高密度视口可能得到相同几何；质量档主要在放大后更早恢复完整原始点。抗锯齿、线宽、点半径、缓存、刷新率以及Canvas/D3D11选择均不得由质量档隐式改变。
+
 公共查询链路：
 
 ```mermaid
@@ -183,22 +185,30 @@ D3D11路径：
 ```mermaid
 flowchart LR
     batch["PlotGeometryBatch"] --> dart["D3d11PlotSurface / Dart图元编码"]
-    dart --> channel["MethodChannel / latest request wins"]
-    channel --> plugin["Windows D3D11插件"]
-    plugin --> buffer["实例化线段与方形点缓冲"]
-    buffer --> texture["DXGI共享纹理"]
+    dart --> upload["数据坐标图元 / 仅几何变化时上传"]
+    upload --> buffer["D3D11常驻图元缓冲"]
+    frame["PlotFrameTransform"] --> uniform["视口矩阵与通道样式"]
+    buffer --> plugin["Windows D3D11插件"]
+    uniform --> plugin
+    plugin --> texture["双缓冲DXGI共享纹理"]
     texture --> flutter["Flutter Texture数据层"]
-    flutter --> composite["PlotLayerStack与坐标轴、光标、测量层合成"]
+    plugin --> presented["返回已呈现frameId"]
+    presented --> coordinator["PlotPresentationCoordinator"]
+    flutter --> composite["PlotLayerStack合成"]
+    coordinator --> composite
+    coordinator --> overlay["坐标轴、观察、光标、测量及命中测试"]
 ```
 
-D3D11只接收屏幕坐标、线宽、点大小和颜色，不得读取原始历史或自行降采样。零长度图元表示方形点，普通相邻点表示抗锯齿线段；`runOffsets`之间不得连接。初始化、提交、纹理重建或设备异常时必须回退Canvas，保留历史且不修改用户选择的质量档。
+D3D11只接收公共查询生成的数据坐标图元，不得读取原始历史或自行降采样。当前视口和两侧预取范围的图元常驻GPU；Y方向交互、预取范围内平移和有效密度区间内缩放只更新矩阵与样式。零长度点图元和普通线图元分别编码，`runOffsets`之间不得连接。常驻几何限制为64 MiB；初始化、上传、呈现、纹理重建或设备异常时必须回退Canvas，保留历史且不修改用户质量档。
+
+D3D11纹理提交是异步的。`PlotFrameTransform`统一逻辑尺寸、DPR、动态边距、正反坐标变换和原生矩阵；原生完成前后台纹理切换后返回`frameId`，`PlotPresentationCoordinator`才发布对应快照。曲线、网格、坐标轴、观察、光标、吸附、测量和统计范围必须消费同一个已呈现快照。页面Widget层不得直接用最新ViewModel视口定位数据锚点，否则快速拖动时会领先纹理一帧。
 
 维护两种引擎时遵守以下规则：
 
 - 波形语义只在`PlotViewportQuery`和`PlotGeometryBatch`中修改；禁止在Painter、D3D11 Dart层或HLSL中改变点序、补趋势线或重新选择LOD。
-- 点与线必须消费同一次查询得到的批次。新增通道显示变换时，Canvas与D3D11必须使用相同的scale、offset、可见性、线宽、点大小和物理像素比例。
+- 点与线必须消费同一次查询得到的批次。新增通道显示变换时，Canvas与D3D11必须使用相同的scale、offset、可见性、线宽、点大小和物理像素比例；D3D11只能在Shader中应用该公共帧状态，不能改写数据拓扑。
 - 新增断点、无效值或分段语义时，先扩展`runOffsets`及其单元测试，再分别验证Canvas不会跨run画线、D3D11不会跨run生成实例。
-- 坐标轴、网格、光标、测量和观察继续由Flutter叠加层绘制，不应复制到D3D11插件；这些功能不得改变数据层几何。
+- 坐标轴、网格、光标、测量和观察继续由Flutter叠加层绘制，不应复制到D3D11插件；所有数据坐标Widget必须订阅已呈现快照，手势命中也必须使用当前已呈现视口。
 - 修改任何公共查询或渲染属性后，至少运行视口查询、Painter和完整测试，并在Windows Profile下运行D3D11正确性测试。测试必须同时覆盖平滑波形、孤立尖峰、低密度点标记和纹理尺寸变化。
 - 性能优化只有在两种引擎的正确性结果一致后才有效；不得以隐藏尖峰、跨通道连接、点线错位或改变阶跃宽度换取帧率。
 

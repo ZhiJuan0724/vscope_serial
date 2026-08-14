@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../data/models/plot_render_engine.dart';
 import 'd3d11_plot_surface.dart';
 import 'plot_painter.dart';
+import 'plot_presentation_coordinator.dart';
 import 'plot_viewport.dart';
 
 /// 只订阅冻结渲染快照的四层绘图组件。
@@ -14,9 +15,14 @@ import 'plot_viewport.dart';
 /// 平移只移动该纹理，避免 Raster 每帧重新光栅化数万条高密度线段。越过
 /// 预取范围或数据发生变化时自动回到 Canvas 并生成下一张缓存。
 class PlotLayerStack extends StatefulWidget {
-  const PlotLayerStack({required this.snapshot, super.key});
+  const PlotLayerStack({
+    required this.snapshot,
+    this.presentationCoordinator,
+    super.key,
+  });
 
   final PlotRenderSnapshot snapshot;
+  final PlotPresentationCoordinator? presentationCoordinator;
 
   @override
   State<PlotLayerStack> createState() => _PlotLayerStackState();
@@ -31,16 +37,15 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
   static const int _rapidMotionCooldownMicros = 200000;
 
   final PlotGeometryBuffers _geometryBuffers = PlotGeometryBuffers();
-  PlotRenderSnapshot? _axisSnapshot;
   PlotRenderSnapshot? _dataBaseSnapshot;
   ui.Image? _dataRasterImage;
   Size? _dataRasterLogicalSize;
   int _captureGeneration = 0;
   bool _captureScheduled = false;
-  int _lastAxisUpdateMicros = 0;
   PlotViewport? _lastInteractionViewport;
   int? _lastInteractionMicros;
   int _rapidMotionUntilMicros = 0;
+  PlotRenderSnapshot? _presentedSnapshot;
 
   @override
   void dispose() {
@@ -52,14 +57,17 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
   @override
   Widget build(BuildContext context) {
     final current = widget.snapshot;
+    if (current.renderEngine == PlotRenderEngine.canvas) {
+      _presentedSnapshot = current;
+      widget.presentationCoordinator?.present(
+        current,
+        frameId: current.viewportRevision,
+        notify: false,
+      );
+    }
+    final presented = _presentedSnapshot ?? current;
     final nowMicros = DateTime.now().microsecondsSinceEpoch;
     _updateInteractionVelocity(current, nowMicros);
-    if (!current.interactionActive ||
-        _axisSnapshot == null ||
-        nowMicros - _lastAxisUpdateMicros >= 33333) {
-      _axisSnapshot = current;
-      _lastAxisUpdateMicros = nowMicros;
-    }
     _resolveDataBase(current);
 
     return LayoutBuilder(
@@ -77,13 +85,13 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
         return Stack(
           fit: StackFit.expand,
           children: [
-            _paintLayer(PlotPaintLayer.background, _axisSnapshot!),
+            _paintLayer(PlotPaintLayer.background, presented),
             ClipRect(
-              clipper: _PlotAreaClipper(current.viewport),
+              clipper: _PlotAreaClipper(presented.viewport),
               child: _buildDataLayer(current, size),
             ),
-            _paintLayer(PlotPaintLayer.axis, _axisSnapshot!),
-            _paintLayer(PlotPaintLayer.overlay, current),
+            _paintLayer(PlotPaintLayer.axis, presented),
+            _paintLayer(PlotPaintLayer.overlay, presented),
           ],
         );
       },
@@ -95,6 +103,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
       return D3d11PlotSurface(
         snapshot: current,
         size: size,
+        onFramePresented: _handleD3dFramePresented,
         fallback: _paintLayer(
           PlotPaintLayer.data,
           current,
@@ -132,6 +141,12 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
       );
     }
     return _paintLayer(PlotPaintLayer.data, current, externalDataClip: true);
+  }
+
+  void _handleD3dFramePresented(PlotRenderSnapshot snapshot, int frameId) {
+    if (!mounted) return;
+    setState(() => _presentedSnapshot = snapshot);
+    widget.presentationCoordinator?.present(snapshot, frameId: frameId);
   }
 
   Widget _paintLayer(

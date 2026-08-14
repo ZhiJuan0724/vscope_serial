@@ -64,6 +64,8 @@ abstract final class PlotPerformanceMetric {
   static const String canvasSubmitMicros = 'canvas.submit.us';
   static const String gpuSubmitMicros = 'gpu.submit.us';
   static const String gpuSubmitCount = 'gpu.submit.count';
+  static const String gpuGeometryUploadCount = 'gpu.geometry.upload.count';
+  static const String gpuViewportOnlyCount = 'gpu.viewport.only.count';
   static const String gpuSegmentCount = 'gpu.segment.count';
   static const String lodBucketCount = 'lod.bucket.count';
   static const String geometryPointCount = 'geometry.point.count';

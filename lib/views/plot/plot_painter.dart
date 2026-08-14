@@ -785,30 +785,13 @@ class PlotLayerPainter extends CustomPainter {
         lodIndex?.length ?? (data.isEmpty ? 0 : data.last.index + 1);
     final viewportDataCount = _visibleHistoryPointCount(historyLength);
 
-    // 三档只改变绘制阶段的数据选择，不改变接收阶段的增量 LOD 索引：
-    // - 性能优先：精确窗口在 8 点/逻辑像素以内时保持像素桶，
-    //   更高密度查询标准 LOD。
-    // - 均衡：完整精确窗口在 32 点/逻辑像素以内时按像素聚合；
-    //   其余范围查询细一级 LOD，在绘制质量与输出点数间折中。
-    // - 质量优先：精确窗口处理与均衡相同；查询历史时比均衡再细一级
-    //   LOD。输出点数更多，但仍不会无上限扫描当前窗口或全量历史。
-    final useExactQualityBuckets = _canUseExactQualityBuckets(
-      visibleIndices,
-      viewportDataCount,
-      plotW,
-    );
+    // 三档只改变 PlotViewportQuery 的几何密度：直接绘制原始点的阈值为
+    // 每物理像素 1/2/4 点，高密度 M4 的列跨度为 2/1/1 个物理像素。
+    // 接收阶段的增量 LOD、线条样式、抗锯齿和渲染后端均不随档位变化。
     final exactWindowCoversViewport = _exactWindowCoversViewport(
       visibleIndices,
     );
-    final canUseLod =
-        !useExactQualityBuckets &&
-        lodIndex != null &&
-        lodIndex!.isNotEmpty &&
-        (lodIndex!.canQuery(viewportDataCount, plotW) ||
-            !exactWindowCoversViewport) &&
-        activeChannelCount > 0;
-    final dataCount = visibleIndices.end - visibleIndices.start;
-    final useMinMaxBuckets = dataCount > plotW;
+    final hasLod = lodIndex != null && lodIndex!.isNotEmpty;
     final plotH = viewport.plotHeight(size.height);
     if (plotW <= 0 || plotH <= 0) return;
 
@@ -825,7 +808,7 @@ class PlotLayerPainter extends CustomPainter {
     for (int ch = 0; ch < channels.length && ch < activeChannelCount; ch++) {
       final channel = channels[ch];
       if (!channel.visible) continue;
-      if (!canUseLod &&
+      if (!hasLod &&
           (visibleIndices.start >= visibleIndices.end ||
               ch >= data.first.values.length)) {
         continue;
@@ -837,29 +820,11 @@ class PlotLayerPainter extends CustomPainter {
         ch,
         channel,
         visibleIndices,
-        useMinMaxBuckets,
-        canUseLod,
+        exactWindowCoversViewport,
+        viewportDataCount,
       );
     }
     if (!externalDataClip) canvas.restore();
-  }
-
-  bool _canUseExactQualityBuckets(
-    _Range visibleRange,
-    double viewportDataCount,
-    double plotWidth,
-  ) {
-    final maxPointsPerPixel =
-        lodQuality == PlotLodQuality.performance
-            ? PlotConfiguration.lodPerformanceExactMaxPointsPerPixel
-            : PlotConfiguration.lodQualityExactMaxPointsPerPixel;
-    if (plotWidth <= 0 ||
-        viewportDataCount > plotWidth * maxPointsPerPixel ||
-        !_exactWindowCoversViewport(visibleRange)) {
-      return false;
-    }
-
-    return true;
   }
 
   bool _exactWindowCoversViewport(_Range visibleRange) {
@@ -876,16 +841,6 @@ class PlotLayerPainter extends CustomPainter {
     return firstIndex <= expectedStart &&
         lastIndex >= expectedEnd &&
         visibleCount >= expectedEnd - expectedStart + 1;
-  }
-
-  bool debugUsesExactQualityBuckets(Size size) {
-    final historyLength =
-        lodIndex?.length ?? (data.isEmpty ? 0 : data.last.index + 1);
-    return _canUseExactQualityBuckets(
-      _findVisibleRange(),
-      _visibleHistoryPointCount(historyLength),
-      viewport.plotWidth(size.width),
-    );
   }
 
   double _visibleHistoryPointCount(int historyLength) {
@@ -918,13 +873,10 @@ class PlotLayerPainter extends CustomPainter {
     int channelIndex,
     ChannelConfig channel,
     _Range visibleRange,
-    bool useMinMaxBuckets,
-    bool canUseLod,
+    bool exactWindowCoversViewport,
+    double viewportDataCount,
   ) {
-    final visibleCount =
-        canUseLod
-            ? math.max(0, viewport.xRange.round())
-            : visibleRange.end - visibleRange.start;
+    final visibleCount = math.max(0, viewportDataCount.round());
     PlotGeometryBatch? sharedGeometry;
     var geometryQueried = false;
 
@@ -1023,7 +975,9 @@ class PlotLayerPainter extends CustomPainter {
       final geometry = querySharedGeometry();
       if (geometry != null && !geometry.isEmpty) {
         _drawGeometryPoints(canvas, size, channel, geometry, pointPaint);
-      } else if (!canUseLod) {
+      } else if (exactWindowCoversViewport ||
+          (visibleRange.start < visibleRange.end &&
+              (lodIndex == null || lodIndex!.isEmpty))) {
         _drawChannelPoints(
           canvas,
           size,

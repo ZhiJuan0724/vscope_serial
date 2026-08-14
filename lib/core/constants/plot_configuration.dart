@@ -153,21 +153,6 @@ abstract final class PlotConfiguration {
   /// 历史预算之外为界面、解析和导入等内存保留的 RSS 余量。
   static const int emergencyRssHeadroomBytes = 2 * bytesPerGiB;
 
-  /// 均衡和质量优先模式允许使用精确像素桶绘制的数据密度上限。
-  ///
-  /// 该限制让精确扫描量继续受绘图区宽度约束，避免大范围视口拖慢绘制。
-  static const double lodQualityExactMaxPointsPerPixel = 32;
-
-  /// 性能优先仍应优先保持波形拓扑；只有精确窗口密度明显超过屏幕承载能力
-  /// 时才切换到历史 LOD，避免轻微缩小时 64 点桶破坏周期波形。
-  static const double lodPerformanceExactMaxPointsPerPixel = 8;
-
-  /// 均衡模式查询大范围历史时相对性能优先细化的 LOD 层数。
-  static const int lodBalancedFinerLevelCount = 1;
-
-  /// 质量优先模式查询大范围历史时相对性能优先细化的 LOD 层数。
-  static const int lodQualityFinerLevelCount = 2;
-
   /// 内置随机源生成数值时使用的默认下限。
   static const double randomSourceDefaultMin = 0;
 

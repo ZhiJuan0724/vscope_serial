@@ -395,63 +395,7 @@ void main() {
       expect(PlotLayerPainter.debugFontSizeFor(12, 1), 14);
     });
 
-    test('三档在各自密度上限内使用精确像素桶', () {
-      final lod = PlotLodIndex();
-      final data = <PlotDataPoint>[];
-      for (var i = 0; i < 650; i++) {
-        final value = math.sin(i / 31) * 40 + 50;
-        lod.add(i, [value]);
-        data.add(
-          PlotDataPoint(index: i, timestamp: i.toDouble(), values: [value]),
-        );
-      }
-      final channels = [ChannelConfig(index: 0, color: Colors.red)];
-      final viewport = PlotViewport(xMin: 0, xMax: 649, yMin: 0, yMax: 100);
-
-      final performance = PlotLayerPainter(
-        layer: PlotPaintLayer.data,
-        viewport: viewport,
-        data: data,
-        lodIndex: lod,
-        channels: channels,
-        activeChannelCount: 1,
-      );
-      final balanced = PlotLayerPainter(
-        layer: PlotPaintLayer.data,
-        viewport: viewport,
-        data: data,
-        lodIndex: lod,
-        lodQuality: PlotLodQuality.balanced,
-        channels: channels,
-        activeChannelCount: 1,
-      );
-      final quality = PlotLayerPainter(
-        layer: PlotPaintLayer.data,
-        viewport: viewport,
-        data: data,
-        lodIndex: lod,
-        lodQuality: PlotLodQuality.quality,
-        channels: channels,
-        activeChannelCount: 1,
-      );
-
-      expect(
-        performance.debugUsesExactQualityBuckets(const Size(500, 300)),
-        isTrue,
-      );
-      expect(
-        balanced.debugUsesExactQualityBuckets(const Size(500, 300)),
-        isTrue,
-      );
-      expect(
-        quality.debugUsesExactQualityBuckets(const Size(500, 300)),
-        isTrue,
-      );
-      expect(balanced.shouldRepaint(performance), isTrue);
-      expect(quality.shouldRepaint(performance), isTrue);
-    });
-
-    test('交互预览保持质量档精确像素桶并触发数据层重绘', () {
+    test('交互预览保持用户质量档并触发数据层重绘', () {
       final lod = PlotLodIndex();
       final data = <PlotDataPoint>[];
       for (var i = 0; i < 650; i++) {
@@ -485,43 +429,7 @@ void main() {
         ),
       );
 
-      expect(
-        settled.debugUsesExactQualityBuckets(const Size(500, 300)),
-        isTrue,
-      );
-      expect(
-        interacting.debugUsesExactQualityBuckets(const Size(500, 300)),
-        isTrue,
-      );
       expect(interacting.shouldRepaint(settled), isTrue);
-    });
-
-    test('视口空白区不计入有效密度且性能档保留精确波形', () {
-      final lod = PlotLodIndex();
-      final data = <PlotDataPoint>[];
-      for (var i = 0; i < 500; i++) {
-        final value = math.sin(i * 0.07) * 40 + 50;
-        lod.add(i, [value]);
-        data.add(
-          PlotDataPoint(index: i, timestamp: i.toDouble(), values: [value]),
-        );
-      }
-      final painter = PlotLayerPainter.fromSnapshot(
-        layer: PlotPaintLayer.data,
-        snapshot: PlotRenderSnapshot(
-          viewport: PlotViewport(xMin: -200, xMax: 1400, yMin: 0, yMax: 100),
-          data: data,
-          lodIndex: lod,
-          lodQuality: PlotLodQuality.performance,
-          interactionActive: true,
-          channels: [ChannelConfig(index: 0, color: Colors.red)],
-        ),
-      );
-
-      expect(
-        painter.debugUsesExactQualityBuckets(const Size(1000, 300)),
-        isTrue,
-      );
     });
 
     testWidgets('精确窗口为空时仍使用LOD绘制数据', (tester) async {

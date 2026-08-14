@@ -7,6 +7,71 @@ import 'package:vscope_serial/data/models/plot_viewport_query.dart';
 
 void main() {
   group('PlotViewportQuery', () {
+    test('三档按每物理像素1、2、4点切换原始折线', () {
+      PlotGeometryBatch query(int pointCount, PlotLodQuality quality) {
+        final data = <PlotDataPoint>[
+          for (var i = 0; i < pointCount; i++)
+            PlotDataPoint(
+              index: i,
+              timestamp: i.toDouble(),
+              values: [math.sin(i * 0.1)],
+            ),
+        ];
+        return PlotViewportQuery.queryChannel(
+          exactData: data,
+          rangeIndex: null,
+          channelIndex: 0,
+          xMin: 0,
+          xMax: pointCount - 1,
+          logicalPlotWidth: 100,
+          devicePixelRatio: 1,
+          quality: quality,
+          workspace: PlotGeometryWorkspace(),
+        )!;
+      }
+
+      expect(query(150, PlotLodQuality.performance).isRaw, isFalse);
+      expect(query(150, PlotLodQuality.balanced).isRaw, isTrue);
+      expect(query(150, PlotLodQuality.quality).isRaw, isTrue);
+      expect(query(350, PlotLodQuality.performance).isRaw, isFalse);
+      expect(query(350, PlotLodQuality.balanced).isRaw, isFalse);
+      expect(query(350, PlotLodQuality.quality).isRaw, isTrue);
+    });
+
+    test('高密度时性能档合并两列，均衡与质量档使用相同单列M4', () {
+      final data = <PlotDataPoint>[
+        for (var i = 0; i < 2000; i++)
+          PlotDataPoint(
+            index: i,
+            timestamp: i.toDouble(),
+            values: [math.sin(i * 0.07) * 100],
+          ),
+      ];
+
+      PlotGeometryBatch query(PlotLodQuality quality) =>
+          PlotViewportQuery.queryChannel(
+            exactData: data,
+            rangeIndex: null,
+            channelIndex: 0,
+            xMin: 0,
+            xMax: 1999,
+            logicalPlotWidth: 100,
+            devicePixelRatio: 1,
+            quality: quality,
+            workspace: PlotGeometryWorkspace(),
+          )!;
+
+      final performance = query(PlotLodQuality.performance);
+      final balanced = query(PlotLodQuality.balanced);
+      final quality = query(PlotLodQuality.quality);
+      expect(performance.isRaw, isFalse);
+      expect(balanced.isRaw, isFalse);
+      expect(quality.isRaw, isFalse);
+      expect(performance.length, lessThan(balanced.length));
+      expect(quality.indices, orderedEquals(balanced.indices));
+      expect(quality.values, orderedEquals(balanced.values));
+    });
+
     test('低密度正弦使用原始点并保持严格时序', () {
       final data = <PlotDataPoint>[
         for (var i = 0; i < 1000; i++)
