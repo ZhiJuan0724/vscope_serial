@@ -28,6 +28,7 @@ import '../../viewmodels/plot_viewmodel.dart';
 import '../../viewmodels/settings_drafts.dart';
 import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_frame_rate_counter.dart';
 import '../plot/plot_draggable_info_box.dart';
 import '../plot/plot_layer_stack.dart';
 import '../plot/plot_painter.dart';
@@ -171,6 +172,7 @@ String _formatCompactCount(int value) {
 class _PlotPageContentState extends State<_PlotPageContent> {
   final PlotPresentationCoordinator _plotPresentation =
       PlotPresentationCoordinator();
+  final PlotFrameRateCounter _plotFrameRate = PlotFrameRateCounter();
   bool _measurementModifierPressed(PlotViewModel vm) =>
       vm.gestureModifier == PlotGestureModifier.shift
           ? HardwareKeyboard.instance.isShiftPressed
@@ -212,6 +214,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void dispose() {
     _hideChannelContextMenu();
     _plotPresentation.dispose();
+    _plotFrameRate.dispose();
     super.dispose();
   }
 
@@ -258,7 +261,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             ],
           ),
         ),
-        const PlotStatusBar(),
+        PlotStatusBar(frameRate: _plotFrameRate.fps),
       ],
     );
   }
@@ -1949,6 +1952,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     child: PlotLayerStack(
                       snapshot: renderSnapshot,
                       presentationCoordinator: _plotPresentation,
+                      frameRateCounter: _plotFrameRate,
                     ),
                   ),
                   Positioned.fill(

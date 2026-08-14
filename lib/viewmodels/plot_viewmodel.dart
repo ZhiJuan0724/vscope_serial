@@ -884,8 +884,13 @@ class PlotViewModel extends BaseViewModel {
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
+
+  /// 高频接收时只有Canvas需要降至30fps缓解主线程光栅压力；D3D11的数据层
+  /// 由GPU呈现，继续尊重用户设置的目标刷新率。
   int get effectiveRefreshFps =>
-      _highRateMode ? _highRateRefreshFps : _refreshFps;
+      _highRateMode && _renderEngine == PlotRenderEngine.canvas
+          ? _highRateRefreshFps
+          : _refreshFps;
   bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
   bool get plotFontBold => _plotFontBold;

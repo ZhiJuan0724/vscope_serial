@@ -96,6 +96,7 @@ class PlotLayerPainter extends CustomPainter {
   final PlotGeometryBuffers? geometryBuffers;
   final bool externalDataClip;
   final double dataQueryPadding;
+  final VoidCallback? onPaintCompleted;
   final PlotGeometryWorkspace _fallbackQueryWorkspace = PlotGeometryWorkspace();
 
   PlotViewport get viewport => snapshot.viewport;
@@ -186,6 +187,7 @@ class PlotLayerPainter extends CustomPainter {
     this.geometryBuffers,
     this.externalDataClip = false,
     this.dataQueryPadding = 0,
+    this.onPaintCompleted,
   }) : snapshot = PlotRenderSnapshot(
          viewport: viewport,
          data: data,
@@ -233,6 +235,7 @@ class PlotLayerPainter extends CustomPainter {
     this.geometryBuffers,
     this.externalDataClip = false,
     this.dataQueryPadding = 0,
+    this.onPaintCompleted,
   });
 
   double _fontSize(double base) {
@@ -462,6 +465,7 @@ class PlotLayerPainter extends CustomPainter {
           PlotPerformanceMetric.dataPainterPaint,
         );
         _drawChannels(canvas, size);
+        onPaintCompleted?.call();
         break;
       case PlotPaintLayer.axis:
         PlotPerformanceMetrics.instance.increment(

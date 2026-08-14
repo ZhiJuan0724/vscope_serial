@@ -69,6 +69,10 @@ class _D3d11PlotSurfaceState extends State<D3d11PlotSurface> {
   @override
   void didUpdateWidget(covariant D3d11PlotSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.snapshot, widget.snapshot) &&
+        oldWidget.size == widget.size) {
+      return;
+    }
     _scheduleRender(widget.snapshot, widget.size);
   }
 

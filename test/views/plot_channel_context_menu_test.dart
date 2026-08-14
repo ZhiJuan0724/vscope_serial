@@ -87,6 +87,31 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('绘图状态栏显示数据层提供的帧率而非应用FrameTiming', (tester) async {
+    final vm = PlotViewModel(connectionService);
+    final frameRate = ValueNotifier<double?>(59.6);
+    addTearDown(frameRate.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<PlotViewModel>.value(
+        value: vm,
+        child: MaterialApp(
+          home: Scaffold(
+            bottomNavigationBar: PlotStatusBar(frameRate: frameRate),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('FPS: 60'), findsOneWidget);
+    frameRate.value = 42.4;
+    await tester.pump();
+    expect(find.text('FPS: 42'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    vm.dispose();
+  });
+
   testWidgets('统计浮窗通道名称使用对应通道颜色', (tester) async {
     final vm = PlotViewModel(connectionService);
     vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 4));

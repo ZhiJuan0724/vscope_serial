@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../data/models/plot_render_engine.dart';
 import 'd3d11_plot_surface.dart';
 import 'plot_painter.dart';
+import 'plot_frame_rate_counter.dart';
 import 'plot_presentation_coordinator.dart';
 import 'plot_viewport.dart';
 
@@ -18,11 +19,13 @@ class PlotLayerStack extends StatefulWidget {
   const PlotLayerStack({
     required this.snapshot,
     this.presentationCoordinator,
+    this.frameRateCounter,
     super.key,
   });
 
   final PlotRenderSnapshot snapshot;
   final PlotPresentationCoordinator? presentationCoordinator;
+  final PlotFrameRateCounter? frameRateCounter;
 
   @override
   State<PlotLayerStack> createState() => _PlotLayerStackState();
@@ -46,6 +49,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
   int? _lastInteractionMicros;
   int _rapidMotionUntilMicros = 0;
   PlotRenderSnapshot? _presentedSnapshot;
+  bool _canvasFrameRecordScheduled = false;
 
   @override
   void dispose() {
@@ -108,6 +112,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
           PlotPaintLayer.data,
           current,
           externalDataClip: true,
+          trackCanvasFrame: true,
         ),
       );
     }
@@ -115,6 +120,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
     final imageSize = _dataRasterLogicalSize;
     final base = _dataBaseSnapshot!;
     if (current.interactionActive && image != null && imageSize != null) {
+      _scheduleCanvasFrameRecord();
       final viewport = current.viewport;
       final baseViewport = base.viewport;
       final plotWidth = viewport.plotWidth(size.width);
@@ -140,11 +146,17 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
         ],
       );
     }
-    return _paintLayer(PlotPaintLayer.data, current, externalDataClip: true);
+    return _paintLayer(
+      PlotPaintLayer.data,
+      current,
+      externalDataClip: true,
+      trackCanvasFrame: true,
+    );
   }
 
   void _handleD3dFramePresented(PlotRenderSnapshot snapshot, int frameId) {
     if (!mounted) return;
+    widget.frameRateCounter?.recordFrame();
     setState(() => _presentedSnapshot = snapshot);
     widget.presentationCoordinator?.present(snapshot, frameId: frameId);
   }
@@ -153,6 +165,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
     PlotPaintLayer layer,
     PlotRenderSnapshot snapshot, {
     bool externalDataClip = false,
+    bool trackCanvasFrame = false,
   }) => RepaintBoundary(
     key: ValueKey<String>('plot-layer-${layer.name}'),
     child: CustomPaint(
@@ -161,10 +174,20 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
         snapshot: snapshot,
         geometryBuffers: _geometryBuffers,
         externalDataClip: externalDataClip,
+        onPaintCompleted: trackCanvasFrame ? _scheduleCanvasFrameRecord : null,
       ),
       size: Size.infinite,
     ),
   );
+
+  void _scheduleCanvasFrameRecord() {
+    if (_canvasFrameRecordScheduled) return;
+    _canvasFrameRecordScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _canvasFrameRecordScheduled = false;
+      if (mounted) widget.frameRateCounter?.recordFrame();
+    });
+  }
 
   void _resolveDataBase(PlotRenderSnapshot current) {
     final cached = _dataBaseSnapshot;

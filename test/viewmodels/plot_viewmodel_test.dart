@@ -15,6 +15,7 @@ import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
 import 'package:vscope_serial/data/models/plot_lod_index.dart';
+import 'package:vscope_serial/data/models/plot_render_engine.dart';
 import 'package:vscope_serial/services/app_settings.dart';
 import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
@@ -101,6 +102,7 @@ void main() {
       settings.useRandomSource = false;
       settings.triggerToolbarEnabled = false;
       settings.plotLodQuality = 'balanced';
+      settings.plotRenderEngine = 'canvas';
       settings.plotHistoryMemoryLimitGiB = 2;
       settings.mathChannels = MathChannelConfig.createDefaults();
       settings.keepPlotOnRestart = false;
@@ -2290,7 +2292,7 @@ void main() {
       expect(vm.dataRevision, dataRevision);
     });
 
-    test('高频接收强制使用30fps但不修改用户刷新帧率', () {
+    test('Canvas高频接收强制使用30fps但不修改用户刷新帧率', () {
       vm.setRefreshFps(120);
 
       for (int ms = 500; ms <= 1000; ms += 250) {
@@ -2301,6 +2303,23 @@ void main() {
       expect(vm.refreshFps, 120);
       expect(vm.effectiveRefreshFps, 30);
       expect(vm.statusText, contains('高频模式 30fps'));
+    });
+
+    test('D3D11高频接收继续使用用户配置刷新帧率', () {
+      vm.dispose();
+      AppSettings().plotRenderEngine = 'd3d11';
+      vm = PlotViewModel(connectionService);
+      vm.setRefreshFps(120);
+
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 20, ms);
+      }
+
+      expect(vm.renderEngine, PlotRenderEngine.d3d11);
+      expect(vm.highRateMode, true);
+      expect(vm.refreshFps, 120);
+      expect(vm.effectiveRefreshFps, 120);
+      expect(vm.statusText, contains('高频模式 120fps'));
     });
 
     test('绘图目标刷新率允许30至120fps', () {
