@@ -1,16 +1,17 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../core/constants/rtt_configuration.dart';
+import '../../core/constants/plot_configuration.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/utils/byte_size_formatter.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../data/models/plot_lod_index.dart';
+import '../../data/models/plot_render_engine.dart';
 import '../../data/models/probe_plot_config.dart';
 import '../../data/models/probe_connection_config.dart';
 import '../../services/app_notifications.dart';
@@ -19,12 +20,46 @@ import '../../services/j_scope_rtt_parser.dart';
 import '../../viewmodels/probe_plot_viewmodel.dart';
 import '../../viewmodels/settings_drafts.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_presentation_coordinator.dart';
 import '../plot/plot_draggable_info_box.dart';
 import '../plot/plot_layer_stack.dart';
+import '../plot/plot_legend_box.dart';
+import '../plot/plot_channel_row.dart';
+import '../plot/plot_live_values_box.dart';
+import '../plot/plot_locator_bar.dart';
+import '../plot/plot_measurement_box.dart';
 import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/plot_tools_toolbar.dart';
+
+/// 将 ViewModel 暴露的 ARGB32 整数颜色转换回 Flutter `Color`。
+Color? _argbToColor(int? value) => value == null ? null : Color(value);
+
+/// 工具栏最小订阅集合：只包含工具栏按钮的禁用/选中与运行状态。
+typedef _ProbeToolbarSelection =
+    ({
+      bool isConnected,
+      bool operationPending,
+      bool running,
+      ProbePlotMode mode,
+      int pointCount,
+      bool vCursorEnabled,
+      int? maxJumpPacketIndex,
+      bool observationPlacementActive,
+      bool xMeasurementEnabled,
+      bool yMeasurementEnabled,
+      bool follow,
+      bool canUndoZoom,
+      bool boxZoomEnabled,
+      bool boxZoomContinuous,
+      bool previewToolbarEnabled,
+    });
+
+/// 通道面板最小订阅集合：活动通道数量与通道配置版本号。
+typedef _ProbeChannelPanelSelection =
+    ({int activeChannelCount, int channelConfigRevision});
 
 /// 独立于串口绘图的数据探针绘图页面。
 class ProbePlotPage extends StatefulWidget {
@@ -38,7 +73,16 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
   bool _channelPanelCollapsed = false;
   bool _legendVisible = false;
   bool _liveValuesVisible = false;
+  bool _previewVisible = false;
   bool _cursorJumpDialogOpen = false;
+  final PlotPresentationCoordinator _plotPresentation =
+      PlotPresentationCoordinator();
+
+  @override
+  void dispose() {
+    _plotPresentation.dispose();
+    super.dispose();
+  }
 
   Future<void> _toggle(ProbePlotViewModel vm) async {
     try {
@@ -57,481 +101,557 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     if (confirmed) vm.clear();
   }
 
+  _ProbeToolbarSelection _selectToolbar(ProbePlotViewModel vm) {
+    return (
+      isConnected: vm.service.isConnected,
+      operationPending: vm.operationPending,
+      running: vm.running,
+      mode: vm.mode,
+      pointCount: vm.pointCount,
+      vCursorEnabled: vm.vCursorEnabled,
+      maxJumpPacketIndex: vm.maxJumpPacketIndex,
+      observationPlacementActive: vm.observationPlacementActive,
+      xMeasurementEnabled: vm.xMeasurementEnabled,
+      yMeasurementEnabled: vm.yMeasurementEnabled,
+      follow: vm.follow,
+      canUndoZoom: vm.canUndoZoom,
+      boxZoomEnabled: vm.boxZoomEnabled,
+      boxZoomContinuous: vm.boxZoomContinuous,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
+    );
+  }
+
+  _ProbeChannelPanelSelection _selectChannelPanel(ProbePlotViewModel vm) {
+    return (
+      activeChannelCount: vm.activeChannelCount,
+      channelConfigRevision: vm.channelConfigRevision,
+    );
+  }
+
+  Widget _buildPrimaryToolbar(BuildContext context, ProbePlotViewModel vm) {
+    return UnifiedToolbar(
+      leadingItems: [
+        ToolbarLayoutItem(
+          extent: 92,
+          child: ToolbarStartStopButton(
+            onPressed:
+                vm.service.isConnected && !vm.operationPending
+                    ? () => unawaited(_toggle(vm))
+                    : null,
+            running: vm.running,
+            label:
+                vm.operationPending
+                    ? (vm.running ? '停止中' : '启动中')
+                    : vm.running
+                    ? '停止'
+                    : '开始',
+          ),
+        ),
+        ToolbarLayoutItem(
+          extent: 96,
+          child: SizedBox(
+            height: 24,
+            child: SegmentedButton<ProbePlotMode>(
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                minimumSize: WidgetStatePropertyAll(Size(42, 24)),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8),
+                ),
+                textStyle: WidgetStatePropertyAll(
+                  TextStyle(
+                    fontSize: 12,
+                    height: 1,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                alignment: Alignment.center,
+                shape: WidgetStatePropertyAll(
+                  RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(4)),
+                  ),
+                ),
+              ),
+              segments: [
+                const ButtonSegment(
+                  value: ProbePlotMode.hss,
+                  label: SizedBox(
+                    width: 28,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(
+                        child: Text('HSS', textAlign: TextAlign.center),
+                      ),
+                    ),
+                  ),
+                ),
+                const ButtonSegment(
+                  value: ProbePlotMode.rtt,
+                  label: SizedBox(
+                    width: 28,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(
+                        child: Text('RTT', textAlign: TextAlign.center),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              selected: {vm.mode},
+              onSelectionChanged:
+                  vm.running
+                      ? null
+                      : (value) =>
+                          unawaited(_changeMode(context, vm, value.first)),
+              showSelectedIcon: false,
+            ),
+          ),
+        ),
+        ToolbarLayoutItem(
+          extent: kToolbarControlExtent,
+          child: ToolbarIconButton(
+            key: const ValueKey('probe-source-settings-button'),
+            icon: const Icon(Icons.settings),
+            tooltip: '${vm.mode.label} 数据配置',
+            onPressed: vm.running ? null : () => _showConfig(context, vm),
+          ),
+          overflowActions: [
+            ToolbarOverflowAction(
+              icon: const Icon(Icons.settings),
+              label: '${vm.mode.label} 数据配置',
+              onPressed: vm.running ? null : () => _showConfig(context, vm),
+            ),
+          ],
+        ),
+      ],
+      trailingItems: [
+        ..._zoomToolItems(vm),
+        ..._fitToolItems(vm),
+        ..._clearSettingsToolItems(context, vm),
+      ],
+    );
+  }
+
+  Widget _buildSecondaryToolbar(BuildContext context, ProbePlotViewModel vm) {
+    return UnifiedToolbar(
+      leadingItems: [..._interactionToolItems(context, vm)],
+      trailingItems: const [],
+    );
+  }
+
+  /// 探针页交互工具（光标/测量/跟随/图例/实时值）的共享配置。
+  ///
+  /// 与串口绘图页共用 [PlotToolConfig]/[PlotToolbarButton]，展示形态一致：
+  /// 交互类 toggle 工具用图标+文字按钮（[label] 非空）。
+  List<PlotToolConfig> _interactionToolConfigs(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) {
+    return [
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotCursor),
+        label: AppStrings.plot.cursor,
+        tooltip: AppStrings.plot.verticalCursor,
+        overflowLabel: AppStrings.plot.cursor,
+        selected: vm.vCursorEnabled,
+        activeColor: Colors.orange,
+        onPressed:
+            vm.pointCount == 0
+                ? null
+                : () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+        onSecondaryPressed:
+            vm.maxJumpPacketIndex == null
+                ? null
+                : () => unawaited(_showCursorJumpDialog(context, vm)),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.add_location_alt),
+        label: AppStrings.plot.observation,
+        tooltip:
+            vm.observationPlacementActive
+                ? AppStrings.plot.placeObservation
+                : AppStrings.plot.addObservation,
+        overflowLabel: AppStrings.plot.observation,
+        selected: vm.observationPlacementActive,
+        activeColor: Colors.amber,
+        onPressed: vm.pointCount == 0 ? null : () => _addObservation(vm),
+        onSecondaryPressed:
+            () => unawaited(_showObservationManager(context, vm)),
+      ),
+      PlotToolConfig(
+        key: const ValueKey('probe-plot-measure-x-button'),
+        icon: const AppIcon(AppIcons.plotMeasureXx),
+        label: AppStrings.plot.measureXx,
+        tooltip: AppStrings.plot.measureXxTooltip,
+        overflowLabel: AppStrings.plot.measureXx,
+        selected: vm.xMeasurementEnabled,
+        activeColor: Colors.blue,
+        onPressed: vm.pointCount == 0 ? null : vm.toggleXMeasurement,
+        onSecondaryPressed:
+            () => unawaited(_showMeasurementSettings(context, vm, isX: true)),
+      ),
+      PlotToolConfig(
+        key: const ValueKey('probe-plot-measure-y-button'),
+        icon: const AppIcon(AppIcons.plotMeasureYy),
+        label: AppStrings.plot.measureYy,
+        tooltip: AppStrings.plot.measureYyTooltip,
+        overflowLabel: AppStrings.plot.measureYy,
+        selected: vm.yMeasurementEnabled,
+        activeColor: Colors.blue,
+        onPressed: vm.pointCount == 0 ? null : vm.toggleYMeasurement,
+        onSecondaryPressed:
+            () => unawaited(_showMeasurementSettings(context, vm, isX: false)),
+      ),
+      PlotToolConfig(
+        key: const ValueKey('probe-plot-preview-button'),
+        icon: const Icon(Icons.preview),
+        label: AppStrings.plot.preview,
+        tooltip: AppStrings.plot.previewTooltip,
+        overflowLabel: AppStrings.plot.preview,
+        selected: _previewVisible,
+        activeColor: Colors.teal,
+        visible: vm.previewToolbarEnabled,
+        onPressed: () => setState(() => _previewVisible = !_previewVisible),
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFollow),
+        label: AppStrings.plot.follow,
+        tooltip: AppStrings.plot.followTooltip,
+        overflowLabel: AppStrings.plot.follow,
+        selected: vm.follow,
+        activeColor: Colors.orange,
+        onPressed: () => vm.setFollow(!vm.follow),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.list_alt),
+        label: AppStrings.plot.legend,
+        tooltip: AppStrings.plot.legend,
+        overflowLabel: AppStrings.plot.legend,
+        selected: _legendVisible,
+        activeColor: Colors.teal,
+        onPressed: () => setState(() => _legendVisible = !_legendVisible),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.format_list_numbered),
+        label: AppStrings.plot.liveValues,
+        tooltip: AppStrings.plot.liveValues,
+        overflowLabel: AppStrings.plot.liveValues,
+        selected: _liveValuesVisible,
+        activeColor: Colors.lightBlue,
+        onPressed:
+            () => setState(() => _liveValuesVisible = !_liveValuesVisible),
+      ),
+    ];
+  }
+
+  /// 交互工具按钮的内联宽度估算：图标+文字按钮比纯图标按钮更宽。
+  double _toolExtent(PlotToolConfig tool) =>
+      tool.label != null ? 80 : kToolbarControlExtent;
+
+  List<ToolbarLayoutItem> _interactionToolItems(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) {
+    return [
+      for (final tool in _interactionToolConfigs(context, vm))
+        if (tool.visible)
+          ToolbarLayoutItem(
+            extent: _toolExtent(tool),
+            child: PlotToolbarButton(config: tool),
+            overflowActions: [tool.toOverflowAction()],
+          ),
+    ];
+  }
+
+  /// 缩放/框选工具组配置。
+  ///
+  /// 顺序与串口页一致：撤回缩放 | 框选 | X放 | X缩 | Y放 | Y缩。
+  List<PlotToolConfig> _zoomToolConfigs(ProbePlotViewModel vm) {
+    final hasData = vm.pointCount > 0;
+    return [
+      PlotToolConfig(
+        icon: const Icon(Icons.undo),
+        tooltip: AppStrings.plot.undoZoom,
+        overflowLabel: AppStrings.plot.undoZoom,
+        toggle: false,
+        onPressed: vm.canUndoZoom ? vm.undoZoom : null,
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.crop_free),
+        tooltip: '${AppStrings.plot.boxZoom}（左键单次，右键连续）',
+        overflowLabel: AppStrings.plot.boxZoom,
+        selected: vm.boxZoomEnabled,
+        activeColor: vm.boxZoomContinuous ? Colors.orange : Colors.blue,
+        onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+        onSecondaryPressed:
+            () => vm.setBoxZoomEnabled(
+              !(vm.boxZoomEnabled && vm.boxZoomContinuous),
+              continuous: true,
+            ),
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomXIn),
+        tooltip: AppStrings.plot.zoomXIn,
+        overflowLabel: AppStrings.plot.zoomXIn,
+        toggle: false,
+        onPressed: hasData ? vm.zoomXIn : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomXOut),
+        tooltip: AppStrings.plot.zoomXOut,
+        overflowLabel: AppStrings.plot.zoomXOut,
+        toggle: false,
+        onPressed: hasData ? vm.zoomXOut : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomYIn),
+        tooltip: AppStrings.plot.zoomYIn,
+        overflowLabel: AppStrings.plot.zoomYIn,
+        toggle: false,
+        onPressed: hasData ? vm.zoomYIn : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomYOut),
+        tooltip: AppStrings.plot.zoomYOut,
+        overflowLabel: AppStrings.plot.zoomYOut,
+        toggle: false,
+        onPressed: hasData ? vm.zoomYOut : null,
+      ),
+    ];
+  }
+
+  List<ToolbarLayoutItem> _zoomToolItems(ProbePlotViewModel vm) {
+    return [
+      for (final tool in _zoomToolConfigs(vm))
+        if (tool.visible)
+          ToolbarLayoutItem(
+            extent: _toolExtent(tool),
+            child: PlotToolbarButton(config: tool),
+            overflowActions: [tool.toOverflowAction()],
+          ),
+    ];
+  }
+
+  /// 自适应工具组配置（Y / X / 全自适应），形态与串口页一致。
+  List<PlotToolConfig> _fitToolConfigs(ProbePlotViewModel vm) {
+    final hasData = vm.pointCount > 0;
+    return [
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitY),
+        tooltip: AppStrings.plot.fitYTooltip,
+        overflowLabel: AppStrings.plot.fitYTooltip,
+        toggle: false,
+        onPressed: hasData ? vm.fitYAxis : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitX),
+        tooltip: AppStrings.plot.fitXTooltip,
+        overflowLabel: AppStrings.plot.fitXTooltip,
+        toggle: false,
+        onPressed: hasData ? vm.fitXAxis : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitAll),
+        tooltip: AppStrings.plot.fitAll,
+        overflowLabel: AppStrings.plot.fitAll,
+        toggle: false,
+        onPressed: hasData ? vm.fitAll : null,
+      ),
+    ];
+  }
+
+  List<ToolbarLayoutItem> _fitToolItems(ProbePlotViewModel vm) {
+    return [
+      for (final tool in _fitToolConfigs(vm))
+        if (tool.visible)
+          ToolbarLayoutItem(
+            extent: _toolExtent(tool),
+            child: PlotToolbarButton(config: tool),
+            overflowActions: [tool.toOverflowAction()],
+          ),
+    ];
+  }
+
+  List<PlotToolConfig> _clearSettingsToolConfigs(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) {
+    return [
+      PlotToolConfig(
+        icon: const Icon(Icons.clear),
+        tooltip: AppStrings.plot.clearData,
+        overflowLabel: AppStrings.plot.clearData,
+        toggle: false,
+        onPressed:
+            vm.pointCount == 0 ? null : () => unawaited(_confirmClear(vm)),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.tune),
+        tooltip: '探针绘图设置',
+        overflowLabel: '探针绘图设置',
+        toggle: false,
+        onPressed: () => _showPlotSettings(context, vm),
+      ),
+    ];
+  }
+
+  List<ToolbarLayoutItem> _clearSettingsToolItems(
+    BuildContext context,
+    ProbePlotViewModel vm,
+  ) {
+    return [
+      for (final tool in _clearSettingsToolConfigs(context, vm))
+        if (tool.visible)
+          ToolbarLayoutItem(
+            extent: kToolbarControlExtent,
+            child: PlotToolbarButton(config: tool),
+            overflowActions: [tool.toOverflowAction()],
+          ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Consumer<ProbePlotViewModel>(
-      builder:
-          (context, vm, _) => Column(
-            children: [
-              UnifiedToolbar(
-                leadingItems: [
-                  ToolbarLayoutItem(
-                    extent: 92,
-                    child: ToolbarStartStopButton(
-                      onPressed:
-                          vm.service.isConnected && !vm.operationPending
-                              ? () => unawaited(_toggle(vm))
-                              : null,
-                      running: vm.running,
-                      label:
-                          vm.operationPending
-                              ? (vm.running ? '停止中' : '启动中')
-                              : vm.running
-                              ? '停止'
-                              : '开始',
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: 96,
-                    child: SizedBox(
-                      height: 24,
-                      child: SegmentedButton<ProbePlotMode>(
-                        style: const ButtonStyle(
-                          visualDensity: VisualDensity.compact,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          minimumSize: WidgetStatePropertyAll(Size(42, 24)),
-                          padding: WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                          textStyle: WidgetStatePropertyAll(
-                            TextStyle(
-                              fontSize: 12,
-                              height: 1,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          shape: WidgetStatePropertyAll(
-                            RoundedRectangleBorder(
-                              borderRadius: BorderRadius.all(
-                                Radius.circular(4),
-                              ),
-                            ),
-                          ),
-                        ),
-                        segments: [
-                          const ButtonSegment(
-                            value: ProbePlotMode.hss,
-                            label: SizedBox(
-                              width: 28,
-                              child: Center(
-                                child: AppSegmentedButtonLabel(
-                                  child: Text(
-                                    'HSS',
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const ButtonSegment(
-                            value: ProbePlotMode.rtt,
-                            label: SizedBox(
-                              width: 28,
-                              child: Center(
-                                child: AppSegmentedButtonLabel(
-                                  child: Text(
-                                    'RTT',
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                        selected: {vm.mode},
-                        onSelectionChanged:
-                            vm.running
-                                ? null
-                                : (value) => unawaited(
-                                  _changeMode(context, vm, value.first),
-                                ),
-                        showSelectedIcon: false,
-                      ),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    child: ToolbarIconButton(
-                      key: const ValueKey('probe-source-settings-button'),
-                      icon: const Icon(Icons.settings),
-                      tooltip: '${vm.mode.label} 数据配置',
-                      onPressed:
-                          vm.running ? null : () => _showConfig(context, vm),
-                    ),
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.settings),
-                        label: '${vm.mode.label} 数据配置',
-                        onPressed:
-                            vm.running ? null : () => _showConfig(context, vm),
-                      ),
-                    ],
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const AppIcon(AppIcons.plotCursor),
-                        label: AppStrings.plot.verticalCursor,
-                        selected: vm.vCursorEnabled,
-                        onPressed:
-                            vm.pointCount == 0
-                                ? null
-                                : () =>
-                                    vm.setVCursorEnabled(!vm.vCursorEnabled),
-                        onSecondaryPressed:
-                            vm.maxJumpPacketIndex == null
-                                ? null
-                                : () => unawaited(
-                                  _showCursorJumpDialog(context, vm),
-                                ),
-                      ),
-                    ],
-                    child: Listener(
-                      onPointerDown: (event) {
-                        if (event.buttons == kSecondaryMouseButton &&
-                            vm.maxJumpPacketIndex != null) {
-                          unawaited(_showCursorJumpDialog(context, vm));
-                        }
-                      },
-                      child: ToolbarToggleIconButton(
-                        icon: const AppIcon(AppIcons.plotCursor),
-                        tooltip: AppStrings.plot.verticalCursor,
-                        selected: vm.vCursorEnabled,
-                        activeColor: Colors.orange,
-                        onPressed:
-                            vm.pointCount == 0
-                                ? null
-                                : () =>
-                                    vm.setVCursorEnabled(!vm.vCursorEnabled),
-                      ),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.add_location_alt),
-                        label: AppStrings.plot.observation,
-                        selected: vm.observationPlacementActive,
-                        onPressed:
-                            vm.pointCount == 0
-                                ? null
-                                : () => _addObservation(vm),
-                        onSecondaryPressed:
-                            () =>
-                                unawaited(_showObservationManager(context, vm)),
-                      ),
-                    ],
-                    child: Listener(
-                      onPointerDown: (event) {
-                        if (event.buttons == kSecondaryMouseButton) {
-                          unawaited(_showObservationManager(context, vm));
-                        }
-                      },
-                      child: ToolbarToggleIconButton(
-                        icon: const Icon(Icons.add_location_alt),
-                        tooltip:
-                            vm.observationPlacementActive
-                                ? AppStrings.plot.placeObservation
-                                : AppStrings.plot.addObservation,
-                        selected: vm.observationPlacementActive,
-                        activeColor: Colors.amber,
-                        onPressed:
-                            vm.pointCount == 0
-                                ? null
-                                : () => _addObservation(vm),
-                      ),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const AppIcon(AppIcons.plotMeasureXx),
-                        label: AppStrings.plot.measureXx,
-                        selected: vm.xMeasurementEnabled,
-                        onPressed:
-                            vm.pointCount == 0 ? null : vm.toggleXMeasurement,
-                        onSecondaryPressed:
-                            () => unawaited(
-                              _showMeasurementSettings(context, vm, isX: true),
-                            ),
-                      ),
-                    ],
-                    child: Listener(
-                      key: const ValueKey('probe-plot-measure-x-button'),
-                      onPointerDown: (event) {
-                        if (event.buttons == kSecondaryMouseButton) {
-                          unawaited(
-                            _showMeasurementSettings(context, vm, isX: true),
-                          );
-                        }
-                      },
-                      child: ToolbarToggleIconButton(
-                        icon: const AppIcon(AppIcons.plotMeasureXx),
-                        tooltip: AppStrings.plot.measureXxTooltip,
-                        selected: vm.xMeasurementEnabled,
-                        activeColor: Colors.blue,
-                        onPressed:
-                            vm.pointCount == 0 ? null : vm.toggleXMeasurement,
-                      ),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const AppIcon(AppIcons.plotMeasureYy),
-                        label: AppStrings.plot.measureYy,
-                        selected: vm.yMeasurementEnabled,
-                        onPressed:
-                            vm.pointCount == 0 ? null : vm.toggleYMeasurement,
-                        onSecondaryPressed:
-                            () => unawaited(
-                              _showMeasurementSettings(context, vm, isX: false),
-                            ),
-                      ),
-                    ],
-                    child: Listener(
-                      key: const ValueKey('probe-plot-measure-y-button'),
-                      onPointerDown: (event) {
-                        if (event.buttons == kSecondaryMouseButton) {
-                          unawaited(
-                            _showMeasurementSettings(context, vm, isX: false),
-                          );
-                        }
-                      },
-                      child: ToolbarToggleIconButton(
-                        icon: const AppIcon(AppIcons.plotMeasureYy),
-                        tooltip: AppStrings.plot.measureYyTooltip,
-                        selected: vm.yMeasurementEnabled,
-                        activeColor: Colors.blue,
-                        onPressed:
-                            vm.pointCount == 0 ? null : vm.toggleYMeasurement,
-                      ),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const AppIcon(AppIcons.plotFollow),
-                        label: AppStrings.plot.follow,
-                        selected: vm.follow,
-                        onPressed: () => vm.setFollow(!vm.follow),
-                      ),
-                    ],
-                    child: ToolbarToggleIconButton(
-                      icon: const AppIcon(AppIcons.plotFollow),
-                      tooltip: AppStrings.plot.followTooltip,
-                      selected: vm.follow,
-                      activeColor: Colors.orange,
-                      onPressed: () => vm.setFollow(!vm.follow),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.list_alt),
-                        label: AppStrings.plot.legend,
-                        selected: _legendVisible,
-                        onPressed:
-                            () => setState(
-                              () => _legendVisible = !_legendVisible,
-                            ),
-                      ),
-                    ],
-                    child: ToolbarToggleIconButton(
-                      icon: const Icon(Icons.list_alt),
-                      tooltip: AppStrings.plot.legend,
-                      selected: _legendVisible,
-                      activeColor: Colors.teal,
-                      onPressed:
-                          () =>
-                              setState(() => _legendVisible = !_legendVisible),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.format_list_numbered),
-                        label: AppStrings.plot.liveValues,
-                        selected: _liveValuesVisible,
-                        onPressed:
-                            () => setState(
-                              () => _liveValuesVisible = !_liveValuesVisible,
-                            ),
-                      ),
-                    ],
-                    child: ToolbarToggleIconButton(
-                      icon: const Icon(Icons.format_list_numbered),
-                      tooltip: AppStrings.plot.liveValues,
-                      selected: _liveValuesVisible,
-                      activeColor: Colors.lightBlue,
-                      onPressed:
-                          () => setState(
-                            () => _liveValuesVisible = !_liveValuesVisible,
-                          ),
-                    ),
-                  ),
-                ],
-                trailingItems: [
-                  for (final action in [
-                    (AppIcons.plotZoomXIn, AppStrings.plot.zoomXIn, vm.zoomXIn),
-                    (
-                      AppIcons.plotZoomXOut,
-                      AppStrings.plot.zoomXOut,
-                      vm.zoomXOut,
-                    ),
-                    (AppIcons.plotZoomYIn, AppStrings.plot.zoomYIn, vm.zoomYIn),
-                    (
-                      AppIcons.plotZoomYOut,
-                      AppStrings.plot.zoomYOut,
-                      vm.zoomYOut,
-                    ),
-                  ])
-                    ToolbarLayoutItem(
-                      extent: kToolbarControlExtent,
-                      overflowActions: [
-                        ToolbarOverflowAction(
-                          icon: AppIcon(action.$1),
-                          label: action.$2,
-                          onPressed: vm.pointCount == 0 ? null : action.$3,
-                        ),
-                      ],
-                      child: ToolbarIconButton(
-                        icon: AppIcon(action.$1),
-                        tooltip: action.$2,
-                        onPressed: vm.pointCount == 0 ? null : action.$3,
-                      ),
-                    ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.clear),
-                        label: AppStrings.plot.clearData,
-                        onPressed:
-                            vm.pointCount == 0
-                                ? null
-                                : () => unawaited(_confirmClear(vm)),
-                      ),
-                    ],
-                    child: ToolbarIconButton(
-                      icon: const Icon(Icons.clear),
-                      tooltip: AppStrings.plot.clearData,
-                      onPressed:
-                          vm.pointCount == 0
-                              ? null
-                              : () => unawaited(_confirmClear(vm)),
-                    ),
-                  ),
-                  ToolbarLayoutItem(
-                    extent: kToolbarControlExtent,
-                    overflowActions: [
-                      ToolbarOverflowAction(
-                        icon: const Icon(Icons.tune),
-                        label: '探针绘图设置',
-                        onPressed: () => _showPlotSettings(context, vm),
-                      ),
-                    ],
-                    child: ToolbarAdvancedSettingsButton(
-                      tooltip: '探针绘图设置',
-                      onPressed: () => _showPlotSettings(context, vm),
-                    ),
-                  ),
-                ],
+    final vm = context.read<ProbePlotViewModel>();
+    return Column(
+      children: [
+        Selector<ProbePlotViewModel, _ProbeToolbarSelection>(
+          selector: (_, viewModel) => _selectToolbar(viewModel),
+          builder:
+              (context, _, _) => _buildPrimaryToolbar(
+                context,
+                context.read<ProbePlotViewModel>(),
               ),
+        ),
+        Selector<ProbePlotViewModel, _ProbeToolbarSelection>(
+          selector: (_, viewModel) => _selectToolbar(viewModel),
+          builder:
+              (context, _, _) => _buildSecondaryToolbar(
+                context,
+                context.read<ProbePlotViewModel>(),
+              ),
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Selector<ProbePlotViewModel, _ProbeChannelPanelSelection>(
+                selector: (_, viewModel) => _selectChannelPanel(viewModel),
+                builder:
+                    (context, _, _) => _buildChannelPanel(
+                      context,
+                      context.read<ProbePlotViewModel>(),
+                    ),
+              ),
+              const VerticalDivider(width: 1),
               Expanded(
-                child: Row(
-                  children: [
-                    _buildChannelPanel(context, vm),
-                    const VerticalDivider(width: 1),
-                    Expanded(
-                      child: ValueListenableBuilder<int>(
-                        valueListenable: vm.renderListenable,
-                        builder:
-                            (context, renderRevision, child) => LayoutBuilder(
-                              builder: (context, constraints) {
-                                final leftAxisWidth =
-                                    PlotLayerPainter.calculateLeftAxisWidth(
-                                      viewport: vm.viewport,
-                                      canvasHeight: constraints.maxHeight,
-                                      gridDensity: vm.gridDensity,
-                                      plotFontSizeDelta:
-                                          vm.plotFontSizeDelta.toDouble(),
-                                      plotFontBold: vm.plotFontBold,
-                                    );
-                                final renderViewport = vm.viewport.copyWith(
-                                  marginLeft: leftAxisWidth,
-                                );
-                                final plotPoints = vm.points;
-                                final plotSurface =
-                                    vm.pointCount == 0
-                                        ? const Center(child: Text('暂无探针采样数据'))
-                                        : PlotLayerStack(
-                                          snapshot: PlotRenderSnapshot(
-                                            viewport: renderViewport,
-                                            data: plotPoints,
-                                            dataRevision: vm.dataRevision,
-                                            viewportRevision:
-                                                vm.viewportRevision,
-                                            channelConfigRevision:
-                                                vm.channelConfigRevision,
-                                            overlayRevision: vm.overlayRevision,
-                                            lodIndex: vm.lodIndex,
-                                            lodQuality: vm.lodQuality,
-                                            devicePixelRatio:
-                                                MediaQuery.devicePixelRatioOf(
-                                                  context,
-                                                ),
-                                            channels: vm.channels,
-                                            activeChannelCount:
-                                                vm.activeChannelCount,
-                                            showGrid: vm.showGrid,
-                                            gridDensity: vm.gridDensity,
-                                            backgroundStyle: vm.backgroundStyle,
-                                            floatingPanelOpacity:
-                                                vm.floatingPanelOpacity,
-                                            cursor: vm.cursor,
-                                            xCursor1: vm.xCursor1,
-                                            xCursor2: vm.xCursor2,
-                                            yCursor1: vm.yCursor1,
-                                            yCursor2: vm.yCursor2,
-                                            xMeasurementLine1Color:
-                                                vm.xMeasurementLine1Color,
-                                            xMeasurementLine2Color:
-                                                vm.xMeasurementLine2Color,
-                                            yMeasurementLine1Color:
-                                                vm.yMeasurementLine1Color,
-                                            yMeasurementLine2Color:
-                                                vm.yMeasurementLine2Color,
-                                            xMeasurementLine1Opacity:
-                                                vm.xMeasurementLine1Opacity,
-                                            xMeasurementLine2Opacity:
-                                                vm.xMeasurementLine2Opacity,
-                                            yMeasurementLine1Opacity:
-                                                vm.yMeasurementLine1Opacity,
-                                            yMeasurementLine2Opacity:
-                                                vm.yMeasurementLine2Opacity,
-                                            plotFontSizeDelta:
-                                                vm.plotFontSizeDelta,
-                                            plotFontBold: vm.plotFontBold,
-                                          ),
-                                        );
-                                return Stack(
+                child: ValueListenableBuilder<int>(
+                  valueListenable: vm.renderListenable,
+                  builder:
+                      (context, renderRevision, child) => LayoutBuilder(
+                        builder: (context, constraints) {
+                          final leftAxisWidth =
+                              PlotLayerPainter.calculateLeftAxisWidth(
+                                viewport: vm.viewport,
+                                canvasHeight: constraints.maxHeight,
+                                gridDensity: vm.gridDensity,
+                                plotFontSizeDelta:
+                                    vm.plotFontSizeDelta.toDouble(),
+                                plotFontBold: vm.plotFontBold,
+                              );
+                          final renderViewport = vm.viewport.copyWith(
+                            marginLeft: leftAxisWidth,
+                          );
+                          final plotPoints = vm.points;
+                          final Widget plotSurface;
+                          if (vm.pointCount == 0) {
+                            plotSurface = const Center(child: Text('暂无探针采样数据'));
+                          } else {
+                            final renderSnapshot = PlotRenderSnapshot(
+                              viewport: renderViewport,
+                              data: plotPoints,
+                              dataRevision: vm.dataRevision,
+                              viewportRevision: vm.viewportRevision,
+                              channelConfigRevision: vm.channelConfigRevision,
+                              overlayRevision: vm.overlayRevision,
+                              lodIndex: vm.lodIndex,
+                              lodQuality: vm.lodQuality,
+                              renderEngine: vm.renderEngine,
+                              devicePixelRatio: MediaQuery.devicePixelRatioOf(
+                                context,
+                              ),
+                              channels: vm.channels,
+                              activeChannelCount: vm.activeChannelCount,
+                              showGrid: vm.showGrid,
+                              gridDensity: vm.gridDensity,
+                              backgroundStyle: vm.backgroundStyle,
+                              floatingPanelOpacity: vm.floatingPanelOpacity,
+                              cursor: vm.cursor,
+                              xCursor1: vm.xCursor1,
+                              xCursor2: vm.xCursor2,
+                              yCursor1: vm.yCursor1,
+                              yCursor2: vm.yCursor2,
+                              xMeasurementLine1Color: _argbToColor(
+                                vm.xMeasurementLine1Color,
+                              ),
+                              xMeasurementLine2Color: _argbToColor(
+                                vm.xMeasurementLine2Color,
+                              ),
+                              yMeasurementLine1Color: _argbToColor(
+                                vm.yMeasurementLine1Color,
+                              ),
+                              yMeasurementLine2Color: _argbToColor(
+                                vm.yMeasurementLine2Color,
+                              ),
+                              xMeasurementLine1Opacity:
+                                  vm.xMeasurementLine1Opacity,
+                              xMeasurementLine2Opacity:
+                                  vm.xMeasurementLine2Opacity,
+                              yMeasurementLine1Opacity:
+                                  vm.yMeasurementLine1Opacity,
+                              yMeasurementLine2Opacity:
+                                  vm.yMeasurementLine2Opacity,
+                              plotFontSizeDelta: vm.plotFontSizeDelta,
+                              plotFontBold: vm.plotFontBold,
+                            );
+                            if (vm.renderEngine == PlotRenderEngine.canvas ||
+                                _plotPresentation.presentedSnapshot == null) {
+                              _plotPresentation.present(
+                                renderSnapshot,
+                                frameId: vm.viewportRevision,
+                                notify: false,
+                              );
+                            }
+                            plotSurface = PlotLayerStack(
+                              snapshot: renderSnapshot,
+                              presentationCoordinator: _plotPresentation,
+                            );
+                          }
+                          final previewPanelHeight =
+                              _previewVisible && vm.previewToolbarEnabled
+                                  ? PlotConfiguration.locatorBarHeight
+                                  : 0.0;
+                          return Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Positioned.fill(
+                                bottom: previewPanelHeight,
+                                child: Stack(
                                   fit: StackFit.expand,
                                   children: [
                                     PlotGestureHandler(
                                       viewport: renderViewport,
+                                      presentationCoordinator:
+                                          _plotPresentation,
                                       channels: vm.channels,
                                       activeChannelCount: vm.activeChannelCount,
                                       data: plotPoints,
                                       vCursorEnabled: vm.vCursorEnabled,
+                                      boxZoomEnabled: vm.boxZoomEnabled,
+                                      onBoxZoomCompleted: () {
+                                        if (!vm.boxZoomContinuous) {
+                                          vm.setBoxZoomEnabled(false);
+                                        }
+                                      },
                                       refreshFps: 60,
                                       plotFontSizeDelta: vm.plotFontSizeDelta,
                                       observations: vm.observations,
@@ -544,6 +664,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                       onObservationPlacementCommit:
                                           vm.commitObservationPlacement,
                                       onViewportChanged: vm.updateViewport,
+                                      onDragEnd: vm.saveDragViewport,
                                       onCursorChanged: vm.updateCursor,
                                       xCursor1: vm.xCursor1,
                                       xCursor2: vm.xCursor2,
@@ -600,36 +721,46 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                     if (_liveValuesVisible)
                                       _buildLiveValuesBox(context, vm),
                                   ],
-                                );
-                              },
-                            ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                height: kPageStatusBarHeight,
-                padding: kPageStatusBarPadding,
-                alignment: Alignment.centerLeft,
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: ValueListenableBuilder<int>(
-                  valueListenable: vm.statusListenable,
-                  builder:
-                      (context, _, _) => Text(
-                        '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
-                        '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
-                        '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
-                        '${vm.historyMemoryLimitMiB} MiB'
-                        '${vm.retentionLimitReached ? '  已达上限' : ''}',
-                        style: kPageStatusBarTextStyle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (_previewVisible && vm.previewToolbarEnabled)
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  height: previewPanelHeight,
+                                  child: _buildLocatorBar(context, vm),
+                                ),
+                            ],
+                          );
+                        },
                       ),
                 ),
               ),
             ],
           ),
+        ),
+        Container(
+          height: kPageStatusBarHeight,
+          padding: kPageStatusBarPadding,
+          alignment: Alignment.centerLeft,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: ValueListenableBuilder<int>(
+            valueListenable: vm.statusListenable,
+            builder:
+                (context, _, _) => Text(
+                  '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
+                  '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
+                  '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
+                  '${vm.historyMemoryLimitMiB} MiB'
+                  '${vm.retentionLimitReached ? '  已达上限' : ''}',
+                  style: kPageStatusBarTextStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -771,20 +902,27 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
               itemBuilder: (context, index) {
                 final channel = vm.channels[index];
                 return InkWell(
+                  onTap: () => vm.toggleChannel(index),
                   onLongPress: () => _renameChannel(context, vm, index),
-                  child: CheckboxListTile(
-                    dense: true,
-                    value: channel.visible,
-                    onChanged: (_) => vm.toggleChannel(index),
-                    secondary: Container(
-                      width: 10,
-                      height: 10,
-                      color: channel.color,
-                    ),
-                    title: Text(
-                      channel.alias,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: PlotChannelRow(
+                      data: PlotChannelRowData(
+                        name: channel.alias,
+                        color: channel.color,
+                        visible: channel.visible,
+                      ),
+                      onToggleVisible: () => vm.toggleChannel(index),
+                      dimNameWhenHidden: false,
+                      colorBlockRadius: 0,
+                      visibilityBuilder:
+                          (visible, onToggle) => Checkbox(
+                            value: visible,
+                            onChanged: (_) => onToggle(),
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                          ),
                     ),
                   ),
                 );
@@ -814,42 +952,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       fontBold: vm.plotFontBold,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 96, maxWidth: 320),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              AppStrings.plot.legend,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            for (final channel in visible)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: channel.color,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        channel.alias,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
+        child: PlotLegendBox(channels: visible, nameMaxLines: 1),
       ),
     );
   }
@@ -857,6 +960,23 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
   Widget _buildLiveValuesBox(BuildContext context, ProbePlotViewModel vm) {
     final latest = vm.latestPoint;
     if (latest == null) return const SizedBox.shrink();
+    final entries = <PlotLiveValueEntry>[];
+    for (
+      var index = 0;
+      index < latest.values.length &&
+          index < vm.activeChannelCount &&
+          index < vm.channels.length;
+      index++
+    ) {
+      if (!vm.channels[index].visible) continue;
+      entries.add(
+        PlotLiveValueEntry(
+          color: vm.channels[index].color,
+          name: vm.channels[index].alias,
+          value: formatPlotValue(latest.values[index]),
+        ),
+      );
+    }
     return PlotDraggableInfoBox(
       key: const ValueKey('probe-plot-live-values-box'),
       initialRight: 12,
@@ -869,51 +989,25 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       fontBold: vm.plotFontBold,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 120, maxWidth: 280),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              AppStrings.plot.liveValues,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            for (
-              var index = 0;
-              index < latest.values.length &&
-                  index < vm.activeChannelCount &&
-                  index < vm.channels.length;
-              index++
-            )
-              if (vm.channels[index].visible)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: vm.channels[index].color,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          '${vm.channels[index].alias}: '
-                          '${formatPlotValue(latest.values[index])}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: vm.channels[index].color),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-          ],
+        child: PlotLiveValuesBox(
+          entries: entries,
+          rowPadding: const EdgeInsets.symmetric(vertical: 2),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLocatorBar(BuildContext context, ProbePlotViewModel vm) {
+    // 定位条只反映完整 X 范围与当前视口；它不绘制曲线，也不依赖主图 Y 轴状态。
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: PlotLocatorBar(
+        pointCount: vm.pointCount,
+        viewport: vm.viewport,
+        onNavigate:
+            (centerX, {required fromDrag}) =>
+                vm.movePreviewViewportTo(centerX, fromDrag: fromDrag),
+        onDragEnd: vm.saveDragViewport,
       ),
     );
   }
@@ -1002,13 +1096,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       ).colorScheme.surface.withValues(alpha: vm.floatingPanelOpacity),
       fontSizeDelta: vm.plotFontSizeDelta,
       fontBold: vm.plotFontBold,
-      child: Text(
-        vm.measurementText!,
-        style: TextStyle(
-          fontFamily: 'SarasaUiSC',
-          fontSize: _plotFontSize(vm, 12),
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
+      child: PlotMeasurementBox(
+        text: vm.measurementText!,
+        fontSize: _plotFontSize(vm, 12),
+        tabularFigures: true,
       ),
     );
   }
@@ -1239,10 +1330,14 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     required bool isX,
   }) async {
     var line1Color =
-        (isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color) ??
+        _argbToColor(
+          isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color,
+        ) ??
         (isX ? Colors.blue : Colors.red);
     var line2Color =
-        (isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color) ??
+        _argbToColor(
+          isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color,
+        ) ??
         (isX ? Colors.lightBlue : Colors.purple);
     var line1Opacity =
         isX ? vm.xMeasurementLine1Opacity : vm.yMeasurementLine1Opacity;
@@ -1355,16 +1450,16 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     onPressed: () {
                       if (isX) {
                         vm.setXMeasurementStyle(
-                          line1Color: line1Color,
+                          line1Color: line1Color.toARGB32(),
                           line1Opacity: line1Opacity,
-                          line2Color: line2Color,
+                          line2Color: line2Color.toARGB32(),
                           line2Opacity: line2Opacity,
                         );
                       } else {
                         vm.setYMeasurementStyle(
-                          line1Color: line1Color,
+                          line1Color: line1Color.toARGB32(),
                           line1Opacity: line1Opacity,
-                          line2Color: line2Color,
+                          line2Color: line2Color.toARGB32(),
                           line2Opacity: line2Opacity,
                         );
                         vm.setYMeasurementSnapEnabled(snapEnabled);
@@ -1394,8 +1489,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       followPositionRatio: vm.followPositionRatio,
       observationClickToPlace: vm.observationClickToPlace,
       quality: vm.lodQuality,
+      renderEngine: vm.renderEngine,
       windowPointLimit: vm.windowPointLimit,
       historyLimit: vm.historyMemoryLimitMiB,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
     );
     final windowController = TextEditingController(
       text: vm.windowPointLimit.toString(),
@@ -1414,6 +1511,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     final performanceSectionKey = GlobalKey();
     final fontSectionKey = GlobalKey();
     final viewportSectionKey = GlobalKey();
+    final toolbarSectionKey = GlobalKey();
     final interactionSectionKey = GlobalKey();
     final dataSectionKey = GlobalKey();
 
@@ -1463,6 +1561,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         draft.observationClickToPlace !=
                             vm.observationClickToPlace ||
                         draft.quality != vm.lodQuality ||
+                        draft.renderEngine != vm.renderEngine ||
+                        draft.previewToolbarEnabled !=
+                            vm.previewToolbarEnabled ||
                         windowController.text != '${vm.windowPointLimit}' ||
                         memoryController.text != '${vm.historyMemoryLimitMiB}',
                 onSave: () async {
@@ -1485,6 +1586,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     throw const FormatException('请检查绘图设置中的数值范围');
                   }
                   await vm.applyPlotSettings(draft);
+                  if (mounted && !(draft.previewToolbarEnabled ?? true)) {
+                    setState(() => _previewVisible = false);
+                  }
                 },
                 child: SettingsNavigationView(
                   scrollController: settingsScrollController,
@@ -1506,6 +1610,10 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       anchorKey: viewportSectionKey,
                     ),
                     SettingsNavigationItem(
+                      label: AppStrings.common.settingsToolbar,
+                      anchorKey: toolbarSectionKey,
+                    ),
+                    SettingsNavigationItem(
                       label: AppStrings.common.settingsInteraction,
                       anchorKey: interactionSectionKey,
                     ),
@@ -1525,7 +1633,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                       const SizedBox(height: 4),
                       AppSegmentedSelector<PlotBackgroundStyle>(
-                        value: draft.background as PlotBackgroundStyle,
+                        value: draft.background,
                         items: {
                           PlotBackgroundStyle.dark: Text(
                             AppStrings.plot.plotBackgroundDark,
@@ -1562,7 +1670,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         ),
                         const SizedBox(height: 4),
                         AppSegmentedSelector<GridDensity>(
-                          value: draft.gridDensity as GridDensity,
+                          value: draft.gridDensity,
                           items: {
                             GridDensity.sparse: Text(
                               AppStrings.plot.densitySparse,
@@ -1593,6 +1701,36 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                       const Divider(),
                       Text(
+                        AppStrings.plot.renderEngine,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      AppSegmentedSelector<PlotRenderEngine>(
+                        key: const ValueKey('probePlotRenderEngineSelector'),
+                        value: draft.renderEngine ?? PlotRenderEngine.d3d11,
+                        items: {
+                          PlotRenderEngine.canvas: Text(
+                            AppStrings.plot.renderEngineCanvas,
+                          ),
+                          PlotRenderEngine.d3d11: Text(
+                            AppStrings.plot.renderEngineD3d11,
+                          ),
+                        },
+                        onChanged:
+                            (value) => setDialogState(
+                              () => draft.renderEngine = value,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        AppStrings.plot.renderEngineHelp,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Divider(),
+                      Text(
                         key: performanceSectionKey,
                         AppStrings.plot.lodQuality,
                         style: const TextStyle(fontSize: 14),
@@ -1600,7 +1738,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       const SizedBox(height: 6),
                       AppSegmentedSelector<PlotLodQuality>(
                         key: const ValueKey('probe-plot-lod-quality-selector'),
-                        value: draft.quality as PlotLodQuality,
+                        value: draft.quality,
                         items: {
                           PlotLodQuality.performance: Text(
                             AppStrings.plot.lodQualityPerformance,
@@ -1725,19 +1863,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                       const Divider(),
                       Row(
-                        key: interactionSectionKey,
+                        key: toolbarSectionKey,
                         children: [
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  AppStrings.plot.observationClickToPlace,
+                                  AppStrings.plot.previewFeatureToggle,
                                   style: const TextStyle(fontSize: 14),
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  AppStrings.plot.observationClickToPlaceHelp,
+                                  AppStrings.plot.previewFeatureHelp,
                                   style: const TextStyle(
                                     fontSize: 11,
                                     color: Colors.grey,
@@ -1747,14 +1885,28 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                             ),
                           ),
                           Switch(
-                            value: draft.observationClickToPlace,
+                            value: draft.previewToolbarEnabled!,
                             onChanged: (value) {
                               setDialogState(
-                                () => draft.observationClickToPlace = value,
+                                () => draft.previewToolbarEnabled = value,
                               );
                             },
                           ),
                         ],
+                      ),
+                      const Divider(),
+                      AppSwitchRow(
+                        key: interactionSectionKey,
+                        title: Text(AppStrings.plot.observationClickToPlace),
+                        subtitle: Text(
+                          AppStrings.plot.observationClickToPlaceHelp,
+                        ),
+                        value: draft.observationClickToPlace,
+                        onChanged: (value) {
+                          setDialogState(
+                            () => draft.observationClickToPlace = value,
+                          );
+                        },
                       ),
                       const Divider(),
                       Text(
@@ -1808,10 +1960,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         '范围：${ProbePlotViewModel.minWindowPointLimit}~'
                         '${ProbePlotViewModel.maxWindowPointLimit} 点；'
                         '仅限制主图保留的精确点窗口，LOD 历史继续保留。',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey,
-                        ),
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                     ],
                   ),

@@ -50,7 +50,14 @@ void main() {
     // 好处是测试只覆盖绘图页面和 PlotViewModel，减少更新检查、窗口管理等
     // 与绘图性能无关的因素对结果的干扰。
     final connectionService = DataConnectionService();
-    final vm = PlotViewModel(connectionService);
+    final vm = PlotViewModel(
+      connectionService,
+      postFrameCallback: (callback) {
+        final binding = SchedulerBinding.instance;
+        binding.scheduleFrame();
+        binding.addPostFrameCallback((_) => callback());
+      },
+    );
     addTearDown(() {
       vm.dispose();
       connectionService.dispose();

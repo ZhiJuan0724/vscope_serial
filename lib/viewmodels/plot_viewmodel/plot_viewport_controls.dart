@@ -83,21 +83,14 @@ extension PlotViewModelViewportControls on PlotViewModel {
 
   /// 指针事件可能高于显示器刷新率；拖动时只在下一帧通知 UI，
   /// 始终使用此帧收到的最新视口，避免主图重绘任务堆积。
+  ///
+  /// 帧调度由组合根注入的 [_postFrameCallback] 完成；纯逻辑场景使用 no-op
+  /// 实现时不会触发通知，`_dragViewportNotifyScheduled` 直到下次取消才会复位。
   void _notifyDragViewportAtNextFrame() {
     if (_dragViewportNotifyScheduled) return;
     _dragViewportNotifyScheduled = true;
     final generation = _dragViewportNotifyGeneration;
-    final SchedulerBinding binding;
-    try {
-      binding = SchedulerBinding.instance;
-    } on FlutterError {
-      // 纯 ViewModel 测试不会创建 Flutter binding，保留视口更新语义。
-      _dragViewportNotifyScheduled = false;
-      notifyListeners();
-      return;
-    }
-    binding.scheduleFrame();
-    binding.addPostFrameCallback((_) {
+    _postFrameCallback(() {
       if (_disposed ||
           generation != _dragViewportNotifyGeneration ||
           !_dragViewportNotifyScheduled) {

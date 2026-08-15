@@ -103,11 +103,14 @@ void main() {
       findsOneWidget,
     );
     expect(AppStrings.plot.placeObservation, contains('右键'));
-    expect(find.text(AppStrings.plot.cursor), findsNothing);
-    expect(find.text(AppStrings.plot.measureXx), findsNothing);
-    expect(find.text(AppStrings.plot.measureYy), findsNothing);
-    expect(find.text(AppStrings.plot.follow), findsNothing);
-    expect(find.byTooltip(AppStrings.plot.fitY), findsNothing);
+    expect(find.text(AppStrings.plot.cursor), findsOneWidget);
+    expect(find.text(AppStrings.plot.measureXx), findsOneWidget);
+    expect(find.text(AppStrings.plot.measureYy), findsOneWidget);
+    expect(find.text(AppStrings.plot.follow), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.undoZoom), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitYTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitXTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitAll), findsOneWidget);
     expect(
       tester.getCenter(find.byTooltip(AppStrings.plot.verticalCursor)).dx,
       lessThan(tester.getCenter(find.byTooltip(AppStrings.plot.zoomXIn)).dx),
@@ -194,7 +197,7 @@ void main() {
   });
 
   testWidgets('RTT 数据配置集中控制块、通道和格式，右侧仅保留绘图设置', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 760));
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final service = ProbeConnectionService(
       connectionOwners: ConnectionOwnerService(),
@@ -239,7 +242,7 @@ void main() {
       tester.widget<AlertDialog>(find.byType(AlertDialog)).shape,
       kAdvancedSettingsDialogShape,
     );
-    for (final category in ['外观', '性能', '文字', '视口', '交互', '数据']) {
+    for (final category in ['外观', '性能', '文字', '视口', '工具栏', '交互', '数据']) {
       expect(find.text(category), findsOneWidget);
     }
     expect(find.text('精确窗口点数上限'), findsOneWidget);

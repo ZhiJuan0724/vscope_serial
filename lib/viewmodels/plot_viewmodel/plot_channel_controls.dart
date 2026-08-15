@@ -250,7 +250,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     for (int i = 0; i < channels.length; i++) {
       channels[i] = ChannelConfig(
         index: i,
-        color: ChannelConfig.colorForIndex(i, _plotBackground),
+        color: ChannelConfig.colorForIndex(i, _plotBackground.name),
       );
     }
     for (int i = 0; i < mathChannels.length; i++) {

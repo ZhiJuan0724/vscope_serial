@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import '../core/constants/plot_configuration.dart';
 import '../core/localization/app_strings.dart';
@@ -56,6 +55,16 @@ part 'plot_viewmodel/plot_interaction_controls.dart';
 part 'plot_viewmodel/plot_profiles.dart';
 part 'plot_viewmodel/plot_support_models.dart';
 part 'plot_viewmodel/plot_viewport_controls.dart';
+
+/// 帧调度能力：注册一个在下一帧结束后执行的回调。
+///
+/// ViewModel 层不直接依赖 `SchedulerBinding`，而是由组合根（main.dart）注入
+/// 生产实现（内部使用 `SchedulerBinding.instance` 请求新帧并注册 post-frame
+/// 回调）；纯逻辑/测试场景可注入 no-op 实现，避免依赖 Flutter binding。
+typedef PostFrameCallback = void Function(void Function() callback);
+
+/// 不调度任何帧的兜底实现，供无 Flutter binding 的纯逻辑场景使用。
+void _noopPostFrameCallback(void Function() callback) {}
 
 enum PlotTriggerComparison {
   greater('>'),
@@ -316,11 +325,11 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   /// 绘图界面文本是否使用粗体。
   bool _plotFontBold = false;
 
-  /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
-  String _gridDensity = 'normal';
+  /// 网格密度（渲染层统一使用 [GridDensity] 枚举）。
+  GridDensity _gridDensity = GridDensity.normal;
 
-  /// 绘图背景: 'dark'(黑底), 'light'(白底)
-  String _plotBackground = 'dark';
+  /// 绘图背景（渲染层统一使用 [PlotBackgroundStyle] 枚举）。
+  PlotBackgroundStyle _plotBackground = PlotBackgroundStyle.dark;
 
   /// 绘图区悬浮窗不透明度。
   double _floatingPanelOpacity = 0.85;
@@ -510,6 +519,9 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
 
   /// 兜底定时器：确保数据流中断时 UI 仍能刷新。
   Timer? _notifyTimer;
+
+  /// 拖动视口高频通知的帧调度能力，由组合根注入；缺省为 no-op。
+  final PostFrameCallback _postFrameCallback;
   bool _dragViewportNotifyScheduled = false;
   int _dragViewportNotifyGeneration = 0;
 
@@ -531,6 +543,7 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
     super.connectionService, {
     int? retentionLimitBytes,
     int? materializedPointLimit,
+    PostFrameCallback? postFrameCallback,
   }) : _materializedPointLimit =
            materializedPointLimit ??
            PlotConfiguration.maxMaterializedPointCount,
@@ -538,7 +551,8 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
        _plotRetentionLimitBytes =
            retentionLimitBytes ??
            AppSettings().plotHistoryMemoryLimitGiB *
-               PlotConfiguration.bytesPerGiB {
+               PlotConfiguration.bytesPerGiB,
+       _postFrameCallback = postFrameCallback ?? _noopPostFrameCallback {
     if (_plotRetentionLimitBytes <= 0) {
       throw ArgumentError.value(
         _plotRetentionLimitBytes,
@@ -631,8 +645,15 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
       maxDiscardInitialPacketCount,
     );
     _showGrid = settings.showGrid;
-    _gridDensity = settings.gridDensity;
-    _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
+    _gridDensity = switch (settings.gridDensity) {
+      'sparse' => GridDensity.sparse,
+      'dense' => GridDensity.dense,
+      _ => GridDensity.normal,
+    };
+    _plotBackground =
+        settings.plotBackground == 'light'
+            ? PlotBackgroundStyle.light
+            : PlotBackgroundStyle.dark;
     _floatingPanelOpacity = settings.floatingPanelOpacity.clamp(0.0, 1.0);
     _legendPanelRight = settings.plotLegendPanelRight;
     _legendPanelTop = settings.plotLegendPanelTop;
@@ -790,8 +811,8 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
     settings.plotRenderEngine = _renderEngine.name;
     settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
-    settings.gridDensity = _gridDensity;
-    settings.plotBackground = _plotBackground;
+    settings.gridDensity = _gridDensity.name;
+    settings.plotBackground = _plotBackground.name;
     settings.floatingPanelOpacity = _floatingPanelOpacity;
     settings.plotLegendPanelRight = _legendPanelRight;
     settings.plotLegendPanelTop = _legendPanelTop;
@@ -871,8 +892,8 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
   bool get plotFontBold => _plotFontBold;
-  String get gridDensity => _gridDensity;
-  String get plotBackground => _plotBackground;
+  GridDensity get gridDensity => _gridDensity;
+  PlotBackgroundStyle get plotBackground => _plotBackground;
   double get floatingPanelOpacity => _floatingPanelOpacity;
   double get legendPanelRight => _legendPanelRight ?? 16;
   double get legendPanelTop => _legendPanelTop ?? 96;
@@ -1051,9 +1072,13 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   }
 
   Color get _defaultMeasurementPrimary =>
-      _plotBackground == 'light' ? const Color(0xFF0369A1) : Colors.cyan;
+      _plotBackground == PlotBackgroundStyle.light
+          ? const Color(0xFF0369A1)
+          : Colors.cyan;
   Color get _defaultMeasurementSecondary =>
-      _plotBackground == 'light' ? const Color(0xFFB45309) : Colors.yellow;
+      _plotBackground == PlotBackgroundStyle.light
+          ? const Color(0xFFB45309)
+          : Colors.yellow;
   Color get xMeasurementLine1Color =>
       _xMeasurementLine1Color ?? _defaultMeasurementPrimary;
   Color get xMeasurementLine2Color =>

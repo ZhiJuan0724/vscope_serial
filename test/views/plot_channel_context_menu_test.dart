@@ -832,7 +832,7 @@ void main() {
     );
     expect(liveValuesContent.width, 120);
 
-    vm.setPlotBackground('light');
+    vm.setPlotBackground(PlotBackgroundStyle.light);
     await tester.pumpAndSettle();
 
     final liveValueTitle = find.text(AppStrings.plot.liveValues).last;
@@ -996,7 +996,7 @@ void main() {
 
   testWidgets('无数据时使用统一浅色空态，收到数据后应用暗色背景', (tester) async {
     final vm = PlotViewModel(connectionService);
-    vm.setPlotBackground('dark');
+    vm.setPlotBackground(PlotBackgroundStyle.dark);
 
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));

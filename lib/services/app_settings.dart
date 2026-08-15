@@ -205,6 +205,10 @@ class AppSettings {
   int probePlotHistoryMemoryLimitMiB = 256;
 
   String probePlotLodQuality = 'balanced';
+
+  /// 探针绘图数据层后端：canvas 或 d3d11，新安装默认使用 D3D11。
+  String probePlotRenderEngine = 'd3d11';
+
   bool probePlotShowGrid = true;
   String probePlotGridDensity = 'normal';
   String probePlotBackground = 'light';
@@ -213,6 +217,9 @@ class AppSettings {
   bool probePlotFontBold = false;
   double probePlotFollowPositionRatio = 0.9;
   bool probePlotObservationClickToPlace = false;
+
+  /// 探针绘图是否在工具栏显示定位条（预览）入口。
+  bool probePlotPreviewToolbarEnabled = false;
 
   /// Y 轴自适应数据显示占比，范围 0.50~0.95。
   double yFitDisplayRatio = 0.8;
@@ -490,6 +497,7 @@ class AppSettings {
     probePlotWindowPointLimit = 100000;
     probePlotHistoryMemoryLimitMiB = 256;
     probePlotLodQuality = 'balanced';
+    probePlotRenderEngine = 'd3d11';
     probePlotShowGrid = true;
     probePlotGridDensity = 'normal';
     probePlotBackground = 'light';
@@ -498,6 +506,7 @@ class AppSettings {
     probePlotFontBold = false;
     probePlotFollowPositionRatio = 0.9;
     probePlotObservationClickToPlace = false;
+    probePlotPreviewToolbarEnabled = false;
     yFitDisplayRatio = 0.8;
     mathChannels = MathChannelConfig.createDefaults();
     parserType = 'zobow';
@@ -871,6 +880,8 @@ class AppSettings {
         'quality' => 'quality',
         _ => 'balanced',
       };
+      probePlotRenderEngine =
+          json['probePlotRenderEngine'] == 'canvas' ? 'canvas' : 'd3d11';
       probePlotShowGrid = json['probePlotShowGrid'] as bool? ?? true;
       probePlotGridDensity = switch (json['probePlotGridDensity'] as String?) {
         'sparse' => 'sparse',
@@ -890,6 +901,8 @@ class AppSettings {
               .clamp(0.5, 0.95);
       probePlotObservationClickToPlace =
           json['probePlotObservationClickToPlace'] as bool? ?? false;
+      probePlotPreviewToolbarEnabled =
+          json['probePlotPreviewToolbarEnabled'] as bool? ?? false;
       yFitDisplayRatio = ((json['yFitDisplayRatio'] as num?)?.toDouble() ?? 0.8)
           .clamp(0.5, 0.95);
       mathChannels = MathChannelConfig.normalizeList(json['mathChannels']);
@@ -1130,6 +1143,7 @@ class AppSettings {
       'gridDensity',
       'plotBackground',
       'probePlotLodQuality',
+      'probePlotRenderEngine',
       'probePlotGridDensity',
       'probePlotBackground',
       'parserType',
@@ -1188,6 +1202,7 @@ class AppSettings {
       'probePlotShowGrid',
       'probePlotFontBold',
       'probePlotObservationClickToPlace',
+      'probePlotPreviewToolbarEnabled',
       'rProtocolLooseChannelSettings',
       'autoUpdateCheckEnabled',
       'disableNotifications',
@@ -1425,6 +1440,7 @@ class AppSettings {
     'probePlotWindowPointLimit': probePlotWindowPointLimit,
     'probePlotHistoryMemoryLimitMiB': probePlotHistoryMemoryLimitMiB,
     'probePlotLodQuality': probePlotLodQuality,
+    'probePlotRenderEngine': probePlotRenderEngine,
     'probePlotShowGrid': probePlotShowGrid,
     'probePlotGridDensity': probePlotGridDensity,
     'probePlotBackground': probePlotBackground,
@@ -1433,6 +1449,7 @@ class AppSettings {
     'probePlotFontBold': probePlotFontBold,
     'probePlotFollowPositionRatio': probePlotFollowPositionRatio,
     'probePlotObservationClickToPlace': probePlotObservationClickToPlace,
+    'probePlotPreviewToolbarEnabled': probePlotPreviewToolbarEnabled,
     'yFitDisplayRatio': yFitDisplayRatio,
     'mathChannels': mathChannels.map((channel) => channel.toJson()).toList(),
     'parserType': parserType,
@@ -1788,6 +1805,7 @@ class AppSettings {
       'historyMemoryLimitMiB',
     ],
     'probePlotLodQuality': ['probePlot', 'performance', 'lodQuality'],
+    'probePlotRenderEngine': ['probePlot', 'performance', 'renderEngine'],
     'probePlotShowGrid': ['probePlot', 'appearance', 'showGrid'],
     'probePlotGridDensity': ['probePlot', 'appearance', 'gridDensity'],
     'probePlotBackground': ['probePlot', 'appearance', 'background'],
@@ -1808,6 +1826,7 @@ class AppSettings {
       'interaction',
       'observationClickToPlace',
     ],
+    'probePlotPreviewToolbarEnabled': ['probePlot', 'toolbar', 'locator'],
     'probeRttPollingIntervalMs': ['probePlot', 'rtt', 'pollingIntervalMs'],
 
     // RTT 与探针连接

@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -54,6 +55,13 @@ import 'views/pages/shell_page.dart';
 import 'views/widgets/app_icon.dart';
 import 'views/widgets/openocd_runtime_preparation_overlay.dart';
 import 'views/widgets/status_bar.dart';
+
+/// 组合根注入的生产帧调度实现：请求新帧并注册 post-frame 回调。
+void _schedulerPostFrameCallback(void Function() callback) {
+  final binding = SchedulerBinding.instance;
+  binding.scheduleFrame();
+  binding.addPostFrameCallback((_) => callback());
+}
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -245,7 +253,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => FlashProgrammingService()),
         ChangeNotifierProvider(create: (_) => ProbeConnectionService()),
         ChangeNotifierProvider(
-          create: (context) => PlotViewModel(connectionService),
+          create:
+              (context) => PlotViewModel(
+                connectionService,
+                postFrameCallback: _schedulerPostFrameCallback,
+              ),
         ),
         ChangeNotifierProvider(
           create: (context) => ShellViewModel(connectionService, sshService),

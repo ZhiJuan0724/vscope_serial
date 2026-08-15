@@ -58,8 +58,8 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       snapColor: _snapHighlightColorMode,
     );
     _showGrid = draft.showGrid;
-    _gridDensity = draft.gridDensity as String;
-    _plotBackground = draft.background as String;
+    _gridDensity = draft.gridDensity;
+    _plotBackground = draft.background;
     _floatingPanelOpacity = draft.floatingPanelOpacity.clamp(0.0, 1.0);
     _plotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6);
     _plotFontBold = draft.fontBold;
@@ -69,15 +69,14 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       0.95,
     );
     _observationClickToPlace = draft.observationClickToPlace;
-    _gestureModifier =
-        draft.gestureModifier as PlotGestureModifier? ?? _gestureModifier;
+    _gestureModifier = draft.gestureModifier ?? _gestureModifier;
     _showPlotSendDataInRaw =
         draft.showPlotSendDataInRaw ?? _showPlotSendDataInRaw;
     settings.plotReceiveAggregationEnabled =
         draft.receiveAggregationEnabled ??
         settings.plotReceiveAggregationEnabled;
-    _lodQuality = draft.quality as PlotLodQuality;
-    _renderEngine = draft.renderEngine as PlotRenderEngine? ?? _renderEngine;
+    _lodQuality = draft.quality;
+    _renderEngine = draft.renderEngine ?? _renderEngine;
     _maxVisiblePoints = draft.windowPointLimit.clamp(
       PlotViewModel.minVisiblePoints,
       PlotViewModel.maxVisiblePointsLimit,
@@ -452,20 +451,16 @@ extension PlotViewModelDisplayControls on PlotViewModel {
   }
 
   /// 设置网格密度（sparse/normal/dense）
-  void setGridDensity(String density) {
-    const valid = {'sparse', 'normal', 'dense'};
-    if (valid.contains(density)) {
-      _gridDensity = density;
-      _markChannelConfigChanged();
-      _saveSettings();
-      Future.microtask(notifyListeners);
-    }
+  void setGridDensity(GridDensity density) {
+    _gridDensity = density;
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
   }
 
-  void setPlotBackground(String background) {
-    final next = background == 'light' ? 'light' : 'dark';
-    if (_plotBackground == next) return;
-    _plotBackground = next;
+  void setPlotBackground(PlotBackgroundStyle background) {
+    if (_plotBackground == background) return;
+    _plotBackground = background;
     _applyPlotBackgroundPalette();
     _markChannelConfigChanged();
     _saveSettings();
@@ -527,13 +522,13 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     for (final channel in channels) {
       channel.color = ChannelConfig.colorForBackground(
         channel.color,
-        _plotBackground,
+        _plotBackground.name,
       );
     }
     for (final channel in mathChannels) {
       channel.display.color = ChannelConfig.colorForBackground(
         channel.display.color,
-        _plotBackground,
+        _plotBackground.name,
       );
     }
     _invalidateDisplayChannelCaches();

@@ -116,6 +116,37 @@ void main() {
     service.dispose();
   });
 
+  test('HSS 变量上限为 16，第 17 个明确拒绝', () {
+    final backend = _PlotBackend();
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [backend],
+    );
+    final viewModel = ProbePlotViewModel(service)..setMode(ProbePlotMode.hss);
+
+    for (var i = 0; i < 16; i++) {
+      viewModel.addHssVariable(
+        ProbeSampleVariable(
+          name: 'v$i',
+          address: 0x20000000 + i * 4,
+          type: ProbeScalarType.float32,
+        ),
+      );
+    }
+    expect(viewModel.activeChannelCount, 16);
+    expect(viewModel.channels.length, 16);
+    expect(
+      () => viewModel.addHssVariable(
+        const ProbeSampleVariable(
+          name: 'overflow',
+          address: 0x20000000 + 16 * 4,
+          type: ProbeScalarType.float32,
+        ),
+      ),
+      throwsStateError,
+    );
+  });
+
   test('HSS 每组采样按包序号递增且通道数量与 ELF 变量一致', () async {
     final backend = _PlotBackend();
     final service = ProbeConnectionService(

@@ -1,4 +1,8 @@
+import '../data/models/plot_gesture_modifier.dart';
+import '../data/models/plot_lod_index.dart';
+import '../data/models/plot_render_engine.dart';
 import '../services/shell_session.dart';
+import '../views/plot/plot_render_snapshot.dart';
 
 /// 数据收发显示设置草稿。创建后与运行态完全隔离。
 class RawDisplaySettingsDraft {
@@ -87,18 +91,18 @@ class PlotUiSettingsDraft {
   });
 
   bool showGrid;
-  Object gridDensity;
-  Object background;
+  GridDensity gridDensity;
+  PlotBackgroundStyle background;
   double floatingPanelOpacity;
   int fontSizeDelta;
   bool fontBold;
   double followPositionRatio;
   bool observationClickToPlace;
-  Object? gestureModifier;
+  PlotGestureModifier? gestureModifier;
   bool? showPlotSendDataInRaw;
   bool? receiveAggregationEnabled;
-  Object quality;
-  Object? renderEngine;
+  PlotLodQuality quality;
+  PlotRenderEngine? renderEngine;
   int windowPointLimit;
   int historyLimit;
   int? refreshFps;

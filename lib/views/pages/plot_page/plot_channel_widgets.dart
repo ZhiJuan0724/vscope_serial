@@ -267,140 +267,135 @@ class _ChannelItemState extends State<_ChannelItem> {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: widget.ch.color,
-              borderRadius: BorderRadius.circular(2),
+      child: PlotChannelRow(
+        data: PlotChannelRowData(
+          name: _displayName,
+          color: widget.ch.color,
+          visible: widget.ch.visible,
+        ),
+        onToggleVisible:
+            () => widget.vm.setChannelVisible(
+              widget.ch.index,
+              !widget.ch.visible,
             ),
-          ),
-          const SizedBox(width: 4),
-          // 通道名/别名（双击编辑）+ 众邦电控ID（直接编辑）并排显示
-          Expanded(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 通道名称：双击进入编辑模式
-                Flexible(
-                  child:
-                      _isEditingName
-                          ? SizedBox(
-                            height: 24,
-                            child: TextField(
-                              controller: _nameController,
-                              focusNode: _nameFocusNode,
-                              autofocus: true,
-                              maxLength:
-                                  PlotConfiguration.channelAliasMaxLength,
-                              style: const TextStyle(fontSize: 14),
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 2,
-                                  vertical: 0,
-                                ),
-                                border: UnderlineInputBorder(),
-                                counterText: '',
-                              ),
-                              onSubmitted: (_) => _saveAlias(),
-                              onEditingComplete: _saveAlias,
-                              onTapOutside: (_) => _nameFocusNode.unfocus(),
+        // 通道名/别名（双击编辑）+ 众邦电控ID（直接编辑）并排显示
+        nameWidget: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // 通道名称：双击进入编辑模式
+            Flexible(
+              child:
+                  _isEditingName
+                      ? SizedBox(
+                        height: 24,
+                        child: TextField(
+                          controller: _nameController,
+                          focusNode: _nameFocusNode,
+                          autofocus: true,
+                          maxLength: PlotConfiguration.channelAliasMaxLength,
+                          style: const TextStyle(fontSize: 14),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 2,
+                              vertical: 0,
                             ),
-                          )
-                          : _buildDisplayName(context),
-                ),
-                // 众邦电控模式下显示地址，常驻可编辑 TextField
-                if (showsAddress) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    width:
-                        isRProtocolMode
-                            ? _rProtocolAddressWidth(context, addressText)
-                            : usesShortZobowAddress &&
-                                !_addressFocusNode.hasFocus
-                            ? 58
-                            : PlotConfiguration.rProtocolAddressWidth,
-                    height: 26,
-                    alignment: Alignment.centerLeft,
-                    child: Focus(
-                      focusNode: _addressFocusNode,
-                      onFocusChange: _onAddressFocusChange,
-                      child: TextField(
-                        controller: _idController,
-                        enabled: !widget.vm.isPlotting && !widget.vm.isStopping,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontFamily: 'SarasaUiSC',
-                          color: Theme.of(context).colorScheme.onSurface,
-                          height: 1.15,
+                            border: UnderlineInputBorder(),
+                            counterText: '',
+                          ),
+                          onSubmitted: (_) => _saveAlias(),
+                          onEditingComplete: _saveAlias,
+                          onTapOutside: (_) => _nameFocusNode.unfocus(),
                         ),
-                        textAlignVertical: TextAlignVertical.center,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 2,
-                            vertical: 2,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade400,
-                              width: 1,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Colors.grey.shade400,
-                              width: 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(2),
-                            borderSide: BorderSide(
-                              color: Theme.of(context).colorScheme.primary,
-                              width: 1,
-                            ),
-                          ),
+                      )
+                      : _buildDisplayName(context),
+            ),
+            // 众邦电控模式下显示地址，常驻可编辑 TextField
+            if (showsAddress) ...[
+              const SizedBox(width: 6),
+              Container(
+                width:
+                    isRProtocolMode
+                        ? _rProtocolAddressWidth(context, addressText)
+                        : usesShortZobowAddress && !_addressFocusNode.hasFocus
+                        ? 58
+                        : PlotConfiguration.rProtocolAddressWidth,
+                height: 26,
+                alignment: Alignment.centerLeft,
+                child: Focus(
+                  focusNode: _addressFocusNode,
+                  onFocusChange: _onAddressFocusChange,
+                  child: TextField(
+                    controller: _idController,
+                    enabled: !widget.vm.isPlotting && !widget.vm.isStopping,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'SarasaUiSC',
+                      color: Theme.of(context).colorScheme.onSurface,
+                      height: 1.15,
+                    ),
+                    textAlignVertical: TextAlignVertical.center,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 2,
+                        vertical: 2,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(2),
+                        borderSide: BorderSide(
+                          color: Colors.grey.shade400,
+                          width: 1,
                         ),
-                        inputFormatters: [
-                          if (isRProtocolMode)
-                            const _RProtocolAddressInputFormatter()
-                          else
-                            const _ZobowChannelIdInputFormatter(),
-                        ],
-                        onChanged:
-                            isRProtocolMode
-                                ? (_) {
-                                  if (mounted) setState(() {});
-                                }
-                                : null,
-                        onSubmitted:
-                            (_) =>
-                                isRProtocolMode
-                                    ? _saveRAddress()
-                                    : _saveZobowId(),
-                        onEditingComplete:
-                            isRProtocolMode ? _saveRAddress : _saveZobowId,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(2),
+                        borderSide: BorderSide(
+                          color: Colors.grey.shade400,
+                          width: 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(2),
+                        borderSide: BorderSide(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 1,
+                        ),
                       ),
                     ),
+                    inputFormatters: [
+                      if (isRProtocolMode)
+                        const _RProtocolAddressInputFormatter()
+                      else
+                        const _ZobowChannelIdInputFormatter(),
+                    ],
+                    onChanged:
+                        isRProtocolMode
+                            ? (_) {
+                              if (mounted) setState(() {});
+                            }
+                            : null,
+                    onSubmitted:
+                        (_) =>
+                            isRProtocolMode ? _saveRAddress() : _saveZobowId(),
+                    onEditingComplete:
+                        isRProtocolMode ? _saveRAddress : _saveZobowId,
                   ),
-                  // 预设选择按钮
-                  _buildPresetButton(context),
-                ] else if (reservesRAddressSpace) ...[
-                  const SizedBox(width: 6),
-                  const SizedBox(
-                    width: PlotConfiguration.rProtocolAddressMinWidth,
-                    height: 26,
-                  ),
-                ],
-              ],
-            ),
-          ),
+                ),
+              ),
+              // 预设选择按钮
+              _buildPresetButton(context),
+            ] else if (reservesRAddressSpace) ...[
+              const SizedBox(width: 6),
+              const SizedBox(
+                width: PlotConfiguration.rProtocolAddressMinWidth,
+                height: 26,
+              ),
+            ],
+          ],
+        ),
+        trailing: [
           Tooltip(
             message:
                 widget.ch.offsetEnabled
@@ -420,16 +415,6 @@ class _ChannelItemState extends State<_ChannelItem> {
                 visualDensity: VisualDensity.compact,
               ),
             ),
-          ),
-          const SizedBox(width: 5),
-          // 绘图开关
-          _ChannelVisibilityButton(
-            visible: widget.ch.visible,
-            onToggle:
-                () => widget.vm.setChannelVisible(
-                  widget.ch.index,
-                  !widget.ch.visible,
-                ),
           ),
         ],
       ),
@@ -523,32 +508,19 @@ class _MathChannelItem extends StatelessWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: display.color,
-              borderRadius: BorderRadius.circular(2),
+      child: PlotChannelRow(
+        data: PlotChannelRowData(
+          name: channel.name,
+          color: display.color,
+          visible: display.visible,
+        ),
+        onToggleVisible:
+            () => vm.updateMathChannelDisplay(
+              channel.index,
+              display.copyWith(visible: !display.visible),
             ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Tooltip(
-              message: channel.expression,
-              child: Text(
-                channel.name,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: display.visible ? null : Colors.grey,
-                  decoration:
-                      display.visible ? null : TextDecoration.lineThrough,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
+        nameTooltip: channel.expression,
+        trailing: [
           Tooltip(
             message:
                 display.offsetEnabled
@@ -572,59 +544,7 @@ class _MathChannelItem extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 5),
-          _ChannelVisibilityButton(
-            visible: display.visible,
-            onToggle:
-                () => vm.updateMathChannelDisplay(
-                  channel.index,
-                  display.copyWith(visible: !display.visible),
-                ),
-          ),
         ],
-      ),
-    );
-  }
-}
-
-class _ChannelVisibilityButton extends StatelessWidget {
-  final bool visible;
-  final String? tooltip;
-  final VoidCallback onToggle;
-
-  const _ChannelVisibilityButton({
-    required this.visible,
-    this.tooltip,
-    required this.onToggle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Tooltip(
-      message:
-          tooltip ??
-          (visible ? AppStrings.plot.hideChannel : AppStrings.plot.showChannel),
-      child: SizedBox(
-        width: 22,
-        height: 24,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(4),
-            onTap: onToggle,
-            child: Icon(
-              visible
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              size: 18,
-              color:
-                  visible
-                      ? colorScheme.onSurface.withValues(alpha: 0.82)
-                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.55),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -670,7 +590,7 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
     _selectedColor = display.color;
     _selectedColor = ChannelConfig.colorForBackground(
       _selectedColor,
-      widget.vm.plotBackground,
+      widget.vm.plotBackground.name,
     );
     _showLine = display.showLine;
     _pointSize = display.pointSize;
@@ -834,7 +754,7 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
   }
 
   Widget _buildColorPicker() {
-    final presetColors = _channelPresetColors(widget.vm.plotBackground);
+    final presetColors = _channelPresetColors(widget.vm.plotBackground.name);
     return _buildTwoRowColorSwatches([
       ...presetColors.map((color) {
         final selected = color.toARGB32() == _selectedColor.toARGB32();
@@ -899,11 +819,11 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
 
   bool get _usesCustomColor =>
       !_channelPresetColors(
-        widget.vm.plotBackground,
+        widget.vm.plotBackground.name,
       ).any((color) => color.toARGB32() == _selectedColor.toARGB32());
 
   Future<void> _showCustomColorPicker() async {
-    final selectedColor = await _showChannelCustomColorPicker(
+    final selectedColor = await showPlotCustomColorPicker(
       context,
       _selectedColor,
     );
@@ -1137,7 +1057,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     super.initState();
     _selectedColor = ChannelConfig.colorForBackground(
       widget.ch.color,
-      widget.vm.plotBackground,
+      widget.vm.plotBackground.name,
     );
     _alias = widget.ch.alias;
     _showLine = widget.ch.showLine;
@@ -1404,7 +1324,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
     if (_isClosing) return;
     final defaultColor = ChannelConfig.colorForIndex(
       widget.ch.index,
-      widget.vm.plotBackground,
+      widget.vm.plotBackground.name,
     );
     setState(() {
       _selectedColor = defaultColor;
@@ -1540,7 +1460,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
 
   /// 构建颜色选择器（15 个当前背景预设色 + 自选色入口）
   Widget _buildColorPicker() {
-    final presetColors = _channelPresetColors(widget.vm.plotBackground);
+    final presetColors = _channelPresetColors(widget.vm.plotBackground.name);
     final usesCustomColor =
         !presetColors.any(
           (color) => color.toARGB32() == _selectedColor.toARGB32(),
@@ -1608,7 +1528,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
   }
 
   Future<void> _showCustomColorPicker() async {
-    final selectedColor = await _showChannelCustomColorPicker(
+    final selectedColor = await showPlotCustomColorPicker(
       context,
       _selectedColor,
     );
@@ -1622,453 +1542,4 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
         ? Colors.white
         : Colors.black87;
   }
-}
-
-Future<Color?> _showChannelCustomColorPicker(
-  BuildContext context,
-  Color initialColor,
-) async {
-  var selectedColor = _opaqueColor(initialColor);
-  var selectedHsv = HSVColor.fromColor(selectedColor);
-  var hasError = false;
-  final redController = TextEditingController();
-  final greenController = TextEditingController();
-  final blueController = TextEditingController();
-  final hexController = TextEditingController();
-
-  void syncControllersFromColor(
-    Color color, {
-    TextEditingController? editingController,
-  }) {
-    final value = color.toARGB32();
-    if (editingController != redController) {
-      redController.text = ((value >> 16) & 0xFF).toString();
-    }
-    if (editingController != greenController) {
-      greenController.text = ((value >> 8) & 0xFF).toString();
-    }
-    if (editingController != blueController) {
-      blueController.text = (value & 0xFF).toString();
-    }
-    if (editingController != hexController) {
-      hexController.text = _formatHexColor(color);
-    }
-  }
-
-  syncControllersFromColor(selectedColor);
-  final result = await showDialog<Color>(
-    context: context,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setDialogState) {
-          void setColor(
-            Color color, {
-            TextEditingController? editingController,
-          }) {
-            selectedColor = _opaqueColor(color);
-            selectedHsv = HSVColor.fromColor(selectedColor);
-            hasError = false;
-            syncControllersFromColor(
-              selectedColor,
-              editingController: editingController,
-            );
-          }
-
-          void updateFromRgb(TextEditingController editingController) {
-            final r = int.tryParse(redController.text);
-            final g = int.tryParse(greenController.text);
-            final b = int.tryParse(blueController.text);
-            if (!_isRgbByte(r) || !_isRgbByte(g) || !_isRgbByte(b)) {
-              setDialogState(() => hasError = true);
-              return;
-            }
-            setDialogState(() {
-              setColor(
-                Color.fromARGB(255, r!, g!, b!),
-                editingController: editingController,
-              );
-            });
-          }
-
-          void updateFromHex(String value) {
-            final parsed = _parseHexColor(value);
-            if (parsed == null) {
-              setDialogState(() => hasError = value.trim().isNotEmpty);
-              return;
-            }
-            setDialogState(() {
-              setColor(parsed, editingController: hexController);
-            });
-          }
-
-          return AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-            title: Text(AppStrings.plot.customColor),
-            content: SizedBox(
-              width: 320,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    AppStrings.plot.customColorPreview,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _SaturationValuePalette(
-                    hsvColor: selectedHsv,
-                    onChanged: (saturation, value) {
-                      setDialogState(() {
-                        setColor(
-                          selectedHsv
-                              .withSaturation(saturation)
-                              .withValue(value)
-                              .toColor(),
-                        );
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  _HuePalette(
-                    hue: selectedHsv.hue,
-                    onChanged: (hue) {
-                      setDialogState(() {
-                        setColor(selectedHsv.withHue(hue).toColor());
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: selectedColor,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.grey.shade400),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _ColorNumberField(
-                          label: AppStrings.plot.redChannel,
-                          controller: redController,
-                          onChanged: () => updateFromRgb(redController),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _ColorNumberField(
-                          label: AppStrings.plot.greenChannel,
-                          controller: greenController,
-                          onChanged: () => updateFromRgb(greenController),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _ColorNumberField(
-                          label: AppStrings.plot.blueChannel,
-                          controller: blueController,
-                          onChanged: () => updateFromRgb(blueController),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  AppDialogTextField(
-                    controller: hexController,
-                    labelText: AppStrings.plot.hexColor,
-                    hintText: AppStrings.plot.hexColorHint,
-                    errorText:
-                        hasError ? AppStrings.plot.colorInputInvalid : null,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(
-                        RegExp(r'[#0-9a-fA-F]'),
-                      ),
-                      LengthLimitingTextInputFormatter(7),
-                    ],
-                    textCapitalization: TextCapitalization.characters,
-                    onChanged: updateFromHex,
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(AppStrings.common.cancel),
-              ),
-              ElevatedButton(
-                onPressed:
-                    hasError
-                        ? null
-                        : () => Navigator.pop(context, selectedColor),
-                child: Text(AppStrings.common.confirm),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
-
-  redController.dispose();
-  greenController.dispose();
-  blueController.dispose();
-  hexController.dispose();
-  return result;
-}
-
-class _SaturationValuePalette extends StatelessWidget {
-  final HSVColor hsvColor;
-  final void Function(double saturation, double value) onChanged;
-
-  const _SaturationValuePalette({
-    required this.hsvColor,
-    required this.onChanged,
-  });
-
-  void _update(Offset position, Size size) {
-    final saturation = (position.dx / size.width).clamp(0.0, 1.0);
-    final value = 1 - (position.dy / size.height).clamp(0.0, 1.0);
-    onChanged(saturation, value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, 150);
-        return GestureDetector(
-          key: const ValueKey('channel-color-palette'),
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (details) => _update(details.localPosition, size),
-          onPanStart: (details) => _update(details.localPosition, size),
-          onPanUpdate: (details) => _update(details.localPosition, size),
-          child: CustomPaint(
-            size: size,
-            painter: _SaturationValuePainter(hsvColor),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _SaturationValuePainter extends CustomPainter {
-  final HSVColor hsvColor;
-
-  const _SaturationValuePainter(this.hsvColor);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final radius = const Radius.circular(4);
-    canvas.save();
-    canvas.clipRRect(RRect.fromRectAndRadius(rect, radius));
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = LinearGradient(
-          colors: [
-            Colors.white,
-            HSVColor.fromAHSV(1, hsvColor.hue, 1, 1).toColor(),
-          ],
-        ).createShader(rect),
-    );
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.transparent, Colors.black],
-        ).createShader(rect),
-    );
-    canvas.restore();
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect.deflate(0.5), radius),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..color = Colors.grey.shade500,
-    );
-
-    final center = Offset(
-      hsvColor.saturation * size.width,
-      (1 - hsvColor.value) * size.height,
-    );
-    canvas.drawCircle(
-      center,
-      6,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = Colors.white,
-    );
-    canvas.drawCircle(
-      center,
-      7,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..color = Colors.black54,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_SaturationValuePainter oldDelegate) =>
-      oldDelegate.hsvColor != hsvColor;
-}
-
-class _HuePalette extends StatelessWidget {
-  final double hue;
-  final ValueChanged<double> onChanged;
-
-  const _HuePalette({required this.hue, required this.onChanged});
-
-  void _update(double dx, double width) {
-    onChanged((dx / width).clamp(0.0, 1.0) * 360);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, 18);
-        return GestureDetector(
-          key: const ValueKey('channel-color-hue'),
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (details) => _update(details.localPosition.dx, size.width),
-          onPanStart:
-              (details) => _update(details.localPosition.dx, size.width),
-          onPanUpdate:
-              (details) => _update(details.localPosition.dx, size.width),
-          child: CustomPaint(size: size, painter: _HuePainter(hue)),
-        );
-      },
-    );
-  }
-}
-
-class _HuePainter extends CustomPainter {
-  final double hue;
-
-  const _HuePainter(this.hue);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final radius = const Radius.circular(4);
-    canvas.save();
-    canvas.clipRRect(RRect.fromRectAndRadius(rect, radius));
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const LinearGradient(
-          colors: [
-            Color(0xFFFF0000),
-            Color(0xFFFFFF00),
-            Color(0xFF00FF00),
-            Color(0xFF00FFFF),
-            Color(0xFF0000FF),
-            Color(0xFFFF00FF),
-            Color(0xFFFF0000),
-          ],
-        ).createShader(rect),
-    );
-    canvas.restore();
-
-    final x = (hue / 360) * size.width;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(x, size.height / 2),
-          width: 5,
-          height: 22,
-        ),
-        const Radius.circular(2),
-      ),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = Colors.white,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(x, size.height / 2),
-          width: 7,
-          height: 24,
-        ),
-        const Radius.circular(3),
-      ),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..color = Colors.black54,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_HuePainter oldDelegate) => oldDelegate.hue != hue;
-}
-
-class _ColorNumberField extends StatelessWidget {
-  final String label;
-  final TextEditingController controller;
-  final VoidCallback onChanged;
-
-  const _ColorNumberField({
-    required this.label,
-    required this.controller,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppLabeledField(
-      label: label,
-      child: TextField(
-        controller: controller,
-        decoration: secondaryDialogFieldDecoration(),
-        keyboardType: TextInputType.number,
-        inputFormatters: [
-          FilteringTextInputFormatter.digitsOnly,
-          LengthLimitingTextInputFormatter(3),
-        ],
-        onChanged: (_) => onChanged(),
-      ),
-    );
-  }
-}
-
-bool _isRgbByte(int? value) => value != null && value >= 0 && value <= 255;
-
-Color _opaqueColor(Color color) {
-  final value = color.toARGB32();
-  return Color.fromARGB(
-    255,
-    (value >> 16) & 0xFF,
-    (value >> 8) & 0xFF,
-    value & 0xFF,
-  );
-}
-
-String _formatHexColor(Color color) {
-  final value = color.toARGB32() & 0xFFFFFF;
-  return '#${value.toRadixString(16).padLeft(6, '0').toUpperCase()}';
-}
-
-Color? _parseHexColor(String text) {
-  final raw = text.trim();
-  final hex = raw.startsWith('#') ? raw.substring(1) : raw;
-  if (hex.length != 6 || !RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(hex)) {
-    return null;
-  }
-  final value = int.tryParse(hex, radix: 16);
-  if (value == null) return null;
-  return Color(0xFF000000 | value);
 }

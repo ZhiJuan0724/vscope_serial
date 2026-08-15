@@ -3,13 +3,14 @@ import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../core/constants/plot_configuration.dart';
 import '../core/utils/plot_value_formatter.dart';
 import '../data/models/channel_config.dart';
 import '../data/models/plot_data.dart';
 import '../data/models/plot_lod_index.dart';
+import '../data/models/plot_render_engine.dart';
 import '../data/models/probe_plot_config.dart';
 import '../data/models/probe_connection_config.dart';
 import '../services/j_scope_rtt_parser.dart';
@@ -48,16 +49,21 @@ class ProbePlotViewModel extends ChangeNotifier {
   late final StreamSubscription<RttDataChunk> _subscription;
   late final StreamSubscription<ProbeSampleChunk> _sampleSubscription;
   final List<ChannelConfig> channels = List.generate(
-    12,
+    PlotConfiguration.rawChannelCount,
     (index) => ChannelConfig(
       index: index,
-      color: ChannelConfig.lightPresetColors[index],
+      color: ChannelConfig.colorForIndex(index, 'light'),
       alias: 'Value ${index + 1}',
     ),
   );
 
   ProbePlotMode mode = ProbePlotMode.rtt;
   PlotViewport viewport = PlotViewport(xMin: 0, xMax: 1000, yMin: -1, yMax: 1);
+
+  /// 视口历史记录栈，缩放/平移前保存当前状态，用于「撤回缩放」。
+  final List<PlotViewport> _viewportHistory = [];
+  static const int _maxHistory = 50;
+
   JScopeRttParser? _rttParser;
   int? _rttChannelIndex;
   bool _operationPending = false;
@@ -73,9 +79,14 @@ class ProbePlotViewModel extends ChangeNotifier {
   List<ProbeSymbolInfo> symbols = const [];
   DateTime? _programModifiedAt;
   bool follow = true;
+
+  /// 框选放大模式开关；连续模式需要手动关闭，单次模式在框选成功后关闭。
+  bool _boxZoomEnabled = false;
+  bool _boxZoomContinuous = false;
   late int windowPointLimit;
   late int historyMemoryLimitMiB;
   late PlotLodQuality lodQuality;
+  PlotRenderEngine renderEngine = PlotRenderEngine.d3d11;
   late bool showGrid;
   late GridDensity gridDensity;
   late PlotBackgroundStyle backgroundStyle;
@@ -84,6 +95,7 @@ class ProbePlotViewModel extends ChangeNotifier {
   late bool plotFontBold;
   late double followPositionRatio;
   late bool observationClickToPlace;
+  late bool previewToolbarEnabled;
   bool retentionLimitReached = false;
   int _exactPointsEstimatedBytes = 0;
   int revision = 0;
@@ -159,6 +171,9 @@ class ProbePlotViewModel extends ChangeNotifier {
 
   bool get running => service.activityOwner == ProbeActivityOwner.probePlot;
   bool get operationPending => _operationPending;
+  bool get canUndoZoom => _viewportHistory.isNotEmpty;
+  bool get boxZoomEnabled => _boxZoomEnabled;
+  bool get boxZoomContinuous => _boxZoomContinuous;
   int get activeChannelCount => switch (mode) {
     ProbePlotMode.hss => hssVariables.length,
     ProbePlotMode.rtt => _rttActiveChannelCount,
@@ -179,6 +194,10 @@ class ProbePlotViewModel extends ChangeNotifier {
       'balanced' => PlotLodQuality.balanced,
       _ => PlotLodQuality.quality,
     };
+    renderEngine =
+        settings.probePlotRenderEngine == 'canvas'
+            ? PlotRenderEngine.canvas
+            : PlotRenderEngine.d3d11;
     showGrid = settings.probePlotShowGrid;
     gridDensity = switch (settings.probePlotGridDensity) {
       'sparse' => GridDensity.sparse,
@@ -194,6 +213,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     plotFontBold = settings.probePlotFontBold;
     followPositionRatio = settings.probePlotFollowPositionRatio;
     observationClickToPlace = settings.probePlotObservationClickToPlace;
+    previewToolbarEnabled = settings.probePlotPreviewToolbarEnabled;
   }
 
   void _saveDisplaySettings() {
@@ -205,6 +225,7 @@ class ProbePlotViewModel extends ChangeNotifier {
       PlotLodQuality.balanced => 'balanced',
       PlotLodQuality.quality => 'quality',
     };
+    settings.probePlotRenderEngine = renderEngine.name;
     settings.probePlotShowGrid = showGrid;
     settings.probePlotGridDensity = gridDensity.name;
     settings.probePlotBackground = backgroundStyle.name;
@@ -213,6 +234,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     settings.probePlotFontBold = plotFontBold;
     settings.probePlotFollowPositionRatio = followPositionRatio;
     settings.probePlotObservationClickToPlace = observationClickToPlace;
+    settings.probePlotPreviewToolbarEnabled = previewToolbarEnabled;
     unawaited(settings.save());
   }
 
@@ -228,14 +250,18 @@ class ProbePlotViewModel extends ChangeNotifier {
     );
     final nextOpacity = draft.floatingPanelOpacity.clamp(0.0, 1.0);
     final nextFollow = draft.followPositionRatio.clamp(0.5, 0.95);
-    final nextGridDensity = draft.gridDensity as GridDensity;
-    final nextBackground = draft.background as PlotBackgroundStyle;
-    final nextQuality = draft.quality as PlotLodQuality;
+    final nextGridDensity = draft.gridDensity;
+    final nextBackground = draft.background;
+    final nextQuality = draft.quality;
+    final nextRenderEngine = draft.renderEngine ?? renderEngine;
     final settings = AppSettings();
+    final nextPreviewToolbar =
+        draft.previewToolbarEnabled ?? settings.probePlotPreviewToolbarEnabled;
     final previous = (
       window: settings.probePlotWindowPointLimit,
       history: settings.probePlotHistoryMemoryLimitMiB,
       quality: settings.probePlotLodQuality,
+      renderEngine: settings.probePlotRenderEngine,
       showGrid: settings.probePlotShowGrid,
       gridDensity: settings.probePlotGridDensity,
       background: settings.probePlotBackground,
@@ -244,11 +270,13 @@ class ProbePlotViewModel extends ChangeNotifier {
       fontBold: settings.probePlotFontBold,
       follow: settings.probePlotFollowPositionRatio,
       observation: settings.probePlotObservationClickToPlace,
+      previewToolbar: settings.probePlotPreviewToolbarEnabled,
     );
     settings
       ..probePlotWindowPointLimit = nextWindow
       ..probePlotHistoryMemoryLimitMiB = nextMemory
       ..probePlotLodQuality = nextQuality.name
+      ..probePlotRenderEngine = nextRenderEngine.name
       ..probePlotShowGrid = draft.showGrid
       ..probePlotGridDensity = nextGridDensity.name
       ..probePlotBackground = nextBackground.name
@@ -256,7 +284,8 @@ class ProbePlotViewModel extends ChangeNotifier {
       ..probePlotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6)
       ..probePlotFontBold = draft.fontBold
       ..probePlotFollowPositionRatio = nextFollow
-      ..probePlotObservationClickToPlace = draft.observationClickToPlace;
+      ..probePlotObservationClickToPlace = draft.observationClickToPlace
+      ..probePlotPreviewToolbarEnabled = nextPreviewToolbar;
     try {
       await settings.save();
     } catch (_) {
@@ -264,6 +293,7 @@ class ProbePlotViewModel extends ChangeNotifier {
         ..probePlotWindowPointLimit = previous.window
         ..probePlotHistoryMemoryLimitMiB = previous.history
         ..probePlotLodQuality = previous.quality
+        ..probePlotRenderEngine = previous.renderEngine
         ..probePlotShowGrid = previous.showGrid
         ..probePlotGridDensity = previous.gridDensity
         ..probePlotBackground = previous.background
@@ -271,13 +301,15 @@ class ProbePlotViewModel extends ChangeNotifier {
         ..probePlotFontSizeDelta = previous.fontSize
         ..probePlotFontBold = previous.fontBold
         ..probePlotFollowPositionRatio = previous.follow
-        ..probePlotObservationClickToPlace = previous.observation;
+        ..probePlotObservationClickToPlace = previous.observation
+        ..probePlotPreviewToolbarEnabled = previous.previewToolbar;
       rethrow;
     }
 
     windowPointLimit = nextWindow;
     historyMemoryLimitMiB = nextMemory;
     lodQuality = nextQuality;
+    renderEngine = nextRenderEngine;
     showGrid = draft.showGrid;
     gridDensity = nextGridDensity;
     backgroundStyle = nextBackground;
@@ -286,6 +318,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     plotFontBold = draft.fontBold;
     followPositionRatio = nextFollow;
     observationClickToPlace = draft.observationClickToPlace;
+    previewToolbarEnabled = nextPreviewToolbar;
     while (_exactPoints.length > windowPointLimit) {
       final removed = _exactPoints.removeFirst();
       _exactPointsEstimatedBytes -= _estimatePointBytes(removed);
@@ -300,6 +333,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     dataRevision++;
     revision++;
     overlayRevision++;
+    _renderNotifier.value++;
     notifyListeners();
     if (retentionLimitReached) unawaited(_stopAfterRetentionLimit());
   }
@@ -416,6 +450,12 @@ class ProbePlotViewModel extends ChangeNotifier {
     _rttChannelIndex = selected.index;
     final detected = JScopeFormat.tryParse(selected.name);
     if (detected != null) {
+      if (detected.fields.length > PlotConfiguration.rawChannelCount) {
+        throw StateError(
+          'RTT 检测到 ${detected.fields.length} 个通道，'
+          '超过上限 ${PlotConfiguration.rawChannelCount}，无法绘制',
+        );
+      }
       rttFormat = selected.name;
       _rttActiveChannelCount = detected.fields.length;
     } else {
@@ -425,7 +465,9 @@ class ProbePlotViewModel extends ChangeNotifier {
   }
 
   void addHssVariable(ProbeSampleVariable variable) {
-    if (hssVariables.length >= 12) throw StateError('最多支持 12 个 HSS 变量');
+    if (hssVariables.length >= PlotConfiguration.rawChannelCount) {
+      throw StateError('最多支持 ${PlotConfiguration.rawChannelCount} 个 HSS 变量');
+    }
     if (hssVariables.any((item) => item.address == variable.address)) return;
     hssVariables.add(variable);
     _syncHssChannels();
@@ -699,6 +741,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     _dataYMin = null;
     _dataYMax = null;
     _autoFitY = true;
+    _viewportHistory.clear();
     cursor = null;
     retentionLimitReached = false;
     observations.clear();
@@ -849,6 +892,13 @@ class ProbePlotViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setPreviewToolbarEnabled(bool value) {
+    if (previewToolbarEnabled == value) return;
+    previewToolbarEnabled = value;
+    _saveDisplaySettings();
+    notifyListeners();
+  }
+
   void updateViewport(PlotViewport value, {bool fromDrag = false}) {
     final previous = viewport;
     final yChanged = value.yMin != viewport.yMin || value.yMax != viewport.yMax;
@@ -859,6 +909,7 @@ class ProbePlotViewModel extends ChangeNotifier {
             math.max(1, previous.xRange.abs()) * 1e-9 &&
         (value.yRange - previous.yRange).abs() <=
             math.max(1, previous.yRange.abs()) * 1e-9;
+    if (!fromDrag) _saveViewport();
     viewport = value;
     if (fromDrag && preservesRange && (xMoved || yMoved)) {
       follow = false;
@@ -866,6 +917,83 @@ class ProbePlotViewModel extends ChangeNotifier {
     if (yChanged) _autoFitY = false;
     viewportRevision++;
     revision++;
+    notifyListeners();
+  }
+
+  /// 保存当前视口到历史记录栈（用于「撤回缩放」）。
+  void _saveViewport() {
+    _viewportHistory.add(viewport.copy());
+    if (_viewportHistory.length > _maxHistory) {
+      _viewportHistory.removeAt(0);
+    }
+  }
+
+  /// 撤回上次缩放，恢复到上一个视口。
+  void undoZoom() {
+    if (_viewportHistory.isEmpty) return;
+    viewport = _viewportHistory.removeLast();
+    viewportRevision++;
+    revision++;
+    _renderNotifier.value++;
+    notifyListeners();
+  }
+
+  /// 拖动结束后保存最终视口到历史记录栈。
+  ///
+  /// 拖动期间 [updateViewport] 以 [fromDrag] = true 逐帧更新视口但不压栈，
+  /// 这里在松手后把最终视口压入历史，保证「撤回缩放」能退回拖动前状态。
+  void saveDragViewport() {
+    _saveViewport();
+    notifyListeners();
+  }
+
+  /// 设置框选放大开关；连续模式需要手动关闭，单次模式在框选成功后关闭。
+  void setBoxZoomEnabled(bool value, {bool continuous = false}) {
+    _boxZoomEnabled = value;
+    _boxZoomContinuous = value && continuous;
+    _renderNotifier.value++;
+    notifyListeners();
+  }
+
+  /// X 轴自适应：按包序号范围（最小..最大）调整 X 轴，Y 轴保持不变。
+  void fitXAxis() {
+    final minX = minJumpPacketIndex;
+    final maxX = maxJumpPacketIndex;
+    if (minX == null || maxX == null || maxX <= minX) return;
+    _saveViewport();
+    viewport = viewport.copyWith(xMin: minX.toDouble(), xMax: maxX.toDouble());
+    viewportRevision++;
+    revision++;
+    _renderNotifier.value++;
+    notifyListeners();
+  }
+
+  /// Y 轴自适应：复用 [_applyDataYRange] 按数据极值加 padding 调整 Y 轴。
+  void fitYAxis() {
+    if (_dataYMin == null || _dataYMax == null) return;
+    _saveViewport();
+    _autoFitY = true;
+    _applyDataYRange();
+    viewportRevision++;
+    revision++;
+    _renderNotifier.value++;
+    notifyListeners();
+  }
+
+  /// 全自适应：同时按数据范围调整 X 轴与 Y 轴。
+  void fitAll() {
+    final minX = minJumpPacketIndex;
+    final maxX = maxJumpPacketIndex;
+    if (minX == null || maxX == null || maxX <= minX) return;
+    _saveViewport();
+    viewport = viewport.copyWith(xMin: minX.toDouble(), xMax: maxX.toDouble());
+    if (_dataYMin != null && _dataYMax != null) {
+      _autoFitY = true;
+      _applyDataYRange();
+    }
+    viewportRevision++;
+    revision++;
+    _renderNotifier.value++;
     notifyListeners();
   }
 
@@ -894,25 +1022,15 @@ class ProbePlotViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Color? get xMeasurementLine1Color {
-    final value = AppSettings().xMeasurementLine1Color;
-    return value == null ? null : Color(value);
-  }
+  /// 测量线颜色以 ARGB32 整数表示，避免 ViewModel 依赖 Flutter 的 `Color`；
+  /// 由 view 层用 `Color(value)` 转换回 `Color`。
+  int? get xMeasurementLine1Color => AppSettings().xMeasurementLine1Color;
 
-  Color? get xMeasurementLine2Color {
-    final value = AppSettings().xMeasurementLine2Color;
-    return value == null ? null : Color(value);
-  }
+  int? get xMeasurementLine2Color => AppSettings().xMeasurementLine2Color;
 
-  Color? get yMeasurementLine1Color {
-    final value = AppSettings().yMeasurementLine1Color;
-    return value == null ? null : Color(value);
-  }
+  int? get yMeasurementLine1Color => AppSettings().yMeasurementLine1Color;
 
-  Color? get yMeasurementLine2Color {
-    final value = AppSettings().yMeasurementLine2Color;
-    return value == null ? null : Color(value);
-  }
+  int? get yMeasurementLine2Color => AppSettings().yMeasurementLine2Color;
 
   double get xMeasurementLine1Opacity => AppSettings().xMeasurementLine1Opacity;
   double get xMeasurementLine2Opacity => AppSettings().xMeasurementLine2Opacity;
@@ -979,14 +1097,14 @@ class ProbePlotViewModel extends ChangeNotifier {
   }
 
   void setXMeasurementStyle({
-    required Color line1Color,
+    required int line1Color,
     required double line1Opacity,
-    required Color line2Color,
+    required int line2Color,
     required double line2Opacity,
   }) {
     final settings = AppSettings();
-    settings.xMeasurementLine1Color = line1Color.toARGB32();
-    settings.xMeasurementLine2Color = line2Color.toARGB32();
+    settings.xMeasurementLine1Color = line1Color;
+    settings.xMeasurementLine2Color = line2Color;
     settings.xMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0);
     settings.xMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0);
     unawaited(settings.save());
@@ -995,14 +1113,14 @@ class ProbePlotViewModel extends ChangeNotifier {
   }
 
   void setYMeasurementStyle({
-    required Color line1Color,
+    required int line1Color,
     required double line1Opacity,
-    required Color line2Color,
+    required int line2Color,
     required double line2Opacity,
   }) {
     final settings = AppSettings();
-    settings.yMeasurementLine1Color = line1Color.toARGB32();
-    settings.yMeasurementLine2Color = line2Color.toARGB32();
+    settings.yMeasurementLine1Color = line1Color;
+    settings.yMeasurementLine2Color = line2Color;
     settings.yMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0);
     settings.yMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0);
     unawaited(settings.save());
@@ -1120,6 +1238,22 @@ class ProbePlotViewModel extends ChangeNotifier {
     viewportRevision++;
     revision++;
     notifyListeners();
+  }
+
+  /// 定位条导航：把视口中心移动到 [centerX]，保持当前 X 范围不变。
+  ///
+  /// [fromDrag] 为 true 时来自定位条拖动，逐帧更新但不压历史栈；松手后由
+  /// [saveDragViewport] 统一压栈，避免拖动期间频繁写入。
+  void movePreviewViewportTo(double centerX, {bool fromDrag = false}) {
+    final maxX = math.max(0, pointCount - 1).toDouble();
+    final range = math.min(viewport.xRange, math.max(1.0, maxX));
+    final minX =
+        (centerX - range / 2)
+            .clamp(0.0, math.max(0.0, maxX - range))
+            .toDouble();
+    final next = viewport.copyWith(xMin: minX, xMax: minX + range);
+    if (follow) follow = false;
+    updateViewport(next, fromDrag: fromDrag);
   }
 
   void updateCursor(CursorState? value) {

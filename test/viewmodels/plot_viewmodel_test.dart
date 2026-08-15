@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
@@ -88,6 +89,13 @@ Future<void> _writeLegacyV2PlotBin(
     ...metadataBytes,
     ...payloadBytes,
   ]);
+}
+
+/// 与组合根一致的生产帧调度实现，供需要真实 binding 的 testWidgets 注入。
+void _schedulerPostFrameCallback(void Function() callback) {
+  final binding = SchedulerBinding.instance;
+  binding.scheduleFrame();
+  binding.addPostFrameCallback((_) => callback());
 }
 
 void main() {
@@ -192,13 +200,13 @@ void main() {
       vm.setChannelColor(0, ChannelConfig.darkPresetColors.first);
       vm.setChannelColor(1, customColor);
 
-      vm.setPlotBackground('light');
+      vm.setPlotBackground(PlotBackgroundStyle.light);
 
-      expect(vm.plotBackground, 'light');
+      expect(vm.plotBackground, PlotBackgroundStyle.light);
       expect(vm.channels[0].color, ChannelConfig.lightPresetColors.first);
       expect(vm.channels[1].color, customColor);
 
-      vm.setPlotBackground('dark');
+      vm.setPlotBackground(PlotBackgroundStyle.dark);
 
       expect(vm.channels[0].color, ChannelConfig.darkPresetColors.first);
       expect(vm.channels[1].color, customColor);
@@ -265,26 +273,37 @@ void main() {
     });
 
     testWidgets('拖动视口在同一帧内只通知一次', (tester) async {
-      var notifications = 0;
-      vm.addListener(() => notifications++);
+      final dragVm = PlotViewModel(
+        connectionService,
+        postFrameCallback: _schedulerPostFrameCallback,
+      );
+      try {
+        // 让构造期异步初始化（地址配置服务等）的通知先落定，避免干扰计数。
+        await tester.pump();
 
-      vm.updateViewport(
-        vm.viewport.copyWith(xMin: 10, xMax: 110),
-        fromDrag: true,
-      );
-      vm.updateViewport(
-        vm.viewport.copyWith(xMin: 20, xMax: 120),
-        fromDrag: true,
-      );
-      vm.updateViewport(
-        vm.viewport.copyWith(xMin: 30, xMax: 130),
-        fromDrag: true,
-      );
+        var notifications = 0;
+        dragVm.addListener(() => notifications++);
 
-      expect(vm.viewport.xMin, 30.0);
-      expect(notifications, 0);
-      await tester.pump();
-      expect(notifications, 1);
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 10, xMax: 110),
+          fromDrag: true,
+        );
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 20, xMax: 120),
+          fromDrag: true,
+        );
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 30, xMax: 130),
+          fromDrag: true,
+        );
+
+        expect(dragVm.viewport.xMin, 30.0);
+        expect(notifications, 0);
+        await tester.pump();
+        expect(notifications, 1);
+      } finally {
+        dragVm.dispose();
+      }
     });
 
     test('jumpToXIndex 保持当前范围并移动视口中心', () {

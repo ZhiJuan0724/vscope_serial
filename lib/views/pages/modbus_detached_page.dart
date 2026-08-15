@@ -9,7 +9,7 @@ import '../../services/app_notifications.dart';
 import '../../services/modbus_client_service.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/modbus_register_grid.dart';
-import 'plot_page.dart' show showPlotCustomColorPicker;
+import '../widgets/plot_color_picker.dart';
 
 class ModbusDetachedPage extends StatefulWidget {
   const ModbusDetachedPage({
