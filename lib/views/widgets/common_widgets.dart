@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 export 'app_controls/app_dialog.dart';
-export 'app_controls/app_feedback.dart';
 export 'app_controls/app_form.dart';
 
 /// 二级弹窗内单行输入框和下拉框的默认宽度。
@@ -1800,4 +1799,36 @@ class _ComboInputState extends State<ComboInput> {
       ),
     );
   }
+}
+
+/// 通用确认对话框，返回用户是否确认。
+///
+/// 用于清空数据、删除配置等破坏性操作的二次确认。
+Future<bool> showConfirmDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String confirmLabel = '确定',
+  String cancelLabel = '取消',
+}) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder:
+        (dialogContext) => AlertDialog(
+          shape: kAdvancedSettingsDialogShape,
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(cancelLabel),
+            ),
+            DialogPrimaryActionButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              label: confirmLabel,
+            ),
+          ],
+        ),
+  );
+  return confirmed == true;
 }

@@ -745,6 +745,7 @@ class _OpenOcdTclClient {
   final Socket _socket;
   late final StreamSubscription<Uint8List> _subscription;
   final List<int> _buffer = [];
+  static const int _maxBufferBytes = 1024 * 1024;
   Completer<String>? _pending;
   Future<void> _requestTail = Future.value();
 
@@ -754,6 +755,7 @@ class _OpenOcdTclClient {
     _requestTail = release.future;
     await previous;
     try {
+      _buffer.clear();
       if (_pending != null) throw StateError('OpenOCD Tcl 命令发生重入');
       final response = Completer<String>();
       _pending = response;
@@ -769,7 +771,10 @@ class _OpenOcdTclClient {
   void _onData(Uint8List data) {
     _buffer.addAll(data);
     final terminator = _buffer.indexOf(0x1a);
-    if (terminator < 0) return;
+    if (terminator < 0) {
+      if (_buffer.length > _maxBufferBytes) _buffer.clear();
+      return;
+    }
     final payload = Uint8List.fromList(_buffer.sublist(0, terminator));
     _buffer.removeRange(0, terminator + 1);
     final pending = _pending;

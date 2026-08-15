@@ -46,7 +46,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     if (fromDrag) {
       _notifyDragViewportAtNextFrame();
     } else {
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
     }
   }
 
@@ -65,7 +65,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
       'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
       category: 'PLOT',
     );
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 定位条拖动期间只在鼠标短暂停顿后换载精确窗口。
@@ -118,7 +118,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     _saveViewport();
     _setViewport(viewport.reset());
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 撤回上次缩放
@@ -128,7 +128,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     _setViewport(_limitXRange(previous).copy());
     _loadWindowForViewport();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   PlotViewport _limitXRange(PlotViewport candidate, {PlotViewport? previous}) {
@@ -198,7 +198,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     );
     _loadWindowForViewport();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// X 轴缩小
@@ -210,7 +210,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     );
     _loadWindowForViewport();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// Y 轴放大
@@ -219,7 +219,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     final centerY = viewport.yMin + viewport.yRange / 2;
     _setViewport(viewport.zoomY(0.8, centerY));
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// Y 轴缩小
@@ -228,14 +228,14 @@ extension PlotViewModelViewportControls on PlotViewModel {
     final centerY = viewport.yMin + viewport.yRange / 2;
     _setViewport(viewport.zoomY(1.25, centerY));
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置框选放大开关；连续模式需要手动关闭，单次模式在框选成功后关闭。
   void setBoxZoomEnabled(bool value, {bool continuous = false}) {
     _boxZoomEnabled = value;
     _boxZoomContinuous = value && continuous;
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
@@ -293,7 +293,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     changed = _fitOffsetChannelsY(visiblePoints) || changed;
     if (!changed) return;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
@@ -309,7 +309,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
     _loadTailWindow();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 全自适应：调整X和Y使所有可见通道数据完全显示
@@ -372,7 +372,7 @@ extension PlotViewModelViewportControls on PlotViewModel {
     }
     _fitOffsetChannelsY(currentData);
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {

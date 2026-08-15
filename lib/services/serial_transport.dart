@@ -83,7 +83,9 @@ class NativeSerialTransport
       'elapsed=${stopwatch.elapsedMilliseconds}ms',
       category: 'SERIAL',
     );
-    if (!result.opened) return false;
+    if (!result.opened) {
+      throw NativeSerialOpenException(result.failureDescription);
+    }
 
     final attached = _reader.attachToOpenPort();
     logger.debug(

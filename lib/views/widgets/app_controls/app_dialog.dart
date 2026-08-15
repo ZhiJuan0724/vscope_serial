@@ -199,37 +199,3 @@ class AppDialogPrimaryButton extends StatelessWidget {
     child: child,
   );
 }
-
-/// 页面普通操作按钮，无阴影。
-class AppActionButton extends StatelessWidget {
-  const AppActionButton({
-    super.key,
-    required this.onPressed,
-    required this.child,
-    this.icon,
-  });
-
-  final VoidCallback? onPressed;
-  final Widget child;
-  final Widget? icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = OutlinedButton.styleFrom(
-      elevation: 0,
-      minimumSize: const Size(0, 32),
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.all(Radius.circular(4)),
-      ),
-    );
-    return icon == null
-        ? OutlinedButton(onPressed: onPressed, style: style, child: child)
-        : OutlinedButton.icon(
-          onPressed: onPressed,
-          style: style,
-          icon: icon!,
-          label: child,
-        );
-  }
-}

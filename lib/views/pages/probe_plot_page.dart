@@ -48,6 +48,15 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     }
   }
 
+  Future<void> _confirmClear(ProbePlotViewModel vm) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: AppStrings.plot.clearData,
+      message: '确定清空当前探针采样数据和历史吗？此操作不可撤销。',
+    );
+    if (confirmed) vm.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ProbePlotViewModel>(
@@ -101,7 +110,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           ),
                         ),
                         segments: [
-                          ButtonSegment(
+                          const ButtonSegment(
                             value: ProbePlotMode.hss,
                             label: SizedBox(
                               width: 28,
@@ -115,7 +124,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                               ),
                             ),
                           ),
-                          ButtonSegment(
+                          const ButtonSegment(
                             value: ProbePlotMode.rtt,
                             label: SizedBox(
                               width: 28,
@@ -406,13 +415,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ToolbarOverflowAction(
                         icon: const Icon(Icons.clear),
                         label: AppStrings.plot.clearData,
-                        onPressed: vm.pointCount == 0 ? null : vm.clear,
+                        onPressed:
+                            vm.pointCount == 0
+                                ? null
+                                : () => unawaited(_confirmClear(vm)),
                       ),
                     ],
                     child: ToolbarIconButton(
                       icon: const Icon(Icons.clear),
                       tooltip: AppStrings.plot.clearData,
-                      onPressed: vm.pointCount == 0 ? null : vm.clear,
+                      onPressed:
+                          vm.pointCount == 0
+                              ? null
+                              : () => unawaited(_confirmClear(vm)),
                     ),
                   ),
                   ToolbarLayoutItem(
@@ -598,15 +613,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                 padding: kPageStatusBarPadding,
                 alignment: Alignment.centerLeft,
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: Text(
-                  '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
-                  '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
-                  '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
-                  '${vm.historyMemoryLimitMiB} MiB'
-                  '${vm.retentionLimitReached ? '  已达上限' : ''}',
-                  style: kPageStatusBarTextStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: ValueListenableBuilder<int>(
+                  valueListenable: vm.statusListenable,
+                  builder:
+                      (context, _, _) => Text(
+                        '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
+                        '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
+                        '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
+                        '${vm.historyMemoryLimitMiB} MiB'
+                        '${vm.retentionLimitReached ? '  已达上限' : ''}',
+                        style: kPageStatusBarTextStyle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                 ),
               ),
             ],
@@ -1562,33 +1581,15 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         ),
                       ],
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(
-                            AppStrings.plot.floatingPanelOpacity,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const Spacer(),
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              key: const ValueKey(
-                                'probe-floating-panel-opacity-field',
-                              ),
-                              controller: opacityController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted:
-                                  (_) =>
-                                      applyFloatingPanelOpacity(setDialogState),
-                            ),
-                          ),
-                        ],
+                      AppNumberRow(
+                        key: const ValueKey(
+                          'probe-floating-panel-opacity-field',
+                        ),
+                        label: AppStrings.plot.floatingPanelOpacity,
+                        controller: opacityController,
+                        suffixText: '%',
+                        onApply:
+                            () => applyFloatingPanelOpacity(setDialogState),
                       ),
                       const Divider(),
                       Text(
@@ -1702,27 +1703,17 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              key: const ValueKey(
-                                'probe-follow-position-field',
-                              ),
-                              controller: followController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted:
-                                  (_) => applyFollowPosition(setDialogState),
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          key: const ValueKey('probe-follow-position-field'),
+                          controller: followController,
+                          suffixText: '%',
+                          onSubmitted:
+                              (_) => applyFollowPosition(setDialogState),
+                          onEditingComplete:
+                              () => applyFollowPosition(setDialogState),
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -1772,28 +1763,19 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              key: const ValueKey(
-                                'probe-history-memory-limit-field',
-                              ),
-                              controller: memoryController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: 'MiB',
-                              ),
-                              onSubmitted:
-                                  (_) =>
-                                      applyHistoryMemoryLimit(setDialogState),
-                            ),
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          key: const ValueKey(
+                            'probe-history-memory-limit-field',
                           ),
-                        ],
+                          controller: memoryController,
+                          suffixText: 'MiB',
+                          onSubmitted:
+                              (_) => applyHistoryMemoryLimit(setDialogState),
+                          onEditingComplete:
+                              () => applyHistoryMemoryLimit(setDialogState),
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -1809,34 +1791,24 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       const SizedBox(height: 12),
                       const Text('精确窗口点数上限', style: TextStyle(fontSize: 14)),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              key: const ValueKey(
-                                'probe-window-point-limit-field',
-                              ),
-                              controller: windowController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '点',
-                              ),
-                              onSubmitted:
-                                  (_) => applyWindowPointLimit(setDialogState),
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          key: const ValueKey('probe-window-point-limit-field'),
+                          controller: windowController,
+                          suffixText: '点',
+                          onSubmitted:
+                              (_) => applyWindowPointLimit(setDialogState),
+                          onEditingComplete:
+                              () => applyWindowPointLimit(setDialogState),
+                        ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
+                      const Text(
                         '范围：${ProbePlotViewModel.minWindowPointLimit}~'
                         '${ProbePlotViewModel.maxWindowPointLimit} 点；'
                         '仅限制主图保留的精确点窗口，LOD 历史继续保留。',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           color: Colors.grey,
                         ),
@@ -2063,12 +2035,10 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               const SizedBox(height: 12),
               AppLabeledField(
                 label: 'RTT 轮询间隔',
-                child: TextField(
+                child: AppNumberField(
                   key: const ValueKey('probe-rtt-polling-interval'),
                   controller: _pollingInterval,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: secondaryDialogFieldDecoration(suffixText: 'ms'),
+                  suffixText: 'ms',
                 ),
               ),
               const SizedBox(height: 6),
@@ -2280,9 +2250,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
     try {
       await widget.vm.loadProgram(path);
       if (mounted) {
-        setState(() {
-          _symbolSearch.clear();
-        });
+        setState(_symbolSearch.clear);
       }
     } catch (error) {
       AppNotifications.show('程序文件读取失败: $error');
@@ -2393,7 +2361,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                         : AppFieldIconButton(
                           tooltip: '清空搜索',
                           onPressed: () {
-                            setState(() => _symbolSearch.clear());
+                            setState(_symbolSearch.clear);
                           },
                           icon: const Icon(Icons.close, size: 18),
                         ),
@@ -2403,7 +2371,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
             const SizedBox(height: 4),
             Text(
               '已识别 ${widget.vm.symbols.length} 个数据变量，单击即可加入 HSS 通道',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
             const SizedBox(height: 6),
             SizedBox(

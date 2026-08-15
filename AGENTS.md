@@ -1,4 +1,4 @@
-# Codex 项目硬规则
+# 项目硬规则
 
 - 本仓库涉及代码或文档读写时，使用 PowerShell 7：`pwsh`。
 - 不要用 Windows PowerShell 5.1 的输出判断源码或文档内容，尤其是中文文本。

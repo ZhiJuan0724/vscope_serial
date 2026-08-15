@@ -34,14 +34,14 @@ class FlashDataDocument {
     final lower = path.toLowerCase();
     final name = path.split(RegExp(r'[\\/]')).last;
     final segments = switch (lower) {
-      String value when value.endsWith('.bin') => [
+      final String value when value.endsWith('.bin') => [
         FlashDataSegment(
           _validateRange(binAddress ?? 0, bytes.length),
           Uint8List.fromList(bytes),
         ),
       ],
-      String value when value.endsWith('.hex') => _parseIntelHex(bytes),
-      String value when value.endsWith('.elf') => _parseElf(bytes),
+      final String value when value.endsWith('.hex') => _parseIntelHex(bytes),
+      final String value when value.endsWith('.elf') => _parseElf(bytes),
       _ => throw const FormatException('仅支持 ELF、HEX 和 BIN 文件'),
     };
     if (segments.isEmpty) throw const FormatException('文件中没有可显示的数据');

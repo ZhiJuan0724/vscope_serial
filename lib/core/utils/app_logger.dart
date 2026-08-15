@@ -114,18 +114,18 @@ class FileLogOutput extends LogOutput {
 class _AppLogPrinter extends LogPrinter {
   static final _levelColors = {
     Level.trace: AnsiColor.fg(AnsiColor.grey(0.5)),
-    Level.debug: AnsiColor.fg(6),
-    Level.info: AnsiColor.fg(2),
-    Level.warning: AnsiColor.fg(3),
-    Level.error: AnsiColor.fg(196),
-    Level.fatal: AnsiColor.fg(199),
+    Level.debug: const AnsiColor.fg(6),
+    Level.info: const AnsiColor.fg(2),
+    Level.warning: const AnsiColor.fg(3),
+    Level.error: const AnsiColor.fg(196),
+    Level.fatal: const AnsiColor.fg(199),
   };
 
   @override
   List<String> log(LogEvent event) {
     final time = event.time.toIso8601String();
     final level = _levelName(event.level);
-    final color = _levelColors[event.level] ?? AnsiColor.none();
+    final color = _levelColors[event.level] ?? const AnsiColor.none();
     final message = event.message;
     final error = event.error;
     final stackTrace = event.stackTrace;

@@ -398,7 +398,7 @@ void main() {
         final service = YmodemService(
           inputHighWaterBytes: 16,
           packetTimeout: const Duration(seconds: 1),
-          sendBytes: (data) => sent.addAll(data),
+          sendBytes: sent.addAll,
         );
 
         final receiveFuture = service.receiveFile(temp);
@@ -494,7 +494,7 @@ void main() {
       final sent = <int>[];
       service = YmodemService(
         packetTimeout: const Duration(seconds: 1),
-        sendBytes: (data) => sent.addAll(data),
+        sendBytes: sent.addAll,
       );
       final temp = await Directory.systemTemp.createTemp('ymodem-cancel-');
       addTearDown(() => temp.delete(recursive: true));

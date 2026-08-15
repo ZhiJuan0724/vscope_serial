@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -11,8 +9,6 @@ import 'package:flutter/scheduler.dart';
 import '../core/constants/plot_configuration.dart';
 import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
-import '../core/utils/atomic_file.dart';
-import '../core/utils/crc.dart';
 import '../core/utils/plot_value_formatter.dart';
 import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
@@ -43,6 +39,7 @@ import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
 import 'plot_history_store.dart';
+import 'plot_import_export_service.dart';
 import 'plot_math_engine.dart';
 import 'plot_observation_assembler.dart';
 import 'settings_drafts.dart';
@@ -51,16 +48,14 @@ import 'plot_statistics_calculator.dart';
 import 'plot_trigger_runtime.dart';
 import 'plot_window_provider.dart';
 
-part 'plot_viewmodel/plot_import_export.dart';
+export 'plot_import_export_service.dart';
+
 part 'plot_viewmodel/plot_channel_controls.dart';
 part 'plot_viewmodel/plot_display_controls.dart';
 part 'plot_viewmodel/plot_interaction_controls.dart';
 part 'plot_viewmodel/plot_profiles.dart';
 part 'plot_viewmodel/plot_support_models.dart';
 part 'plot_viewmodel/plot_viewport_controls.dart';
-
-typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
-typedef PlotExportProgressCallback = void Function(PlotImportProgress progress);
 
 enum PlotTriggerComparison {
   greater('>'),
@@ -137,37 +132,6 @@ class PlotTriggerConfig {
   }
 }
 
-class PlotImportProgress {
-  final String stage;
-  final int current;
-  final int total;
-  final String? detail;
-  final double? bytesPerSecond;
-
-  const PlotImportProgress({
-    required this.stage,
-    required this.current,
-    required this.total,
-    this.detail,
-    this.bytesPerSecond,
-  });
-
-  double? get fraction {
-    if (total <= 0) return null;
-    return (current / total).clamp(0.0, 1.0);
-  }
-}
-
-class PlotExportCancelToken {
-  bool _isCancelled = false;
-
-  bool get isCancelled => _isCancelled;
-
-  void cancel() {
-    _isCancelled = true;
-  }
-}
-
 /// 绘图页面核心 ViewModel，负责整个波形绘图页面的业务逻辑。
 ///
 /// 主要职责：
@@ -190,11 +154,15 @@ class PlotExportCancelToken {
 /// - 历史存储中的 LOD 始终增量更新，用于大范围拖动/缩放时快速预览。
 ///
 /// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建。
-class PlotViewModel extends BaseViewModel {
+class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   // ========== 数据源 ==========
   /// 唯一拥有 parser、数据订阅和 start/stop single-flight 的会话控制器。
   late final PlotSessionController _sessionController;
   late final PlotProtocolInitializer _protocolInitializer;
+
+  // ========== 数据导入导出 ==========
+  /// 委托 CSV/BIN/DAT 导入导出的独立服务，仅通过窄接口访问本类状态。
+  late final PlotImportExportService _importExportService;
 
   // ========== 数据缓冲区 ==========
   /// 唯一拥有当前精确窗口和异步加载 generation 的窗口提供器。
@@ -285,6 +253,7 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 视口 ==========
   /// 当前绘图视口，定义可见的 X/Y 数据范围
+  @override
   PlotViewport viewport = PlotViewport(
     xMin: PlotConfiguration.viewportDefaultXMin,
     xMax: PlotConfiguration.viewportDefaultXMax,
@@ -301,7 +270,9 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 通道配置 ==========
   /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
+  @override
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
+  @override
   final List<MathChannelConfig> mathChannels =
       MathChannelConfig.createDefaults();
   final PlotMathEngine _mathEngine = PlotMathEngine();
@@ -318,6 +289,7 @@ class PlotViewModel extends BaseViewModel {
   String? _cachedDisplayChannelKey;
   List<int>? _importedChannelAddresses;
   List<ChannelPresetBinding> _channelPresetBindings = [];
+  @override
   List<int>? get importedChannelAddresses =>
       _importedChannelAddresses == null
           ? null
@@ -604,6 +576,11 @@ class PlotViewModel extends BaseViewModel {
       },
     );
     _protocolInitializer = PlotProtocolInitializer(connectionService);
+    _importExportService = PlotImportExportService(
+      historyStore: _historyStore,
+      mathEngine: _mathEngine,
+      host: this,
+    );
     _loadSettings();
     _initAddressProfileServices();
     _startRefreshTimer();
@@ -1124,6 +1101,7 @@ class PlotViewModel extends BaseViewModel {
     return null;
   }
 
+  @override
   String displayChannelName(int index) {
     final channel = displayChannelByIndex(index);
     if (channel == null) return 'Ch$index';
@@ -1187,13 +1165,17 @@ class PlotViewModel extends BaseViewModel {
     ];
   }
 
+  @override
   ParserType get parserType => _parserType;
+  @override
   ParserConfig get parserConfig => _parserConfig;
+  @override
   SendProtocolType get sendProtocolType => _sendProtocolType;
   SendProtocolType get effectiveSendProtocolType =>
       _parserType == ParserType.zobow
           ? SendProtocolType.zobowBuiltIn
           : _sendProtocolType;
+  @override
   List<String> get rChannelAddresses =>
       List.unmodifiable(_sendProtocolConfig.rChannelAddresses);
   bool get rProtocolLooseChannelSettings => _rProtocolLooseChannelSettings;
@@ -1217,6 +1199,9 @@ class PlotViewModel extends BaseViewModel {
 
   int get plotRetentionLimitGiB =>
       _plotRetentionLimitBytes ~/ PlotConfiguration.bytesPerGiB;
+
+  @override
+  int get retentionLimitBytes => _plotRetentionLimitBytes;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
@@ -1739,6 +1724,7 @@ class PlotViewModel extends BaseViewModel {
   /// 显示浮动临时提示。
   String? get lastStatusMessage => _lastStatusMessage;
 
+  @override
   void showStatusMessage(
     String message, {
     Duration duration = const Duration(seconds: 4),
@@ -1761,7 +1747,7 @@ class PlotViewModel extends BaseViewModel {
       (_) {
         // 光标模式下定时刷新（让垂直光标跟随鼠标）
         if (_vCursorEnabled && _cursor != null) {
-          Future.microtask(() => notifyListeners());
+          Future.microtask(notifyListeners);
         }
       },
     );
@@ -1802,7 +1788,7 @@ class PlotViewModel extends BaseViewModel {
       showStatusMessage(value ? '随机源已启用' : '随机源已关闭');
     }
 
-    unawaited(Future.microtask(() => notifyListeners()));
+    unawaited(Future.microtask(notifyListeners));
   }
 
   /// 设置随机源频率（Hz），范围 1~100000
@@ -1819,7 +1805,7 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    unawaited(Future.microtask(() => notifyListeners()));
+    unawaited(Future.microtask(notifyListeners));
   }
 
   // ========== 解析器控制 ==========
@@ -1868,7 +1854,7 @@ class PlotViewModel extends BaseViewModel {
     }
     settings.save();
 
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setSendProtocolType(SendProtocolType type) {
@@ -1887,7 +1873,7 @@ class PlotViewModel extends BaseViewModel {
       '发送协议从 ${oldType.label} 切换为 ${type.label}',
       category: 'PLOT',
     );
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setRChannelAddress(int index, String address) {
@@ -1908,7 +1894,7 @@ class PlotViewModel extends BaseViewModel {
       'r协议 Ch$index 地址设置为 ${next.isEmpty ? '<空>' : next}',
       category: 'PLOT',
     );
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setRProtocolLooseChannelSettings(bool value) {
@@ -1917,7 +1903,7 @@ class PlotViewModel extends BaseViewModel {
     _rProtocolLooseChannelSettings = value;
     _saveSettings();
     AppLogger().info('r协议宽松通道设置${value ? '启用' : '关闭'}', category: 'PLOT');
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// r 协议地址槽位在通道面板中的显示数量。
@@ -2040,7 +2026,7 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   bool _canModifyInputConfiguration() {
@@ -2108,7 +2094,7 @@ class PlotViewModel extends BaseViewModel {
         _startRefreshTimer();
         AppLogger().info('开始绘图', category: 'PLOT');
         showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
       },
       onStartRejected: () {
         _sourceConfig.useConnection = false;
@@ -2116,14 +2102,14 @@ class PlotViewModel extends BaseViewModel {
         final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
       },
       onStartFailed: (error, stackTrace) {
         _sourceConfig.useConnection = false;
         _sourceConfig.useRandom = false;
         AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
         showStatusMessage('绘图启动失败，已恢复页面操作');
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
       },
     );
   }
@@ -2368,7 +2354,7 @@ class PlotViewModel extends BaseViewModel {
     _setViewport(viewport.reset());
     _viewportHistory.clear();
     _resetCursorPositions();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _prepareHistoryForStart() {
@@ -2768,14 +2754,14 @@ class PlotViewModel extends BaseViewModel {
       _pendingNotifyCount = 0;
       _notifyTimer?.cancel();
       _notifyTimer = null;
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
     } else if (_notifyTimer == null) {
       // 兜底定时器：确保即使数据流中断也能刷新 UI。
       final delayMs = (1000 / effectiveRefreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
       });
     }
   }
@@ -3115,7 +3101,7 @@ class PlotViewModel extends BaseViewModel {
   }
 
   void _notifyLater() {
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _resetCursorPositions() {
@@ -3146,7 +3132,7 @@ class PlotViewModel extends BaseViewModel {
       xMeasurementLine1Color,
     );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 X2 光标位置（拖动时使用）
@@ -3157,7 +3143,7 @@ class PlotViewModel extends BaseViewModel {
       xMeasurementLine2Color,
     );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 Y1 光标位置（拖动时使用）
@@ -3168,7 +3154,7 @@ class PlotViewModel extends BaseViewModel {
             ? _snapHighlightForY(y, yMeasurementLine1Color)
             : const [];
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 Y2 光标位置（拖动时使用）
@@ -3179,7 +3165,7 @@ class PlotViewModel extends BaseViewModel {
             ? _snapHighlightForY(y, yMeasurementLine2Color)
             : const [];
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setXMeasurementCursor(int groupIndex, int lineIndex, double value) {
@@ -3195,7 +3181,7 @@ class PlotViewModel extends BaseViewModel {
             ? group.copyWith(cursor1: _snapXToNearestVisiblePoint(value))
             : group.copyWith(cursor2: _snapXToNearestVisiblePoint(value));
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setYMeasurementCursor(int groupIndex, int lineIndex, double value) {
@@ -3211,7 +3197,7 @@ class PlotViewModel extends BaseViewModel {
             ? group.copyWith(cursor1: value)
             : group.copyWith(cursor2: value);
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void removeMeasurementGroup({required bool isX, required int groupIndex}) {
@@ -3241,7 +3227,7 @@ class PlotViewModel extends BaseViewModel {
     }
     _refreshSnapHighlightColors();
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 清除所有光标和测量线
@@ -3255,7 +3241,7 @@ class PlotViewModel extends BaseViewModel {
     _clearSnapHighlights();
     _cursor = null;
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 测量信息文本，显示 X1/X2/Y1/Y2 值和 delta
@@ -3421,6 +3407,282 @@ class PlotViewModel extends BaseViewModel {
 
     if (start >= end) return null;
     return (start: start, end: end);
+  }
+
+  // ========== 数据导入导出 ==========
+  /// 导出候选通道（普通通道 + 已启用的数学通道）。
+  List<ChannelConfig> get exportCandidateChannels =>
+      _importExportService.exportCandidateChannels;
+
+  /// 导出数据到 CSV 文件，委托 [PlotImportExportService]。
+  Future<String?> exportToCsv(
+    String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
+    List<int>? channelIndices,
+    PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
+  }) {
+    return _importExportService.exportToCsv(
+      selectedPath,
+      startIndex: startIndex,
+      endIndex: endIndex,
+      channelIndices: channelIndices,
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 导出数据到 BIN 文件，委托 [PlotImportExportService]。
+  Future<String?> exportToBin(
+    String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
+    List<int>? channelIndices,
+    PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
+  }) {
+    return _importExportService.exportToBin(
+      selectedPath,
+      startIndex: startIndex,
+      endIndex: endIndex,
+      channelIndices: channelIndices,
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 从 CSV 文件导入数据，委托 [PlotImportExportService]。
+  Future<String?> importFromCsv(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromCsv(filePath, onProgress: onProgress);
+  }
+
+  /// 从 BIN 文件导入数据，委托 [PlotImportExportService]。
+  Future<String?> importFromBin(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromBin(filePath, onProgress: onProgress);
+  }
+
+  /// 导入旧版 VisualScope 应用导出的 DAT 数据，委托 [PlotImportExportService]。
+  Future<String?> importFromLegacyDat(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromLegacyDat(
+      filePath,
+      onProgress: onProgress,
+    );
+  }
+
+  // ========== PlotImportExportHost 窄接口实现 ==========
+  @override
+  String formatRetentionBytes(int bytes) => _formatRetentionBytes(bytes);
+
+  @override
+  List<Map<String, dynamic>> exportObservationsMetadata({
+    required int sourceStart,
+    required int pointCount,
+  }) {
+    if (_observations.isEmpty) return const [];
+    return _observations
+        .where(
+          (observation) =>
+              observation.x >= sourceStart &&
+              observation.x < sourceStart + pointCount,
+        )
+        .map(
+          (observation) => <String, dynamic>{
+            'x': observation.x - sourceStart,
+            if (observation.note.isNotEmpty) 'note': observation.note,
+            if (observation.locked) 'locked': true,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  void beginImportedReplacement() {
+    // 至此预检已完成；导入历史不可用于保持绘图续接，因此先彻底重置实时来源状态。
+    _windowProvider.clear();
+    _historyStore.clear();
+    _resetPlotRetentionState();
+    _importedChannelAddresses = null;
+  }
+
+  @override
+  void setNextIndex(int value) {
+    _nextIndex = value;
+  }
+
+  @override
+  void setActiveChannelCount(int value) {
+    _activeChannelCount = value;
+  }
+
+  @override
+  void clearStartTime() {
+    _startTime = null;
+  }
+
+  @override
+  void applyImportedMetadata(Map<String, dynamic>? metadata, int channelCount) {
+    final importedMathChannels = metadata?['mathChannels'];
+    _replaceMathChannels(
+      importedMathChannels is List
+          ? MathChannelConfig.normalizeList(importedMathChannels)
+          : MathChannelConfig.createDefaults(),
+    );
+    if (metadata == null || metadata.isEmpty) return;
+
+    final names = metadata['channelNames'];
+    if (names is List) {
+      for (
+        int i = 0;
+        i < names.length && i < channelCount && i < channels.length;
+        i++
+      ) {
+        final name = names[i];
+        if (name is String && name.isNotEmpty) {
+          channels[i].alias = name == 'Ch$i' ? '' : name;
+        }
+      }
+    }
+
+    final addresses = metadata['channelAddresses'];
+    if (addresses is List) {
+      _importedChannelAddresses = _applyChannelAddresses(
+        addresses,
+        channelCount,
+      );
+    }
+
+    final ids = metadata['zobowChannelIds'];
+    if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
+      _parserType = ParserType.zobow;
+      _parserConfig.type = ParserType.zobow;
+      _parserConfig.channelCount =
+          channelCount >= ParserConfig.maxZobowChannelCount
+              ? ParserConfig.maxZobowChannelCount
+              : ParserConfig.minZobowChannelCount;
+      _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
+      AppSettings().parserType = ParserType.zobow.name;
+      _saveSettings();
+    }
+
+    final rAddresses = metadata['rChannelAddresses'];
+    if (metadata['sendProtocolType'] == SendProtocolType.rProtocol.name &&
+        rAddresses is List) {
+      final restoredAddresses = List<String>.filled(
+        SendProtocolConfig.maxChannelCount,
+        '',
+      );
+      for (
+        var i = 0;
+        i < rAddresses.length && i < restoredAddresses.length;
+        i++
+      ) {
+        final address = rAddresses[i];
+        if (address is String) restoredAddresses[i] = address.trim();
+      }
+      _sendProtocolType = SendProtocolType.rProtocol;
+      _sendProtocolConfig
+        ..type = SendProtocolType.rProtocol
+        ..source = ProtocolSource.builtIn
+        ..customProtocolId = null
+        ..rChannelAddresses = restoredAddresses;
+      _saveSettings();
+    }
+  }
+
+  @override
+  Future<void> rebuildParsedWindow(int start, int count) {
+    return _rebuildParsedWindow(start, count);
+  }
+
+  @override
+  void clearViewportHistory() {
+    _viewportHistory.clear();
+  }
+
+  @override
+  void resetCursorPositions() {
+    _resetCursorPositions();
+  }
+
+  @override
+  void applyImportedObservations(Map<String, dynamic>? metadata) {
+    final values = metadata?['observations'];
+    if (values is! List) return;
+    for (final item in values) {
+      if (_observations.length >= PlotViewModel.maxObservationCount) break;
+      if (item is! Map) continue;
+      final xValue = item['x'];
+      final x = xValue is num ? xValue.toDouble() : null;
+      if (x == null || !x.isFinite || !canJumpToXIndex(x.round())) continue;
+      final noteValue = item['note'];
+      _observations.add(
+        PlotObservation(
+          cursor: _buildImportedObservationCursorAtX(x),
+          note: noteValue is String ? noteValue : '',
+          locked: item['locked'] == true,
+        ),
+      );
+    }
+  }
+
+  @override
+  void notifyLater() {
+    _notifyLater();
+  }
+
+  CursorState _buildImportedObservationCursorAtX(double x) {
+    final index = x.round();
+    if ((x - index).abs() > 0.000001 || !canJumpToXIndex(index)) {
+      return CursorState(x: x, hasData: false);
+    }
+    final valueCount = _historyStore.parsedValueCountAt(index);
+    if (valueCount <= 0) return CursorState(x: x, hasData: false);
+    return CursorState(
+      x: x,
+      channelValues: [
+        for (var channel = 0; channel < valueCount; channel++)
+          _historyStore.parsedValueAt(index, channel),
+      ],
+      hasData: true,
+    );
+  }
+
+  List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {
+    final addresses = <int>[];
+    for (
+      int i = 0;
+      i < values.length &&
+          i < channelCount &&
+          i < _parserConfig.zobowChannelIds.length;
+      i++
+    ) {
+      final value = values[i];
+      final address = switch (value) {
+        final int value => value,
+        final num value => value.toInt(),
+        final String value => int.tryParse(
+          value.replaceAll('0x', '').replaceAll('0X', ''),
+          radix: 16,
+        ),
+        _ => null,
+      };
+      if (address != null) {
+        final normalized = address & 0xFFFFFFFF;
+        _parserConfig.zobowChannelIds[i] = normalized;
+        addresses.add(normalized);
+      }
+    }
+    return addresses;
   }
 
   @override

@@ -133,12 +133,12 @@ void main(List<String> args) async {
 
   // 初始化窗口管理
   await windowManager.ensureInitialized();
-  final windowOptions = WindowOptions(
-    size: const Size(
+  final windowOptions = const WindowOptions(
+    size: Size(
       WindowConfiguration.defaultWidth,
       WindowConfiguration.defaultHeight,
     ),
-    minimumSize: const Size(
+    minimumSize: Size(
       WindowConfiguration.minWidth,
       WindowConfiguration.minHeight,
     ),

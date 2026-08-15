@@ -327,6 +327,44 @@ std::wstring NormalizePathForCompare(const fs::path& path) {
   return value;
 }
 
+bool PathIsWithin(const fs::path& root, const fs::path& child) {
+  std::wstring root_norm = NormalizePathForCompare(root);
+  std::wstring child_norm = NormalizePathForCompare(child);
+  if (!root_norm.empty() && root_norm.back() != L'\\') {
+    root_norm.push_back(L'\\');
+  }
+  return child_norm.size() >= root_norm.size() &&
+         child_norm.compare(0, root_norm.size(), root_norm) == 0;
+}
+
+// plan.json is written by the app under <exe_dir>/updates and could be
+// tampered with locally. Constrain install/cleanup/result/rollback paths to
+// <exe_dir>/updates before fs::remove_all / fs::remove / WriteResult, so a
+// malformed plan cannot become an arbitrary-directory-deletion primitive.
+void ValidatePlanPaths(const UpdatePlan& plan) {
+  const fs::path install = fs::absolute(plan.install_dir).lexically_normal();
+  const fs::path installed_exe = install / plan.executable;
+  if (!fs::exists(installed_exe) ||
+      !fs::equivalent(installed_exe.parent_path(), install)) {
+    throw std::runtime_error("invalid installation directory");
+  }
+
+  const fs::path updates_root = install / L"updates";
+  if (plan.payload_dir.empty() || plan.cleanup_dir.empty() ||
+      !PathIsWithin(updates_root, plan.payload_dir) ||
+      !PathIsWithin(updates_root, plan.cleanup_dir)) {
+    throw std::runtime_error("update plan paths must be inside the updates directory");
+  }
+  if (!plan.result_file.empty() &&
+      !PathIsWithin(updates_root, plan.result_file)) {
+    throw std::runtime_error("update result file must be inside the updates directory");
+  }
+  if (!plan.rollback_dir.empty() &&
+      !PathIsWithin(updates_root, plan.rollback_dir)) {
+    throw std::runtime_error("rollback directory must be inside the updates directory");
+  }
+}
+
 std::wstring ProcessImagePath(DWORD pid) {
   HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
   if (!process) return {};
@@ -622,6 +660,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   UpdatePlan plan;
   try {
     plan = ParsePlan(plan_path);
+    ValidatePlanPaths(plan);
     if (!elevated && !CanWriteDirectory(plan.install_dir)) {
       RelaunchElevated(plan_path);
       return 0;

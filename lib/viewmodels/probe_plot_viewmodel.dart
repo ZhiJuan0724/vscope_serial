@@ -112,11 +112,15 @@ class ProbePlotViewModel extends ChangeNotifier {
   PlotObservation? observationPreview;
   Timer? _frameNotificationTimer;
   final ValueNotifier<int> _renderNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> _statusRevision = ValueNotifier<int>(0);
   Object? _serviceStateSignature;
   bool _disposed = false;
 
   /// 只驱动绘图区的高频刷新，避免采样时重建工具栏和通道列表。
   ValueNotifier<int> get renderListenable => _renderNotifier;
+
+  /// 只驱动状态栏（点数/速率/内存）的低频刷新，避免采样期间整页重建。
+  ValueNotifier<int> get statusListenable => _statusRevision;
 
   List<PlotDataPoint> get points =>
       _pointsSnapshot ??= List.unmodifiable(_exactPoints);
@@ -639,8 +643,13 @@ class ProbePlotViewModel extends ChangeNotifier {
     }
     revision++;
     _notifyOnNextFrame();
-    // 点数和速率只需低频刷新状态栏；首点需要立即撤下空数据占位。
-    if (firstPoint || rateChanged) notifyListeners();
+    // 首点需启用测量/清空按钮并刷新状态栏；之后仅低频刷新状态栏速率，
+    // 避免采样期间整页重建。空数据占位由绘图区的 renderListenable 切换。
+    if (firstPoint) {
+      notifyListeners();
+    } else if (rateChanged) {
+      _statusRevision.value++;
+    }
   }
 
   int _estimatePointBytes(PlotDataPoint point) {
@@ -1156,6 +1165,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     unawaited(_subscription.cancel());
     unawaited(_sampleSubscription.cancel());
     _renderNotifier.dispose();
+    _statusRevision.dispose();
     super.dispose();
   }
 }

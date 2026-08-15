@@ -328,6 +328,7 @@ class _ProgrammingTclClient {
   final Socket _socket;
   late final StreamSubscription<Uint8List> _subscription;
   final List<int> _buffer = [];
+  static const int _maxBufferBytes = 1024 * 1024;
   Completer<String>? _pending;
   Future<void> _tail = Future.value();
 
@@ -340,6 +341,7 @@ class _ProgrammingTclClient {
     _tail = release.future;
     await previous;
     try {
+      _buffer.clear();
       final response = Completer<String>();
       _pending = response;
       _socket.add([...utf8.encode(command), 0x1A]);
@@ -354,7 +356,10 @@ class _ProgrammingTclClient {
   void _onData(Uint8List data) {
     _buffer.addAll(data);
     final end = _buffer.indexOf(0x1A);
-    if (end < 0) return;
+    if (end < 0) {
+      if (_buffer.length > _maxBufferBytes) _buffer.clear();
+      return;
+    }
     final value =
         utf8.decode(_buffer.sublist(0, end), allowMalformed: true).trim();
     _buffer.removeRange(0, end + 1);

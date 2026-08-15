@@ -111,6 +111,15 @@ class _RttPageState extends State<RttPage> {
     }
   }
 
+  Future<void> _confirmClear(RttViewModel vm) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: '清空',
+      message: '确定清空 RTT 终端显示内容吗？此操作不可撤销。',
+    );
+    if (confirmed) vm.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<RttViewModel>(
@@ -285,13 +294,19 @@ class _RttPageState extends State<RttPage> {
                   child: ToolbarIconButton(
                     icon: const Icon(Icons.close),
                     tooltip: '清空',
-                    onPressed: visibleItemCount == 0 ? null : vm.clear,
+                    onPressed:
+                        visibleItemCount == 0
+                            ? null
+                            : () => unawaited(_confirmClear(vm)),
                   ),
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.close),
                       label: '清空',
-                      onPressed: visibleItemCount == 0 ? null : vm.clear,
+                      onPressed:
+                          visibleItemCount == 0
+                              ? null
+                              : () => unawaited(_confirmClear(vm)),
                     ),
                   ],
                 ),
@@ -707,7 +722,7 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
   String? _errorText;
 
   static final List<Color> _colors = RttConfiguration.defaultTerminalColors
-      .map((value) => Color(value))
+      .map(Color.new)
       .toList(growable: false);
 
   @override

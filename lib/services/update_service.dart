@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 
 import 'app_info.dart';
@@ -20,6 +20,7 @@ class UpdateManifest {
   final int packageSize;
   final String sha256;
   final String executable;
+  final String? signature;
 
   const UpdateManifest({
     required this.schemaVersion,
@@ -28,6 +29,7 @@ class UpdateManifest {
     required this.packageSize,
     required this.sha256,
     required this.executable,
+    this.signature,
   });
 
   factory UpdateManifest.fromJson(Map<String, dynamic> json) {
@@ -38,6 +40,11 @@ class UpdateManifest {
       packageSize: (json['packageSize'] as num?)?.toInt() ?? 0,
       sha256: (json['sha256'] ?? '').toString().toLowerCase(),
       executable: (json['executable'] ?? '').toString(),
+      signature: switch (json['signature']) {
+        final String value when value.trim().isNotEmpty =>
+          value.trim().toLowerCase(),
+        _ => null,
+      },
     );
   }
 
@@ -54,6 +61,11 @@ class UpdateManifest {
         !packageValid ||
         executable != 'vscope_serial.exe') {
       throw const FormatException('更新清单无效或与发布版本不匹配');
+    }
+    if (signature != null) {
+      // 供应链加固预留：在发布侧签名与内置公钥落地前，禁止静默信任带签名
+      // 但无法校验的清单，保持失败关闭（fail-closed）。
+      throw const FormatException('更新清单包含签名，但当前版本未启用签名校验');
     }
   }
 }
@@ -687,51 +699,70 @@ class UpdateService {
     return digest.toString();
   }
 
+  /// 压缩包自身体积上限，先于任何解码检查，防止超大包或高压缩比炸弹。
+  static const int _maxPackageZipBytes = 512 * 1024 * 1024;
+
+  /// 解压后总文件体积上限，逐条目累计并在写盘前检查。
+  static const int _maxPackageExtractedBytes = 1024 * 1024 * 1024;
+
   static Future<void> extractPackageSafely(
     File zip,
     Directory destination,
   ) async {
     if (await destination.exists()) await destination.delete(recursive: true);
     await destination.create(recursive: true);
-    final bytes = await zip.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-    if (archive.length > 20000) {
-      throw const FormatException('更新包文件数量异常');
+
+    if (await zip.length() > _maxPackageZipBytes) {
+      throw const FormatException('更新包压缩体积超过限制');
     }
-    final totalSize = archive.fold<int>(
-      0,
-      (sum, entry) => sum + (entry.isFile ? entry.size : 0),
-    );
-    if (totalSize > 1024 * 1024 * 1024) {
-      throw const FormatException('更新包解压体积超过限制');
-    }
-    final root = destination.absolute.path.replaceAll('/', '\\');
-    final targets = <String>{};
-    for (final entry in archive) {
-      final normalized = entry.name.replaceAll('\\', '/');
-      final parts = normalized.split('/').where((part) => part.isNotEmpty);
-      if (normalized.startsWith('/') ||
-          parts.any(
-            (part) => part == '.' || part == '..' || part.contains(':'),
-          )) {
-        throw const FormatException('更新包包含不安全路径');
+
+    final input = InputFileStream(zip.path);
+    try {
+      final archive = ZipDecoder().decodeStream(input);
+      if (archive.length > 20000) {
+        throw const FormatException('更新包文件数量异常');
       }
-      final relative = parts.join('\\');
-      if (relative.isEmpty) continue;
-      final target = File('$root\\$relative').absolute;
-      final targetPath = target.path.replaceAll('/', '\\');
-      if (!targetPath.toLowerCase().startsWith('${root.toLowerCase()}\\')) {
-        throw const FormatException('更新包路径越界');
+
+      var totalSize = 0;
+      final root = destination.absolute.path.replaceAll('/', '\\');
+      final targets = <String>{};
+      for (final entry in archive) {
+        final normalized = entry.name.replaceAll('\\', '/');
+        final parts = normalized.split('/').where((part) => part.isNotEmpty);
+        if (normalized.startsWith('/') ||
+            parts.any(
+              (part) => part == '.' || part == '..' || part.contains(':'),
+            )) {
+          throw const FormatException('更新包包含不安全路径');
+        }
+        final relative = parts.join('\\');
+        if (relative.isEmpty) continue;
+        final target = File('$root\\$relative').absolute;
+        final targetPath = target.path.replaceAll('/', '\\');
+        if (!targetPath.toLowerCase().startsWith('${root.toLowerCase()}\\')) {
+          throw const FormatException('更新包路径越界');
+        }
+        if (!targets.add(targetPath.toLowerCase())) {
+          throw const FormatException('更新包包含重复路径');
+        }
+        if (entry.isFile) {
+          totalSize += entry.size;
+          if (totalSize > _maxPackageExtractedBytes) {
+            throw const FormatException('更新包解压体积超过限制');
+          }
+          await target.parent.create(recursive: true);
+          final output = OutputFileStream(target.path);
+          try {
+            entry.writeContent(output);
+          } finally {
+            await output.close();
+          }
+        } else {
+          await Directory(target.path).create(recursive: true);
+        }
       }
-      if (!targets.add(targetPath.toLowerCase())) {
-        throw const FormatException('更新包包含重复路径');
-      }
-      if (entry.isFile) {
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(entry.content as List<int>, flush: true);
-      } else {
-        await Directory(target.path).create(recursive: true);
-      }
+    } finally {
+      await input.close();
     }
   }
 

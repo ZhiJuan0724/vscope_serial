@@ -289,7 +289,7 @@ abstract final class PlotViewportQuery {
     final runs = workspace.ensureRunOffsets(columnCount + 1);
     final xRange = xMax - xMin;
     var out = 0;
-    var runCount = 1;
+    final runCount = 1;
     var activeColumn = -1;
     var firstIndex = 0;
     var lastIndex = 0;

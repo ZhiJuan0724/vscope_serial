@@ -18,9 +18,7 @@ void main() {
       );
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
       await source.start();
       await Future.delayed(const Duration(milliseconds: durationMs));
@@ -50,9 +48,7 @@ void main() {
       );
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
       await source.start();
       await Future.delayed(const Duration(milliseconds: durationMs));

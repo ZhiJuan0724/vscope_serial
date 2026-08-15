@@ -117,4 +117,32 @@ void main() {
       expect(encoded[1], function.code);
     }
   });
+
+  test('ASCII分包器对无帧尾的超长噪声重同步，不无限累积', () {
+    final parser = ModbusFrameParser(ModbusMode.ascii);
+    final noise = Uint8List.fromList([
+      0x3A,
+      ...List<int>.filled(600, 0x41), // ':' + 600 'A'，无 \r\n
+    ]);
+    expect(parser.add(noise), isEmpty);
+    final valid = ascii.encode(':010300000002FA\r\n');
+    expect(parser.add(Uint8List.fromList(valid)).length, 1);
+  });
+
+  test('位功能码响应字节数不足时拒绝解析', () {
+    final readCoils = ModbusRequest(
+      mode: ModbusMode.rtu,
+      unitId: 1,
+      function: ModbusFunction.readCoils,
+      address: 0,
+      quantity: 2000,
+    );
+    final body = Uint8List.fromList([1, 1, 1, 0]);
+    final crc = ModbusCodec.crc16(body);
+    final frame = Uint8List.fromList([...body, crc & 0xFF, crc >> 8]);
+    expect(
+      () => ModbusCodec.decodeResponse(readCoils, frame),
+      throwsFormatException,
+    );
+  });
 }

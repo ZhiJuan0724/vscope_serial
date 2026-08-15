@@ -71,7 +71,7 @@ VertexOutput vertexMain(Primitive input, uint vertexId : SV_VertexID) {
   float lengthValue = isPoint ? 0.0 : rawLength;
   // 点仍复用实例化线段缓冲，但以零长度图元编码。为零长度指定稳定的
   // 基向量，避免四个顶点全部塌缩到同一位置。
-  float2 direction = isPoint ? float2(1.0, 0.0) : delta / rawLength;
+  float2 direction = (isPoint || rawLength <= 0.0001) ? float2(1.0, 0.0) : delta / rawLength;
   float2 normal = float2(-direction.y, direction.x);
   float width = isPoint ? geometry.w : geometry.z;
   float radius = max(width * 0.5, 0.5);

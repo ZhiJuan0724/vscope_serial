@@ -6,10 +6,10 @@ import 'package:vscope_serial/services/multi_send_profile_service.dart';
 
 void main() {
   test('多条发送配置可完整 JSON 往返并限制间隔', () {
-    final profile = MultiSendProfile(
+    final profile = const MultiSendProfile(
       id: 'profile',
       name: '启动命令',
-      entries: const [
+      entries: [
         MultiSendEntry(
           id: 'entry',
           name: '初始化',

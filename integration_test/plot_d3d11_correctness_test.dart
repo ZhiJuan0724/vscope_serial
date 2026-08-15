@@ -220,7 +220,7 @@ void _expectNarrowSpike(_CapturedFrame frame) {
   final baselineY = frame.viewport.dataToScreenY(0, frame.height.toDouble());
   final spikeX = frame.viewport.dataToScreenX(40000, frame.width.toDouble());
   var peakSeen = false;
-  var offBaselineColumns = <int>{};
+  final offBaselineColumns = <int>{};
   for (var y = 0; y < frame.height; y++) {
     for (var x = 0; x < frame.width; x++) {
       if (!frame.isColored(x, y)) continue;

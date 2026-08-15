@@ -576,7 +576,7 @@ class _ShellPageState extends State<ShellPage> {
                 ButtonSegment(
                   value: ShellConnectionMode.ssh,
                   enabled: AppSettings().networkConnectionsEnabled,
-                  label: SizedBox(
+                  label: const SizedBox(
                     width: 30,
                     child: Center(
                       child: AppSegmentedButtonLabel(child: Text('SSH')),
@@ -607,7 +607,7 @@ class _ShellPageState extends State<ShellPage> {
               padding: EdgeInsets.zero,
               iconSize: kToolbarIconSize,
               icon: const Icon(Icons.clear),
-              onSelected: _clearTerminal,
+              onSelected: (value) => unawaited(_clearTerminal(value)),
               itemBuilder:
                   (context) => const [
                     PopupMenuItem(value: 'screen', child: Text('清除当前屏幕')),
@@ -620,17 +620,17 @@ class _ShellPageState extends State<ShellPage> {
             ToolbarOverflowAction(
               icon: const Icon(Icons.clear),
               label: '清除当前屏幕',
-              onPressed: () => _clearTerminal('screen'),
+              onPressed: () => unawaited(_clearTerminal('screen')),
             ),
             ToolbarOverflowAction(
               icon: const Icon(Icons.history),
               label: '清除历史',
-              onPressed: () => _clearTerminal('history'),
+              onPressed: () => unawaited(_clearTerminal('history')),
             ),
             ToolbarOverflowAction(
               icon: const Icon(Icons.delete_sweep_outlined),
               label: '清除屏幕和历史',
-              onPressed: () => _clearTerminal('all'),
+              onPressed: () => unawaited(_clearTerminal('all')),
             ),
           ],
         ),
@@ -779,7 +779,18 @@ class _ShellPageState extends State<ShellPage> {
     if (vm.isRunning) _focusInputModeAfterLayout(mode);
   }
 
-  void _clearTerminal(String value) {
+  Future<void> _clearTerminal(String value) async {
+    final label = switch (value) {
+      'screen' => '清除当前屏幕',
+      'history' => '清除历史',
+      _ => '清除屏幕和历史',
+    };
+    final confirmed = await showConfirmDialog(
+      context,
+      title: label,
+      message: '此操作不可撤销，确定继续吗？',
+    );
+    if (!confirmed) return;
     switch (value) {
       case 'screen':
         _terminal.write('\x1b[2J\x1b[H');

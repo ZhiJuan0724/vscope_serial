@@ -132,7 +132,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(width: 8),
             Text(
               AppStrings.plot.autoDetectHint,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
@@ -189,7 +189,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(width: 8),
             Text(
               AppStrings.plot.autoDetectHint,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
@@ -247,7 +247,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         const SizedBox(height: 8),
         Text(
           AppStrings.plot.zobowChannelPanelHelp,
-          style: TextStyle(fontSize: 11, color: Colors.grey),
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
         ),
       ],
     );
@@ -386,7 +386,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             Text(
               AppStrings.plot.selectDataTypeInChannelList,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
           const SizedBox(height: 8),

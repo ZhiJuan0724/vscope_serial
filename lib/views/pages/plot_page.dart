@@ -221,48 +221,61 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   @override
   Widget build(BuildContext context) {
     PlotPerformanceMetrics.instance.increment(PlotPerformanceMetric.pageBuild);
-    return Column(
-      children: [
-        Selector<PlotViewModel, _PlotToolbarSelection>(
-          selector: (_, vm) => _selectToolbar(vm),
-          builder:
-              (context, _, _) =>
-                  _buildPrimaryToolbar(context, context.read<PlotViewModel>()),
-        ),
-        Selector<PlotViewModel, _PlotToolbarSelection>(
-          selector: (_, vm) => _selectToolbar(vm),
-          builder:
-              (context, _, _) => _buildSecondaryToolbar(
-                context,
-                context.read<PlotViewModel>(),
-              ),
-        ),
-        Expanded(
-          child: Row(
-            children: [
-              Selector<PlotViewModel, _PlotChannelPanelSelection>(
-                selector: (_, vm) => _selectChannelPanel(vm),
-                builder:
-                    (context, _, _) => _buildChannelPanelArea(
-                      context,
-                      context.read<PlotViewModel>(),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () {
+          final vm = context.read<PlotViewModel>();
+          if (vm.canUndoZoom) vm.undoZoom();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Column(
+          children: [
+            Selector<PlotViewModel, _PlotToolbarSelection>(
+              selector: (_, vm) => _selectToolbar(vm),
+              builder:
+                  (context, _, _) => _buildPrimaryToolbar(
+                    context,
+                    context.read<PlotViewModel>(),
+                  ),
+            ),
+            Selector<PlotViewModel, _PlotToolbarSelection>(
+              selector: (_, vm) => _selectToolbar(vm),
+              builder:
+                  (context, _, _) => _buildSecondaryToolbar(
+                    context,
+                    context.read<PlotViewModel>(),
+                  ),
+            ),
+            Expanded(
+              child: Row(
+                children: [
+                  Selector<PlotViewModel, _PlotChannelPanelSelection>(
+                    selector: (_, vm) => _selectChannelPanel(vm),
+                    builder:
+                        (context, _, _) => _buildChannelPanelArea(
+                          context,
+                          context.read<PlotViewModel>(),
+                        ),
+                  ),
+                  Expanded(
+                    child: Selector<PlotViewModel, _PlotAreaSelection>(
+                      selector: (_, vm) => _selectPlotArea(vm),
+                      builder:
+                          (context, _, _) => _buildPlotArea(
+                            context,
+                            context.read<PlotViewModel>(),
+                          ),
                     ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: Selector<PlotViewModel, _PlotAreaSelection>(
-                  selector: (_, vm) => _selectPlotArea(vm),
-                  builder:
-                      (context, _, _) => _buildPlotArea(
-                        context,
-                        context.read<PlotViewModel>(),
-                      ),
-                ),
-              ),
-            ],
-          ),
+            ),
+            PlotStatusBar(frameRate: _plotFrameRate.fps),
+          ],
         ),
-        PlotStatusBar(frameRate: _plotFrameRate.fps),
-      ],
+      ),
     );
   }
 
@@ -619,7 +632,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ToolbarOverflowAction(
         icon: const Icon(Icons.clear),
         label: AppStrings.plot.clearData,
-        onPressed: vm.dataPoints.isEmpty ? null : vm.clearData,
+        onPressed:
+            vm.dataPoints.isEmpty
+                ? null
+                : () => unawaited(_confirmClearData(context, vm)),
       ),
       ToolbarOverflowAction(
         icon: const Icon(Icons.tune),
@@ -1313,6 +1329,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   /// 清空 + 高级设置
+  Future<void> _confirmClearData(BuildContext context, PlotViewModel vm) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: AppStrings.plot.clearData,
+      message: '确定清空当前绘图数据和历史吗？此操作不可撤销。',
+    );
+    if (confirmed) vm.clearData();
+  }
+
   Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -1320,7 +1345,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         ToolbarIconButton(
           icon: const Icon(Icons.clear),
           tooltip: AppStrings.plot.clearData,
-          onPressed: vm.dataPoints.isEmpty ? null : vm.clearData,
+          onPressed:
+              vm.dataPoints.isEmpty
+                  ? null
+                  : () => unawaited(_confirmClearData(context, vm)),
         ),
         ToolbarAdvancedSettingsButton(
           onPressed: () => _showAdvancedSettingsDialog(context, vm),
@@ -1376,7 +1404,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 const SizedBox(width: 4),
                 Text(
                   AppStrings.plot.channel,
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                 ),
                 const Spacer(),
                 Tooltip(
@@ -3813,7 +3841,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildStatsContent(String text, PlotViewModel vm) {
     final lines = text.split('\n');
     final channelBlocks = <List<String>>[];
-    List<String> currentBlock = [];
+    final List<String> currentBlock = [];
 
     // 按 --- 分割成各通道块
     for (final line in lines) {
@@ -4219,6 +4247,54 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       builder:
           (dialogContext) => StatefulBuilder(
             builder: (context, setState) {
+              void applyRefreshFps() {
+                final fps = int.tryParse(refreshFpsController.text.trim());
+                if (fps != null) {
+                  draft.refreshFps = fps;
+                  setState(() {});
+                }
+              }
+
+              void applySnapDiameter() {
+                final diameter = double.tryParse(
+                  snapDiameterController.text.trim(),
+                );
+                if (diameter != null) {
+                  draft.snapHighlightDiameter = diameter;
+                  setState(() {});
+                }
+              }
+
+              void applyHistoryLimit() {
+                final gib = int.tryParse(
+                  plotRetentionLimitController.text.trim(),
+                );
+                if (gib != null) {
+                  draft.historyLimit = gib;
+                  setState(() {});
+                }
+              }
+
+              void applyWindowPointLimit() {
+                final points = _parseCompactCount(
+                  maxVisibleController.text.trim(),
+                );
+                if (points != null) {
+                  draft.windowPointLimit = points;
+                  setState(() {});
+                }
+              }
+
+              void applyDiscardInitialPacketCount() {
+                final count = _parseCompactCount(
+                  discardInitialPacketController.text.trim(),
+                );
+                if (count != null) {
+                  draft.discardInitialPacketCount = count;
+                  setState(() {});
+                }
+              }
+
               return AppSettingsDialog(
                 title: Text(AppStrings.plot.advancedSettings),
                 size: AppDialogSize.navigation,
@@ -4402,29 +4478,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ),
                       ],
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(
-                            AppStrings.plot.floatingPanelOpacity,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const Spacer(),
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: floatingPanelOpacityController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted:
-                                  (_) => applyFloatingPanelOpacity(setState),
-                            ),
-                          ),
-                        ],
+                      AppNumberRow(
+                        label: AppStrings.plot.floatingPanelOpacity,
+                        controller: floatingPanelOpacityController,
+                        suffixText: '%',
+                        onApply: () => applyFloatingPanelOpacity(setState),
                       ),
                       const Divider(),
                       Text(
@@ -4500,33 +4558,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         children: [
                           SizedBox(
                             width: kSecondaryDialogFieldWidth,
-                            child: TextField(
+                            child: AppNumberField(
                               controller: refreshFpsController,
-                              keyboardType: TextInputType.number,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: AppStrings.plot.unitFps,
-                              ),
-                              onSubmitted: (value) {
-                                final fps = int.tryParse(value);
-                                if (fps != null) {
-                                  draft.refreshFps = fps;
-                                  setState(() {});
-                                }
-                              },
+                              suffixText: AppStrings.plot.unitFps,
+                              onSubmitted: (_) => applyRefreshFps(),
+                              onEditingComplete: applyRefreshFps,
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              final fps = int.tryParse(
-                                refreshFpsController.text,
-                              );
-                              if (fps != null) {
-                                draft.refreshFps = fps;
-                                setState(() {});
-                              }
-                            },
-                            child: Text(AppStrings.common.apply),
                           ),
                           const SizedBox(width: 8),
                           Text(
@@ -4541,7 +4578,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       const SizedBox(height: 4),
                       Text(
                         AppStrings.plot.refreshFpsHelp,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const SizedBox(height: 8),
                       AppSwitchRow(
@@ -4619,7 +4656,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                       Text(
                         AppStrings.plot.plotFontSizeHelp,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const Divider(),
                       Text(
@@ -4628,25 +4665,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: followPositionController,
-                              keyboardType: TextInputType.number,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted: (_) => applyFollowPosition(setState),
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          controller: followPositionController,
+                          suffixText: '%',
+                          onSubmitted: (_) => applyFollowPosition(setState),
+                          onEditingComplete:
+                              () => applyFollowPosition(setState),
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         AppStrings.plot.followPositionHelp,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -4654,25 +4686,20 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: yFitDisplayRatioController,
-                              keyboardType: TextInputType.number,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: '%',
-                              ),
-                              onSubmitted: (_) => applyYFitRatio(setState),
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          controller: yFitDisplayRatioController,
+                          suffixText: '%',
+                          allowDecimal: true,
+                          onSubmitted: (_) => applyYFitRatio(setState),
+                          onEditingComplete: () => applyYFitRatio(setState),
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         AppStrings.plot.yFitDisplayRatioHelp,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const Divider(),
                       Row(
@@ -4842,32 +4869,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: snapDiameterController,
-                              keyboardType: TextInputType.number,
-                              enabled: draft.snapHighlightEnabled,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: AppStrings.plot.unitPixel,
-                              ),
-                              onSubmitted: (value) {
-                                final diameter = double.tryParse(value);
-                                if (diameter != null) {
-                                  draft.snapHighlightDiameter = diameter;
-                                  setState(() {});
-                                }
-                              },
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          controller: snapDiameterController,
+                          enabled: draft.snapHighlightEnabled ?? true,
+                          suffixText: AppStrings.plot.unitPixel,
+                          allowDecimal: true,
+                          onSubmitted: (_) => applySnapDiameter(),
+                          onEditingComplete: applySnapDiameter,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         AppStrings.plot.snapHighlightHelp,
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -4928,30 +4944,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              key: const ValueKey('plot-retention-limit-field'),
-                              controller: plotRetentionLimitController,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: AppStrings.plot.unitGiB,
-                              ),
-                              onSubmitted: (value) {
-                                final gib = int.tryParse(value);
-                                if (gib != null) {
-                                  draft.historyLimit = gib;
-                                  setState(() {});
-                                }
-                              },
-                            ),
-                          ),
-                        ],
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: AppNumberField(
+                          key: const ValueKey('plot-retention-limit-field'),
+                          controller: plotRetentionLimitController,
+                          suffixText: AppStrings.plot.unitGiB,
+                          onSubmitted: (_) => applyHistoryLimit(),
+                          onEditingComplete: applyHistoryLimit,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -4967,26 +4968,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: maxVisibleController,
-                              keyboardType: TextInputType.text,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: AppStrings.plot.unitPacket,
-                              ),
-                              onSubmitted: (value) {
-                                final points = _parseCompactCount(value);
-                                if (points != null) {
-                                  draft.windowPointLimit = points;
-                                  setState(() {});
-                                }
-                              },
-                            ),
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: TextField(
+                          controller: maxVisibleController,
+                          keyboardType: TextInputType.text,
+                          decoration: secondaryDialogFieldDecoration(
+                            suffixText: AppStrings.plot.unitPacket,
                           ),
-                        ],
+                          onSubmitted: (_) => applyWindowPointLimit(),
+                          onEditingComplete: applyWindowPointLimit,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -5013,26 +5005,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: kSecondaryDialogFieldWidth,
-                            child: TextField(
-                              controller: discardInitialPacketController,
-                              keyboardType: TextInputType.text,
-                              decoration: secondaryDialogFieldDecoration(
-                                suffixText: AppStrings.plot.unitPacket,
-                              ),
-                              onSubmitted: (value) {
-                                final count = _parseCompactCount(value);
-                                if (count != null) {
-                                  draft.discardInitialPacketCount = count;
-                                  setState(() {});
-                                }
-                              },
-                            ),
+                      SizedBox(
+                        width: kSecondaryDialogFieldWidth,
+                        child: TextField(
+                          controller: discardInitialPacketController,
+                          keyboardType: TextInputType.text,
+                          decoration: secondaryDialogFieldDecoration(
+                            suffixText: AppStrings.plot.unitPacket,
                           ),
-                        ],
+                          onSubmitted: (_) => applyDiscardInitialPacketCount(),
+                          onEditingComplete: applyDiscardInitialPacketCount,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(

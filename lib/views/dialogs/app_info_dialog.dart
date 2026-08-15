@@ -15,32 +15,19 @@ import '../../core/utils/app_logger.dart';
 import '../../core/utils/byte_size_formatter.dart';
 import '../../data/models/modbus_models.dart';
 import '../../data/models/ssh_connection_config.dart';
-import '../../services/app_info.dart';
-import '../../services/app_notifications.dart';
-import '../../services/app_settings.dart';
-import '../../services/crash_dump_service.dart';
-import '../../services/native_serial_reader.dart';
-import '../../services/probe_connection_service.dart';
-import '../../services/ssh_connection_service.dart';
-import '../../services/probe_backend.dart';
-import '../../services/changelog_service.dart';
-import '../../services/raw_receive_session.dart';
-import '../../services/data_connection_service.dart';
-import '../../services/modbus_client_service.dart';
-import '../../services/shell_receive_queue.dart';
-import '../../services/update_checker.dart';
-import '../../services/update_service.dart';
-import '../../services/ymodem_service.dart';
 import '../../viewmodels/plot_viewmodel.dart';
 import '../../viewmodels/rtt_viewmodel.dart';
 import '../../viewmodels/shell_viewmodel.dart';
 import '../widgets/common_widgets.dart';
+import 'app_info_actions.dart';
+import 'app_info_actions_factory.dart';
 
 /// 打开应用信息、更新和版本说明窗口。
 Future<void> showAppInfoDialog(BuildContext context) {
   return showDialog(
     context: context,
-    builder: (context) => const AppInfoDialog(),
+    builder:
+        (context) => AppInfoDialog(actions: buildAppInfoDialogActions(context)),
   );
 }
 
@@ -48,7 +35,11 @@ Future<void> showAppInfoDialog(BuildContext context) {
 Future<void> showAppAdvancedSettingsDialog(BuildContext context) {
   return showDialog(
     context: context,
-    builder: (context) => const AppInfoDialog(showAdvancedSettingsOnly: true),
+    builder:
+        (context) => AppInfoDialog(
+          showAdvancedSettingsOnly: true,
+          actions: buildAppInfoDialogActions(context),
+        ),
   );
 }
 
@@ -57,8 +48,10 @@ Future<void> showUpdateAvailableDialog(
   BuildContext context,
   ReleaseInfo release, {
   UpdateSourcePreference sourcePreference = UpdateSourcePreference.auto,
+  AppInfoDialogActions? actions,
 }) async {
-  final currentVersion = await AppInfo.displayVersion();
+  final resolved = actions ?? buildAppInfoDialogActions(context);
+  final currentVersion = await resolved.appInfo.displayVersion();
   if (!context.mounted) return;
   return showDialog(
     context: context,
@@ -68,6 +61,8 @@ Future<void> showUpdateAvailableDialog(
           release: release,
           currentVersion: currentVersion,
           sourcePreference: sourcePreference,
+          updateActions: resolved.update,
+          parseChangelogBody: resolved.appInfo.parseChangelogBody,
         ),
   );
 }
@@ -96,16 +91,20 @@ Widget _scrollWithoutScrollbar(BuildContext context, {required Widget child}) {
 
 /// 单次更新下载/安装流程的状态容器。
 ///
-/// 取消下载由 [UpdateService] 的 generation 处理，界面只反映当前这一次操作状态。
+/// 取消下载由 [UpdateActions] 背后的 generation 处理，界面只反映当前这一次操作状态。
 class _UpdateAvailableDialog extends StatefulWidget {
   final ReleaseInfo release;
   final String currentVersion;
   final UpdateSourcePreference sourcePreference;
+  final UpdateActions updateActions;
+  final List<ChangelogLine> Function(String body) parseChangelogBody;
 
   const _UpdateAvailableDialog({
     required this.release,
     required this.currentVersion,
     required this.sourcePreference,
+    required this.updateActions,
+    required this.parseChangelogBody,
   });
 
   @override
@@ -114,7 +113,6 @@ class _UpdateAvailableDialog extends StatefulWidget {
 
 class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   static const _canInstall = bool.fromEnvironment('dart.vm.product');
-  final _service = UpdateService();
   late final UpdateChannel _channel = widget.release.channel;
   UpdateDownloadProgress? _progress;
   PreparedUpdate? _prepared;
@@ -126,7 +124,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   @override
   void initState() {
     super.initState();
-    _service.findPreparedUpdate(widget.release).then((value) {
+    widget.updateActions.findPreparedUpdate(widget.release).then((value) {
       if (mounted && value != null) setState(() => _prepared = value);
     });
   }
@@ -161,7 +159,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                     const SizedBox(height: 12),
                     Text(
                       AppStrings.appInfo.changelog,
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
                     ConstrainedBox(
@@ -169,7 +167,10 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
                       child: _scrollWithoutScrollbar(
                         context,
                         child: SingleChildScrollView(
-                          child: _ChangelogBody(body: widget.release.body),
+                          child: _ChangelogBody(
+                            body: widget.release.body,
+                            parseBody: widget.parseChangelogBody,
+                          ),
                         ),
                       ),
                     ),
@@ -221,7 +222,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
           TextButton(
             onPressed: () {
               _cancelled = true;
-              _service.cancelDownload();
+              widget.updateActions.cancelDownload();
               setState(() {
                 _error = AppStrings.appInfo.cancelingDownload;
               });
@@ -261,7 +262,7 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
       _progress = null;
     });
     try {
-      final prepared = await _service.downloadAndPrepare(
+      final prepared = await widget.updateActions.downloadAndPrepare(
         widget.release,
         channel: _channel,
         allowSourceFallback:
@@ -289,14 +290,16 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
   Future<void> _install() async {
     final prepared = _prepared;
     if (prepared == null) return;
-    final canProceed = await _confirmAndCloseOtherInstances(_service);
+    final canProceed = await _confirmAndCloseOtherInstances(
+      widget.updateActions,
+    );
     if (!canProceed) return;
     setState(() {
       _installing = true;
       _error = null;
     });
     try {
-      await _service.launchInstaller(prepared);
+      await widget.updateActions.launchInstaller(prepared);
       if (mounted) Navigator.of(context).pop();
       await windowManager.close();
     } catch (error) {
@@ -309,8 +312,8 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
     }
   }
 
-  Future<bool> _confirmAndCloseOtherInstances(UpdateService service) async {
-    final otherInstances = await service.findOtherRunningInstanceProcessIds();
+  Future<bool> _confirmAndCloseOtherInstances(UpdateActions actions) async {
+    final otherInstances = await actions.findOtherRunningInstanceProcessIds();
     if (otherInstances.isEmpty) return true;
     if (!mounted) return false;
     final confirmed = await showDialog<bool>(
@@ -332,8 +335,8 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
           ),
     );
     if (confirmed != true) return false;
-    await service.requestCloseOtherRunningInstances(otherInstances);
-    final closed = await service.waitForOtherRunningInstancesToExit(
+    await actions.requestCloseOtherRunningInstances(otherInstances);
+    final closed = await actions.waitForOtherRunningInstancesToExit(
       const Duration(seconds: 10),
     );
     if (!closed && mounted) {
@@ -349,37 +352,30 @@ class _UpdateAvailableDialogState extends State<_UpdateAvailableDialog> {
 ///
 /// 两个入口复用同一状态加载逻辑，`showAdvancedSettingsOnly` 仅改变初始可见内容。
 class AppInfoDialog extends StatefulWidget {
-  const AppInfoDialog({super.key, this.showAdvancedSettingsOnly = false});
+  const AppInfoDialog({
+    super.key,
+    this.showAdvancedSettingsOnly = false,
+    required this.actions,
+  });
 
   final bool showAdvancedSettingsOnly;
+  final AppInfoDialogActions actions;
 
   @override
   State<AppInfoDialog> createState() => _AppInfoDialogState();
 }
 
 class _AppInfoDialogState extends State<AppInfoDialog> {
-  final _checker = UpdateChecker();
   final _advancedSettingsScrollController = ScrollController();
-  final _plotHistoryLimitController = TextEditingController(
-    text: AppSettings().plotHistoryMemoryLimitGiB.toString(),
-  );
-  final _rttJlinkPathController = TextEditingController(
-    text: AppSettings().rttJlinkExecutablePath,
-  );
-  final _rttOpenocdPathController = TextEditingController(
-    text: AppSettings().rttOpenocdExecutablePath,
-  );
-  final _rttPyocdPythonPathController = TextEditingController(
-    text: AppSettings().rttPyocdPythonPath,
-  );
+  late final TextEditingController _plotHistoryLimitController;
+  late final TextEditingController _rttJlinkPathController;
+  late final TextEditingController _rttOpenocdPathController;
+  late final TextEditingController _rttPyocdPythonPathController;
   Future<Map<String, ProbeBackendAvailability>>? _rttBackendAvailability;
-  bool _autoUpdateCheckEnabled = AppSettings().autoUpdateCheckEnabled;
-  bool _disableNotifications = AppSettings().disableNotifications;
-  UpdateChannel _updateChannel = UpdateChannel.fromString(
-    AppSettings().updateChannel,
-  );
-  UpdateSourcePreference _updateSourcePreference =
-      UpdateSourcePreference.fromString(AppSettings().updateSource);
+  late bool _autoUpdateCheckEnabled;
+  late bool _disableNotifications;
+  late UpdateChannel _updateChannel;
+  late UpdateSourcePreference _updateSourcePreference;
   bool _checking = false;
   bool _loadingRollback = false;
   String? _version;
@@ -388,22 +384,44 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   UpdateCheckResult? _lastResult;
   List<RollbackUpdate> _rollbackUpdates = const [];
 
+  SettingsActions get _settings => widget.actions.settings;
+
   @override
   void initState() {
     super.initState();
+    final settings = _settings;
+    _plotHistoryLimitController = TextEditingController(
+      text: settings.plotHistoryMemoryLimitGiB.toString(),
+    );
+    _rttJlinkPathController = TextEditingController(
+      text: settings.rttJlinkExecutablePath,
+    );
+    _rttOpenocdPathController = TextEditingController(
+      text: settings.rttOpenocdExecutablePath,
+    );
+    _rttPyocdPythonPathController = TextEditingController(
+      text: settings.rttPyocdPythonPath,
+    );
+    _autoUpdateCheckEnabled = settings.autoUpdateCheckEnabled;
+    _disableNotifications = settings.disableNotifications;
+    _updateChannel = UpdateChannel.fromString(settings.updateChannel);
+    _updateSourcePreference = UpdateSourcePreference.fromString(
+      settings.updateSource,
+    );
     if (widget.showAdvancedSettingsOnly) {
       _loadRollbackUpdates();
       return;
     }
-    AppInfo.displayVersion()
+    widget.actions.appInfo
+        .displayVersion()
         .then((value) {
           if (mounted) setState(() => _version = value);
-          return ChangelogService().currentAndPrevious(value);
+          return widget.actions.appInfo.loadChangelog(value);
         })
         .then((entries) {
           if (mounted) setState(() => _changelogEntries = entries);
         });
-    AppInfo.buildTime().then((value) {
+    widget.actions.appInfo.buildTime().then((value) {
       if (mounted) setState(() => _buildTime = value);
     });
   }
@@ -455,7 +473,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         child: _InfoRow(
                           key: const ValueKey('app-info-name'),
                           label: AppStrings.appInfo.appName,
-                          value: AppInfo.name,
+                          value: widget.actions.appInfo.appName,
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -482,10 +500,13 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     const SizedBox(height: 8),
                     Text(
                       AppStrings.appInfo.releaseNotes,
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 6),
-                    _ChangelogPreview(entries: _changelogEntries),
+                    _ChangelogPreview(
+                      entries: _changelogEntries,
+                      parseBody: widget.actions.appInfo.parseChangelogBody,
+                    ),
                   ],
                   const SizedBox(height: 8),
                   const Divider(height: 1),
@@ -519,9 +540,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (value) {
                           setState(() => _autoUpdateCheckEnabled = value);
-                          final settings =
-                              AppSettings()..autoUpdateCheckEnabled = value;
-                          settings.save();
+                          _settings.autoUpdateCheckEnabled = value;
+                          unawaited(_settings.save());
                         },
                       ),
                     ],
@@ -588,6 +608,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     context,
                     release,
                     sourcePreference: _updateSourcePreference,
+                    actions: widget.actions,
                   )
                   : null,
           icon: const Icon(Icons.download, size: 16),
@@ -645,8 +666,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     _updateChannel = value;
                     _lastResult = null;
                   });
-                  final settings = AppSettings()..updateChannel = value.value;
-                  settings.save();
+                  _settings.updateChannel = value.value;
+                  unawaited(_settings.save());
                 },
               ),
             ),
@@ -672,8 +693,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     _updateSourcePreference = value;
                     _lastResult = null;
                   });
-                  final settings = AppSettings()..updateSource = value.value;
-                  settings.save();
+                  _settings.updateSource = value.value;
+                  unawaited(_settings.save());
                 },
               ),
             ),
@@ -792,25 +813,25 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           title: AppStrings.appInfo.rawRetentionMemoryLimit,
           subtitle: AppStrings.appInfo.rawRetentionMemoryLimitSummary,
           usedBytes: rawRetentionUsedBytes,
-          limitBytes: RawReceiveSession.rawRetentionLimitBytes,
+          limitBytes: widget.actions.memoryLimits.rawRetentionLimitBytes,
         ),
         _MemoryLimitRow(
           title: AppStrings.appInfo.rawTextCacheMemoryLimit,
           subtitle: AppStrings.appInfo.rawTextCacheMemoryLimitSummary,
           usedBytes: rawTextCacheUsedBytes,
-          limitBytes: RawReceiveSession.textDisplayCacheLimitBytes,
+          limitBytes: widget.actions.memoryLimits.rawTextCacheLimitBytes,
         ),
         _MemoryLimitRow(
           title: AppStrings.appInfo.shellQueueMemoryLimit,
           subtitle: AppStrings.appInfo.shellQueueMemoryLimitSummary,
           usedBytes: shellQueueUsedBytes,
-          limitBytes: ShellReceiveQueue.defaultMaxBytes,
+          limitBytes: widget.actions.memoryLimits.shellQueueLimitBytes,
         ),
         _MemoryLimitRow(
           title: AppStrings.appInfo.ymodemQueueMemoryLimit,
           subtitle: AppStrings.appInfo.ymodemQueueMemoryLimitSummary,
           usedBytes: ymodemQueueUsedBytes,
-          limitBytes: YmodemService.defaultInputHighWaterBytes,
+          limitBytes: widget.actions.memoryLimits.ymodemQueueLimitBytes,
         ),
         _MemoryLimitRow(
           title: AppStrings.appInfo.rttQueueMemoryLimit,
@@ -867,15 +888,13 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     BuildContext context,
     StateSetter setDialogState,
   ) {
-    final settings = AppSettings();
-    _rttBackendAvailability ??= context
-        .read<ProbeConnectionService>()
+    final settings = _settings;
+    _rttBackendAvailability ??= widget.actions.probeDetection
         .checkBackendAvailability(prepareBundledOpenOcd: false);
 
     void refreshAvailability({bool prepareBundledOpenOcd = false}) {
       setDialogState(() {
-        _rttBackendAvailability = context
-            .read<ProbeConnectionService>()
+        _rttBackendAvailability = widget.actions.probeDetection
             .checkBackendAvailability(
               prepareBundledOpenOcd: prepareBundledOpenOcd,
             );
@@ -956,13 +975,14 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
   }
 
   Widget _buildAdvancedSettingsDialog(BuildContext dialogContext) {
+    final settings = _settings;
     var disableNotifications = _disableNotifications;
-    var diagnosticLoggingEnabled = AppSettings().diagnosticLoggingEnabled;
-    var crashDumpEnabled = AppSettings().crashDumpEnabled;
-    var connectionShortcutsEnabled = AppSettings().connectionShortcutsEnabled;
-    var networkConnectionsEnabled = AppSettings().networkConnectionsEnabled;
-    var separateSerialProfiles = AppSettings().separateSerialProfiles;
-    final sshService = dialogContext.read<SshConnectionService?>();
+    var diagnosticLoggingEnabled = settings.diagnosticLoggingEnabled;
+    var crashDumpEnabled = settings.crashDumpEnabled;
+    var connectionShortcutsEnabled = settings.connectionShortcutsEnabled;
+    var networkConnectionsEnabled = settings.networkConnectionsEnabled;
+    var separateSerialProfiles = settings.separateSerialProfiles;
+    final sshStatus = widget.actions.sshStatus;
     // 探针后端属于连接能力设置，即使当前未显示探针页面也允许预先配置。
     const rttEnabled = true;
     final notificationSectionKey = GlobalKey();
@@ -980,19 +1000,17 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
             size: AppDialogSize.navigation,
             hasUnsavedChanges:
                 () =>
-                    disableNotifications !=
-                        AppSettings().disableNotifications ||
+                    disableNotifications != settings.disableNotifications ||
                     diagnosticLoggingEnabled !=
-                        AppSettings().diagnosticLoggingEnabled ||
-                    crashDumpEnabled != AppSettings().crashDumpEnabled ||
+                        settings.diagnosticLoggingEnabled ||
+                    crashDumpEnabled != settings.crashDumpEnabled ||
                     connectionShortcutsEnabled !=
-                        AppSettings().connectionShortcutsEnabled ||
+                        settings.connectionShortcutsEnabled ||
                     networkConnectionsEnabled !=
-                        AppSettings().networkConnectionsEnabled ||
-                    separateSerialProfiles !=
-                        AppSettings().separateSerialProfiles ||
+                        settings.networkConnectionsEnabled ||
+                    separateSerialProfiles != settings.separateSerialProfiles ||
                     _plotHistoryLimitController.text !=
-                        '${AppSettings().plotHistoryMemoryLimitGiB}',
+                        '${settings.plotHistoryMemoryLimitGiB}',
             onSave: () async {
               final plotLimit = int.tryParse(
                 _plotHistoryLimitController.text.trim(),
@@ -1002,17 +1020,16 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   plotLimit > PlotConfiguration.maxHistoryMemoryLimitGiB) {
                 throw const FormatException('请检查绘图历史内存上限');
               }
-              final dataService = DataConnectionService();
-              if (dataService.isConnectionBusy &&
+              final dataConnection = widget.actions.dataConnection;
+              if (dataConnection.isConnectionBusy() &&
                   (networkConnectionsEnabled !=
-                          AppSettings().networkConnectionsEnabled ||
+                          settings.networkConnectionsEnabled ||
                       separateSerialProfiles !=
-                          AppSettings().separateSerialProfiles)) {
+                          settings.separateSerialProfiles)) {
                 throw StateError('数据连接活动期间不能修改网络或串口配置记录方式');
               }
-              final settings = AppSettings();
               final plotViewModel = dialogContext.read<PlotViewModel>();
-              final modbusService = dialogContext.read<ModbusClientService?>();
+              final modbusActions = widget.actions.modbus;
               final shellViewModel = dialogContext.read<ShellViewModel?>();
               final oldDisableNotifications = settings.disableNotifications;
               final oldDiagnosticLogging = settings.diagnosticLoggingEnabled;
@@ -1028,7 +1045,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               final oldPlotLimit = settings.plotHistoryMemoryLimitGiB;
               try {
                 if (crashDumpEnabled != oldCrashDump) {
-                  await CrashDumpService().setEnabled(crashDumpEnabled);
+                  await widget.actions.crashDump.setEnabled(crashDumpEnabled);
                 }
                 settings
                   ..disableNotifications = disableNotifications
@@ -1051,7 +1068,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   ..plotHistoryMemoryLimitGiB = oldPlotLimit;
                 if (crashDumpEnabled != oldCrashDump) {
                   try {
-                    await CrashDumpService().setEnabled(oldCrashDump);
+                    await widget.actions.crashDump.setEnabled(oldCrashDump);
                   } catch (_) {
                     // 保留原始保存错误；下次启动会根据已恢复的设置重新同步原生状态。
                   }
@@ -1060,14 +1077,14 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               }
               setState(() => _disableNotifications = disableNotifications);
               AppLogger().setDiagnosticEnabled(diagnosticLoggingEnabled);
-              dataService.setNetworkConnectionsEnabled(
+              dataConnection.setNetworkConnectionsEnabled(
                 networkConnectionsEnabled,
               );
-              dataService.selectSerialProfile('rawData', forceReload: true);
+              dataConnection.selectSerialProfile('rawData', forceReload: true);
               plotViewModel.syncPlotRetentionLimitFromSettings(plotLimit);
               if (!networkConnectionsEnabled) {
-                if (modbusService?.mode == ModbusMode.tcp) {
-                  await modbusService!.setMode(ModbusMode.rtu);
+                if (modbusActions?.mode() == ModbusMode.tcp) {
+                  await modbusActions!.setMode(ModbusMode.rtu);
                 }
                 if (shellViewModel?.connectionMode == ShellConnectionMode.ssh) {
                   await shellViewModel!.setConnectionMode(
@@ -1182,7 +1199,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   AppSwitchRow(
                     key: shortcutsSectionKey,
                     title: const Text('启用连接快捷键'),
-                    subtitle: Text(
+                    subtitle: const Text(
                       'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；'
                       '关闭后全部不响应。',
                     ),
@@ -1200,10 +1217,11 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     ),
                     value: networkConnectionsEnabled,
                     onChanged:
-                        (DataConnectionService().isNetworkConnection &&
-                                    DataConnectionService().isConnectionBusy) ||
-                                (sshService?.isConnected ?? false) ||
-                                (sshService?.isConnecting ?? false)
+                        (widget.actions.dataConnection.isNetworkConnection() &&
+                                    widget.actions.dataConnection
+                                        .isConnectionBusy()) ||
+                                (sshStatus?.isConnected() ?? false) ||
+                                (sshStatus?.isConnecting() ?? false)
                             ? null
                             : (value) {
                               setDialogState(
@@ -1216,7 +1234,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     subtitle: const Text('关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。'),
                     value: separateSerialProfiles,
                     onChanged:
-                        DataConnectionService().isConnectionBusy
+                        widget.actions.dataConnection.isConnectionBusy()
                             ? null
                             : (value) {
                               setDialogState(
@@ -1241,10 +1259,6 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                       ),
                       builder: (context, _) {
                         final plotViewModel = context.read<PlotViewModel>();
-                        final connectionService =
-                            context.read<DataConnectionService>();
-                        final probeConnectionService =
-                            context.read<ProbeConnectionService?>();
                         final rttViewModel = context.read<RttViewModel?>();
                         final plotUsage = plotViewModel.plotRetentionUsage;
                         return _buildMemoryLimitsSection(
@@ -1254,15 +1268,19 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           plotHistoryUsedBytes: plotUsage.usedBytes,
                           processRssBytes: ProcessInfo.currentRss,
                           rawRetentionUsedBytes:
-                              connectionService.rawRetentionUsage.usedBytes,
+                              widget.actions.dataConnection
+                                  .rawRetentionUsedBytes(),
                           rawTextCacheUsedBytes:
-                              connectionService.rawTextDisplayCacheBytes,
+                              widget.actions.dataConnection
+                                  .rawTextCacheUsedBytes(),
                           shellQueueUsedBytes:
-                              connectionService.shellPendingReceiveBytes,
+                              widget.actions.dataConnection
+                                  .shellQueueUsedBytes(),
                           ymodemQueueUsedBytes:
-                              connectionService.ymodemService.incomingBytes,
+                              widget.actions.dataConnection
+                                  .ymodemQueueUsedBytes(),
                           rttQueueUsedBytes:
-                              probeConnectionService?.queuedBytes ?? 0,
+                              widget.actions.probeDetection.queuedBytes(),
                           rttRawHistoryUsedBytes:
                               rttViewModel?.rawHistoryBytes ?? 0,
                         );
@@ -1284,28 +1302,28 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                         if (didReset) {
                           if (!context.mounted) return;
                           final resetPlotLimit =
-                              AppSettings().plotHistoryMemoryLimitGiB;
+                              settings.plotHistoryMemoryLimitGiB;
                           context
                               .read<PlotViewModel>()
                               .setPlotRetentionLimitGiB(resetPlotLimit);
                           setDialogState(() {
                             disableNotifications =
-                                AppSettings().disableNotifications;
+                                settings.disableNotifications;
                             diagnosticLoggingEnabled =
-                                AppSettings().diagnosticLoggingEnabled;
-                            crashDumpEnabled = AppSettings().crashDumpEnabled;
+                                settings.diagnosticLoggingEnabled;
+                            crashDumpEnabled = settings.crashDumpEnabled;
                             connectionShortcutsEnabled =
-                                AppSettings().connectionShortcutsEnabled;
+                                settings.connectionShortcutsEnabled;
                             networkConnectionsEnabled =
-                                AppSettings().networkConnectionsEnabled;
+                                settings.networkConnectionsEnabled;
                             separateSerialProfiles =
-                                AppSettings().separateSerialProfiles;
+                                settings.separateSerialProfiles;
                             _plotHistoryLimitController.text =
                                 resetPlotLimit.toString();
                           });
                           try {
-                            await CrashDumpService().setEnabled(
-                              AppSettings().crashDumpEnabled,
+                            await widget.actions.crashDump.setEnabled(
+                              settings.crashDumpEnabled,
                             );
                           } catch (error, stackTrace) {
                             AppLogger().error(
@@ -1357,10 +1375,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     if (confirmed != true || !mounted) return;
 
     try {
-      await AppSettings().flushPendingSave();
+      await _settings.flushPendingSave();
       AppLogger().fatal('用户从 Debug 高级设置主动触发原生崩溃测试', category: 'APP');
       await AppLogger().flush();
-      NativeSerialReader.triggerTestCrash();
+      widget.actions.crashDump.triggerTestCrash();
     } catch (error, stackTrace) {
       AppLogger().error(
         '触发原生崩溃测试失败: $error',
@@ -1368,7 +1386,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         error: error,
         stackTrace: stackTrace,
       );
-      if (mounted) AppNotifications.show('触发原生崩溃测试失败：$error');
+      if (mounted) {
+        widget.actions.showNotification('触发原生崩溃测试失败：$error');
+      }
     }
   }
 
@@ -1403,7 +1423,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                     const SizedBox(height: 8),
                     Text(
                       AppStrings.appInfo.resetSettingsKeepsProfiles,
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 12),
                     Text(AppStrings.appInfo.enterResetCode(confirmCode)),
@@ -1446,9 +1466,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     );
     if (confirmed != true) return false;
 
-    await AppSettings().resetToDefaults();
+    await _settings.resetToDefaults();
     if (!mounted) return true;
-    final settings = AppSettings();
+    final settings = _settings;
     setState(() {
       _autoUpdateCheckEnabled = settings.autoUpdateCheckEnabled;
       _disableNotifications = settings.disableNotifications;
@@ -1458,7 +1478,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       );
       _lastResult = null;
     });
-    AppNotifications.show(
+    widget.actions.showNotification(
       AppStrings.appInfo.resetSettingsDone,
       messenger: ScaffoldMessenger.maybeOf(context),
     );
@@ -1470,9 +1490,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       _checking = true;
       _lastResult = null;
     });
-    final result = await _checker.check(
-      channel: _updateChannel,
-      source: _updateSourcePreference.releaseSource,
+    final result = await widget.actions.update.checkForUpdate(
+      _updateChannel,
+      _updateSourcePreference,
     );
     if (!mounted) return;
     setState(() {
@@ -1483,7 +1503,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
 
   Future<void> _loadRollbackUpdates() async {
     setState(() => _loadingRollback = true);
-    final updates = await UpdateService().findRollbackUpdates();
+    final updates = await widget.actions.update.findRollbackUpdates();
     if (!mounted) return;
     setState(() {
       _rollbackUpdates = updates;
@@ -1500,10 +1520,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
 
   Future<void> _installRollback(RollbackUpdate update) async {
     try {
-      final service = UpdateService();
-      final canProceed = await _confirmAndCloseOtherInstances(service);
+      final updateActions = widget.actions.update;
+      final canProceed = await _confirmAndCloseOtherInstances(updateActions);
       if (!canProceed) return;
-      await service.launchRollbackInstaller(update);
+      await updateActions.launchRollbackInstaller(update);
       if (mounted) Navigator.of(context).pop();
       await windowManager.close();
     } catch (error) {
@@ -1514,8 +1534,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
     }
   }
 
-  Future<bool> _confirmAndCloseOtherInstances(UpdateService service) async {
-    final otherInstances = await service.findOtherRunningInstanceProcessIds();
+  Future<bool> _confirmAndCloseOtherInstances(UpdateActions actions) async {
+    final otherInstances = await actions.findOtherRunningInstanceProcessIds();
     if (otherInstances.isEmpty) return true;
     if (!mounted) return false;
     final confirmed = await showDialog<bool>(
@@ -1537,8 +1557,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           ),
     );
     if (confirmed != true) return false;
-    await service.requestCloseOtherRunningInstances(otherInstances);
-    final closed = await service.waitForOtherRunningInstancesToExit(
+    await actions.requestCloseOtherRunningInstances(otherInstances);
+    final closed = await actions.waitForOtherRunningInstancesToExit(
       const Duration(seconds: 10),
     );
     if (!closed && mounted) {
@@ -1662,8 +1682,9 @@ String _formatMemoryPercent(int usedBytes, int limitBytes) {
 
 class _ChangelogPreview extends StatelessWidget {
   final List<ChangelogEntry> entries;
+  final List<ChangelogLine> Function(String body) parseBody;
 
-  const _ChangelogPreview({required this.entries});
+  const _ChangelogPreview({required this.entries, required this.parseBody});
 
   @override
   Widget build(BuildContext context) {
@@ -1686,7 +1707,7 @@ class _ChangelogPreview extends StatelessWidget {
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
-                        _ChangelogBody(body: entry.body),
+                        _ChangelogBody(body: entry.body, parseBody: parseBody),
                       ],
                     ),
                   );
@@ -1700,13 +1721,14 @@ class _ChangelogPreview extends StatelessWidget {
 
 class _ChangelogBody extends StatelessWidget {
   final String body;
+  final List<ChangelogLine> Function(String body) parseBody;
 
-  const _ChangelogBody({required this.body});
+  const _ChangelogBody({required this.body, required this.parseBody});
 
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.onSurfaceVariant;
-    final lines = ChangelogService.parseBody(body);
+    final lines = parseBody(body);
 
     return SelectionArea(
       child: Column(

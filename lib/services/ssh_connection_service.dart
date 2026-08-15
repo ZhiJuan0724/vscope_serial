@@ -354,7 +354,7 @@ class _DartSshClientAdapter implements SshClientAdapter {
     _sessionDone = session.done;
     _stdoutSubscription = session.stdout.listen(_stdout.add);
     _stderrSubscription = session.stderr.listen(_stderr.add);
-    unawaited(session.done.whenComplete(() => stopShell()));
+    unawaited(session.done.whenComplete(stopShell));
   }
 
   @override

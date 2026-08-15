@@ -40,13 +40,9 @@ void main() {
 
   final owners = ConnectionOwnerService();
 
-  setUp(() {
-    owners.reset();
-  });
+  setUp(owners.reset);
 
-  tearDown(() {
-    owners.reset();
-  });
+  tearDown(owners.reset);
 
   test('CMSIS-DAP 自动模式优先使用外置 OpenOCD', () async {
     final openocd = _FakeBackend('external-openocd');

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart' as file_picker;
@@ -183,13 +184,24 @@ class _ModbusPageState extends State<ModbusPage> {
     if (unit == null || address == null || quantity == null) {
       throw const FormatException('单元号、地址和数量必须是整数');
     }
-    final values =
+    final valuesInput =
         _valuesController.text
             .split(RegExp(r'[,\s]+'))
             .where((value) => value.isNotEmpty)
-            .map(_parseInt)
-            .whereType<int>()
             .toList();
+    final invalidValues = <String>[];
+    final values = <int>[];
+    for (final value in valuesInput) {
+      final parsed = _parseInt(value);
+      if (parsed == null) {
+        invalidValues.add(value);
+      } else {
+        values.add(parsed);
+      }
+    }
+    if (invalidValues.isNotEmpty) {
+      throw FormatException('写入值无法解析：${invalidValues.join('、')}');
+    }
     return ModbusRequest(
       mode: mode,
       unitId: unit,
@@ -628,7 +640,7 @@ class _ModbusPageState extends State<ModbusPage> {
       _ModbusMenuAction(
         Icons.delete_outline,
         '删除寄存器',
-        () => service.removeRow(page.key, row.id),
+        () => unawaited(_confirmDeleteRow(page, row)),
       ),
     ]);
   }
@@ -1087,6 +1099,56 @@ class _ModbusPageState extends State<ModbusPage> {
           ),
     );
     if (confirmed == true && mounted) await service.deleteProfile(id);
+  }
+
+  Future<bool> _confirm(
+    String title,
+    String message, {
+    String confirmLabel = '删除',
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              DialogPrimaryActionButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                label: confirmLabel,
+              ),
+            ],
+          ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _confirmDeleteRow(
+    ModbusRegisterPage page,
+    ModbusRegisterRow row,
+  ) async {
+    final confirmed = await _confirm(
+      '删除寄存器',
+      '确定删除地址 ${row.address} 的寄存器吗？其变量类型、备注、背景色和轮询配置将一并删除。',
+    );
+    if (!confirmed || !mounted) return;
+    context.read<ModbusClientService>().removeRow(page.key, row.id);
+  }
+
+  Future<void> _confirmClosePage(ModbusRegisterPage page) async {
+    final confirmed = await _confirm(
+      '关闭页面',
+      '确定关闭该寄存器页面吗？',
+      confirmLabel: '关闭',
+    );
+    if (!confirmed || !mounted) return;
+    context.read<ModbusClientService>().removePage(page.key);
+    setState(() => _selectedPageKey = null);
   }
 
   Future<void> _showProfileManager() async {
@@ -1614,10 +1676,7 @@ class _ModbusPageState extends State<ModbusPage> {
                   width: 28,
                   height: 28,
                 ),
-                onPressed: () {
-                  context.read<ModbusClientService>().removePage(page.key);
-                  setState(() => _selectedPageKey = null);
-                },
+                onPressed: () => unawaited(_confirmClosePage(page)),
                 icon: const Icon(Icons.close, size: 16),
               ),
             ],
@@ -1634,10 +1693,11 @@ class _ModbusPageState extends State<ModbusPage> {
         '在独立窗口打开',
         () => _detachPage(page.key),
       ),
-      _ModbusMenuAction(Icons.close, '关闭页面', () {
-        context.read<ModbusClientService>().removePage(page.key);
-        setState(() => _selectedPageKey = null);
-      }),
+      _ModbusMenuAction(
+        Icons.close,
+        '关闭页面',
+        () => unawaited(_confirmClosePage(page)),
+      ),
     ]);
   }
 

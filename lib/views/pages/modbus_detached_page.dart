@@ -117,6 +117,42 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
     await WindowController.fromWindowId(widget.windowId).close();
   }
 
+  Future<bool> _confirm(
+    String title,
+    String message, {
+    String confirmLabel = '删除',
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            shape: kAdvancedSettingsDialogShape,
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('取消'),
+              ),
+              DialogPrimaryActionButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                label: confirmLabel,
+              ),
+            ],
+          ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _confirmDeleteRow(ModbusRegisterRow row) async {
+    final confirmed = await _confirm(
+      '删除寄存器',
+      '确定删除地址 ${row.address} 的寄存器吗？其变量类型、备注、背景色和轮询配置将一并删除。',
+    );
+    if (!confirmed || !mounted) return;
+    await _command('removeRow', {'rowId': row.id});
+  }
+
   Future<void> _showRowMenu(
     ModbusRegisterPage page,
     ModbusRegisterRow row,
@@ -170,7 +206,7 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
           'row': next.toSparseJson(page.area),
         });
       case ModbusRowMenuAction.delete:
-        await _command('removeRow', {'rowId': row.id});
+        await _confirmDeleteRow(row);
     }
   }
 
@@ -551,7 +587,7 @@ class _ModbusDetachedPageState extends State<ModbusDetachedPage> {
           });
         }
       case 'delete':
-        await _command('removeRow', {'rowId': row.id});
+        await _confirmDeleteRow(row);
     }
   }
 

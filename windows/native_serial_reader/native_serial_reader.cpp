@@ -577,6 +577,12 @@ static void read_thread_func() {
                     hSerial, &overlapped, &bytesRead, TRUE);
                 break;
             }
+        } else if (!result) {
+            // Device removed or handle became invalid: record the error and
+            // exit instead of busy-spinning; the Dart health check drives the
+            // disconnect and reconnect flow.
+            g_lastOpenError = GetLastError();
+            break;
         }
         
         if (result && bytesRead > 0) {

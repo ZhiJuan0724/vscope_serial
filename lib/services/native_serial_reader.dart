@@ -513,6 +513,30 @@ class NativeSerialOpenResult {
     10 => '完成',
     _ => '未开始',
   };
+
+  /// 把 Win32 错误码映射为可行动的中文提示，供连接失败时直接展示给用户。
+  String get failureDescription {
+    final reason = switch (errorCode) {
+      2 => '设备不存在，请确认设备已连接',
+      3 => '串口路径不存在',
+      5 => '端口被占用或无权限，请关闭占用该端口的程序',
+      21 => '设备未就绪',
+      32 => '端口被其他程序占用',
+      1167 => '设备已断开',
+      _ => '打开失败',
+    };
+    return '$reason（$stageName，错误码 $errorCode）';
+  }
+}
+
+/// 原生串口打开失败，携带可直接展示给用户的原因。
+class NativeSerialOpenException implements Exception {
+  const NativeSerialOpenException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Windows 原生串口读取器
@@ -764,12 +788,16 @@ class NativeSerialReader {
 class NativeSerialPortMonitor {
   final _changesController = StreamController<void>.broadcast();
   ReceivePort? _receivePort;
+  bool _dartApiInitialized = false;
 
   Stream<void> get changes => _changesController.stream;
 
   bool start() {
     if (_receivePort != null) return true;
-    if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+    if (!_dartApiInitialized) {
+      if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+      _dartApiInitialized = true;
+    }
 
     final receivePort = ReceivePort();
     receivePort.listen((_) => _changesController.add(null));

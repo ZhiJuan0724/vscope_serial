@@ -226,6 +226,7 @@ class _JLinkCommanderSession {
   late final Future<int> _exitFuture;
   bool _exited = false;
   final StringBuffer _buffer = StringBuffer();
+  static const int _maxBufferChars = 1024 * 1024;
   Completer<String>? _pendingPrompt;
   Future<void> _commandTail = Future.value();
 
@@ -250,7 +251,10 @@ class _JLinkCommanderSession {
     _buffer.write(text);
     final content = _buffer.toString();
     final prompt = content.lastIndexOf('J-Link>');
-    if (prompt < 0) return;
+    if (prompt < 0) {
+      if (_buffer.length > _maxBufferChars) _buffer.clear();
+      return;
+    }
     final response = content.substring(0, prompt);
     _buffer
       ..clear()
@@ -278,6 +282,7 @@ class _JLinkCommanderSession {
     _commandTail = release.future;
     await previous;
     try {
+      _buffer.clear();
       final response = _waitForPrompt();
       _process.stdin.writeln(command);
       await _process.stdin.flush();

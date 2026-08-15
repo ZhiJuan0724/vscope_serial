@@ -32,9 +32,7 @@ void main() {
       final source = RandomDataSource(channelCount: 4, intervalMs: 10);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
       await source.start();
 
@@ -71,9 +69,7 @@ void main() {
       final source = RandomDataSource(channelCount: 4, frequencyHz: 1000);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
       await source.start();
 
@@ -173,9 +169,7 @@ void main() {
       final source = RandomDataSource(intervalMs: 10);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
       await source.start();
       await Future.delayed(const Duration(milliseconds: 30));

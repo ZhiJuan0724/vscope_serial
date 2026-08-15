@@ -1,4 +1,92 @@
-part of '../plot_viewmodel.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import '../core/constants/plot_configuration.dart';
+import '../core/utils/app_logger.dart';
+import '../core/utils/atomic_file.dart';
+import '../core/utils/crc.dart';
+import '../data/models/channel_config.dart';
+import '../data/models/math_channel_config.dart';
+import '../data/models/parser_config.dart';
+import '../views/plot/plot_viewport.dart';
+import 'plot_history_store.dart';
+import 'plot_math_engine.dart';
+
+typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
+typedef PlotExportProgressCallback = void Function(PlotImportProgress progress);
+
+class PlotImportProgress {
+  final String stage;
+  final int current;
+  final int total;
+  final String? detail;
+  final double? bytesPerSecond;
+
+  const PlotImportProgress({
+    required this.stage,
+    required this.current,
+    required this.total,
+    this.detail,
+    this.bytesPerSecond,
+  });
+
+  double? get fraction {
+    if (total <= 0) return null;
+    return (current / total).clamp(0.0, 1.0);
+  }
+}
+
+class PlotExportCancelToken {
+  bool _isCancelled = false;
+
+  bool get isCancelled => _isCancelled;
+
+  void cancel() {
+    _isCancelled = true;
+  }
+}
+
+/// 导入导出服务需要宿主（PlotViewModel）提供的窄接口。
+///
+/// 导入导出的核心业务只依赖 [PlotHistoryStore]、[PlotMathEngine] 和本接口，
+/// 不依赖任何 Flutter UI 类型；宿主负责把少量与自身私有状态强耦合的
+/// 读写操作暴露出来，从而避免把整个 PlotViewModel 传入服务。
+abstract interface class PlotImportExportHost {
+  ParserType get parserType;
+  ParserConfig get parserConfig;
+  SendProtocolType get sendProtocolType;
+  List<String> get rChannelAddresses;
+  List<ChannelConfig> get channels;
+  List<MathChannelConfig> get mathChannels;
+  List<int>? get importedChannelAddresses;
+  int get retentionLimitBytes;
+  PlotViewport get viewport;
+  set viewport(PlotViewport value);
+
+  String displayChannelName(int index);
+  void showStatusMessage(String message, {Duration duration});
+  String formatRetentionBytes(int bytes);
+
+  /// 序列化 [sourceStart, sourceStart + pointCount) 范围内的观察点，
+  /// 供导出元数据复用。无观察点时返回空列表。
+  List<Map<String, dynamic>> exportObservationsMetadata({
+    required int sourceStart,
+    required int pointCount,
+  });
+
+  void beginImportedReplacement();
+  void setNextIndex(int value);
+  void setActiveChannelCount(int value);
+  void clearStartTime();
+  void applyImportedMetadata(Map<String, dynamic>? metadata, int channelCount);
+  Future<void> rebuildParsedWindow(int start, int count);
+  void clearViewportHistory();
+  void resetCursorPositions();
+  void applyImportedObservations(Map<String, dynamic>? metadata);
+  void notifyLater();
+}
 
 /// 用户主动取消导出时使用的内部控制流异常；调用方不将其当作错误提示。
 class _PlotExportCancelled implements Exception {}
@@ -75,23 +163,39 @@ class _ImportValueRange {
   }
 }
 
-/// PlotViewModel 的数据导入导出能力，包含 CSV、BIN 和旧版 DAT 格式。
+/// 绘图数据导入导出服务，包含 CSV、BIN 和旧版 DAT 格式。
 /// 绘图历史的事务导入导出实现。
 ///
 /// 导出始终写同目录 .part；导入先流式预检并暂存，预检失败保留当前绘图，提交后
 /// 只维护新历史，避免旧新双份完整数据同时占用内存。
-extension PlotViewModelImportExport on PlotViewModel {
+///
+/// 服务通过构造注入 [PlotHistoryStore]、[PlotMathEngine] 与宿主窄接口
+/// [PlotImportExportHost]，可脱离完整 PlotViewModel 单独测试。
+class PlotImportExportService {
+  PlotImportExportService({
+    required PlotHistoryStore historyStore,
+    required PlotMathEngine mathEngine,
+    required PlotImportExportHost host,
+  }) : _historyStore = historyStore,
+       _mathEngine = mathEngine,
+       _host = host;
+
   static const int _binMaxUint32 = 0xFFFFFFFF;
   static const int _binExportBatchSize = 65536;
   static const int _csvExportBatchSize = 8192;
   static const int _maxExportChannelCount = PlotConfiguration.totalChannelCount;
   static const AtomicFileCommitter _atomicFiles = AtomicFileCommitter();
 
+  final PlotHistoryStore _historyStore;
+  final PlotMathEngine _mathEngine;
+  final PlotImportExportHost _host;
+
   List<ChannelConfig> get exportCandidateChannels {
-    final rawCount = _exportChannelCount.clamp(0, channels.length).toInt();
+    final rawCount =
+        _exportChannelCount.clamp(0, _host.channels.length).toInt();
     return [
-      ...channels.take(rawCount),
-      for (final channel in mathChannels)
+      ..._host.channels.take(rawCount),
+      for (final channel in _host.mathChannels)
         if (channel.enabled) channel.display,
     ];
   }
@@ -148,7 +252,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       for (final column in exportColumns) {
         header.write(
           column.isMath
-              ? ',${mathChannels[column.channelIndex - PlotConfiguration.rawChannelCount].expression}'
+              ? ',${_host.mathChannels[column.channelIndex - PlotConfiguration.rawChannelCount].expression}'
               : ',Ch${column.channelIndex}',
         );
       }
@@ -260,7 +364,7 @@ extension PlotViewModelImportExport on PlotViewModel {
         final message =
             'BIN 导出失败：当前 BIN 格式单文件最多支持 4GB 数据，'
             '本次预计 ${payloadGb.toStringAsFixed(2)} GB。请先缩小数据范围或改用分段导出。';
-        showStatusMessage(message, duration: const Duration(seconds: 6));
+        _host.showStatusMessage(message, duration: const Duration(seconds: 6));
         AppLogger().warning(message, category: 'PLOT');
         return null;
       }
@@ -379,7 +483,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     }
     if (unique.isEmpty) {
       const message = '导出失败：请至少选择 1 个通道';
-      showStatusMessage(message, duration: const Duration(seconds: 4));
+      _host.showStatusMessage(message, duration: const Duration(seconds: 4));
       AppLogger().warning(message, category: 'PLOT');
       return null;
     }
@@ -387,21 +491,24 @@ extension PlotViewModelImportExport on PlotViewModel {
       const message =
           '导出失败：当前格式最多支持同时导出 '
           '${PlotConfiguration.totalChannelCount} 个通道';
-      showStatusMessage(message, duration: const Duration(seconds: 4));
+      _host.showStatusMessage(message, duration: const Duration(seconds: 4));
       AppLogger().warning(message, category: 'PLOT');
       return null;
     }
     for (final index in unique) {
       if (!byIndex.containsKey(index)) {
         final message = '导出失败：通道 $index 不可用';
-        showStatusMessage(message, duration: const Duration(seconds: 4));
+        _host.showStatusMessage(message, duration: const Duration(seconds: 4));
         AppLogger().warning(message, category: 'PLOT');
         return null;
       }
     }
     return [
       for (final index in unique)
-        _PlotExportColumn(channelIndex: index, name: displayChannelName(index)),
+        _PlotExportColumn(
+          channelIndex: index,
+          name: _host.displayChannelName(index),
+        ),
     ];
   }
 
@@ -414,7 +521,9 @@ extension PlotViewModelImportExport on PlotViewModel {
       return _exportRawValueAt(pointIndex, column.channelIndex, decodedCache);
     }
     final mathIndex = column.channelIndex - PlotConfiguration.rawChannelCount;
-    if (mathIndex < 0 || mathIndex >= mathChannels.length) return double.nan;
+    if (mathIndex < 0 || mathIndex >= _host.mathChannels.length) {
+      return double.nan;
+    }
     return _mathEngine.evaluateAt(
       channelIndex: mathIndex,
       currentIndex: pointIndex,
@@ -450,16 +559,17 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   int get _exportChannelCount {
-    if (_parserType == ParserType.zobow && _historyStore.hasZobowFrames) {
-      return _parserConfig.zobowChannelCount;
+    if (_host.parserType == ParserType.zobow && _historyStore.hasZobowFrames) {
+      return _host.parserConfig.zobowChannelCount;
     }
-    if (_parserType == ParserType.fixedFrame && _historyStore.hasFixedFrames) {
-      return _parserConfig.channelCount;
+    if (_host.parserType == ParserType.fixedFrame &&
+        _historyStore.hasFixedFrames) {
+      return _host.parserConfig.channelCount;
     }
     return _historyStore.parsedMaxChannelCount;
   }
 
-  int get _exportPointCount => _historyStore.pointCount(_parserType);
+  int get _exportPointCount => _historyStore.pointCount(_host.parserType);
 
   (int, int)? _normalizeExportRange(int? startIndex, int? endIndex) {
     final total = _exportPointCount;
@@ -468,7 +578,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     final end = endIndex ?? total - 1;
     if (start < 0 || end < start || end >= total) {
       final message = '导出范围无效：起始点和结束点必须在 0-${total - 1} 内';
-      showStatusMessage(message, duration: const Duration(seconds: 4));
+      _host.showStatusMessage(message, duration: const Duration(seconds: 4));
       AppLogger().warning(message, category: 'PLOT');
       return null;
     }
@@ -476,12 +586,17 @@ extension PlotViewModelImportExport on PlotViewModel {
   }
 
   bool get _exportsParsedHistory =>
-      !(_parserType == ParserType.zobow && _historyStore.hasZobowFrames) &&
-      !(_parserType == ParserType.fixedFrame && _historyStore.hasFixedFrames);
+      !(_host.parserType == ParserType.zobow && _historyStore.hasZobowFrames) &&
+      !(_host.parserType == ParserType.fixedFrame &&
+          _historyStore.hasFixedFrames);
 
   List<double> _decodeExportValuesAt(int pointIndex) {
     if (!_exportsParsedHistory) {
-      return _historyStore.valuesAt(pointIndex, _parserType, _parserConfig);
+      return _historyStore.valuesAt(
+        pointIndex,
+        _host.parserType,
+        _host.parserConfig,
+      );
     }
     throw StateError('文本历史无需解码');
   }
@@ -502,7 +617,8 @@ extension PlotViewModelImportExport on PlotViewModel {
             'name': column.name,
             if (column.isMath)
               'expression':
-                  mathChannels[column.channelIndex -
+                  _host
+                      .mathChannels[column.channelIndex -
                           PlotConfiguration.rawChannelCount]
                       .expression,
           },
@@ -519,41 +635,34 @@ extension PlotViewModelImportExport on PlotViewModel {
         preservesRawPrefix &&
         (rawColumns.length == columns.length ||
             rawColumns.length == PlotConfiguration.rawChannelCount);
-    if (restoresProtocolMetadata && _importedChannelAddresses != null) {
-      metadata['channelAddresses'] = _importedChannelAddresses!
+    if (restoresProtocolMetadata && _host.importedChannelAddresses != null) {
+      metadata['channelAddresses'] = _host.importedChannelAddresses!
           .take(rawColumns.length)
           .map((id) => id & 0xFFFFFFFF)
           .toList(growable: false);
     }
-    if (restoresProtocolMetadata && _parserType == ParserType.zobow) {
+    if (restoresProtocolMetadata && _host.parserType == ParserType.zobow) {
       metadata['parserType'] = ParserType.zobow.name;
-      metadata['zobowChannelIds'] = _parserConfig.zobowChannelIds
+      metadata['zobowChannelIds'] = _host.parserConfig.zobowChannelIds
           .take(rawColumns.length)
           .map((id) => id & 0xFFFFFFFF)
           .toList(growable: false);
     }
     if (restoresProtocolMetadata &&
-        _sendProtocolType == SendProtocolType.rProtocol) {
+        _host.sendProtocolType == SendProtocolType.rProtocol) {
       metadata['sendProtocolType'] = SendProtocolType.rProtocol.name;
       metadata['rChannelAddresses'] = List<String>.from(
-        _sendProtocolConfig.rChannelAddresses,
+        _host.rChannelAddresses,
       );
     }
-    if (includeObservations && _observations.isNotEmpty) {
-      metadata['observations'] = _observations
-          .where(
-            (observation) =>
-                observation.x >= sourceStart &&
-                observation.x < sourceStart + pointCount,
-          )
-          .map(
-            (observation) => <String, dynamic>{
-              'x': observation.x - sourceStart,
-              if (observation.note.isNotEmpty) 'note': observation.note,
-              if (observation.locked) 'locked': true,
-            },
-          )
-          .toList(growable: false);
+    if (includeObservations) {
+      final observations = _host.exportObservationsMetadata(
+        sourceStart: sourceStart,
+        pointCount: pointCount,
+      );
+      if (observations.isNotEmpty) {
+        metadata['observations'] = observations;
+      }
     }
     return metadata;
   }
@@ -821,7 +930,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     final channelCount = headerParts.length - 1;
     if (channelCount < 1) throw const FormatException('至少需要 1 个数据列');
     if (channelCount > PlotConfiguration.totalChannelCount) {
-      throw FormatException(
+      throw const FormatException(
         '通道数超过限制（最大${PlotConfiguration.totalChannelCount}通道）',
       );
     }
@@ -851,7 +960,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     _CsvImportPlan plan,
     PlotImportProgressCallback? onProgress,
   ) async {
-    _beginImportedReplacement();
+    _host.beginImportedReplacement();
     final range = _ImportValueRange();
     var headerSeen = false;
     var pointIndex = 0;
@@ -1008,7 +1117,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     _BinImportPlan plan,
     PlotImportProgressCallback? onProgress,
   ) async {
-    _beginImportedReplacement();
+    _host.beginImportedReplacement();
     final range = _ImportValueRange();
     final input = await file.open();
     var pointIndex = 0;
@@ -1116,7 +1225,7 @@ extension PlotViewModelImportExport on PlotViewModel {
     _DatImportPlan plan,
     PlotImportProgressCallback? onProgress,
   ) async {
-    _beginImportedReplacement();
+    _host.beginImportedReplacement();
     final range = _ImportValueRange();
     final input = await file.open();
     var pointIndex = 0;
@@ -1244,20 +1353,12 @@ extension PlotViewModelImportExport on PlotViewModel {
     final projectedBytes =
         pointCount * (normalizedChannelCount * 8 + 64) +
         math.min(pointCount, PlotConfiguration.maxMaterializedPointCount) * 192;
-    if (projectedBytes > _plotRetentionLimitBytes) {
+    if (projectedBytes > _host.retentionLimitBytes) {
       throw StateError(
-        '导入预计占用 ${_formatRetentionBytes(projectedBytes)}，超过绘图历史 '
-        '${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限',
+        '导入预计占用 ${_host.formatRetentionBytes(projectedBytes)}，超过绘图历史 '
+        '${_host.formatRetentionBytes(_host.retentionLimitBytes)} 上限',
       );
     }
-  }
-
-  void _beginImportedReplacement() {
-    // 至此预检已完成；导入历史不可用于保持绘图续接，因此先彻底重置实时来源状态。
-    _windowProvider.clear();
-    _historyStore.clear();
-    _resetPlotRetentionState();
-    _importedChannelAddresses = null;
   }
 
   void _appendImportedValues(
@@ -1265,7 +1366,11 @@ extension PlotViewModelImportExport on PlotViewModel {
     List<double> values,
     _ImportValueRange range,
   ) {
-    _historyStore.appendImportedParsedPoint(pointIndex, values, _parserType);
+    _historyStore.appendImportedParsedPoint(
+      pointIndex,
+      values,
+      _host.parserType,
+    );
     range.include(values);
   }
 
@@ -1276,17 +1381,17 @@ extension PlotViewModelImportExport on PlotViewModel {
     Map<String, dynamic>? metadata,
     PlotImportProgressCallback? onProgress,
   }) async {
-    _nextIndex = pointCount;
-    _activeChannelCount = channelCount;
-    _startTime = null;
-    _applyImportedMetadata(metadata, channelCount);
+    _host.setNextIndex(pointCount);
+    _host.setActiveChannelCount(channelCount);
+    _host.clearStartTime();
+    _host.applyImportedMetadata(metadata, channelCount);
 
     final visibleCount =
         pointCount
             .clamp(0, PlotConfiguration.maxMaterializedPointCount)
             .toInt();
     final visibleStart = pointCount - visibleCount;
-    viewport = PlotViewport(
+    _host.viewport = PlotViewport(
       xMin: visibleStart.toDouble(),
       xMax: pointCount.toDouble(),
       yMin: range.min == double.infinity ? 0 : range.min,
@@ -1299,7 +1404,7 @@ extension PlotViewModelImportExport on PlotViewModel {
       visibleCount,
       detail: '$visibleCount 点',
     );
-    await _rebuildParsedWindow(visibleStart, visibleCount);
+    await _host.rebuildParsedWindow(visibleStart, visibleCount);
     await _reportImportProgress(
       onProgress,
       '加载可见窗口',
@@ -1307,148 +1412,11 @@ extension PlotViewModelImportExport on PlotViewModel {
       visibleCount,
       detail: '$visibleCount 点',
     );
-    _viewportHistory.clear();
+    _host.clearViewportHistory();
 
-    _resetCursorPositions();
-    _applyImportedObservations(metadata);
+    _host.resetCursorPositions();
+    _host.applyImportedObservations(metadata);
 
-    _notifyLater();
-  }
-
-  void _applyImportedMetadata(
-    Map<String, dynamic>? metadata,
-    int channelCount,
-  ) {
-    final importedMathChannels = metadata?['mathChannels'];
-    _replaceMathChannels(
-      importedMathChannels is List
-          ? MathChannelConfig.normalizeList(importedMathChannels)
-          : MathChannelConfig.createDefaults(),
-    );
-    if (metadata == null || metadata.isEmpty) return;
-
-    final names = metadata['channelNames'];
-    if (names is List) {
-      for (
-        int i = 0;
-        i < names.length && i < channelCount && i < channels.length;
-        i++
-      ) {
-        final name = names[i];
-        if (name is String && name.isNotEmpty) {
-          channels[i].alias = name == 'Ch$i' ? '' : name;
-        }
-      }
-    }
-
-    final addresses = metadata['channelAddresses'];
-    if (addresses is List) {
-      _importedChannelAddresses = _applyChannelAddresses(
-        addresses,
-        channelCount,
-      );
-    }
-
-    final ids = metadata['zobowChannelIds'];
-    if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
-      _parserType = ParserType.zobow;
-      _parserConfig.type = ParserType.zobow;
-      _parserConfig.channelCount =
-          channelCount >= ParserConfig.maxZobowChannelCount
-              ? ParserConfig.maxZobowChannelCount
-              : ParserConfig.minZobowChannelCount;
-      _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
-      AppSettings().parserType = ParserType.zobow.name;
-      _saveSettings();
-    }
-
-    final rAddresses = metadata['rChannelAddresses'];
-    if (metadata['sendProtocolType'] == SendProtocolType.rProtocol.name &&
-        rAddresses is List) {
-      final restoredAddresses = List<String>.filled(
-        SendProtocolConfig.maxChannelCount,
-        '',
-      );
-      for (
-        var i = 0;
-        i < rAddresses.length && i < restoredAddresses.length;
-        i++
-      ) {
-        final address = rAddresses[i];
-        if (address is String) restoredAddresses[i] = address.trim();
-      }
-      _sendProtocolType = SendProtocolType.rProtocol;
-      _sendProtocolConfig
-        ..type = SendProtocolType.rProtocol
-        ..source = ProtocolSource.builtIn
-        ..customProtocolId = null
-        ..rChannelAddresses = restoredAddresses;
-      _saveSettings();
-    }
-  }
-
-  void _applyImportedObservations(Map<String, dynamic>? metadata) {
-    final values = metadata?['observations'];
-    if (values is! List) return;
-    for (final item in values) {
-      if (_observations.length >= PlotViewModel.maxObservationCount) break;
-      if (item is! Map) continue;
-      final xValue = item['x'];
-      final x = xValue is num ? xValue.toDouble() : null;
-      if (x == null || !x.isFinite || !canJumpToXIndex(x.round())) continue;
-      final noteValue = item['note'];
-      _observations.add(
-        PlotObservation(
-          cursor: _buildImportedObservationCursorAtX(x),
-          note: noteValue is String ? noteValue : '',
-          locked: item['locked'] == true,
-        ),
-      );
-    }
-  }
-
-  CursorState _buildImportedObservationCursorAtX(double x) {
-    final index = x.round();
-    if ((x - index).abs() > 0.000001 || !canJumpToXIndex(index)) {
-      return CursorState(x: x, hasData: false);
-    }
-    final valueCount = _historyStore.parsedValueCountAt(index);
-    if (valueCount <= 0) return CursorState(x: x, hasData: false);
-    return CursorState(
-      x: x,
-      channelValues: [
-        for (var channel = 0; channel < valueCount; channel++)
-          _historyStore.parsedValueAt(index, channel),
-      ],
-      hasData: true,
-    );
-  }
-
-  List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {
-    final addresses = <int>[];
-    for (
-      int i = 0;
-      i < values.length &&
-          i < channelCount &&
-          i < _parserConfig.zobowChannelIds.length;
-      i++
-    ) {
-      final value = values[i];
-      final address = switch (value) {
-        int value => value,
-        num value => value.toInt(),
-        String value => int.tryParse(
-          value.replaceAll('0x', '').replaceAll('0X', ''),
-          radix: 16,
-        ),
-        _ => null,
-      };
-      if (address != null) {
-        final normalized = address & 0xFFFFFFFF;
-        _parserConfig.zobowChannelIds[i] = normalized;
-        addresses.add(normalized);
-      }
-    }
-    return addresses;
+    _host.notifyLater();
   }
 }

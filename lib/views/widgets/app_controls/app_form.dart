@@ -44,6 +44,7 @@ class AppDialogTextField extends StatelessWidget {
     this.inputFormatters,
     this.onChanged,
     this.onSubmitted,
+    this.onEditingComplete,
     this.minLines = 1,
     this.maxLines = 1,
     this.textCapitalization = TextCapitalization.none,
@@ -65,6 +66,7 @@ class AppDialogTextField extends StatelessWidget {
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
+  final VoidCallback? onEditingComplete;
   final int? minLines;
   final int? maxLines;
   final TextCapitalization textCapitalization;
@@ -97,6 +99,7 @@ class AppDialogTextField extends StatelessWidget {
             inputFormatters: inputFormatters,
             onChanged: onChanged,
             onSubmitted: onSubmitted,
+            onEditingComplete: onEditingComplete,
             minLines: minLines,
             maxLines: obscureText ? 1 : maxLines,
             textCapitalization: textCapitalization,
@@ -129,6 +132,7 @@ class AppNumberField extends AppDialogTextField {
     super.autofocus,
     super.onChanged,
     super.onSubmitted,
+    super.onEditingComplete,
     bool allowDecimal = false,
     bool allowNegative = false,
   }) : super(
@@ -146,6 +150,54 @@ class AppNumberField extends AppDialogTextField {
            ),
          ],
        );
+}
+
+/// 设置弹窗中「标题在左、固定宽度数值输入框在右」的单行字段。
+///
+/// 与 [AppSwitchRow] / [AppCheckboxRow] 保持一致的排版，内部使用
+/// [AppNumberField] 统一提供数字键盘与输入过滤，并把失焦/回车统一绑定到同一个
+/// [onApply] 回调上，避免逐字段复制 `onSubmitted` + `onEditingComplete`。
+class AppNumberRow extends StatelessWidget {
+  const AppNumberRow({
+    super.key,
+    required this.label,
+    required this.controller,
+    this.suffixText,
+    this.allowDecimal = false,
+    this.allowNegative = false,
+    this.enabled = true,
+    this.fieldWidth = 140,
+    this.onApply,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String? suffixText;
+  final bool allowDecimal;
+  final bool allowNegative;
+  final bool enabled;
+  final double fieldWidth;
+  final VoidCallback? onApply;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Text(label, style: const TextStyle(fontSize: 14)),
+      const Spacer(),
+      SizedBox(
+        width: fieldWidth,
+        child: AppNumberField(
+          controller: controller,
+          enabled: enabled,
+          suffixText: suffixText,
+          allowDecimal: allowDecimal,
+          allowNegative: allowNegative,
+          onSubmitted: onApply == null ? null : (_) => onApply!(),
+          onEditingComplete: onApply,
+        ),
+      ),
+    ],
+  );
 }
 
 /// 弹窗表单的统一“标题 + 控件”布局。
@@ -173,36 +225,6 @@ class AppLabeledField extends StatelessWidget {
       child,
       if (helpText != null) ...[
         const SizedBox(height: 4),
-        Text(
-          helpText!,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-      ],
-    ],
-  );
-}
-
-class AppLabeledControlRow extends StatelessWidget {
-  const AppLabeledControlRow({
-    super.key,
-    required this.label,
-    required this.control,
-    this.helpText,
-  });
-
-  final Widget label;
-  final Widget control;
-  final String? helpText;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Row(children: [Expanded(child: label), control]),
-      if (helpText != null) ...[
-        const SizedBox(height: 2),
         Text(
           helpText!,
           style: Theme.of(context).textTheme.bodySmall?.copyWith(

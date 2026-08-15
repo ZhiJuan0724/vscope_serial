@@ -27,9 +27,7 @@ void main() {
 
       final manager = DataSourceManager(connectionService, config: config);
       final receivedData = <Uint8List>[];
-      final subscription = manager.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = manager.byteStream.listen(receivedData.add);
 
       await manager.start();
       await Future.delayed(const Duration(milliseconds: durationMs));

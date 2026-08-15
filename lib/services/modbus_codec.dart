@@ -42,6 +42,9 @@ abstract final class ModbusCodec {
         throw const FormatException('Modbus 读取响应长度无效');
       }
       if (request.function.isBitFunction) {
+        if (pdu[1] < (request.quantity + 7) ~/ 8) {
+          throw const FormatException('Modbus 位响应字节数不足');
+        }
         final values = <bool>[];
         for (var index = 0; index < request.quantity; index++) {
           values.add((pdu[2 + index ~/ 8] & (1 << (index % 8))) != 0);
@@ -260,6 +263,9 @@ class ModbusFrameParser {
   final ModbusMode mode;
   final List<int> _buffer = [];
 
+  /// ASCII 帧最长合法长度（覆盖最长的读写帧），超限且未见帧尾时重同步。
+  static const int _maxAsciiFrameBytes = 256;
+
   List<Uint8List> add(Uint8List data) {
     _buffer.addAll(data);
     final frames = <Uint8List>[];
@@ -292,6 +298,15 @@ class ModbusFrameParser {
     for (var index = 1; index + 1 < _buffer.length; index++) {
       if (_buffer[index] == 0x0D && _buffer[index + 1] == 0x0A) {
         return _take(index + 2);
+      }
+    }
+    // 未找到帧尾且缓冲超限时丢弃到下一个 ':'，避免异常设备流无界增长。
+    if (_buffer.length > _maxAsciiFrameBytes) {
+      final nextStart = _buffer.indexOf(0x3A, 1);
+      if (nextStart > 0) {
+        _buffer.removeRange(0, nextStart);
+      } else {
+        _buffer.clear();
       }
     }
     return null;

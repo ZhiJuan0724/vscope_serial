@@ -190,7 +190,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _showGrid = show;
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 UI 刷新帧率（30~120 fps）。
@@ -200,7 +200,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       PlotConfiguration.maxRefreshFps,
     );
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setSnapHighlightEnabled(bool value) {
@@ -208,7 +208,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _snapHighlightEnabled = value;
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setSnapHighlightDiameter(double value) {
@@ -217,7 +217,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _snapHighlightDiameter = next;
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setSnapHighlightColorMode(String value) {
@@ -227,7 +227,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _refreshSnapHighlightColors();
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setXMeasurementStyle({
@@ -243,7 +243,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _refreshSnapHighlightColors();
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setYMeasurementStyle({
@@ -259,7 +259,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _refreshSnapHighlightColors();
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setYMeasurementSnapEnabled(bool value) {
@@ -273,7 +273,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     }
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setMultiMeasurementEnabled({required bool isX, required bool value}) {
@@ -285,7 +285,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _yMultiMeasurementEnabled = value;
     }
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   Color _opaqueMeasurementColor(Color color) =>
@@ -295,7 +295,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     if (_statsToolbarEnabled == value) return;
     _statsToolbarEnabled = value;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setTriggerToolbarEnabled(bool value) {
@@ -307,21 +307,21 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _markOverlayChanged();
     }
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setPreviewToolbarEnabled(bool value) {
     if (_previewToolbarEnabled == value) return;
     _previewToolbarEnabled = value;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setLodQuality(PlotLodQuality value) {
     if (_lodQuality == value) return;
     _lodQuality = value;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void movePreviewViewportTo(double centerX, {bool fromDrag = false}) {
@@ -340,7 +340,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     if (_keepPlotOnRestart == value) return;
     _keepPlotOnRestart = value;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置单次绘图历史内存上限。
@@ -367,7 +367,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
 
     _resetPlotRetentionState();
     _updatePlotRetentionWarning();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// AppSettings 已完成事务保存后，仅同步绘图运行态，避免重复写设置文件。
@@ -391,7 +391,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _loadWindowForViewport(force: true);
     }
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setYFitDisplayRatio(double value) {
@@ -399,7 +399,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     if ((_yFitDisplayRatio - next).abs() < 1e-9) return;
     _yFitDisplayRatio = next;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
@@ -407,7 +407,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _plotFontSizeDelta = delta.clamp(-3, 6);
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setPlotFontBold(bool enabled) {
@@ -415,7 +415,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _plotFontBold = enabled;
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置绘图窗口点数上限，范围由 [PlotConfiguration] 统一约束。
@@ -436,7 +436,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     }
 
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置每次开始绘图时丢弃的前置有效数据包数量。
@@ -448,7 +448,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     if (next == _discardInitialPacketCount) return;
     _discardInitialPacketCount = next;
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置网格密度（sparse/normal/dense）
@@ -458,7 +458,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _gridDensity = density;
       _markChannelConfigChanged();
       _saveSettings();
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
     }
   }
 
@@ -469,7 +469,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _applyPlotBackgroundPalette();
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setFloatingPanelOpacity(double opacity) {
@@ -478,7 +478,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     _floatingPanelOpacity = next;
     _markOverlayChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setLegendPanelPosition({required double right, required double top}) {
@@ -520,7 +520,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _markOverlayChanged();
     }
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _applyPlotBackgroundPalette() {
@@ -562,7 +562,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       if (!_vCursorEnabled) _cursor = null;
     }
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 按功能键追加一组 X 测量，最多 10 组。
@@ -579,7 +579,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       ),
     );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 切换 Y-Y 测量开关
@@ -604,7 +604,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       if (!_vCursorEnabled) _cursor = null;
     }
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 按功能键追加一组 Y 测量，最多 10 组。
@@ -621,7 +621,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       ),
     );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 切换统计测量开关
@@ -640,7 +640,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _statsRangeEnabled = false;
     }
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 切换统计范围开关
@@ -661,21 +661,21 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       _statsX2 = viewport.xMax;
     }
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置统计范围左边界
   void setStatsX1(double x) {
     _statsX1 = x;
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置统计范围右边界
   void setStatsX2(double x) {
     _statsX2 = x;
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _handleTriggerForPoint(PlotDataPoint point, DateTime now) {
@@ -705,7 +705,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
 
     if (!evaluation.limitReached) {
       _markOverlayChanged();
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
       return;
     }
 
@@ -714,7 +714,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
     switch (_triggerConfig.action) {
       case PlotTriggerAction.markOnly:
         _markOverlayChanged();
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
         break;
       case PlotTriggerAction.stopImmediately:
         _requestTriggerStop();
@@ -928,7 +928,7 @@ extension PlotViewModelDisplayControls on PlotViewModel {
       viewport.copyWith(xMin: center - halfRange, xMax: center + halfRange),
     );
     _loadWindowForViewport();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   bool _addObservationAtX(double x, {String note = ''}) {

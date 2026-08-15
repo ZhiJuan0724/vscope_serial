@@ -9,7 +9,7 @@ extension PlotViewModelInteractionControls on PlotViewModel {
       _loadTailWindow();
     }
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置单垂直光标开关
@@ -19,7 +19,7 @@ extension PlotViewModelInteractionControls on PlotViewModel {
     _vCursorEnabled = value;
     _cursor = null;
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void updateTriggerConfig(PlotTriggerConfig config) {
@@ -42,7 +42,7 @@ extension PlotViewModelInteractionControls on PlotViewModel {
     _triggerConfigured = true;
     _resetTriggerRuntimeState();
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setTriggerEnabled(bool value) {
@@ -62,6 +62,6 @@ extension PlotViewModelInteractionControls on PlotViewModel {
     _triggerConfig.enabled = value;
     _resetTriggerRuntimeState();
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 }

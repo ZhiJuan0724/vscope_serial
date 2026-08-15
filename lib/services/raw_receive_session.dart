@@ -280,9 +280,9 @@ class RawReceiveSession {
     final retention = retentionUsage;
     return <String, String>{
       '显示行数': '${receivedLines.length} / $_displayLineLimit',
-      '显示文本缓存': '${(_receivedTextBytes / 1024 / 1024).toStringAsFixed(2)} MB',
+      '显示文本缓存': _formatByteSize(_receivedTextBytes),
       '完整原始数据':
-          '${_rawBytes.length} B (${(_rawBytes.length / 1024 / 1024).toStringAsFixed(2)} MB)',
+          '${_rawBytes.length} B (${_formatByteSize(_rawBytes.length)})',
       '原始数据容量':
           '${(retention.ratio * 100).clamp(0, 100).toStringAsFixed(1)}% / '
           '${_formatByteSize(retention.limitBytes)}',

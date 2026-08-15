@@ -9,7 +9,7 @@ void main() {
     test('解析单行数据', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       parser.feed(Uint8List.fromList('1.0,2.0,3.0,4.0\n'.codeUnits));
 
@@ -24,7 +24,7 @@ void main() {
     test('解析多行数据', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       parser.feed(Uint8List.fromList('1.0,2.0\n3.0,4.0\n5.0,6.0\n'.codeUnits));
 
@@ -56,7 +56,7 @@ void main() {
     test('分多次feed解析', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 分两次发送，模拟网络/串口分包
       parser.feed(Uint8List.fromList('1.0,2.0,'.codeUnits));
@@ -73,7 +73,7 @@ void main() {
     test('高频数据解析 - 模拟1KHz', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 模拟1KHz数据：1ms一包
       final line = '100.0,200.0,300.0,400.0\n';
@@ -99,7 +99,7 @@ void main() {
       final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 4;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 发送8通道数据，应截断为4通道
       parser.feed(
@@ -118,7 +118,7 @@ void main() {
       final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 8;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 只发送4通道数据，但要求8通道
       parser.feed(Uint8List.fromList('1.0,2.0,3.0,4.0\n'.codeUnits));

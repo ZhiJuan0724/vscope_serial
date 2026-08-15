@@ -146,7 +146,7 @@
 
 ### 6.2 UI 规则
 
-- 固定 UI 文本优先放入 `lib/core/localization/app_strings.dart`。
+- 固定 UI 文本应放入 `lib/core/localization/app_strings.dart`；数据/协议枚举沿用项目既有的 `label` 字段惯例，日志消息与协议名可贴近各自逻辑。现有页面中尚未迁移的硬编码文本按页面分批迁入，不再新增。
 - 应用窗口最小宽度 `800px`；不得用布局溢出代替尺寸约束。
 - 工具栏、设置导航和底部按钮使用统一组件。紧凑按钮必须显式约束尺寸、点击区和悬停效果，禁止使用产生大范围圆形阴影的默认样式。
 - Flutter build 阶段不得直接修改 ViewModel；使用临时渲染状态或在事件阶段更新。
@@ -164,6 +164,7 @@
 - 版本来自 `pubspec.yaml`；稳定 tag 为 `vX.Y.Z`，Beta 为 `vX.Y.Z-beta.N`，必须与版本号一致。
 - GitHub Actions 或 `tools/build_release.py` 必须注入 `BUILD_TIME`。
 - Release 同时提供 Windows ZIP 和更新清单；客户端校验大小与 SHA-256。
+- 更新包解压采用流式逐条目写入，并限制压缩包（512 MiB）与解压总体积（1 GiB）；`vscope_updater.exe` 校验 `update-plan.json` 的安装、清理、结果与回退路径必须位于 `<exe_dir>\updates\` 内。更新清单预留 `signature` 字段，在发布签名与内置公钥落地前，带签名但无法校验的清单按失败关闭（fail-closed）处理。
 - 更新优先 GitHub，失败后按同一通道尝试 Gitee；自动检查只提示，用户确认后才安装。
 - `vscope_updater.exe` 在主程序安全退出后更新，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败自动回滚。
 - 稳定版和 Beta 各保留一个本地回退槽；按当前运行版本的通道写入，不按目标版本通道写入。

@@ -401,6 +401,19 @@ class _RawDataPageState extends State<RawDataPage> {
     return (hexString.length / 2).ceil();
   }
 
+  Future<void> _confirmClearData(RawDataViewModel vm) async {
+    if (!vm.hasRawData) {
+      vm.clearData();
+      return;
+    }
+    final confirmed = await showConfirmDialog(
+      context,
+      title: AppStrings.raw.clear,
+      message: '确定清空当前接收数据和完整字节记录吗？此操作不可撤销。',
+    );
+    if (confirmed) vm.clearData();
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = Provider.of<DataConnectionService>(context, listen: false);
@@ -711,13 +724,13 @@ class _RawDataPageState extends State<RawDataPage> {
               child: ToolbarIconButton(
                 icon: const Icon(Icons.clear),
                 tooltip: AppStrings.raw.clear,
-                onPressed: vm.clearData,
+                onPressed: () => unawaited(_confirmClearData(vm)),
               ),
               overflowActions: [
                 ToolbarOverflowAction(
                   icon: const Icon(Icons.clear),
                   label: AppStrings.raw.clear,
-                  onPressed: vm.clearData,
+                  onPressed: () => unawaited(_confirmClearData(vm)),
                 ),
               ],
             ),
@@ -796,7 +809,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     )
                     : const Center(
                       child: Text(
-                        '点击"开始"按钮开始接收/发送数据',
+                        '请先点击左下角状态栏连接串口或网络，再点击"开始"接收',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Colors.grey, fontSize: 14),
                       ),

@@ -111,9 +111,9 @@ void main() {
     final plotViewModel = PlotViewModel(service);
     final probeConnectionService = ProbeConnectionService(
       backends: [
-        _VersionBackend('external-jlink', 'v8.24a'),
-        _VersionBackend('external-openocd', 'v0.12.0-external'),
-        _VersionBackend('bundled-openocd', 'v0.12.0-bundled'),
+        const _VersionBackend('external-jlink', 'v8.24a'),
+        const _VersionBackend('external-openocd', 'v0.12.0-external'),
+        const _VersionBackend('bundled-openocd', 'v0.12.0-bundled'),
       ],
     );
     final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;

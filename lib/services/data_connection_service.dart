@@ -648,10 +648,14 @@ class DataConnectionService extends ChangeNotifier {
     AppLogger().trace('connect() 被调用', category: 'SERIAL');
     if (config.port == null) {
       AppLogger().error('请先选择串口', category: 'SERIAL');
+      isConnecting = false;
+      _notifyListenersSoon();
       return;
     }
     if (isConnected) {
       AppLogger().trace('connect() 被忽略，串口已连接', category: 'SERIAL');
+      isConnecting = false;
+      _notifyListenersSoon();
       return;
     }
     if (!_connectionOwners.tryAcquire(ConnectionOwner.data)) {
@@ -711,7 +715,11 @@ class DataConnectionService extends ChangeNotifier {
         stackTrace: stackTrace,
       );
       await _cleanupPortLocked();
-      AppNotifications.show('串口打开失败，请检查端口占用或设备状态');
+      AppNotifications.show(
+        error is NativeSerialOpenException
+            ? '串口打开失败：${error.message}'
+            : '串口打开失败，请检查端口占用或设备状态',
+      );
     } finally {
       isConnecting = false;
       AppLogger().trace('connect() 结束, isConnecting=false', category: 'SERIAL');

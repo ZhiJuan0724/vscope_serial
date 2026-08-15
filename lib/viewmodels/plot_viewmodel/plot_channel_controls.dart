@@ -38,7 +38,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
 
     _cleanupOffsetBindingGroups();
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void clearOffsetBinding(int index) {
@@ -51,7 +51,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       }
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _cleanupOffsetBindingGroups() {
@@ -111,7 +111,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       _cleanupOffsetBindingGroups();
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道颜色
@@ -119,7 +119,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     if (index < 0 || index >= channels.length) return;
     channels[index].color = color;
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道是否显示连线
@@ -127,7 +127,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     if (index < 0 || index >= channels.length) return;
     channels[index].showLine = show;
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道点半径
@@ -135,7 +135,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     if (index < 0 || index >= channels.length) return;
     channels[index].pointSize = size.clamp(0.5, 12.0);
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道线宽
@@ -143,7 +143,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     if (index < 0 || index >= channels.length) return;
     channels[index].lineWidth = width.clamp(0.5, 8.0);
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 一键设置所有通道的显示状态
@@ -159,7 +159,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     if (!visible) _cleanupOffsetBindingGroups();
     _markChannelConfigChanged();
     _invalidateDisplayCaches();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   MathChannelConfig? firstAvailableMathChannel() {
@@ -203,7 +203,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     _rebuildObservedRawValueMetadata();
     _markChannelConfigChanged();
     _saveSettings();
-    unawaited(Future.microtask(() => notifyListeners()));
+    unawaited(Future.microtask(notifyListeners));
     return true;
   }
 
@@ -220,7 +220,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     _invalidateDisplayChannelCaches();
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void disableMathChannel(int index) {
@@ -234,7 +234,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     _rebuildObservedRawValueMetadata();
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void resetMathChannel(int index) {
@@ -281,7 +281,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     _markChannelConfigChanged();
     _saveSettings();
     AppLogger().info('已重置全部通道设置', category: 'PLOT');
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
     return true;
   }
 
@@ -293,7 +293,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     channels[index].alias = alias;
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道 Y 轴偏移
@@ -310,7 +310,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       }
       _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
       return;
     }
     if (index < 0 || index >= channels.length) return;
@@ -321,7 +321,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       channels[index].yOffset = offset;
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道偏移功能开关
@@ -336,7 +336,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       _cleanupOffsetBindingGroups();
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置通道 Y 轴缩放
@@ -353,7 +353,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       }
       _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
       return;
     }
     if (index < 0 || index >= channels.length) return;
@@ -364,7 +364,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       channels[index].yScale = scale;
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 缩放通道 Y 轴（滚轮缩放，按比例调整）
@@ -382,7 +382,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       }
       _invalidateDisplayChannelCaches();
       _markChannelConfigChanged();
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
       return;
     }
     if (index < 0 || index >= channels.length) return;
@@ -394,7 +394,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       channels[index].yScale = newScale;
     }
     _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 众邦电控的通道号
@@ -414,7 +414,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     );
     _markChannelConfigChanged();
     _saveSettings();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 众邦电控的通道数据类型，并重新解释已缓存的原始帧。
@@ -475,7 +475,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
       );
     }
 
-    unawaited(Future.microtask(() => notifyListeners()));
+    unawaited(Future.microtask(notifyListeners));
     return true;
   }
 
@@ -494,7 +494,7 @@ extension PlotViewModelChannelControls on PlotViewModel {
     _saveSettings();
     _resetFixedFrameRawFrameBuffer();
     clearData();
-    unawaited(Future.microtask(() => notifyListeners()));
+    unawaited(Future.microtask(notifyListeners));
     return true;
   }
 }

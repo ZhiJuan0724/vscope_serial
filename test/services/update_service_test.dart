@@ -11,7 +11,7 @@ import 'package:vscope_serial/services/update_service.dart';
 void main() {
   group('UpdateManifest', () {
     test('validates release package metadata', () {
-      final release = ReleaseInfo(
+      final release = const ReleaseInfo(
         tagName: 'v1.2.3',
         htmlUrl: '',
         source: 'GitHub',
@@ -30,7 +30,7 @@ void main() {
     });
 
     test('rejects mismatched package name', () {
-      final release = ReleaseInfo(
+      final release = const ReleaseInfo(
         tagName: 'v1.2.3',
         htmlUrl: '',
         source: 'GitHub',
@@ -47,6 +47,29 @@ void main() {
 
       expect(() => manifest.validateFor(release), throwsFormatException);
     });
+
+    test(
+      'rejects signed manifest before signature verification is enabled',
+      () {
+        final release = const ReleaseInfo(
+          tagName: 'v1.2.3',
+          htmlUrl: '',
+          source: 'GitHub',
+          body: '',
+        );
+        final manifest = UpdateManifest(
+          schemaVersion: 1,
+          version: '1.2.3',
+          packageName: 'vscope_serial-windows-v1.2.3.zip',
+          packageSize: 100,
+          sha256: List.filled(64, 'a').join(),
+          executable: 'vscope_serial.exe',
+          signature: List.filled(128, 'f').join(),
+        );
+
+        expect(() => manifest.validateFor(release), throwsFormatException);
+      },
+    );
   });
 
   test('falls back to Gitee when GitHub assets are incomplete', () async {
@@ -65,7 +88,7 @@ void main() {
         'executable': 'vscope_serial.exe',
       }),
     );
-    final github = ReleaseInfo(
+    final github = const ReleaseInfo(
       tagName: tag,
       htmlUrl: '',
       source: 'GitHub',
@@ -138,13 +161,13 @@ void main() {
         'executable': 'vscope_serial.exe',
       }),
     );
-    final github = ReleaseInfo(
+    final github = const ReleaseInfo(
       tagName: tag,
       htmlUrl: '',
       source: 'GitHub',
       body: '',
       prerelease: true,
-      assets: const [
+      assets: [
         ReleaseAsset(
           name: 'update-manifest-$tag.json',
           size: 4,
@@ -215,7 +238,7 @@ void main() {
     final root = await Directory.systemTemp.createTemp('vscope-update-test-');
     addTearDown(() => root.delete(recursive: true));
     const tag = 'v9.9.9-beta.1';
-    final github = ReleaseInfo(
+    final github = const ReleaseInfo(
       tagName: tag,
       htmlUrl: '',
       source: 'GitHub',
@@ -376,12 +399,12 @@ void main() {
     final root = await Directory.systemTemp.createTemp('vscope-update-test-');
     addTearDown(() => root.delete(recursive: true));
     const tag = 'v1.0.5';
-    final release = ReleaseInfo(
+    final release = const ReleaseInfo(
       tagName: tag,
       htmlUrl: '',
       source: 'GitHub',
       body: '',
-      assets: const [
+      assets: [
         ReleaseAsset(
           name: 'v1.0.5.zip',
           size: 100,
@@ -416,7 +439,7 @@ void main() {
     final service = UpdateService(
       runtimeGuard: _FakeUpdateRuntimeGuard(lockUnavailable: true),
     );
-    final release = ReleaseInfo(
+    final release = const ReleaseInfo(
       tagName: 'v1.0.5',
       htmlUrl: '',
       source: 'GitHub',
@@ -448,7 +471,7 @@ void main() {
         updatesRoot: root,
         runtimeGuard: _FakeUpdateRuntimeGuard(otherProcessIds: [1234]),
       );
-      final release = ReleaseInfo(
+      final release = const ReleaseInfo(
         tagName: 'v1.2.3',
         htmlUrl: '',
         source: 'GitHub',

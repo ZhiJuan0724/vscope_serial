@@ -1293,7 +1293,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   const SizedBox(height: 4),
                   Text(
                     AppStrings.plot.zobowDataTypeHelp,
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
                   Row(
@@ -1341,7 +1341,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   const SizedBox(height: 4),
                   Text(
                     AppStrings.plot.fixedFrameDataTypeHelp,
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
