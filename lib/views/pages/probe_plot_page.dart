@@ -96,7 +96,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     final confirmed = await showConfirmDialog(
       context,
       title: AppStrings.plot.clearData,
-      message: '确定清空当前探针采样数据和历史吗？此操作不可撤销。',
+      message: AppStrings.probe.clearDataConfirmMessage,
     );
     if (confirmed) vm.clear();
   }
@@ -141,10 +141,12 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
             running: vm.running,
             label:
                 vm.operationPending
-                    ? (vm.running ? '停止中' : '启动中')
+                    ? (vm.running
+                        ? AppStrings.plot.stopping
+                        : AppStrings.probe.starting)
                     : vm.running
-                    ? '停止'
-                    : '开始',
+                    ? AppStrings.plot.stop
+                    : AppStrings.plot.start,
           ),
         ),
         ToolbarLayoutItem(
@@ -212,13 +214,13 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
           child: ToolbarIconButton(
             key: const ValueKey('probe-source-settings-button'),
             icon: const Icon(Icons.settings),
-            tooltip: '${vm.mode.label} 数据配置',
+            tooltip: AppStrings.probe.dataConfigTitle(vm.mode.label),
             onPressed: vm.running ? null : () => _showConfig(context, vm),
           ),
           overflowActions: [
             ToolbarOverflowAction(
               icon: const Icon(Icons.settings),
-              label: '${vm.mode.label} 数据配置',
+              label: AppStrings.probe.dataConfigTitle(vm.mode.label),
               onPressed: vm.running ? null : () => _showConfig(context, vm),
             ),
           ],
@@ -378,7 +380,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       ),
       PlotToolConfig(
         icon: const Icon(Icons.crop_free),
-        tooltip: '${AppStrings.plot.boxZoom}（左键单次，右键连续）',
+        tooltip: AppStrings.probe.boxZoomTooltip(AppStrings.plot.boxZoom),
         overflowLabel: AppStrings.plot.boxZoom,
         selected: vm.boxZoomEnabled,
         activeColor: vm.boxZoomContinuous ? Colors.orange : Colors.blue,
@@ -487,8 +489,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       ),
       PlotToolConfig(
         icon: const Icon(Icons.tune),
-        tooltip: '探针绘图设置',
-        overflowLabel: '探针绘图设置',
+        tooltip: AppStrings.probe.plotSettings,
+        overflowLabel: AppStrings.probe.plotSettings,
         toggle: false,
         onPressed: () => _showPlotSettings(context, vm),
       ),
@@ -564,7 +566,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           final plotPoints = vm.points;
                           final Widget plotSurface;
                           if (vm.pointCount == 0) {
-                            plotSurface = const Center(child: Text('暂无探针采样数据'));
+                            plotSurface = Center(
+                              child: Text(AppStrings.probe.noSamplingData),
+                            );
                           } else {
                             final renderSnapshot = PlotRenderSnapshot(
                               viewport: renderViewport,
@@ -749,11 +753,11 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
             valueListenable: vm.statusListenable,
             builder:
                 (context, _, _) => Text(
-                  '${vm.running ? '运行中' : '已停止'}  ${vm.mode.label}  '
-                  '点数 ${vm.pointCount}  实际 ${vm.actualRate.toStringAsFixed(1)} Hz  '
-                  '内存 ${formatByteSize(vm.estimatedHistoryBytes)} / '
+                  '${vm.running ? AppStrings.probe.running : AppStrings.probe.stopped}  ${vm.mode.label}  '
+                  '${AppStrings.probe.pointCountLabel} ${vm.pointCount}  ${AppStrings.probe.actualRateLabel} ${vm.actualRate.toStringAsFixed(1)} Hz  '
+                  '${AppStrings.probe.memoryLabel} ${formatByteSize(vm.estimatedHistoryBytes)} / '
                   '${vm.historyMemoryLimitMiB} MiB'
-                  '${vm.retentionLimitReached ? '  已达上限' : ''}',
+                  '${vm.retentionLimitReached ? '  ${AppStrings.probe.retentionLimitReached}' : ''}',
                   style: kPageStatusBarTextStyle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -775,18 +779,18 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
         context: context,
         builder:
             (context) => AlertDialog(
-              title: const Text('切换探针绘图模式'),
+              title: Text(AppStrings.probe.switchModeTitle),
               content: Text(
-                '从 ${vm.mode.label} 切换到 ${mode.label} 将清空当前绘图数据，是否继续？',
+                AppStrings.probe.switchModeMessage(vm.mode.label, mode.label),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消'),
+                  child: Text(AppStrings.common.cancel),
                 ),
                 FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('清空并切换'),
+                  child: Text(AppStrings.probe.clearAndSwitch),
                 ),
               ],
             ),
@@ -1022,21 +1026,21 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('重命名通道'),
+            title: Text(AppStrings.probe.renameChannel),
             content: AppDialogTextField(
               controller: controller,
               autofocus: true,
-              labelText: '通道名称',
+              labelText: AppStrings.probe.channelNameLabel,
               onSubmitted: (value) => Navigator.pop(context, value),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, controller.text),
-                child: const Text('确定'),
+                child: Text(AppStrings.common.confirm),
               ),
             ],
           ),
@@ -1057,16 +1061,16 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text('${vm.mode.label} 数据配置'),
+            title: Text(AppStrings.probe.dataConfigTitle(vm.mode.label)),
             content: SingleChildScrollView(child: _HssConfigContent(vm: vm)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('确定'),
+                child: Text(AppStrings.common.confirm),
               ),
             ],
           ),
@@ -1191,7 +1195,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     height: 360,
                     child:
                         vm.observations.isEmpty
-                            ? const Center(child: Text('暂无观察'))
+                            ? Center(
+                              child: Text(AppStrings.probe.noObservation),
+                            )
                             : ListView.separated(
                               itemCount: vm.observations.length,
                               separatorBuilder:
@@ -1210,7 +1216,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                   title: TextFormField(
                                     initialValue: observation.note,
                                     decoration: InputDecoration(
-                                      hintText: '备注',
+                                      hintText: AppStrings.probe.noteHint,
                                       isDense: true,
                                       suffixText:
                                           'X=${observation.x.toStringAsFixed(0)}',
@@ -1225,7 +1231,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       IconButton(
-                                        tooltip: '定位',
+                                        tooltip: AppStrings.probe.locate,
                                         icon: const Icon(Icons.my_location),
                                         onPressed: () {
                                           vm.jumpToObservation(index);
@@ -1234,7 +1240,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                       ),
                                       IconButton(
                                         tooltip:
-                                            observation.locked ? '解除锁定' : '锁定',
+                                            observation.locked
+                                                ? AppStrings.probe.unlock
+                                                : AppStrings.probe.lock,
                                         icon: Icon(
                                           observation.locked
                                               ? Icons.lock
@@ -1249,7 +1257,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                         },
                                       ),
                                       IconButton(
-                                        tooltip: '删除',
+                                        tooltip: AppStrings.common.delete,
                                         icon: const Icon(Icons.delete_outline),
                                         onPressed: () {
                                           vm.removeObservation(index);
@@ -1293,7 +1301,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('选择颜色'),
+            title: Text(AppStrings.probe.selectColor),
             content: Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1381,7 +1389,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                     ),
                     const Spacer(),
-                    const Text('不透明度'),
+                    Text(AppStrings.plot.measurementLineOpacity),
                     const SizedBox(width: 8),
                     SizedBox(
                       width: 82,
@@ -1407,7 +1415,11 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
               }
 
               return AlertDialog(
-                title: Text(isX ? 'Delta X 设置' : 'Delta Y 设置'),
+                title: Text(
+                  isX
+                      ? AppStrings.plot.measureXSettings
+                      : AppStrings.plot.measureYSettings,
+                ),
                 content: SizedBox(
                   width: 360,
                   child: Column(
@@ -1583,7 +1595,9 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                           ProbePlotViewModel.minWindowPointLimit ||
                       draft.windowPointLimit >
                           ProbePlotViewModel.maxWindowPointLimit) {
-                    throw const FormatException('请检查绘图设置中的数值范围');
+                    throw FormatException(
+                      AppStrings.probe.plotSettingsRangeError,
+                    );
                   }
                   await vm.applyPlotSettings(draft);
                   if (mounted && !(draft.previewToolbarEnabled ?? true)) {
@@ -1931,24 +1945,30 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '范围：${ProbePlotViewModel.minHistoryMemoryLimitMiB}~'
-                        '${ProbePlotViewModel.maxHistoryMemoryLimitMiB} MiB；'
-                        '当前估算占用 ${formatByteSize(vm.estimatedHistoryBytes)}。'
-                        '达到上限时停止采集并保留已有图像。',
+                        AppStrings.probe.historyMemoryLimitHelp(
+                          min: ProbePlotViewModel.minHistoryMemoryLimitMiB,
+                          max: ProbePlotViewModel.maxHistoryMemoryLimitMiB,
+                          currentBytes: formatByteSize(
+                            vm.estimatedHistoryBytes,
+                          ),
+                        ),
                         style: const TextStyle(
                           fontSize: 11,
                           color: Colors.grey,
                         ),
                       ),
                       const SizedBox(height: 12),
-                      const Text('精确窗口点数上限', style: TextStyle(fontSize: 14)),
+                      Text(
+                        AppStrings.probe.windowPointLimitLabel,
+                        style: const TextStyle(fontSize: 14),
+                      ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: kSecondaryDialogFieldWidth,
                         child: AppNumberField(
                           key: const ValueKey('probe-window-point-limit-field'),
                           controller: windowController,
-                          suffixText: '点',
+                          suffixText: AppStrings.probe.pointUnit,
                           onSubmitted:
                               (_) => applyWindowPointLimit(setDialogState),
                           onEditingComplete:
@@ -1956,11 +1976,15 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        '范围：${ProbePlotViewModel.minWindowPointLimit}~'
-                        '${ProbePlotViewModel.maxWindowPointLimit} 点；'
-                        '仅限制主图保留的精确点窗口，LOD 历史继续保留。',
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      Text(
+                        AppStrings.probe.windowPointLimitHelp(
+                          min: ProbePlotViewModel.minWindowPointLimit,
+                          max: ProbePlotViewModel.maxWindowPointLimit,
+                        ),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
                       ),
                     ],
                   ),
@@ -2058,12 +2082,12 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
     final pollingInterval = int.tryParse(_pollingInterval.text);
     if (_mode == RttControlBlockMode.address &&
         (address == null || address < 0)) {
-      setState(() => _error = '请输入有效的 RTT 控制块地址');
+      setState(() => _error = AppStrings.probe.invalidControlBlockAddress);
       return false;
     }
     if (_mode == RttControlBlockMode.range &&
         (start == null || start < 0 || end == null || end <= start)) {
-      setState(() => _error = '搜索结束地址必须大于起始地址');
+      setState(() => _error = AppStrings.probe.rangeEndMustExceedStart);
       return false;
     }
     if (pollingInterval == null ||
@@ -2071,10 +2095,10 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
         pollingInterval > RttConfiguration.maxPollingIntervalMs) {
       setState(
         () =>
-            _error =
-                'RTT 轮询间隔必须为 '
-                '${RttConfiguration.minPollingIntervalMs}～'
-                '${RttConfiguration.maxPollingIntervalMs} ms',
+            _error = AppStrings.probe.pollingIntervalRange(
+              min: RttConfiguration.minPollingIntervalMs,
+              max: RttConfiguration.maxPollingIntervalMs,
+            ),
       );
       return false;
     }
@@ -2101,7 +2125,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
     final channels = widget.vm.rttChannels;
     final selectedExists = channels.any((item) => item.name == _channel.text);
     return AlertDialog(
-      title: const Text('RTT 数据配置'),
+      title: Text(AppStrings.probe.rttDataConfigTitle),
       content: SizedBox(
         width: 480,
         child: SingleChildScrollView(
@@ -2110,11 +2134,11 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               AppLabeledField(
-                label: 'RTT 控制块定位',
+                label: AppStrings.probe.controlBlockPositioning,
                 child: NoAnimDropdown<RttControlBlockMode>(
                   key: const ValueKey('probe-rtt-control-block-mode'),
                   value: _mode,
-                  hint: '控制块定位',
+                  hint: AppStrings.probe.controlBlockPositioningHint,
                   decoration: secondaryDialogFieldDecoration(),
                   items:
                       RttControlBlockMode.values
@@ -2145,12 +2169,12 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               if (_mode == RttControlBlockMode.address) ...[
                 const SizedBox(height: 12),
                 AppLabeledField(
-                  label: 'RTT 控制块地址',
+                  label: AppStrings.probe.controlBlockAddressLabel,
                   child: TextField(
                     key: const ValueKey('probe-rtt-control-block-address'),
                     controller: _address,
                     decoration: secondaryDialogFieldDecoration(
-                      hintText: '例如 0x20000410',
+                      hintText: AppStrings.probe.controlBlockAddressHint,
                     ),
                   ),
                 ),
@@ -2161,7 +2185,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                   children: [
                     Expanded(
                       child: AppLabeledField(
-                        label: '搜索起始地址',
+                        label: AppStrings.probe.rangeStartLabel,
                         child: TextField(
                           controller: _rangeStart,
                           decoration: secondaryDialogFieldDecoration(),
@@ -2171,7 +2195,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: AppLabeledField(
-                        label: '搜索结束地址',
+                        label: AppStrings.probe.rangeEndLabel,
                         child: TextField(
                           controller: _rangeEnd,
                           decoration: secondaryDialogFieldDecoration(),
@@ -2183,7 +2207,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               ],
               const SizedBox(height: 12),
               AppLabeledField(
-                label: 'RTT 轮询间隔',
+                label: AppStrings.probe.pollingIntervalLabel,
                 child: AppNumberField(
                   key: const ValueKey('probe-rtt-polling-interval'),
                   controller: _pollingInterval,
@@ -2192,7 +2216,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               ),
               const SizedBox(height: 6),
               Text(
-                '仅 OpenOCD RTT 绘图使用；HSS 不使用此参数。',
+                AppStrings.probe.rttPollingIntervalHelp,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -2200,11 +2224,11 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               const Divider(height: 28),
               Row(
                 children: [
-                  const Text('RTT Up 通道'),
+                  Text(AppStrings.probe.rttUpChannel),
                   const Spacer(),
                   IconButton(
                     key: const ValueKey('probe-rtt-refresh-channels'),
-                    tooltip: '重新识别 RTT Up 通道',
+                    tooltip: AppStrings.probe.refreshRttUpChannels,
                     onPressed: _refreshing ? null : _refreshChannels,
                     icon:
                         _refreshing
@@ -2218,10 +2242,10 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
               ),
               if (channels.isNotEmpty)
                 AppLabeledField(
-                  label: 'RTT Up 通道',
+                  label: AppStrings.probe.rttUpChannel,
                   child: AppDropdown<String>(
                     value: selectedExists ? _channel.text : null,
-                    hint: 'RTT Up 通道',
+                    hint: AppStrings.probe.rttUpChannel,
                     decoration: secondaryDialogFieldDecoration(),
                     items: [
                       for (final channel in channels)
@@ -2241,7 +2265,7 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                 )
               else
                 AppLabeledField(
-                  label: 'RTT Up 通道名称',
+                  label: AppStrings.probe.rttUpChannelName,
                   child: TextField(
                     controller: _channel,
                     decoration: secondaryDialogFieldDecoration(),
@@ -2249,11 +2273,11 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
                 ),
               const SizedBox(height: 12),
               AppLabeledField(
-                label: 'J-Scope 数据格式',
+                label: AppStrings.probe.jScopeDataFormat,
                 child: TextField(
                   controller: _format,
                   decoration: secondaryDialogFieldDecoration().copyWith(
-                    helperText: '通道名含 JScope_i4u4 时自动识别；普通名称请手动输入 i4u4',
+                    helperText: AppStrings.probe.jScopeDataFormatHelp,
                   ),
                 ),
               ),
@@ -2271,9 +2295,12 @@ class _ProbeRttDataConfigDialogState extends State<_ProbeRttDataConfigDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('确定')),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(AppStrings.common.confirm),
+        ),
       ],
     );
   }
@@ -2322,11 +2349,17 @@ class _ProbeCursorJumpDialogState extends State<_ProbeCursorJumpDialog> {
   void _submit() {
     final index = int.tryParse(_controller.text.trim());
     if (index == null) {
-      setState(() => _errorText = '请输入整数包序号');
+      setState(() => _errorText = AppStrings.probe.invalidPacketIndex);
       return;
     }
     if (index < widget.minX || index > widget.maxX) {
-      setState(() => _errorText = '包序号范围应为 ${widget.minX}-${widget.maxX}');
+      setState(
+        () =>
+            _errorText = AppStrings.probe.packetIndexRange(
+              min: widget.minX,
+              max: widget.maxX,
+            ),
+      );
       return;
     }
     Navigator.of(context).pop(index);
@@ -2335,7 +2368,7 @@ class _ProbeCursorJumpDialogState extends State<_ProbeCursorJumpDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('跳转到包序号 X'),
+      title: Text(AppStrings.probe.jumpToPacketIndexTitle),
       content: SizedBox(
         width: 260,
         child: AppDialogTextField(
@@ -2343,8 +2376,11 @@ class _ProbeCursorJumpDialogState extends State<_ProbeCursorJumpDialog> {
           controller: _controller,
           autofocus: true,
           keyboardType: TextInputType.number,
-          labelText: 'X（包序号）',
-          helperText: '范围: ${widget.minX}-${widget.maxX}',
+          labelText: AppStrings.probe.packetIndexLabel,
+          helperText: AppStrings.probe.packetIndexHelper(
+            min: widget.minX,
+            max: widget.maxX,
+          ),
           errorText: _errorText,
           onChanged: (_) {
             if (_errorText != null) setState(() => _errorText = null);
@@ -2355,9 +2391,9 @@ class _ProbeCursorJumpDialogState extends State<_ProbeCursorJumpDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
-        TextButton(onPressed: _submit, child: const Text('跳转')),
+        TextButton(onPressed: _submit, child: Text(AppStrings.probe.jump)),
       ],
     );
   }
@@ -2464,14 +2500,14 @@ class _HssConfigContentState extends State<_HssConfigContent> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('HSS 使用 OpenOCD 运行态只读内存采样，不会暂停或复位目标。'),
+          Text(AppStrings.probe.hssIntro),
           const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: Text(
                   widget.vm.programPath.isEmpty
-                      ? '未选择程序文件'
+                      ? AppStrings.probe.noProgramFile
                       : widget.vm.programPath,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -2480,12 +2516,12 @@ class _HssConfigContentState extends State<_HssConfigContent> {
               TextButton.icon(
                 onPressed: _chooseProgram,
                 icon: const Icon(Icons.folder_open),
-                label: const Text('选择 ELF/AXF/OUT'),
+                label: Text(AppStrings.probe.chooseProgramFile),
               ),
             ],
           ),
           _HssLabeledControl(
-            label: '采样率（1～5000 Hz）',
+            label: AppStrings.probe.samplingRateLabel,
             child: SecondaryDialogTextField(
               key: const ValueKey('hss-frequency-field'),
               controller: _frequency,
@@ -2499,7 +2535,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
           if (widget.vm.symbols.isNotEmpty) ...[
             const SizedBox(height: 10),
             _HssLabeledControl(
-              label: '搜索 ELF 变量',
+              label: AppStrings.probe.searchElfVariables,
               child: SecondaryDialogTextField(
                 key: const ValueKey('hss-symbol-search'),
                 controller: _symbolSearch,
@@ -2508,7 +2544,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                     _symbolSearch.text.isEmpty
                         ? null
                         : AppFieldIconButton(
-                          tooltip: '清空搜索',
+                          tooltip: AppStrings.probe.clearSearch,
                           onPressed: () {
                             setState(_symbolSearch.clear);
                           },
@@ -2519,7 +2555,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
             ),
             const SizedBox(height: 4),
             Text(
-              '已识别 ${widget.vm.symbols.length} 个数据变量，单击即可加入 HSS 通道',
+              AppStrings.probe.recognizedSymbolsCount(widget.vm.symbols.length),
               style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
             const SizedBox(height: 6),
@@ -2537,7 +2573,9 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                       .take(500)
                       .toList(growable: false);
                   if (matches.isEmpty) {
-                    return const Center(child: Text('没有匹配的变量'));
+                    return Center(
+                      child: Text(AppStrings.probe.noMatchingVariable),
+                    );
                   }
                   return ListView.builder(
                     key: const ValueKey('hss-symbol-list'),
@@ -2567,14 +2605,14 @@ class _HssConfigContentState extends State<_HssConfigContent> {
               ),
             ),
             const Divider(),
-            const Text('手动添加地址'),
+            Text(AppStrings.probe.manualAddAddress),
           ],
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: _HssLabeledControl(
-                  label: '变量名称',
+                  label: AppStrings.probe.variableName,
                   child: SecondaryDialogTextField(
                     key: const ValueKey('hss-name-field'),
                     controller: _name,
@@ -2584,7 +2622,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
               const SizedBox(width: 8),
               Expanded(
                 child: _HssLabeledControl(
-                  label: '地址（HEX）',
+                  label: AppStrings.probe.addressHex,
                   child: SecondaryDialogTextField(
                     key: const ValueKey('hss-address-field'),
                     controller: _address,
@@ -2595,7 +2633,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
               SizedBox(
                 width: 120,
                 child: _HssLabeledControl(
-                  label: '数据类型',
+                  label: AppStrings.plot.dataType,
                   child: SecondaryDialogDropdown<ProbeScalarType>(
                     key: const ValueKey('hss-type-dropdown'),
                     value: _type,
@@ -2614,7 +2652,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                 width: kSecondaryDialogControlHeight,
                 height: kSecondaryDialogControlHeight,
                 child: IconButton(
-                  tooltip: '添加变量',
+                  tooltip: AppStrings.probe.addVariable,
                   onPressed: _add,
                   icon: const Icon(Icons.add),
                 ),
@@ -2651,7 +2689,7 @@ class _HssConfigContentState extends State<_HssConfigContent> {
                     ),
                   ),
                   IconButton(
-                    tooltip: '移除变量',
+                    tooltip: AppStrings.probe.removeVariable,
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () {
                       widget.vm.removeHssVariable(index);

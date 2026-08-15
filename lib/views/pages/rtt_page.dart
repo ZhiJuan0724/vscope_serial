@@ -92,7 +92,10 @@ class _RttPageState extends State<RttPage> {
 
   Future<void> _export(RttViewModel vm, {required bool binary}) async {
     final path = await FilePicker.saveFile(
-      dialogTitle: binary ? '导出 RTT 原始数据' : '导出 RTT 文本',
+      dialogTitle:
+          binary
+              ? AppStrings.rtt.exportRawDialogTitle
+              : AppStrings.rtt.exportTextDialogTitle,
       fileName: binary ? 'rtt-channel0.bin' : 'rtt-channel0.txt',
       type: FileType.custom,
       allowedExtensions: binary ? const ['bin'] : const ['txt'],
@@ -114,8 +117,8 @@ class _RttPageState extends State<RttPage> {
   Future<void> _confirmClear(RttViewModel vm) async {
     final confirmed = await showConfirmDialog(
       context,
-      title: '清空',
-      message: '确定清空 RTT 终端显示内容吗？此操作不可撤销。',
+      title: AppStrings.rtt.clear,
+      message: AppStrings.rtt.clearConfirmMessage,
     );
     if (confirmed) vm.clear();
   }
@@ -142,21 +145,21 @@ class _RttPageState extends State<RttPage> {
                     tooltip:
                         _activityChanging
                             ? _activityStopping
-                                ? '正在停止并重新连接'
-                                : '正在启动 RTT Viewer'
+                                ? AppStrings.rtt.stoppingAndReconnecting
+                                : AppStrings.rtt.startingViewer
                             : service.activityOwner ==
                                 ProbeActivityOwner.rttViewer
-                            ? '停止 RTT Viewer'
-                            : '开始 RTT Viewer',
+                            ? AppStrings.rtt.stopViewer
+                            : AppStrings.rtt.startViewer,
                     label:
                         _activityChanging
                             ? _activityStopping
-                                ? '停止中'
-                                : '启动中'
+                                ? AppStrings.rtt.stopping
+                                : AppStrings.rtt.starting
                             : service.activityOwner ==
                                 ProbeActivityOwner.rttViewer
-                            ? '停止'
-                            : '开始',
+                            ? AppStrings.rtt.stop
+                            : AppStrings.rtt.start,
                     onPressed:
                         service.isConnected && !_activityChanging
                             ? () => unawaited(_toggleActivity(vm))
@@ -168,26 +171,26 @@ class _RttPageState extends State<RttPage> {
                   child: ToolbarIconButton(
                     key: const ValueKey('rtt-activity-settings-button'),
                     icon: const Icon(Icons.settings),
-                    tooltip: 'RTT 接收配置',
+                    tooltip: AppStrings.rtt.receiveConfig,
                     onPressed:
                         service.activityOwner == ProbeActivityOwner.none
                             ? () => showRttControlBlockDialog(
                               context,
                               service: service,
-                              title: 'RTT Viewer 接收配置',
+                              title: AppStrings.rtt.receiveConfigTitle,
                             )
                             : null,
                   ),
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.settings),
-                      label: 'RTT 接收配置',
+                      label: AppStrings.rtt.receiveConfig,
                       onPressed:
                           service.activityOwner == ProbeActivityOwner.none
                               ? () => showRttControlBlockDialog(
                                 context,
                                 service: service,
-                                title: 'RTT Viewer 接收配置',
+                                title: AppStrings.rtt.receiveConfigTitle,
                               )
                               : null,
                     ),
@@ -197,8 +200,14 @@ class _RttPageState extends State<RttPage> {
                   extent: 76,
                   child: ToolbarToggleTextButton(
                     icon: Icon(vm.paused ? Icons.play_arrow : Icons.pause),
-                    label: vm.paused ? '继续' : '暂停',
-                    tooltip: vm.paused ? '继续显示' : '暂停显示',
+                    label:
+                        vm.paused
+                            ? AppStrings.rtt.resume
+                            : AppStrings.rtt.pause,
+                    tooltip:
+                        vm.paused
+                            ? AppStrings.rtt.resumeDisplay
+                            : AppStrings.rtt.pauseDisplay,
                     selected: vm.paused,
                     activeColor: _viewerOptionActiveColor,
                     onPressed:
@@ -209,7 +218,10 @@ class _RttPageState extends State<RttPage> {
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: Icon(vm.paused ? Icons.play_arrow : Icons.pause),
-                      label: vm.paused ? '继续显示' : '暂停显示',
+                      label:
+                          vm.paused
+                              ? AppStrings.rtt.resumeDisplay
+                              : AppStrings.rtt.pauseDisplay,
                       selected: vm.paused,
                       onPressed:
                           service.activityOwner == ProbeActivityOwner.rttViewer
@@ -222,8 +234,8 @@ class _RttPageState extends State<RttPage> {
                   extent: 76,
                   child: ToolbarToggleTextButton(
                     icon: const Icon(Icons.schedule),
-                    label: '时间戳',
-                    tooltip: '时间戳',
+                    label: AppStrings.rtt.timestamp,
+                    tooltip: AppStrings.rtt.timestamp,
                     selected: vm.timestampEnabled,
                     activeColor: _viewerOptionActiveColor,
                     onPressed:
@@ -232,7 +244,7 @@ class _RttPageState extends State<RttPage> {
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.schedule),
-                      label: '时间戳',
+                      label: AppStrings.rtt.timestamp,
                       selected: vm.timestampEnabled,
                       onPressed:
                           () => vm.setTimestampEnabled(!vm.timestampEnabled),
@@ -243,8 +255,8 @@ class _RttPageState extends State<RttPage> {
                   extent: 82,
                   child: ToolbarToggleTextButton(
                     icon: const Icon(Icons.numbers),
-                    label: 'HEX显示',
-                    tooltip: 'HEX显示',
+                    label: AppStrings.rtt.hexDisplay,
+                    tooltip: AppStrings.rtt.hexDisplay,
                     selected: vm.displayMode == RttDisplayMode.hex,
                     activeColor: _viewerOptionActiveColor,
                     onPressed:
@@ -257,7 +269,7 @@ class _RttPageState extends State<RttPage> {
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.numbers),
-                      label: 'HEX显示',
+                      label: AppStrings.rtt.hexDisplay,
                       selected: vm.displayMode == RttDisplayMode.hex,
                       onPressed:
                           () => vm.setDisplayMode(
@@ -272,8 +284,8 @@ class _RttPageState extends State<RttPage> {
                   extent: 88,
                   child: ToolbarToggleTextButton(
                     icon: const Icon(Icons.vertical_align_bottom),
-                    label: '自动滚动',
-                    tooltip: '自动滚动',
+                    label: AppStrings.rtt.autoScroll,
+                    tooltip: AppStrings.rtt.autoScroll,
                     selected: vm.autoScroll,
                     activeColor: _viewerOptionActiveColor,
                     onPressed: () => vm.setAutoScroll(!vm.autoScroll),
@@ -281,7 +293,7 @@ class _RttPageState extends State<RttPage> {
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.vertical_align_bottom),
-                      label: '自动滚动',
+                      label: AppStrings.rtt.autoScroll,
                       selected: vm.autoScroll,
                       onPressed: () => vm.setAutoScroll(!vm.autoScroll),
                     ),
@@ -293,7 +305,7 @@ class _RttPageState extends State<RttPage> {
                   extent: kToolbarControlExtent,
                   child: ToolbarIconButton(
                     icon: const Icon(Icons.close),
-                    tooltip: '清空',
+                    tooltip: AppStrings.rtt.clear,
                     onPressed:
                         visibleItemCount == 0
                             ? null
@@ -302,7 +314,7 @@ class _RttPageState extends State<RttPage> {
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.close),
-                      label: '清空',
+                      label: AppStrings.rtt.clear,
                       onPressed:
                           visibleItemCount == 0
                               ? null
@@ -314,21 +326,27 @@ class _RttPageState extends State<RttPage> {
                   extent: kToolbarControlExtent,
                   child: PopupMenuButton<bool>(
                     key: const ValueKey('rtt-export-button'),
-                    tooltip: '导出',
+                    tooltip: AppStrings.rtt.export,
                     icon: const Icon(Icons.file_upload_outlined),
                     enabled: hasExportData,
                     onSelected:
                         (binary) => unawaited(_export(vm, binary: binary)),
                     itemBuilder:
-                        (_) => const [
-                          PopupMenuItem(value: false, child: Text('导出文本')),
-                          PopupMenuItem(value: true, child: Text('导出原始 BIN')),
+                        (_) => [
+                          PopupMenuItem(
+                            value: false,
+                            child: Text(AppStrings.rtt.exportText),
+                          ),
+                          PopupMenuItem(
+                            value: true,
+                            child: Text(AppStrings.rtt.exportRawBin),
+                          ),
                         ],
                   ),
                   overflowActions: [
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.file_upload_outlined),
-                      label: '导出文本',
+                      label: AppStrings.rtt.exportText,
                       onPressed:
                           hasExportData
                               ? () => unawaited(_export(vm, binary: false))
@@ -336,7 +354,7 @@ class _RttPageState extends State<RttPage> {
                     ),
                     ToolbarOverflowAction(
                       icon: const Icon(Icons.data_object),
-                      label: '导出原始 BIN',
+                      label: AppStrings.rtt.exportRawBin,
                       onPressed:
                           hasExportData
                               ? () => unawaited(_export(vm, binary: true))
@@ -347,7 +365,7 @@ class _RttPageState extends State<RttPage> {
                 ToolbarLayoutItem(
                   extent: kToolbarControlExtent,
                   child: ToolbarAdvancedSettingsButton(
-                    tooltip: 'RTT Viewer 设置',
+                    tooltip: AppStrings.rtt.settings,
                     onPressed: () => showRttSettingsDialog(context),
                   ),
                 ),
@@ -395,7 +413,9 @@ class _RttPageState extends State<RttPage> {
                                         service.isConnected
                                             ? service.activityOwner ==
                                                     ProbeActivityOwner.none
-                                                ? '点击“开始”读取 RTT 数据'
+                                                ? AppStrings
+                                                    .rtt
+                                                    .clickStartToRead
                                                 : AppStrings.rtt.waitingData
                                             : service.lastError ??
                                                 AppStrings.rtt.connectHint,
@@ -461,18 +481,23 @@ class _RttPageState extends State<RttPage> {
               child: Text(
                 [
                   service.activityOwner == ProbeActivityOwner.rttViewer
-                      ? '运行中'
+                      ? AppStrings.rtt.running
                       : service.isConnected
-                      ? '已连接'
-                      : '已停止',
+                      ? AppStrings.rtt.connected
+                      : AppStrings.rtt.stopped,
                   vm.encoding,
                   vm.allTerminalsSelected
-                      ? 'All Terminals'
-                      : 'Terminal ${vm.selectedTerminal}',
-                  '接收 ${formatByteSize(service.receivedBytes)}',
+                      ? AppStrings.rtt.allTerminals
+                      : AppStrings.rtt.terminalStatus(vm.selectedTerminal),
+                  AppStrings.rtt.receivedBytes(
+                    formatByteSize(service.receivedBytes),
+                  ),
                   if (service.droppedBytes > 0)
-                    '丢弃 ${formatByteSize(service.droppedBytes)}',
-                  if (vm.paused) '暂停新增 ${formatByteSize(vm.pausedBytes)}',
+                    AppStrings.rtt.droppedBytes(
+                      formatByteSize(service.droppedBytes),
+                    ),
+                  if (vm.paused)
+                    AppStrings.rtt.pausedBytes(formatByteSize(vm.pausedBytes)),
                   if (!service.isConnected && service.lastError != null)
                     service.lastError!,
                 ].join('  '),
@@ -550,7 +575,7 @@ class _TerminalRail extends StatelessWidget {
           alignment: Alignment.topCenter,
           child: _TerminalPanelToggleButton(
             key: const ValueKey('rtt-terminal-panel-expand-button'),
-            tooltip: '展开终端',
+            tooltip: AppStrings.rtt.expandTerminal,
             icon: Icons.chevron_right,
             onPressed: onToggle,
           ),
@@ -565,18 +590,18 @@ class _TerminalRail extends StatelessWidget {
             height: 36,
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Padding(
-                    padding: EdgeInsets.only(left: 12),
+                    padding: const EdgeInsets.only(left: 12),
                     child: Text(
-                      '虚拟终端',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                      AppStrings.rtt.virtualTerminal,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
                 _TerminalPanelToggleButton(
                   key: const ValueKey('rtt-terminal-panel-collapse-button'),
-                  tooltip: '收起终端',
+                  tooltip: AppStrings.rtt.collapseTerminal,
                   icon: Icons.chevron_left,
                   onPressed: onToggle,
                 ),
@@ -626,7 +651,9 @@ class _TerminalRail extends StatelessWidget {
                     ).colorScheme.primaryContainer.withValues(alpha: 0.55),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     title: Text(
-                      terminal < 0 ? 'All Terminals' : terminalLabel(terminal),
+                      terminal < 0
+                          ? AppStrings.rtt.allTerminals
+                          : terminalLabel(terminal),
                       maxLines: 1,
                       style: TextStyle(
                         fontSize: 12,
@@ -742,11 +769,11 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
     final label =
         _labelController.text.replaceAll(RegExp(r'[\[\]]'), '').trim();
     if (label.isEmpty) {
-      setState(() => _errorText = '方括号内的标注不能为空');
+      setState(() => _errorText = AppStrings.rtt.terminalLabelEmptyError);
       return;
     }
     if (label.length > 32) {
-      setState(() => _errorText = '标注最多 32 个字符');
+      setState(() => _errorText = AppStrings.rtt.terminalLabelTooLongError);
       return;
     }
     Navigator.of(context).pop(_TerminalAppearance(label, _selectedColor));
@@ -755,7 +782,7 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('Terminal ${widget.terminal} 标注设置'),
+      title: Text(AppStrings.rtt.terminalAppearanceTitle(widget.terminal)),
       content: SizedBox(
         width: 300,
         child: Column(
@@ -766,8 +793,8 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
               key: const ValueKey('rtt-terminal-label-field'),
               controller: _labelController,
               autofocus: true,
-              labelText: '方括号内文字',
-              hintText: '例如 电机状态',
+              labelText: AppStrings.rtt.bracketLabelText,
+              hintText: AppStrings.rtt.bracketLabelHint,
               suffixText: ']',
               prefixText: '[',
               errorText: _errorText,
@@ -777,7 +804,10 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 14),
-            const Text('标识颜色', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              AppStrings.rtt.labelColor,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 10,
@@ -785,7 +815,7 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
               children: [
                 for (var index = 0; index < _colors.length; index++)
                   Tooltip(
-                    message: '颜色 ${index + 1}',
+                    message: AppStrings.rtt.colorOption(index + 1),
                     child: InkWell(
                       key: ValueKey('rtt-terminal-color-option-$index'),
                       onTap:
@@ -826,9 +856,12 @@ class _TerminalAppearanceDialogState extends State<_TerminalAppearanceDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('确定')),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(AppStrings.common.confirm),
+        ),
       ],
     );
   }
@@ -871,9 +904,9 @@ class _RttInputBar extends StatelessWidget {
                 hintText:
                     enabled
                         ? hex
-                            ? '输入 HEX 字节'
-                            : '输入发送到 Down 0 的文本'
-                        : '当前后端没有可用的 Down 0',
+                            ? AppStrings.rtt.hexInputHint
+                            : AppStrings.rtt.textInputHint
+                        : AppStrings.rtt.noDown0Hint,
               ),
               onSubmitted: enabled ? (_) => onSend() : null,
             ),
@@ -884,13 +917,13 @@ class _RttInputBar extends StatelessWidget {
               width: 104,
               child: AppDropdown<String>(
                 value: lineEnding,
-                hint: '行尾',
+                hint: AppStrings.rtt.lineEnding,
                 decoration: const InputDecoration(isDense: true),
-                items: const [
-                  DropdownMenuItem(value: '', child: Text('无')),
-                  DropdownMenuItem(value: '\r', child: Text('CR')),
-                  DropdownMenuItem(value: '\n', child: Text('LF')),
-                  DropdownMenuItem(value: '\r\n', child: Text('CRLF')),
+                items: [
+                  DropdownMenuItem(value: '', child: Text(AppStrings.rtt.none)),
+                  const DropdownMenuItem(value: '\r', child: Text('CR')),
+                  const DropdownMenuItem(value: '\n', child: Text('LF')),
+                  const DropdownMenuItem(value: '\r\n', child: Text('CRLF')),
                 ],
                 onChanged:
                     enabled
@@ -903,7 +936,7 @@ class _RttInputBar extends StatelessWidget {
           ],
           const SizedBox(width: 8),
           IconButton.filled(
-            tooltip: '发送到 RTT Down 0',
+            tooltip: AppStrings.rtt.sendToDown0,
             onPressed: enabled ? onSend : null,
             icon: const Icon(Icons.send),
           ),

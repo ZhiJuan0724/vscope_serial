@@ -455,8 +455,8 @@ class _ShellPageState extends State<ShellPage> {
         context: context,
         builder:
             (context) => AlertDialog(
-              title: const Text('发送多行内容'),
-              content: const Text('剪贴板包含多行内容，确定直接发送到设备吗？'),
+              title: Text(AppStrings.shell.sendMultilineTitle),
+              content: Text(AppStrings.shell.sendMultilineMessage),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
@@ -525,12 +525,13 @@ class _ShellPageState extends State<ShellPage> {
             key: const ValueKey('shell-start-stop-button'),
             tooltip:
                 vm.isSshMode && vm.isRunning
-                    ? '断开 SSH'
+                    ? AppStrings.shell.disconnectSsh
                     : vm.isRunning
-                    ? '停止 Shell'
-                    : '开始 Shell',
+                    ? AppStrings.shell.stopShell
+                    : AppStrings.shell.startShell,
             running: vm.isRunning,
-            label: vm.isRunning ? '停止' : '开始',
+            label:
+                vm.isRunning ? AppStrings.shell.stop : AppStrings.shell.start,
             onPressed:
                 vm.isConnected || vm.isRunning
                     ? () => _toggleRunning(vm)
@@ -564,22 +565,26 @@ class _ShellPageState extends State<ShellPage> {
                 ),
               ),
               segments: [
-                const ButtonSegment(
+                ButtonSegment(
                   value: ShellConnectionMode.normal,
                   label: SizedBox(
                     width: 30,
                     child: Center(
-                      child: AppSegmentedButtonLabel(child: Text('普通')),
+                      child: AppSegmentedButtonLabel(
+                        child: Text(AppStrings.shell.normal),
+                      ),
                     ),
                   ),
                 ),
                 ButtonSegment(
                   value: ShellConnectionMode.ssh,
                   enabled: AppSettings().networkConnectionsEnabled,
-                  label: const SizedBox(
+                  label: SizedBox(
                     width: 30,
                     child: Center(
-                      child: AppSegmentedButtonLabel(child: Text('SSH')),
+                      child: AppSegmentedButtonLabel(
+                        child: Text(AppStrings.shell.ssh),
+                      ),
                     ),
                   ),
                 ),
@@ -603,45 +608,54 @@ class _ShellPageState extends State<ShellPage> {
             width: kToolbarControlExtent,
             height: kToolbarControlExtent,
             child: PopupMenuButton<String>(
-              tooltip: '清屏',
+              tooltip: AppStrings.raw.clearScreen,
               padding: EdgeInsets.zero,
               iconSize: kToolbarIconSize,
               icon: const Icon(Icons.clear),
               onSelected: (value) => unawaited(_clearTerminal(value)),
               itemBuilder:
-                  (context) => const [
-                    PopupMenuItem(value: 'screen', child: Text('清除当前屏幕')),
-                    PopupMenuItem(value: 'history', child: Text('清除历史')),
-                    PopupMenuItem(value: 'all', child: Text('清除屏幕和历史')),
+                  (context) => [
+                    PopupMenuItem(
+                      value: 'screen',
+                      child: Text(AppStrings.shell.clearCurrentScreen),
+                    ),
+                    PopupMenuItem(
+                      value: 'history',
+                      child: Text(AppStrings.shell.clearHistory),
+                    ),
+                    PopupMenuItem(
+                      value: 'all',
+                      child: Text(AppStrings.shell.clearScreenAndHistory),
+                    ),
                   ],
             ),
           ),
           overflowActions: [
             ToolbarOverflowAction(
               icon: const Icon(Icons.clear),
-              label: '清除当前屏幕',
+              label: AppStrings.shell.clearCurrentScreen,
               onPressed: () => unawaited(_clearTerminal('screen')),
             ),
             ToolbarOverflowAction(
               icon: const Icon(Icons.history),
-              label: '清除历史',
+              label: AppStrings.shell.clearHistory,
               onPressed: () => unawaited(_clearTerminal('history')),
             ),
             ToolbarOverflowAction(
               icon: const Icon(Icons.delete_sweep_outlined),
-              label: '清除屏幕和历史',
+              label: AppStrings.shell.clearScreenAndHistory,
               onPressed: () => unawaited(_clearTerminal('all')),
             ),
           ],
         ),
         _shellActionToolbarItem(
           icon: Icons.drive_folder_upload_outlined,
-          label: '文件传输',
+          label: AppStrings.shell.fileTransfer,
           onPressed: canTransfer ? () => _showFileTransferDialog(vm) : null,
         ),
         _shellActionToolbarItem(
           icon: Icons.save,
-          label: '导出终端文本',
+          label: AppStrings.shell.exportTerminalText,
           onPressed: _exportTerminalText,
         ),
         ToolbarLayoutItem(
@@ -672,20 +686,24 @@ class _ShellPageState extends State<ShellPage> {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('切换 Shell 连接模式'),
+            title: Text(AppStrings.shell.switchConnectionModeTitle),
             content: Text(
               requiresDisconnect
-                  ? '切换普通终端与 SSH 前必须断开当前连接，并清空终端显示、滚动历史和命令历史。是否继续？'
-                  : '切换普通终端与 SSH 会清空终端显示、滚动历史和命令历史。是否继续？',
+                  ? AppStrings.shell.switchConnectionModeDisconnectMessage
+                  : AppStrings.shell.switchConnectionModeMessage,
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: Text(requiresDisconnect ? '断开并切换' : '清空并切换'),
+                child: Text(
+                  requiresDisconnect
+                      ? AppStrings.shell.disconnectAndSwitch
+                      : AppStrings.shell.clearAndSwitch,
+                ),
               ),
             ],
           ),
@@ -743,7 +761,8 @@ class _ShellPageState extends State<ShellPage> {
     RawShellInputMode mode,
   ) {
     final lineMode = mode == RawShellInputMode.line;
-    final label = lineMode ? '命令行模式' : '逐键模式';
+    final label =
+        lineMode ? AppStrings.shell.commandLineMode : AppStrings.shell.keyMode;
     final icon = lineMode ? Icons.keyboard_return : Icons.keyboard;
     return ToolbarLayoutItem(
       extent: kToolbarControlExtent,
@@ -781,14 +800,14 @@ class _ShellPageState extends State<ShellPage> {
 
   Future<void> _clearTerminal(String value) async {
     final label = switch (value) {
-      'screen' => '清除当前屏幕',
-      'history' => '清除历史',
-      _ => '清除屏幕和历史',
+      'screen' => AppStrings.shell.clearCurrentScreen,
+      'history' => AppStrings.shell.clearHistory,
+      _ => AppStrings.shell.clearScreenAndHistory,
     };
     final confirmed = await showConfirmDialog(
       context,
       title: label,
-      message: '此操作不可撤销，确定继续吗？',
+      message: AppStrings.shell.clearConfirmMessage,
     );
     if (!confirmed) return;
     switch (value) {
@@ -902,7 +921,11 @@ class _ShellPageState extends State<ShellPage> {
                       _scheduleScrollToBottom();
                     },
                     icon: const Icon(Icons.arrow_downward, size: 16),
-                    label: Text('新输出 ${formatByteSize(_newOutputBytes)}'),
+                    label: Text(
+                      AppStrings.shell.newOutput(
+                        formatByteSize(_newOutputBytes),
+                      ),
+                    ),
                   ),
                 ),
             ],
@@ -988,10 +1011,10 @@ class _ShellPageState extends State<ShellPage> {
                 focusNode: _lineFocusNode,
                 enabled: vm.isRunning && !vm.isYmodemActive,
                 textInputAction: TextInputAction.send,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  border: OutlineInputBorder(),
-                  hintText: '输入命令后按 Enter 发送',
+                  border: const OutlineInputBorder(),
+                  hintText: AppStrings.raw.commandInputHint,
                 ),
                 // 覆盖 TextField 的默认完成行为，避免 Enter 后自动释放焦点。
                 onEditingComplete: () {},
@@ -1004,7 +1027,7 @@ class _ShellPageState extends State<ShellPage> {
             onPressed:
                 vm.isRunning && !vm.isYmodemActive ? () => _sendLine(vm) : null,
             icon: const Icon(Icons.send, size: 18),
-            label: const Text('发送'),
+            label: Text(AppStrings.raw.send),
           ),
         ],
       ),
@@ -1029,25 +1052,31 @@ class _ShellPageState extends State<ShellPage> {
         style: kPageStatusBarTextStyle,
         child: Row(
           children: [
-            Text(vm.isRunning ? '运行中' : '已停止'),
+            Text(
+              vm.isRunning
+                  ? AppStrings.shell.running
+                  : AppStrings.shell.stopped,
+            ),
             const SizedBox(width: 16),
             Text('${vm.encoding}  $lineEnding'),
             const SizedBox(width: 16),
             Text('${_terminal.viewWidth} x ${_terminal.viewHeight}'),
             const SizedBox(width: 16),
             Text(
-              '接收 ${formatByteSize(_receivedBytes)}',
+              AppStrings.shell.receivedBytes(formatByteSize(_receivedBytes)),
               key: const ValueKey('shell-received-bytes'),
             ),
             if (_receiveQueue.droppedBytes > 0) ...[
               const SizedBox(width: 16),
               Text(
-                '丢弃 ${formatByteSize(_receiveQueue.droppedBytes)}',
+                AppStrings.shell.droppedBytes(
+                  formatByteSize(_receiveQueue.droppedBytes),
+                ),
                 key: const ValueKey('shell-dropped-bytes'),
               ),
             ],
             const Spacer(),
-            if (!_isAtBottom) const Text('滚动锁定'),
+            if (!_isAtBottom) Text(AppStrings.shell.scrollLock),
           ],
         ),
       ),
@@ -1056,7 +1085,7 @@ class _ShellPageState extends State<ShellPage> {
 
   Future<void> _exportTerminalText() async {
     final directory = await file_picker.FilePicker.getDirectoryPath(
-      dialogTitle: '选择终端文本导出目录',
+      dialogTitle: AppStrings.shell.chooseTerminalExportDirectory,
     );
     if (directory == null) return;
     final path =
@@ -1114,7 +1143,9 @@ class _ShellPageState extends State<ShellPage> {
                               fontSizeError =
                                   AppStrings.raw.terminalFontSizeInvalid,
                         );
-                        throw const FormatException('请修正无效设置');
+                        throw FormatException(
+                          AppStrings.probe.invalidSettingsError,
+                        );
                       }
                       final oldScrollback = vm.scrollbackLines;
                       await vm.applyTerminalSettings(
@@ -1154,7 +1185,7 @@ class _ShellPageState extends State<ShellPage> {
                           anchorKey: historySectionKey,
                         ),
                         SettingsNavigationItem(
-                          label: 'SSH',
+                          label: AppStrings.shell.ssh,
                           anchorKey: sshSectionKey,
                         ),
                       ],
@@ -1170,14 +1201,17 @@ class _ShellPageState extends State<ShellPage> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      '文本编码',
-                                      style: TextStyle(fontSize: 14),
+                                    Text(
+                                      AppStrings.common.settingsTextEncoding,
+                                      style: const TextStyle(fontSize: 14),
                                     ),
                                     const SizedBox(height: 4),
                                     NoAnimDropdown<String>(
                                       value: encoding,
-                                      hint: '选择文本编码',
+                                      hint:
+                                          AppStrings
+                                              .probe
+                                              .selectTextEncodingHint,
                                       decoration:
                                           secondaryDialogFieldDecoration(),
                                       items:
@@ -1202,9 +1236,9 @@ class _ShellPageState extends State<ShellPage> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      '命令行行尾',
-                                      style: TextStyle(fontSize: 14),
+                                    Text(
+                                      AppStrings.shell.commandLineEnding,
+                                      style: const TextStyle(fontSize: 14),
                                     ),
                                     const SizedBox(height: 4),
                                     NoAnimDropdown<String>(
@@ -1212,7 +1246,10 @@ class _ShellPageState extends State<ShellPage> {
                                         'shell-line-ending-dropdown',
                                       ),
                                       value: lineEnding,
-                                      hint: '选择命令行行尾',
+                                      hint:
+                                          AppStrings
+                                              .shell
+                                              .selectCommandLineEnding,
                                       decoration:
                                           secondaryDialogFieldDecoration(),
                                       items: const [
@@ -1243,7 +1280,7 @@ class _ShellPageState extends State<ShellPage> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '命令行模式发送时会在内容末尾追加所选行尾。',
+                            AppStrings.shell.commandLineEndingHelp,
                             style: Theme.of(
                               context,
                             ).textTheme.bodySmall?.copyWith(
@@ -1255,7 +1292,7 @@ class _ShellPageState extends State<ShellPage> {
                           ),
                           const SizedBox(height: 8),
                           AppSwitchRow(
-                            title: const Text('命令行本地回显'),
+                            title: Text(AppStrings.shell.localEcho),
                             value: localEcho,
                             onChanged:
                                 (value) =>
@@ -1264,7 +1301,7 @@ class _ShellPageState extends State<ShellPage> {
                           const Divider(height: 24),
                           Text(
                             key: fontSectionKey,
-                            '终端字体',
+                            AppStrings.common.settingsTerminalFont,
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 4),
@@ -1272,7 +1309,7 @@ class _ShellPageState extends State<ShellPage> {
                             width: kSecondaryDialogWideFieldWidth,
                             child: AppDialogDropdown<String>(
                               value: fontFamily,
-                              hint: '选择终端字体',
+                              hint: AppStrings.probe.selectTerminalFontHint,
                               items:
                                   terminalFontFamilies
                                       .map(
@@ -1291,7 +1328,10 @@ class _ShellPageState extends State<ShellPage> {
                           const SizedBox(height: 8),
                           Row(
                             children: [
-                              const Text('字号', style: TextStyle(fontSize: 14)),
+                              Text(
+                                AppStrings.probe.fontSizeLabel,
+                                style: const TextStyle(fontSize: 14),
+                              ),
                               const Spacer(),
                               SizedBox(
                                 width: kSecondaryDialogFieldWidth,
@@ -1327,7 +1367,10 @@ class _ShellPageState extends State<ShellPage> {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          const Text('字体示例', style: TextStyle(fontSize: 14)),
+                          Text(
+                            AppStrings.probe.fontPreviewLabel,
+                            style: const TextStyle(fontSize: 14),
+                          ),
                           const SizedBox(height: 4),
                           Container(
                             key: const ValueKey('shell-font-preview'),
@@ -1345,7 +1388,7 @@ class _ShellPageState extends State<ShellPage> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              'SerialTools Shell  中文终端\nAa Bb 0123456789  > _',
+                              AppStrings.shell.fontPreviewText,
                               style: TextStyle(
                                 fontFamily: fontFamily,
                                 fontSize: fontSize,
@@ -1356,27 +1399,34 @@ class _ShellPageState extends State<ShellPage> {
                           const Divider(height: 24),
                           Text(
                             key: appearanceSectionKey,
-                            '终端主题',
+                            AppStrings.shell.terminalTheme,
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 6),
                           AppSegmentedSelector<RawShellThemeMode>(
                             value: theme,
-                            items: const {
-                              RawShellThemeMode.light: Text('浅色'),
-                              RawShellThemeMode.dark: Text('深色'),
+                            items: {
+                              RawShellThemeMode.light: Text(
+                                AppStrings.shell.light,
+                              ),
+                              RawShellThemeMode.dark: Text(
+                                AppStrings.shell.dark,
+                              ),
                             },
                             onChanged:
                                 (value) => setDialogState(() => theme = value),
                           ),
                           const SizedBox(height: 12),
-                          const Text('光标样式', style: TextStyle(fontSize: 14)),
+                          Text(
+                            AppStrings.shell.cursorStyle,
+                            style: const TextStyle(fontSize: 14),
+                          ),
                           const SizedBox(height: 4),
                           SizedBox(
                             width: kSecondaryDialogWideFieldWidth,
                             child: NoAnimDropdown<RawShellCursorMode>(
                               value: cursor,
-                              hint: '选择光标样式',
+                              hint: AppStrings.shell.selectCursorStyle,
                               decoration: secondaryDialogFieldDecoration(),
                               items:
                                   RawShellCursorMode.values
@@ -1396,7 +1446,7 @@ class _ShellPageState extends State<ShellPage> {
                           const Divider(height: 24),
                           Text(
                             key: historySectionKey,
-                            '历史行数',
+                            AppStrings.probe.historyLinesLabel,
                             style: const TextStyle(fontSize: 14),
                           ),
                           const SizedBox(height: 4),
@@ -1404,14 +1454,18 @@ class _ShellPageState extends State<ShellPage> {
                             width: kSecondaryDialogWideFieldWidth,
                             child: NoAnimDropdown<int>(
                               value: scrollback,
-                              hint: '选择历史行数',
+                              hint: AppStrings.shell.selectHistoryLines,
                               decoration: secondaryDialogFieldDecoration(),
                               items:
                                   const <int>[1000, 5000, 10000, 50000, 100000]
                                       .map(
                                         (value) => DropdownMenuItem(
                                           value: value,
-                                          child: Text('$value 行'),
+                                          child: Text(
+                                            AppStrings.shell.historyLinesOption(
+                                              value,
+                                            ),
+                                          ),
                                         ),
                                       )
                                       .toList(),
@@ -1424,10 +1478,8 @@ class _ShellPageState extends State<ShellPage> {
                           const Divider(height: 24),
                           AppSwitchRow(
                             key: sshSectionKey,
-                            title: const Text('启用 SSH Keepalive'),
-                            subtitle: const Text(
-                              '默认每 10 秒发送一次 OpenSSH keepalive 请求；不兼容的嵌入式 SSH 服务端可关闭，下次连接生效。',
-                            ),
+                            title: Text(AppStrings.shell.enableSshKeepalive),
+                            subtitle: Text(AppStrings.shell.sshKeepaliveHelp),
                             value: sshKeepAliveEnabled,
                             onChanged:
                                 vm.sshService.isConnected ||
@@ -1470,7 +1522,7 @@ class _ShellPageState extends State<ShellPage> {
           (dialogContext) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AlertDialog(
-                  title: const Text('YMODEM 文件传输'),
+                  title: Text(AppStrings.shell.ymodemFileTransfer),
                   content: SizedBox(
                     width: 460,
                     child: StreamBuilder<YmodemTransferStatus>(
@@ -1486,7 +1538,8 @@ class _ShellPageState extends State<ShellPage> {
                               children: [
                                 Expanded(
                                   child: Text(
-                                    selectedFile?.path ?? '未选择发送文件',
+                                    selectedFile?.path ??
+                                        AppStrings.shell.noSendFileSelected,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -1508,27 +1561,27 @@ class _ShellPageState extends State<ShellPage> {
                                             }
                                           },
                                   icon: const Icon(Icons.folder_open),
-                                  label: const Text('选择'),
+                                  label: Text(AppStrings.raw.choose),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 12),
                             AppDialogDropdown<YmodemPacketSizeMode>(
                               value: packetSize,
-                              hint: '发送分包',
-                              labelText: '发送分包',
-                              items: const [
+                              hint: AppStrings.shell.sendPacket,
+                              labelText: AppStrings.shell.sendPacket,
+                              items: [
                                 DropdownMenuItem(
                                   value: YmodemPacketSizeMode.auto,
-                                  child: Text('自动'),
+                                  child: Text(AppStrings.shell.auto),
                                 ),
                                 DropdownMenuItem(
                                   value: YmodemPacketSizeMode.bytes128,
-                                  child: Text('128 字节'),
+                                  child: Text(AppStrings.shell.packet128),
                                 ),
                                 DropdownMenuItem(
                                   value: YmodemPacketSizeMode.bytes1024,
-                                  child: Text('1024 字节'),
+                                  child: Text(AppStrings.shell.packet1024),
                                 ),
                               ],
                               onChanged:
@@ -1550,7 +1603,7 @@ class _ShellPageState extends State<ShellPage> {
                             const SizedBox(height: 8),
                             Text(
                               status.message.isEmpty
-                                  ? '等待开始传输'
+                                  ? AppStrings.raw.waitingForTransfer
                                   : status.message,
                             ),
                             if (error != null) ...[
@@ -1571,7 +1624,7 @@ class _ShellPageState extends State<ShellPage> {
                     if (transferActive)
                       TextButton(
                         onPressed: vm.cancelYmodem,
-                        child: const Text('取消传输'),
+                        child: Text(AppStrings.raw.cancelTransfer),
                       ),
                     TextButton(
                       onPressed:
@@ -1593,7 +1646,9 @@ class _ShellPageState extends State<ShellPage> {
                                   final file = await vm.receiveYmodemFile();
                                   if (file != null) {
                                     setDialogState(
-                                      () => error = '接收完成: ${file.path}',
+                                      () =>
+                                          error = AppStrings.raw
+                                              .receiveCompleted(file.path),
                                     );
                                   }
                                 } catch (value) {
@@ -1607,7 +1662,7 @@ class _ShellPageState extends State<ShellPage> {
                                 }
                               },
                       icon: const Icon(Icons.download),
-                      label: const Text('接收'),
+                      label: Text(AppStrings.raw.receive),
                     ),
                     FilledButton.icon(
                       onPressed:
@@ -1634,7 +1689,7 @@ class _ShellPageState extends State<ShellPage> {
                                 }
                               },
                       icon: const Icon(Icons.upload),
-                      label: const Text('发送'),
+                      label: Text(AppStrings.raw.send),
                     ),
                   ],
                 ),

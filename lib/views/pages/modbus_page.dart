@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart' as file_picker;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/data_connection_config.dart';
 import '../../data/models/modbus_models.dart';
 import '../../services/app_notifications.dart';
@@ -280,7 +281,7 @@ class _ModbusPageState extends State<ModbusPage> {
           (dialogContext) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AppSettingsDialog(
-                  title: const Text('Modbus高级设置'),
+                  title: Text(AppStrings.modbus.advancedSettings),
                   size: AppDialogSize.navigation,
                   hasUnsavedChanges:
                       () =>
@@ -315,15 +316,15 @@ class _ModbusPageState extends State<ModbusPage> {
                     scrollController: scrollController,
                     items: [
                       SettingsNavigationItem(
-                        label: '协议',
+                        label: AppStrings.modbus.protocol,
                         anchorKey: protocolSectionKey,
                       ),
                       SettingsNavigationItem(
-                        label: '寄存器',
+                        label: AppStrings.modbus.registerSection,
                         anchorKey: registerSectionKey,
                       ),
                       SettingsNavigationItem(
-                        label: '日志',
+                        label: AppStrings.modbus.logSection,
                         anchorKey: loggingSectionKey,
                       ),
                     ],
@@ -335,13 +336,13 @@ class _ModbusPageState extends State<ModbusPage> {
                         AppDialogTextField(
                           controller: timeoutController,
                           keyboardType: TextInputType.number,
-                          labelText: '响应超时（100～60000 ms）',
+                          labelText: AppStrings.modbus.responseTimeout,
                           onChanged: (_) => setDialogState(() {}),
                         ),
                         Divider(key: registerSectionKey, height: 32),
                         AppDialogDropdown<ModbusRegisterLayoutMode>(
                           value: layoutMode,
-                          labelText: '寄存器排列',
+                          labelText: AppStrings.modbus.registerLayout,
                           items: [
                             for (final mode in ModbusRegisterLayoutMode.values)
                               DropdownMenuItem(
@@ -357,13 +358,13 @@ class _ModbusPageState extends State<ModbusPage> {
                         ),
                         const SizedBox(height: 14),
                         Text(
-                          '多寄存器数据排列（全局）',
+                          AppStrings.modbus.multiRegisterLayout,
                           style: Theme.of(context).textTheme.titleSmall,
                         ),
                         const SizedBox(height: 8),
                         AppDialogDropdown<ModbusByteOrder>(
                           value: byteOrder,
-                          labelText: '字节序',
+                          labelText: AppStrings.modbus.byteOrder,
                           items: [
                             for (final order in ModbusByteOrder.values)
                               DropdownMenuItem(
@@ -380,7 +381,7 @@ class _ModbusPageState extends State<ModbusPage> {
                         const SizedBox(height: 12),
                         AppDialogDropdown<ModbusWordOrder>(
                           value: wordOrder,
-                          labelText: '字序',
+                          labelText: AppStrings.modbus.wordOrder,
                           items: [
                             for (final order in ModbusWordOrder.values)
                               DropdownMenuItem(
@@ -409,7 +410,9 @@ class _ModbusPageState extends State<ModbusPage> {
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            '当前排列：${_multiRegisterOrderPreview(byteOrder, wordOrder)}',
+                            AppStrings.modbus.currentLayout(
+                              _multiRegisterOrderPreview(byteOrder, wordOrder),
+                            ),
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ),
@@ -417,8 +420,10 @@ class _ModbusPageState extends State<ModbusPage> {
                         AppDialogTextField(
                           controller: logMaxLinesController,
                           keyboardType: TextInputType.number,
-                          labelText:
-                              '日志上限（$modbusMinLogMaxLines～$modbusMaxLogMaxLines 行）',
+                          labelText: AppStrings.modbus.logMaxLines(
+                            modbusMinLogMaxLines,
+                            modbusMaxLogMaxLines,
+                          ),
                           onChanged: (_) => setDialogState(() {}),
                         ),
                       ],
@@ -444,7 +449,7 @@ class _ModbusPageState extends State<ModbusPage> {
             builder:
                 (context, setDialogState) => AlertDialog(
                   shape: kAdvancedSettingsDialogShape,
-                  title: const Text('添加寄存器页面'),
+                  title: Text(AppStrings.modbus.addPageTitle),
                   content: SizedBox(
                     width: 360,
                     child: Column(
@@ -453,12 +458,12 @@ class _ModbusPageState extends State<ModbusPage> {
                         AppDialogTextField(
                           controller: unitController,
                           keyboardType: TextInputType.number,
-                          labelText: '从机 ID（0～255）',
+                          labelText: AppStrings.modbus.unitId,
                         ),
                         const SizedBox(height: 12),
                         AppDialogDropdown<ModbusRegisterArea>(
                           value: area,
-                          labelText: '寄存器区',
+                          labelText: AppStrings.modbus.registerArea,
                           items: [
                             for (final item in ModbusRegisterArea.values)
                               DropdownMenuItem(
@@ -478,11 +483,11 @@ class _ModbusPageState extends State<ModbusPage> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     DialogPrimaryActionButton(
                       onPressed: () => Navigator.pop(dialogContext, true),
-                      label: '添加',
+                      label: AppStrings.modbus.add,
                     ),
                   ],
                 ),
@@ -515,7 +520,7 @@ class _ModbusPageState extends State<ModbusPage> {
             builder:
                 (context, setDialogState) => AlertDialog(
                   shape: kAdvancedSettingsDialogShape,
-                  title: const Text('添加寄存器'),
+                  title: Text(AppStrings.modbus.addRegisterTitle),
                   content: SizedBox(
                     width: 380,
                     child: Column(
@@ -524,19 +529,19 @@ class _ModbusPageState extends State<ModbusPage> {
                         AppDialogTextField(
                           controller: addressController,
                           keyboardType: TextInputType.number,
-                          labelText: '起始地址（0基）',
+                          labelText: AppStrings.modbus.startAddress,
                         ),
                         const SizedBox(height: 12),
                         AppDialogTextField(
                           controller: countController,
                           keyboardType: TextInputType.number,
-                          labelText: '添加数量',
+                          labelText: AppStrings.modbus.addCount,
                         ),
                         if (!page.area.isBitArea) ...[
                           const SizedBox(height: 12),
                           AppDialogDropdown<ModbusVariableType>(
                             value: type,
-                            labelText: '变量类型',
+                            labelText: AppStrings.modbus.variableType,
                             items: [
                               for (final item in ModbusVariableType.values)
                                 DropdownMenuItem(
@@ -557,11 +562,11 @@ class _ModbusPageState extends State<ModbusPage> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     DialogPrimaryActionButton(
                       onPressed: () => Navigator.pop(dialogContext, true),
-                      label: '添加',
+                      label: AppStrings.modbus.add,
                     ),
                   ],
                 ),
@@ -614,19 +619,19 @@ class _ModbusPageState extends State<ModbusPage> {
       if (page.area.isWritable)
         _ModbusMenuAction(
           Icons.send_outlined,
-          '快速发送',
+          AppStrings.modbus.quickSend,
           () => _showOneShotSend(page, row),
         ),
       _ModbusMenuAction(
         Icons.settings_outlined,
-        '配置寄存器',
+        AppStrings.modbus.configureRegister,
         () => _showRowEditor(page, row),
       ),
       _ModbusMenuAction(
         Icons.numbers,
         row.displayRadix == ModbusDisplayRadix.decimal
-            ? '切换为十六进制显示'
-            : '切换为十进制显示',
+            ? AppStrings.modbus.switchToHexDisplay
+            : AppStrings.modbus.switchToDecimalDisplay,
         () => service.updateRow(
           page.key,
           row.copyWith(
@@ -639,7 +644,7 @@ class _ModbusPageState extends State<ModbusPage> {
       ),
       _ModbusMenuAction(
         Icons.delete_outline,
-        '删除寄存器',
+        AppStrings.modbus.deleteRegister,
         () => unawaited(_confirmDeleteRow(page, row)),
       ),
     ]);
@@ -710,19 +715,24 @@ class _ModbusPageState extends State<ModbusPage> {
       builder:
           (dialogContext) => AlertDialog(
             shape: kAdvancedSettingsDialogShape,
-            title: Text('${row.address}[${row.variableType.label}] 一次性发送'),
+            title: Text(
+              AppStrings.modbus.oneShotSendTitle(
+                row.address,
+                row.variableType.label,
+              ),
+            ),
             content: AppDialogTextField(
               controller: controller,
-              labelText: '值（十进制或0x十六进制）',
+              labelText: AppStrings.modbus.oneShotValueHint,
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, controller.text),
-                label: '发送',
+                label: AppStrings.modbus.send,
               ),
             ],
           ),
@@ -768,31 +778,39 @@ class _ModbusPageState extends State<ModbusPage> {
             builder:
                 (context, setDialogState) => AlertDialog(
                   shape: kAdvancedSettingsDialogShape,
-                  title: Text('${row.address}[${row.variableType.label}] 行配置'),
+                  title: Text(
+                    AppStrings.modbus.rowConfigTitle(
+                      row.address,
+                      row.variableType.label,
+                    ),
+                  ),
                   content: SettingsNavigationView(
                     scrollController: scrollController,
                     items: [
                       SettingsNavigationItem(
-                        label: '基本信息',
+                        label: AppStrings.modbus.basicInfoSection,
                         anchorKey: generalKey,
                       ),
                       SettingsNavigationItem(
-                        label: '轮询与发送',
+                        label: AppStrings.modbus.pollingAndSendSection,
                         anchorKey: pollingKey,
                       ),
                       SettingsNavigationItem(
-                        label: '外观',
+                        label: AppStrings.modbus.appearanceSection,
                         anchorKey: appearanceKey,
                       ),
                     ],
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _settingsSectionTitle(generalKey, '基本信息'),
+                        _settingsSectionTitle(
+                          generalKey,
+                          AppStrings.modbus.basicInfoSection,
+                        ),
                         if (!page.area.isBitArea)
                           AppDialogDropdown<ModbusVariableType>(
                             value: variableType,
-                            labelText: '变量类型',
+                            labelText: AppStrings.modbus.variableType,
                             items: [
                               for (final item in ModbusVariableType.values)
                                 DropdownMenuItem(
@@ -809,12 +827,15 @@ class _ModbusPageState extends State<ModbusPage> {
                         const SizedBox(height: 10),
                         AppDialogTextField(
                           controller: noteController,
-                          labelText: '寄存器备注',
+                          labelText: AppStrings.modbus.registerNote,
                         ),
                         const SizedBox(height: 18),
-                        _settingsSectionTitle(pollingKey, '轮询与发送'),
+                        _settingsSectionTitle(
+                          pollingKey,
+                          AppStrings.modbus.pollingAndSendSection,
+                        ),
                         AppSwitchRow(
-                          title: const Text('轮询查询'),
+                          title: Text(AppStrings.modbus.pollQuery),
                           value: pollEnabled,
                           onChanged:
                               (value) =>
@@ -824,19 +845,21 @@ class _ModbusPageState extends State<ModbusPage> {
                           AppDialogTextField(
                             controller: pollController,
                             keyboardType: TextInputType.number,
-                            labelText:
-                                '查询周期（$modbusMinIntervalMs～$modbusMaxIntervalMs ms）',
+                            labelText: AppStrings.modbus.pollInterval(
+                              modbusMinIntervalMs,
+                              modbusMaxIntervalMs,
+                            ),
                           ),
                           const SizedBox(height: 10),
                           AppDialogTextField(
                             controller: retriesController,
                             keyboardType: TextInputType.number,
-                            labelText: '读取重试（0～3）',
+                            labelText: AppStrings.modbus.readRetries,
                           ),
                         ],
                         if (page.area.isWritable) ...[
                           AppSwitchRow(
-                            title: const Text('周期发送'),
+                            title: Text(AppStrings.modbus.periodicSend),
                             value: sendEnabled,
                             onChanged:
                                 (value) =>
@@ -846,7 +869,7 @@ class _ModbusPageState extends State<ModbusPage> {
                             const SizedBox(height: 10),
                             AppDialogDropdown<ModbusSendValueMode>(
                               value: mode,
-                              labelText: '周期发送模式',
+                              labelText: AppStrings.modbus.periodicSendMode,
                               items: [
                                 for (final item in ModbusSendValueMode.values)
                                   DropdownMenuItem(
@@ -863,27 +886,33 @@ class _ModbusPageState extends State<ModbusPage> {
                             const SizedBox(height: 10),
                             AppDialogTextField(
                               controller: valueController,
-                              labelText: '周期发送值',
+                              labelText: AppStrings.modbus.periodicSendValue,
                             ),
                             if (mode == ModbusSendValueMode.increment ||
                                 mode == ModbusSendValueMode.decrement) ...[
                               const SizedBox(height: 10),
                               AppDialogTextField(
                                 controller: stepController,
-                                labelText: '自增/自减步长',
+                                labelText:
+                                    AppStrings.modbus.incrementDecrementStep,
                               ),
                             ],
                             const SizedBox(height: 10),
                             AppDialogTextField(
                               controller: intervalController,
                               keyboardType: TextInputType.number,
-                              labelText:
-                                  '发送周期（$modbusMinIntervalMs～$modbusMaxIntervalMs ms）',
+                              labelText: AppStrings.modbus.sendInterval(
+                                modbusMinIntervalMs,
+                                modbusMaxIntervalMs,
+                              ),
                             ),
                           ],
                         ],
                         const SizedBox(height: 18),
-                        _settingsSectionTitle(appearanceKey, '外观'),
+                        _settingsSectionTitle(
+                          appearanceKey,
+                          AppStrings.modbus.appearanceSection,
+                        ),
                         Align(
                           alignment: Alignment.centerLeft,
                           child: AppColorSwatchPicker(
@@ -913,11 +942,11 @@ class _ModbusPageState extends State<ModbusPage> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     DialogPrimaryActionButton(
                       onPressed: () => Navigator.pop(dialogContext, true),
-                      label: '保存',
+                      label: AppStrings.common.save,
                     ),
                   ],
                 ),
@@ -999,7 +1028,7 @@ class _ModbusPageState extends State<ModbusPage> {
     if (id == null || name == null) return;
     final fileName = name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
     final path = await file_picker.FilePicker.saveFile(
-      dialogTitle: '导出 Modbus 配置',
+      dialogTitle: AppStrings.modbus.exportProfileDialogTitle,
       fileName: '$fileName.json',
       type: file_picker.FileType.custom,
       allowedExtensions: const ['json'],
@@ -1014,7 +1043,7 @@ class _ModbusPageState extends State<ModbusPage> {
 
   Future<void> _importConfiguration() async {
     final result = await file_picker.FilePicker.pickFiles(
-      dialogTitle: '导入 Modbus 配置',
+      dialogTitle: AppStrings.modbus.importProfileDialogTitle,
       type: file_picker.FileType.custom,
       allowedExtensions: const ['json'],
     );
@@ -1043,16 +1072,16 @@ class _ModbusPageState extends State<ModbusPage> {
             content: AppDialogTextField(
               controller: controller,
               autofocus: true,
-              labelText: '配置名称',
+              labelText: AppStrings.modbus.profileName,
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, controller.text),
-                label: '确定',
+                label: AppStrings.common.confirm,
               ),
             ],
           ),
@@ -1062,7 +1091,9 @@ class _ModbusPageState extends State<ModbusPage> {
   }
 
   Future<void> _createProfile() async {
-    final name = await _promptProfileName(title: '新建Modbus配置');
+    final name = await _promptProfileName(
+      title: AppStrings.modbus.createProfileTitle,
+    );
     if (name == null || !mounted) return;
     await context.read<ModbusClientService>().createProfile(name);
   }
@@ -1070,7 +1101,7 @@ class _ModbusPageState extends State<ModbusPage> {
   Future<void> _renameProfile(String id, String currentName) async {
     final service = context.read<ModbusClientService>();
     final name = await _promptProfileName(
-      title: '重命名Modbus配置',
+      title: AppStrings.modbus.renameProfileTitle,
       initial: currentName,
     );
     if (name == null || !mounted) return;
@@ -1084,16 +1115,16 @@ class _ModbusPageState extends State<ModbusPage> {
       builder:
           (dialogContext) => AlertDialog(
             shape: kAdvancedSettingsDialogShape,
-            title: const Text('删除Modbus配置'),
-            content: Text('确定删除“$name”吗？'),
+            title: Text(AppStrings.modbus.deleteProfileTitle),
+            content: Text(AppStrings.modbus.deleteProfileMessage(name)),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                label: '删除',
+                label: AppStrings.common.delete,
               ),
             ],
           ),
@@ -1104,7 +1135,7 @@ class _ModbusPageState extends State<ModbusPage> {
   Future<bool> _confirm(
     String title,
     String message, {
-    String confirmLabel = '删除',
+    String? confirmLabel,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1116,11 +1147,11 @@ class _ModbusPageState extends State<ModbusPage> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                label: confirmLabel,
+                label: confirmLabel ?? AppStrings.common.delete,
               ),
             ],
           ),
@@ -1133,8 +1164,8 @@ class _ModbusPageState extends State<ModbusPage> {
     ModbusRegisterRow row,
   ) async {
     final confirmed = await _confirm(
-      '删除寄存器',
-      '确定删除地址 ${row.address} 的寄存器吗？其变量类型、备注、背景色和轮询配置将一并删除。',
+      AppStrings.modbus.deleteRegister,
+      AppStrings.modbus.deleteRegisterConfirmMessage(row.address),
     );
     if (!confirmed || !mounted) return;
     context.read<ModbusClientService>().removeRow(page.key, row.id);
@@ -1142,9 +1173,9 @@ class _ModbusPageState extends State<ModbusPage> {
 
   Future<void> _confirmClosePage(ModbusRegisterPage page) async {
     final confirmed = await _confirm(
-      '关闭页面',
-      '确定关闭该寄存器页面吗？',
-      confirmLabel: '关闭',
+      AppStrings.modbus.closePage,
+      AppStrings.modbus.closePageConfirmMessage,
+      confirmLabel: AppStrings.common.close,
     );
     if (!confirmed || !mounted) return;
     context.read<ModbusClientService>().removePage(page.key);
@@ -1159,7 +1190,7 @@ class _ModbusPageState extends State<ModbusPage> {
             builder:
                 (context, service, _) => AlertDialog(
                   shape: kAdvancedSettingsDialogShape,
-                  title: const Text('Modbus配置管理'),
+                  title: Text(AppStrings.modbus.profileManagerTitle),
                   content: SizedBox(
                     width: 560,
                     height: 380,
@@ -1172,18 +1203,18 @@ class _ModbusPageState extends State<ModbusPage> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  '本地目录：config/modbus',
+                                  AppStrings.modbus.profileDirectoryHint,
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
                               ),
                               ToolbarIconButton(
                                 icon: const Icon(Icons.add),
-                                tooltip: '新建配置',
+                                tooltip: AppStrings.modbus.createProfile,
                                 onPressed: _createProfile,
                               ),
                               ToolbarIconButton(
                                 icon: const Icon(Icons.file_upload_outlined),
-                                tooltip: '导入配置',
+                                tooltip: AppStrings.modbus.importProfile,
                                 onPressed: _importConfiguration,
                               ),
                             ],
@@ -1233,7 +1264,8 @@ class _ModbusPageState extends State<ModbusPage> {
                                       ),
                                       ToolbarIconButton(
                                         icon: const Icon(Icons.edit_outlined),
-                                        tooltip: '重命名配置',
+                                        tooltip:
+                                            AppStrings.modbus.renameProfile,
                                         onPressed:
                                             () => _renameProfile(
                                               profile.id,
@@ -1244,7 +1276,8 @@ class _ModbusPageState extends State<ModbusPage> {
                                         icon: const Icon(
                                           Icons.file_download_outlined,
                                         ),
-                                        tooltip: '导出配置',
+                                        tooltip:
+                                            AppStrings.modbus.exportProfile,
                                         onPressed:
                                             () => _exportConfiguration(
                                               profileId: profile.id,
@@ -1253,7 +1286,8 @@ class _ModbusPageState extends State<ModbusPage> {
                                       ),
                                       ToolbarIconButton(
                                         icon: const Icon(Icons.delete_outline),
-                                        tooltip: '删除配置',
+                                        tooltip:
+                                            AppStrings.modbus.deleteProfile,
                                         onPressed:
                                             () => _deleteProfile(
                                               profile.id,
@@ -1273,7 +1307,7 @@ class _ModbusPageState extends State<ModbusPage> {
                   actions: [
                     DialogPrimaryActionButton(
                       onPressed: () => Navigator.pop(dialogContext),
-                      label: '关闭',
+                      label: AppStrings.common.close,
                     ),
                   ],
                 ),
@@ -1290,8 +1324,14 @@ class _ModbusPageState extends State<ModbusPage> {
         extent: 76,
         child: ToolbarStartStopButton(
           running: service.sessionActive,
-          label: service.sessionActive ? '停止' : '开始',
-          tooltip: service.sessionActive ? '停止Modbus数据处理' : '开始Modbus数据处理',
+          label:
+              service.sessionActive
+                  ? AppStrings.modbus.stop
+                  : AppStrings.modbus.start,
+          tooltip:
+              service.sessionActive
+                  ? AppStrings.modbus.stopDataProcessing
+                  : AppStrings.modbus.startDataProcessing,
           onPressed: connection.isConnected ? _toggleSession : null,
         ),
       ),
@@ -1301,7 +1341,7 @@ class _ModbusPageState extends State<ModbusPage> {
           width: 110,
           visibleFieldOffsetY: _toolbarDropdownOffsetY,
           value: service.mode,
-          hint: '协议',
+          hint: AppStrings.modbus.protocol,
           items: [
             for (final mode in ModbusMode.values)
               DropdownMenuItem(value: mode, child: Text(mode.label)),
@@ -1321,7 +1361,10 @@ class _ModbusPageState extends State<ModbusPage> {
           width: 160,
           visibleFieldOffsetY: _toolbarDropdownOffsetY,
           value: service.selectedProfile?.id,
-          hint: service.profilesInitialized ? '默认配置' : '加载配置…',
+          hint:
+              service.profilesInitialized
+                  ? AppStrings.modbus.defaultProfile
+                  : AppStrings.modbus.loadingProfiles,
           items: [
             for (final profile in service.profiles)
               DropdownMenuItem(
@@ -1346,7 +1389,7 @@ class _ModbusPageState extends State<ModbusPage> {
         child: ToolbarIconButton(
           key: const ValueKey('modbus-profile-manager-button'),
           icon: const Icon(Icons.edit_note),
-          tooltip: '编辑Modbus配置',
+          tooltip: AppStrings.modbus.editProfile,
           onPressed:
               service.sessionActive || !service.profilesInitialized
                   ? null
@@ -1355,7 +1398,7 @@ class _ModbusPageState extends State<ModbusPage> {
         overflowActions: [
           ToolbarOverflowAction(
             icon: const Icon(Icons.edit_note),
-            label: '编辑Modbus配置',
+            label: AppStrings.modbus.editProfile,
             onPressed:
                 service.sessionActive || !service.profilesInitialized
                     ? null
@@ -1367,14 +1410,14 @@ class _ModbusPageState extends State<ModbusPage> {
         extent: kToolbarControlExtent,
         child: ToolbarToggleIconButton(
           icon: const Icon(Icons.send_outlined),
-          tooltip: '显示/隐藏手动发送',
+          tooltip: AppStrings.modbus.toggleManualSend,
           selected: _showManual,
           onPressed: () => setState(() => _showManual = !_showManual),
         ),
         overflowActions: [
           ToolbarOverflowAction(
             icon: const Icon(Icons.send_outlined),
-            label: '显示手动发送',
+            label: AppStrings.modbus.showManualSend,
             selected: _showManual,
             onPressed: () => setState(() => _showManual = !_showManual),
           ),
@@ -1384,14 +1427,14 @@ class _ModbusPageState extends State<ModbusPage> {
         extent: kToolbarControlExtent,
         child: ToolbarToggleIconButton(
           icon: const Icon(Icons.grid_view),
-          tooltip: '显示/隐藏轮询页面',
+          tooltip: AppStrings.modbus.togglePollingPage,
           selected: _showPolling,
           onPressed: () => setState(() => _showPolling = !_showPolling),
         ),
         overflowActions: [
           ToolbarOverflowAction(
             icon: const Icon(Icons.grid_view),
-            label: '显示轮询页面',
+            label: AppStrings.modbus.showPollingPage,
             selected: _showPolling,
             onPressed: () => setState(() => _showPolling = !_showPolling),
           ),
@@ -1401,14 +1444,14 @@ class _ModbusPageState extends State<ModbusPage> {
         extent: kToolbarControlExtent,
         child: ToolbarToggleIconButton(
           icon: const Icon(Icons.notes_outlined),
-          tooltip: '显示/隐藏日志',
+          tooltip: AppStrings.modbus.toggleLogs,
           selected: _showLogs,
           onPressed: () => setState(() => _showLogs = !_showLogs),
         ),
         overflowActions: [
           ToolbarOverflowAction(
             icon: const Icon(Icons.notes_outlined),
-            label: '显示日志',
+            label: AppStrings.modbus.showLogs,
             selected: _showLogs,
             onPressed: () => setState(() => _showLogs = !_showLogs),
           ),
@@ -1419,13 +1462,13 @@ class _ModbusPageState extends State<ModbusPage> {
       ToolbarLayoutItem(
         extent: kToolbarControlExtent,
         child: ToolbarAdvancedSettingsButton(
-          tooltip: 'Modbus高级设置',
+          tooltip: AppStrings.modbus.advancedSettings,
           onPressed: service.sessionActive ? null : _showProtocolSettings,
         ),
         overflowActions: [
           ToolbarOverflowAction(
             icon: const Icon(Icons.tune),
-            label: 'Modbus高级设置',
+            label: AppStrings.modbus.advancedSettings,
             onPressed: service.sessionActive ? null : _showProtocolSettings,
           ),
         ],
@@ -1439,33 +1482,40 @@ class _ModbusPageState extends State<ModbusPage> {
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        const Text(
-          '手动发送',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        Text(
+          AppStrings.modbus.manualSend,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 10),
         Row(
           children: [
-            Expanded(child: _numberField(_unitController, '从机 ID')),
+            Expanded(
+              child: _numberField(
+                _unitController,
+                AppStrings.modbus.unitIdField,
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: _numberField(
                 _addressController,
-                'PDU地址（0基）',
+                AppStrings.modbus.pduAddressField,
                 onChanged: (_) => setState(() {}),
               ),
             ),
           ],
         ),
         Text(
-          '参考号：${modbusReferenceNumber(_function, reference.clamp(0, 65535))}',
+          AppStrings.modbus.referenceNumber(
+            modbusReferenceNumber(_function, reference.clamp(0, 65535)),
+          ),
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
         AppDialogDropdown<ModbusFunction>(
           value: _function,
-          hint: '选择功能码',
-          labelText: '功能码',
+          hint: AppStrings.modbus.selectFunctionHint,
+          labelText: AppStrings.modbus.functionCode,
           items: [
             for (final item in ModbusFunction.values)
               DropdownMenuItem(
@@ -1478,21 +1528,24 @@ class _ModbusPageState extends State<ModbusPage> {
           onChanged: (value) => setState(() => _function = value ?? _function),
         ),
         const SizedBox(height: 8),
-        _numberField(_quantityController, '数量'),
+        _numberField(_quantityController, AppStrings.modbus.quantity),
         const SizedBox(height: 8),
         AppDialogTextField(
           controller: _valuesController,
-          labelText: '写入值（逗号或空格分隔）',
+          labelText: AppStrings.modbus.writeValuesHint,
         ),
         const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed:
               service.sessionActive && !_manualSending ? _sendManual : null,
           icon: const Icon(Icons.send),
-          label: const Text('发送一次'),
+          label: Text(AppStrings.modbus.sendOnce),
         ),
         const SizedBox(height: 18),
-        const Text('最近响应', style: TextStyle(fontWeight: FontWeight.w600)),
+        Text(
+          AppStrings.modbus.recentResponse,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
         const SizedBox(height: 6),
         SelectableText(_responseText(response)),
         if (service.lastError != null) ...[
@@ -1507,7 +1560,7 @@ class _ModbusPageState extends State<ModbusPage> {
   }
 
   String _responseText(ModbusResponse? response) {
-    if (response == null) return '暂无响应';
+    if (response == null) return AppStrings.modbus.noResponse;
     if (response.isException) {
       return '异常码：0x${response.exceptionCode!.toRadixString(16).padLeft(2, '0')}';
     }
@@ -1533,9 +1586,9 @@ class _ModbusPageState extends State<ModbusPage> {
           height: 38,
           child: Row(
             children: [
-              const Padding(
-                padding: EdgeInsets.only(left: 14),
-                child: Text('寄存器页面'),
+              Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Text(AppStrings.modbus.registerPage),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -1567,7 +1620,7 @@ class _ModbusPageState extends State<ModbusPage> {
               ),
               ToolbarIconButton(
                 icon: const Icon(Icons.add),
-                tooltip: '添加页面',
+                tooltip: AppStrings.modbus.addPage,
                 onPressed: _showAddPage,
               ),
               const SizedBox(width: 4),
@@ -1576,7 +1629,7 @@ class _ModbusPageState extends State<ModbusPage> {
         ),
         const Divider(height: 1),
         if (page == null)
-          const Expanded(child: Center(child: Text('请添加一个寄存器页面')))
+          Expanded(child: Center(child: Text(AppStrings.modbus.noRegisterPage)))
         else ...[
           _buildPageToolbar(service, page),
           const Divider(height: 1),
@@ -1600,13 +1653,16 @@ class _ModbusPageState extends State<ModbusPage> {
           const SizedBox(width: 8),
           ToolbarStartStopButton(
             running: pollingRunning,
-            label: pollingRunning ? '停止' : '开始',
+            label:
+                pollingRunning
+                    ? AppStrings.modbus.stop
+                    : AppStrings.modbus.start,
             tooltip:
                 pollingRunning
-                    ? '停止此页面轮询和周期发送'
+                    ? AppStrings.modbus.stopPagePollingAndSending
                     : canStartPolling
-                    ? '开始此页面轮询和周期发送'
-                    : '请先开始Modbus并至少开启一个寄存器轮询',
+                    ? AppStrings.modbus.startPagePollingAndSending
+                    : AppStrings.modbus.startModbusFirst,
             onPressed:
                 canStartPolling || pollingRunning
                     ? () => service.setPageEnabled(page.key, !page.enabled)
@@ -1614,12 +1670,15 @@ class _ModbusPageState extends State<ModbusPage> {
           ),
           ToolbarIconButton(
             icon: const Icon(Icons.playlist_add),
-            tooltip: '批量添加寄存器',
+            tooltip: AppStrings.modbus.batchAddRegisters,
             onPressed: () => _showAddRows(page),
           ),
           ToolbarToggleIconButton(
             icon: const Icon(Icons.category_outlined),
-            tooltip: page.showVariableType ? '隐藏变量类型（u16）' : '显示变量类型（u16）',
+            tooltip:
+                page.showVariableType
+                    ? AppStrings.modbus.hideVariableType
+                    : AppStrings.modbus.showVariableType,
             selected: page.showVariableType,
             onPressed:
                 () => service.setPageVariableTypeVisible(
@@ -1630,7 +1689,7 @@ class _ModbusPageState extends State<ModbusPage> {
           const Spacer(),
           ToolbarIconButton(
             icon: const Icon(Icons.open_in_new),
-            tooltip: '在独立窗口打开页面',
+            tooltip: AppStrings.modbus.openInDetachedWindow,
             onPressed: () => _detachPage(page.key),
           ),
           const SizedBox(width: 4),
@@ -1670,7 +1729,7 @@ class _ModbusPageState extends State<ModbusPage> {
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
-                tooltip: '关闭页面',
+                tooltip: AppStrings.modbus.closePage,
                 padding: const EdgeInsets.all(4),
                 constraints: const BoxConstraints.tightFor(
                   width: 28,
@@ -1690,12 +1749,12 @@ class _ModbusPageState extends State<ModbusPage> {
     _showContextMenu(position, 'U${page.unitId} · ${page.area.label}', [
       _ModbusMenuAction(
         Icons.open_in_new,
-        '在独立窗口打开',
+        AppStrings.modbus.openInDetached,
         () => _detachPage(page.key),
       ),
       _ModbusMenuAction(
         Icons.close,
-        '关闭页面',
+        AppStrings.modbus.closePage,
         () => unawaited(_confirmClosePage(page)),
       ),
     ]);
@@ -1714,11 +1773,15 @@ class _ModbusPageState extends State<ModbusPage> {
   );
 
   void _showBlankGridMenu(ModbusRegisterPage page, Offset position) {
-    _showContextMenu(position, '寄存器页面', [
-      _ModbusMenuAction(Icons.add, '添加单个寄存器', () => _showAddRows(page)),
+    _showContextMenu(position, AppStrings.modbus.registerPage, [
+      _ModbusMenuAction(
+        Icons.add,
+        AppStrings.modbus.addSingleRegister,
+        () => _showAddRows(page),
+      ),
       _ModbusMenuAction(
         Icons.playlist_play,
-        '一键配置整页轮询',
+        AppStrings.modbus.configurePagePolling,
         () => _showPagePollingEditor(page),
       ),
     ]);
@@ -1741,14 +1804,16 @@ class _ModbusPageState extends State<ModbusPage> {
             builder:
                 (context, setDialogState) => AlertDialog(
                   shape: kAdvancedSettingsDialogShape,
-                  title: const Text('批量配置寄存器轮询'),
+                  title: Text(AppStrings.modbus.batchPollConfigTitle),
                   content: SizedBox(
                     width: 360,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         AppSwitchRow(
-                          title: const Text('启用这些寄存器的轮询功能'),
+                          title: Text(
+                            AppStrings.modbus.enablePollingForRegisters,
+                          ),
                           value: enabled,
                           onChanged:
                               (value) => setDialogState(() => enabled = value),
@@ -1756,14 +1821,16 @@ class _ModbusPageState extends State<ModbusPage> {
                         AppDialogTextField(
                           controller: intervalController,
                           keyboardType: TextInputType.number,
-                          labelText:
-                              '查询周期（$modbusMinIntervalMs～$modbusMaxIntervalMs ms）',
+                          labelText: AppStrings.modbus.pollInterval(
+                            modbusMinIntervalMs,
+                            modbusMaxIntervalMs,
+                          ),
                         ),
                         const SizedBox(height: 10),
                         AppDialogTextField(
                           controller: retriesController,
                           keyboardType: TextInputType.number,
-                          labelText: '读取重试（0～3）',
+                          labelText: AppStrings.modbus.readRetries,
                         ),
                       ],
                     ),
@@ -1771,11 +1838,11 @@ class _ModbusPageState extends State<ModbusPage> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     DialogPrimaryActionButton(
                       onPressed: () => Navigator.pop(dialogContext, true),
-                      label: '应用到所有寄存器',
+                      label: AppStrings.modbus.applyToAllRegisters,
                     ),
                   ],
                 ),
@@ -1821,14 +1888,14 @@ class _ModbusPageState extends State<ModbusPage> {
           height: 38,
           child: Row(
             children: [
-              const Padding(
-                padding: EdgeInsets.only(left: 14),
-                child: Text('Modbus日志'),
+              Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Text(AppStrings.modbus.modbusLog),
               ),
               const Spacer(),
               ToolbarIconButton(
                 icon: const Icon(Icons.delete_sweep_outlined),
-                tooltip: '清空Modbus日志',
+                tooltip: AppStrings.modbus.clearModbusLog,
                 onPressed:
                     service.records.isEmpty ? null : service.clearRecords,
               ),
@@ -1842,7 +1909,7 @@ class _ModbusPageState extends State<ModbusPage> {
             color: Theme.of(context).colorScheme.surface,
             child:
                 service.records.isEmpty
-                    ? const Center(child: Text('暂无输出'))
+                    ? Center(child: Text(AppStrings.modbus.noOutput))
                     : ListView.builder(
                       reverse: true,
                       padding: const EdgeInsets.symmetric(
@@ -1929,7 +1996,11 @@ class _ModbusPageState extends State<ModbusPage> {
                     if (_showPolling)
                       Expanded(child: _buildPollingPanel(service)),
                     if (!_showManual && !_showPolling)
-                      const Expanded(child: Center(child: Text('请从工具栏打开一个区域'))),
+                      Expanded(
+                        child: Center(
+                          child: Text(AppStrings.modbus.openAreaFromToolbar),
+                        ),
+                      ),
                   ],
                 ),
               ),

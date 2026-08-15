@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/flash_data_document.dart';
 import 'common_widgets.dart';
 
@@ -52,9 +53,9 @@ class FlashHexViewer extends StatelessWidget {
             height: 38,
             child: Row(
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(left: 14),
-                  child: Text('HEX显示'),
+                Padding(
+                  padding: const EdgeInsets.only(left: 14),
+                  child: Text(AppStrings.flash.hexDisplay),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -96,7 +97,7 @@ class FlashHexViewer extends StatelessWidget {
                                   ),
                                   IconButton(
                                     visualDensity: VisualDensity.compact,
-                                    tooltip: '关闭',
+                                    tooltip: AppStrings.common.close,
                                     padding: const EdgeInsets.all(4),
                                     constraints: const BoxConstraints.tightFor(
                                       width: 28,
@@ -117,12 +118,12 @@ class FlashHexViewer extends StatelessWidget {
                 const SizedBox(width: 12),
                 ToolbarIconButton(
                   icon: const Icon(Icons.settings_outlined),
-                  tooltip: 'HEX显示设置',
+                  tooltip: AppStrings.flash.hexDisplaySettings,
                   onPressed: onSettings,
                 ),
                 ToolbarIconButton(
                   icon: const Icon(Icons.file_upload_outlined),
-                  tooltip: '导出当前数据为BIN或HEX',
+                  tooltip: AppStrings.flash.exportDataTooltip,
                   onPressed: selected == null ? null : onSave,
                 ),
                 const SizedBox(width: 4),
@@ -133,7 +134,7 @@ class FlashHexViewer extends StatelessWidget {
           Expanded(
             child:
                 selected == null
-                    ? const Center(child: Text('请从工具栏打开文件，或从芯片读取数据'))
+                    ? Center(child: Text(AppStrings.flash.openFileOrReadData))
                     : _HexDataTable(
                       document: selected,
                       bytesPerRow: effectiveBytesPerRow,

@@ -83,11 +83,14 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               history == null ||
                       history < RttConfiguration.minHistoryLines ||
                       history > RttConfiguration.maxHistoryLines
-                  ? '历史行数范围为 ${RttConfiguration.minHistoryLines}~${RttConfiguration.maxHistoryLines}'
+                  ? AppStrings.probe.historyLineRange(
+                    min: RttConfiguration.minHistoryLines,
+                    max: RttConfiguration.maxHistoryLines,
+                  )
                   : null;
         });
         if (_fontSizeError != null || _historyError != null) {
-          throw const FormatException('请修正无效设置');
+          throw FormatException(AppStrings.probe.invalidSettingsError);
         }
         await context.read<RttViewModel>().applyTerminalSettings(
           RttTerminalSettingsDraft(
@@ -111,7 +114,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
           children: [
             Text(
               key: _displayKey,
-              '文本编码',
+              AppStrings.common.settingsTextEncoding,
               style: const TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 4),
@@ -121,7 +124,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                 width: kSecondaryDialogWideFieldWidth,
                 child: NoAnimDropdown<String>(
                   value: _encoding,
-                  hint: '选择文本编码',
+                  hint: AppStrings.probe.selectTextEncodingHint,
                   decoration: secondaryDialogFieldDecoration(),
                   items:
                       shellTextEncodings
@@ -139,7 +142,10 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text('终端字体', style: TextStyle(fontSize: 14)),
+            Text(
+              AppStrings.common.settingsTerminalFont,
+              style: const TextStyle(fontSize: 14),
+            ),
             const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerLeft,
@@ -147,7 +153,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                 width: kSecondaryDialogWideFieldWidth,
                 child: NoAnimDropdown<String>(
                   value: _fontFamily,
-                  hint: '选择终端字体',
+                  hint: AppStrings.probe.selectTerminalFontHint,
                   decoration: secondaryDialogFieldDecoration(),
                   items:
                       terminalFontFamilies
@@ -167,7 +173,10 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
             const SizedBox(height: 8),
             Row(
               children: [
-                const Text('字号', style: TextStyle(fontSize: 14)),
+                Text(
+                  AppStrings.probe.fontSizeLabel,
+                  style: const TextStyle(fontSize: 14),
+                ),
                 const Spacer(),
                 SizedBox(
                   width: kSecondaryDialogFieldWidth,
@@ -195,7 +204,10 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
               ],
             ),
             const SizedBox(height: 8),
-            const Text('字体示例', style: TextStyle(fontSize: 14)),
+            Text(
+              AppStrings.probe.fontPreviewLabel,
+              style: const TextStyle(fontSize: 14),
+            ),
             const SizedBox(height: 4),
             Container(
               key: const ValueKey('rtt-font-preview'),
@@ -208,7 +220,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                'SerialTools RTT  中文终端\nAa Bb 0123456789  > _',
+                AppStrings.probe.fontPreviewText,
                 style: TextStyle(
                   fontFamily: _fontFamily,
                   fontSize:
@@ -221,11 +233,15 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
             AppDialogTextField(
               controller: _historyController,
               keyboardType: TextInputType.number,
-              labelText: '历史行数',
+              labelText: AppStrings.probe.historyLinesLabel,
               errorText: _historyError,
-              helperText:
-                  '范围 1000~1000000 行，当前原始历史 '
-                  '${(vm.rawHistoryBytes / 1024 / 1024).toStringAsFixed(1)} MiB',
+              helperText: AppStrings.probe.historyLinesHelp(
+                min: RttConfiguration.minHistoryLines,
+                max: RttConfiguration.maxHistoryLines,
+                currentMiB: (vm.rawHistoryBytes / 1024 / 1024).toStringAsFixed(
+                  1,
+                ),
+              ),
               onChanged: (_) {
                 if (_historyError != null) setState(() => _historyError = null);
               },

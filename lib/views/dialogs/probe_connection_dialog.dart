@@ -233,7 +233,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     final clock = int.tryParse(_clockController.text.trim());
     if (clock == null || clock < 100 || clock > 50000) {
       if (showError && mounted) {
-        setState(() => _error = '调试时钟范围为 100~50000 kHz');
+        setState(() => _error = AppStrings.probe.clockRangeError);
       }
       return false;
     }
@@ -255,7 +255,9 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
       await _pendingConfigSave;
       return true;
     } catch (error) {
-      if (showError && mounted) setState(() => _error = '保存连接配置失败：$error');
+      if (showError && mounted) {
+        setState(() => _error = AppStrings.probe.saveConfigFailed('$error'));
+      }
       return false;
     }
   }
@@ -288,7 +290,10 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
           backend != _backend) {
         return;
       }
-      final suffix = backend == ProbeBackendSelection.automatic ? '（自动选择）' : '';
+      final suffix =
+          backend == ProbeBackendSelection.automatic
+              ? AppStrings.probe.autoSelectedSuffix
+              : '';
       setState(() => _expectedBackend = '$name$suffix');
     } catch (error) {
       if (!mounted || generation != _backendPreviewGeneration) return;
@@ -331,7 +336,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
           _probes = [
             ProbeInfo(
               id: _probeId,
-              name: '$_probeId（当前不存在）',
+              name: AppStrings.probe.probeUnavailable(_probeId),
               kind: _kind,
               available: false,
             ),
@@ -441,7 +446,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
         decoration: _connectionFieldDecoration(hintText: hintText).copyWith(
           suffixIcon: IconButton(
             key: ValueKey('$keyPrefix-file-button'),
-            tooltip: '选择$name文件',
+            tooltip: AppStrings.probe.chooseConfigFile(name),
             splashRadius: 18,
             padding: const EdgeInsets.all(8),
             constraints: const BoxConstraints.tightFor(width: 40, height: 40),
@@ -449,7 +454,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 enabled
                     ? () => unawaited(
                       _selectOpenOcdConfigFile(
-                        dialogTitle: '选择$name文件',
+                        dialogTitle: AppStrings.probe.chooseConfigFile(name),
                         category: category,
                         controller: controller,
                       ),
@@ -469,21 +474,24 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
         builder:
             (dialogContext) => AlertDialog(
               shape: kAdvancedSettingsDialogShape,
-              title: const Text('连接高权限Flash会话'),
+              title: Text(AppStrings.probe.connectHighPrivilegeFlashTitle),
               content: Text(
-                'Flash连接可能复位或停止目标芯片。\n\n'
-                '目标：${config.target.isEmpty ? config.openOcdTargetConfig : config.target}\n'
-                '后端：${config.backend.label}\n\n'
-                '请确认目标硬件已处于允许编程的安全状态。',
+                AppStrings.probe.flashConnectionConfirmMessage(
+                  target:
+                      config.target.isEmpty
+                          ? config.openOcdTargetConfig
+                          : config.target,
+                  backendLabel: config.backend.label,
+                ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('取消'),
+                  child: Text(AppStrings.common.cancel),
                 ),
                 DialogPrimaryActionButton(
                   onPressed: () => Navigator.pop(dialogContext, true),
-                  label: '确认连接',
+                  label: AppStrings.probe.confirmConnect,
                 ),
               ],
             ),
@@ -497,7 +505,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
         _isProgramming ? null : context.read<ProbeConnectionService>();
     final clock = int.tryParse(_clockController.text.trim());
     if (clock == null || clock < 100 || clock > 50000) {
-      setState(() => _error = '调试时钟范围为 100~50000 kHz');
+      setState(() => _error = AppStrings.probe.clockRangeError);
       return;
     }
     final targetRequired =
@@ -509,7 +517,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 _backend != ProbeBackendSelection.bundledOpenocd &&
                 !_autoDetect;
     if (targetRequired && _target.trim().isEmpty) {
-      setState(() => _error = '请选择或输入目标芯片');
+      setState(() => _error = AppStrings.probe.selectOrInputTargetChip);
       return;
     }
     final openOcdConfigRequired =
@@ -521,7 +529,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
     if (openOcdConfigRequired) {
       if (_openOcdInterfaceController.text.trim().isEmpty ||
           _openOcdTargetController.text.trim().isEmpty) {
-        setState(() => _error = 'OpenOCD 需要接口配置和目标配置');
+        setState(() => _error = AppStrings.probe.openOcdRequiresConfigs);
         return;
       }
     }
@@ -600,8 +608,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 AppDialogDropdown<ProbeBackendSelection>(
                   key: const ValueKey('rtt-backend-field'),
                   value: _backend,
-                  hint: '选择后端',
-                  labelText: '探针后端',
+                  hint: AppStrings.probe.selectBackendHint,
+                  labelText: AppStrings.common.settingsProbeBackend,
                   items:
                       ProbeBackendSelection.values
                           .where(
@@ -650,8 +658,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       child: AppDialogDropdown<ProbeKind>(
                         key: const ValueKey('rtt-probe-kind-field'),
                         value: _kind,
-                        hint: '探针类型',
-                        labelText: '探针类型',
+                        hint: AppStrings.probe.probeKind,
+                        labelText: AppStrings.probe.probeKind,
                         items:
                             ProbeKind.values
                                 .where(
@@ -698,12 +706,12 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                     _probes.any((item) => item.id == _probeId)
                                 ? _probeId
                                 : null,
-                        hint: '自动选择',
-                        labelText: '调试探针',
+                        hint: AppStrings.probe.autoSelect,
+                        labelText: AppStrings.probe.probeFieldLabel,
                         items: [
-                          const DropdownMenuItem(
+                          DropdownMenuItem(
                             value: '',
-                            child: Text('自动选择'),
+                            child: Text(AppStrings.probe.autoSelect),
                           ),
                           ..._probes.map(
                             (item) => DropdownMenuItem(
@@ -730,8 +738,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     Tooltip(
                       message:
                           _backend == ProbeBackendSelection.externalPyocd
-                              ? '扫描 USB 设备'
-                              : '刷新探针',
+                              ? AppStrings.probe.scanUsbDevices
+                              : AppStrings.probe.refreshProbes,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(4),
                         onTap:
@@ -769,17 +777,24 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Tooltip(
-                        message: '仅按当前设置和工具可用性预测；探针占用、目标错误或工具启动失败仍可能导致连接失败',
-                        child: Icon(Icons.account_tree_outlined, size: 16),
+                      Tooltip(
+                        message: AppStrings.probe.expectedBackendTooltip,
+                        child: const Icon(
+                          Icons.account_tree_outlined,
+                          size: 16,
+                        ),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         _checkingExpectedBackend
-                            ? '预计使用后端：检测中…'
+                            ? AppStrings.probe.expectedBackendChecking
                             : _expectedBackendError != null
-                            ? '预计使用后端：不可用（$_expectedBackendError）'
-                            : '预计使用后端：${_expectedBackend ?? '未知'}',
+                            ? AppStrings.probe.expectedBackendUnavailable(
+                              _expectedBackendError!,
+                            )
+                            : AppStrings.probe.expectedBackendResolved(
+                              _expectedBackend ?? AppStrings.appInfo.unknown,
+                            ),
                         key: const ValueKey('rtt-expected-backend'),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color:
@@ -798,8 +813,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   AppDialogDropdown<PyOcdCmsisDapVersion>(
                     key: const ValueKey('rtt-pyocd-cmsis-dap-version'),
                     value: _pyOcdCmsisDapVersion,
-                    hint: '选择 CMSIS-DAP 版本',
-                    labelText: 'CMSIS-DAP 版本',
+                    hint: AppStrings.probe.selectCmsisDapVersionHint,
+                    labelText: AppStrings.probe.cmsisDapVersionLabel,
                     items:
                         PyOcdCmsisDapVersion.values
                             .map(
@@ -829,18 +844,18 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 if (_showsOpenOcdConfig) ...[
                   const SizedBox(height: 12),
                   _buildOpenOcdConfigField(
-                    name: 'OpenOCD 接口配置',
+                    name: AppStrings.probe.openOcdInterfaceConfig,
                     keyPrefix: 'rtt-openocd-interface',
-                    hintText: '例如 interface/cmsis-dap.cfg',
+                    hintText: AppStrings.probe.openOcdInterfaceHint,
                     category: 'interface',
                     controller: _openOcdInterfaceController,
                     enabled: !isConnected && !_connecting,
                   ),
                   const SizedBox(height: 12),
                   _buildOpenOcdConfigField(
-                    name: 'OpenOCD 目标配置',
+                    name: AppStrings.probe.openOcdTargetConfig,
                     keyPrefix: 'rtt-openocd-target',
-                    hintText: '例如 target/stm32f4x.cfg',
+                    hintText: AppStrings.probe.openOcdTargetHint,
                     category: 'target',
                     controller: _openOcdTargetController,
                     enabled: !isConnected && !_connecting,
@@ -849,7 +864,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      '可直接输入 OpenOCD scripts 相对配置名，也可从右侧按钮选择 .cfg 文件。',
+                      AppStrings.probe.openOcdConfigHelp,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
@@ -865,14 +880,14 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         flex: 3,
                         child: AppLabeledField(
                           key: const ValueKey('rtt-target-field-container'),
-                          label: '目标芯片',
+                          label: AppStrings.probe.targetChipLabel,
                           child: TextField(
                             key: const ValueKey('rtt-target-field'),
                             controller: _targetController,
                             onChanged: (value) => _target = value,
                             enabled: !_autoDetect && !isConnected,
                             decoration: _connectionFieldDecoration(
-                              hintText: '输入芯片型号',
+                              hintText: AppStrings.probe.targetChipHint,
                             ),
                           ),
                         ),
@@ -880,7 +895,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       const SizedBox(width: 8),
                       IconButton(
                         key: const ValueKey('rtt-target-search-button'),
-                        tooltip: '检索支持的芯片',
+                        tooltip: AppStrings.probe.searchSupportedChips,
                         onPressed:
                             _autoDetect || isConnected || _connecting
                                 ? null
@@ -898,7 +913,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                                   _scheduleConfigSave();
                                 },
                       ),
-                      const Text('自动识别'),
+                      Text(AppStrings.probe.autoDetect),
                     ],
                   ),
                 const SizedBox(height: 12),
@@ -907,8 +922,8 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     Expanded(
                       child: AppDialogDropdown<ProbeWireProtocol>(
                         value: _wireProtocol,
-                        hint: '接口',
-                        labelText: '调试接口',
+                        hint: AppStrings.probe.interfaceHint,
+                        labelText: AppStrings.probe.debugInterfaceLabel,
                         items:
                             ProbeWireProtocol.values
                                 .map(
@@ -934,7 +949,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                     Expanded(
                       child: AppLabeledField(
                         key: const ValueKey('rtt-clock-field-container'),
-                        label: '调试时钟',
+                        label: AppStrings.probe.debugClockLabel,
                         child: TextField(
                           key: const ValueKey('rtt-clock-field'),
                           controller: _clockController,
@@ -972,7 +987,11 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                   ? (_cancellingConnection ? null : _cancelConnection)
                   : _close,
           child: Text(
-            _connecting ? (_cancellingConnection ? '正在取消...' : '取消连接') : '关闭',
+            _connecting
+                ? (_cancellingConnection
+                    ? AppStrings.probe.cancelling
+                    : AppStrings.probe.cancelConnect)
+                : AppStrings.common.close,
           ),
         ),
         if (isConnected)
@@ -994,13 +1013,13 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                       if (context.mounted) Navigator.of(context).pop();
                     },
             icon: const Icon(Icons.stop),
-            label: const Text('断开'),
+            label: Text(AppStrings.serial.disconnect),
           )
         else
           ElevatedButton.icon(
             onPressed: _refreshing || _connecting ? null : _connect,
             icon: const Icon(Icons.link),
-            label: const Text('连接'),
+            label: Text(AppStrings.serial.connect),
           ),
       ],
     );
@@ -1073,7 +1092,7 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: kAdvancedSettingsDialogShape,
-      title: const Text('选择目标芯片'),
+      title: Text(AppStrings.probe.selectTargetChipTitle),
       content: SizedBox(
         width: 560,
         height: 440,
@@ -1083,10 +1102,10 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
               key: const ValueKey('rtt-target-search-field'),
               autofocus: true,
               onChanged: (value) => setState(() => _query = value),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: '输入型号、厂商或来源进行模糊搜索',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: AppStrings.probe.targetSearchHint,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
@@ -1103,14 +1122,16 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            '加载支持列表失败：${snapshot.error}',
+                            AppStrings.probe.loadTargetListFailed(
+                              '${snapshot.error}',
+                            ),
                             textAlign: TextAlign.center,
                           ),
                           const SizedBox(height: 8),
                           TextButton.icon(
                             onPressed: _reload,
                             icon: const Icon(Icons.refresh),
-                            label: const Text('重试'),
+                            label: Text(AppStrings.probe.retry),
                           ),
                         ],
                       ),
@@ -1120,13 +1141,15 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
                       .where((item) => _matchesTarget(item, _query))
                       .toList(growable: false);
                   if (matches.isEmpty) {
-                    return const Center(child: Text('没有匹配的目标芯片'));
+                    return Center(
+                      child: Text(AppStrings.probe.noMatchingTargetChip),
+                    );
                   }
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '匹配 ${matches.length} 项',
+                        AppStrings.probe.matchedTargetCount(matches.length),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 4),
@@ -1161,7 +1184,7 @@ class _RttTargetSearchDialogState extends State<_RttTargetSearchDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('关闭'),
+          child: Text(AppStrings.common.close),
         ),
       ],
     );

@@ -120,7 +120,7 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
             }.toList();
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          title: const Text('连接配置'),
+          title: Text(AppStrings.serial.connectionTitle),
           contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
           content: SizedBox(
             key: const ValueKey('serial-dialog-content'),
@@ -131,8 +131,8 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                 if (AppSettings().networkConnectionsEnabled) ...[
                   AppDialogDropdown<DataConnectionType>(
                     value: _connectionType,
-                    hint: '连接类型',
-                    labelText: '连接类型',
+                    hint: AppStrings.connection.connectionType,
+                    labelText: AppStrings.connection.connectionType,
                     items:
                         [
                               if (widget.pageId != 'modbus' ||
@@ -413,11 +413,11 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                   AppLabeledField(
                     label:
                         _connectionType == DataConnectionType.tcpServer
-                            ? '监听地址'
-                            : '远端地址',
+                            ? AppStrings.connection.listenAddress
+                            : AppStrings.connection.remoteAddress,
                     helpText:
                         _connectionType == DataConnectionType.tcpServer
-                            ? '默认监听全部本机网络接口'
+                            ? AppStrings.connection.listenAddressHelp
                             : null,
                     child: TextFormField(
                       initialValue: _networkConfig.host,
@@ -438,8 +438,8 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                         child: AppLabeledField(
                           label:
                               _connectionType == DataConnectionType.tcpServer
-                                  ? '监听端口'
-                                  : '远端端口',
+                                  ? AppStrings.connection.listenPort
+                                  : AppStrings.connection.remotePort,
                           child: TextFormField(
                             initialValue: _networkConfig.port.toString(),
                             enabled: !service.isConnectionBusy,
@@ -464,7 +464,7 @@ class _DataConnectionDialogState extends State<DataConnectionDialog> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: AppLabeledField(
-                            label: '本地端口（可选）',
+                            label: AppStrings.connection.localPortOptional,
                             child: TextFormField(
                               initialValue:
                                   _networkConfig.localPort?.toString() ?? '',

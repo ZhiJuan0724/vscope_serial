@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/modbus_models.dart';
 import '../../services/modbus_client_service.dart';
 import '../../services/modbus_value_codec.dart';
@@ -134,20 +135,20 @@ Future<ModbusRowMenuAction?> showModbusRowContextMenu({
   ),
   items: [
     if (page.area.isWritable)
-      const PopupMenuItem(
+      PopupMenuItem(
         value: ModbusRowMenuAction.quickSend,
         child: ListTile(
           dense: true,
-          leading: Icon(Icons.send_outlined, size: 18),
-          title: Text('快速发送'),
+          leading: const Icon(Icons.send_outlined, size: 18),
+          title: Text(AppStrings.modbus.quickSend),
         ),
       ),
-    const PopupMenuItem(
+    PopupMenuItem(
       value: ModbusRowMenuAction.configure,
       child: ListTile(
         dense: true,
-        leading: Icon(Icons.settings_outlined, size: 18),
-        title: Text('配置寄存器'),
+        leading: const Icon(Icons.settings_outlined, size: 18),
+        title: Text(AppStrings.modbus.configureRegister),
       ),
     ),
     PopupMenuItem(
@@ -157,17 +158,17 @@ Future<ModbusRowMenuAction?> showModbusRowContextMenu({
         leading: const Icon(Icons.numbers, size: 18),
         title: Text(
           row.displayRadix == ModbusDisplayRadix.decimal
-              ? '切换为十六进制显示'
-              : '切换为十进制显示',
+              ? AppStrings.modbus.switchToHexDisplay
+              : AppStrings.modbus.switchToDecimalDisplay,
         ),
       ),
     ),
-    const PopupMenuItem(
+    PopupMenuItem(
       value: ModbusRowMenuAction.delete,
       child: ListTile(
         dense: true,
-        leading: Icon(Icons.delete_outline, size: 18),
-        title: Text('删除寄存器'),
+        leading: const Icon(Icons.delete_outline, size: 18),
+        title: Text(AppStrings.modbus.deleteRegister),
       ),
     ),
   ],
@@ -400,10 +401,10 @@ class _ModbusRegisterCell extends StatelessWidget {
               Tooltip(
                 message:
                     row.pollEnabled && row.sendEnabled
-                        ? '开启轮询查询和定时发送'
+                        ? AppStrings.modbus.pollingAndSendingEnabled
                         : row.pollEnabled
-                        ? '开启轮询查询'
-                        : '开启定时发送',
+                        ? AppStrings.modbus.pollingEnabled
+                        : AppStrings.modbus.sendingEnabled,
                 child: Icon(
                   row.pollEnabled && row.sendEnabled
                       ? Icons.swap_vert

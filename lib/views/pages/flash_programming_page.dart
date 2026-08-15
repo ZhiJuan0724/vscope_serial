@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart' as file_picker;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/flash_programming_models.dart';
 import '../../data/models/flash_data_document.dart';
 import '../../services/app_notifications.dart';
@@ -102,8 +103,8 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                                       .withValues(alpha: 0.45),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
-                                child: const Text(
-                                  '高权限操作可能停核、复位、擦除或改写目标。请确认目标硬件已处于允许编程的安全状态。',
+                                child: Text(
+                                  AppStrings.flash.operationRiskWarning,
                                 ),
                               ),
                               CheckboxListTile(
@@ -112,7 +113,9 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                                 contentPadding: EdgeInsets.zero,
                                 controlAffinity:
                                     ListTileControlAffinity.leading,
-                                title: const Text('以后不再显示此高权限提示'),
+                                title: Text(
+                                  AppStrings.flash.dismissRiskWarning,
+                                ),
                                 onChanged:
                                     (value) => setDialogState(
                                       () => dismissRiskWarning = value ?? false,
@@ -125,11 +128,11 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                       actions: [
                         TextButton(
                           onPressed: () => Navigator.pop(dialogContext, false),
-                          child: const Text('取消'),
+                          child: Text(AppStrings.common.cancel),
                         ),
                         DialogPrimaryActionButton(
                           onPressed: () => Navigator.pop(dialogContext, true),
-                          label: '确认',
+                          label: AppStrings.flash.confirm,
                         ),
                       ],
                     ),
@@ -145,7 +148,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
 
   Future<void> _pickProgramFile() async {
     final result = await file_picker.FilePicker.pickFiles(
-      dialogTitle: '选择烧写文件',
+      dialogTitle: AppStrings.flash.chooseProgramFile,
       type: file_picker.FileType.custom,
       allowedExtensions: const ['elf', 'hex', 'bin'],
     );
@@ -180,23 +183,23 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
       builder:
           (dialogContext) => AlertDialog(
             shape: kAdvancedSettingsDialogShape,
-            title: const Text('设置BIN基地址'),
+            title: Text(AppStrings.flash.setBinBaseAddress),
             content: SizedBox(
               width: 360,
               child: AppDialogTextField(
                 controller: controller,
                 autofocus: true,
-                labelText: '基地址（32位）',
+                labelText: AppStrings.flash.binBaseAddressLabel,
               ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               DialogPrimaryActionButton(
                 onPressed: () => Navigator.pop(dialogContext, true),
-                label: '打开',
+                label: AppStrings.flash.open,
               ),
             ],
           ),
@@ -242,11 +245,13 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     }
     final service = context.read<FlashProgrammingService>();
     if (!await _confirm(
-      '确认烧写Flash',
-      '芯片：${service.config?.target}\n后端：${service.activeBackendName}\n'
-          'HEX文档：${document.name}\n'
-          '${request.erase ? '将先擦除相关Flash。' : '不执行预擦除。'}\n'
-          '此操作可能导致现有固件和数据不可恢复。',
+      AppStrings.flash.confirmProgramTitle,
+      AppStrings.flash.programConfirmMessage(
+        chip: service.config?.target,
+        backend: service.activeBackendName,
+        documentName: document.name,
+        erase: request.erase,
+      ),
       includeOperationRiskWarning: true,
     )) {
       return;
@@ -284,13 +289,16 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     final service = context.read<FlashProgrammingService>();
     final range =
         wholeChip
-            ? '全片'
+            ? AppStrings.flash.wholeChip
             : '0x${address!.toRadixString(16)} ～ '
                 '0x${(address + length!).toRadixString(16)}';
     if (!await _confirm(
-      '确认不可恢复的擦除操作',
-      '芯片：${service.config?.target}\n后端：${service.activeBackendName}\n'
-          '范围：$range\n\n擦除内容无法恢复，成功后目标将保持停止。',
+      AppStrings.flash.confirmEraseTitle,
+      AppStrings.flash.eraseConfirmMessage(
+        chip: service.config?.target,
+        backend: service.activeBackendName,
+        range: range,
+      ),
       includeOperationRiskWarning: true,
     )) {
       return;
@@ -321,11 +329,13 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     }
     final service = context.read<FlashProgrammingService>();
     if (!await _confirm(
-      '确认读取Flash',
-      '芯片：${service.config?.target}\n后端：${service.activeBackendName}\n'
-          '地址：0x${address.toRadixString(16)}\n'
-          '长度：0x${length.toRadixString(16)}\n\n'
-          '读取过程中后端可能短暂停止目标，完成后将尝试恢复原运行状态。',
+      AppStrings.flash.confirmReadTitle,
+      AppStrings.flash.readConfirmMessage(
+        chip: service.config?.target,
+        backend: service.activeBackendName,
+        address: '0x${address.toRadixString(16)}',
+        length: '0x${length.toRadixString(16)}',
+      ),
       includeOperationRiskWarning: true,
     )) {
       return;
@@ -388,7 +398,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
     final document = _documentById(_selectedDocumentId);
     if (document == null) return;
     var path = await file_picker.FilePicker.saveFile(
-      dialogTitle: '保存Flash数据',
+      dialogTitle: AppStrings.flash.saveFlashData,
       fileName: '${document.name}.bin',
       type: file_picker.FileType.custom,
       allowedExtensions: const ['bin', 'hex'],
@@ -420,7 +430,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
           (dialogContext) => StatefulBuilder(
             builder:
                 (context, setDialogState) => AppSettingsDialog(
-                  title: const Text('HEX显示设置'),
+                  title: Text(AppStrings.flash.hexDisplaySettings),
                   size: AppDialogSize.medium,
                   hasUnsavedChanges:
                       () =>
@@ -439,8 +449,8 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                         bytes < groupBytes ||
                         bytes > 0x100 ||
                         bytes % groupBytes != 0) {
-                      throw const FormatException(
-                        '每行字节数必须为合并字节数的整数倍，范围1～0x100',
+                      throw FormatException(
+                        AppStrings.flash.bytesPerRowInvalid,
                       );
                     }
                     setState(() {
@@ -454,20 +464,26 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                     children: [
                       AppDialogTextField(
                         controller: bytesController,
-                        labelText: '每行字节数',
-                        helperText: '支持十进制或0x开头的十六进制，默认0x10',
+                        labelText: AppStrings.flash.bytesPerRow,
+                        helperText: AppStrings.flash.bytesPerRowHelper,
                       ),
                       const SizedBox(height: 14),
                       AppDialogDropdown<int>(
                         value: groupBits,
-                        hint: '选择合并位宽',
-                        labelText: '合并显示',
-                        items: const [
-                          DropdownMenuItem(value: 8, child: Text('8位：FF')),
-                          DropdownMenuItem(value: 16, child: Text('16位：FFFF')),
+                        hint: AppStrings.flash.groupBitsHint,
+                        labelText: AppStrings.flash.groupDisplay,
+                        items: [
+                          DropdownMenuItem(
+                            value: 8,
+                            child: Text(AppStrings.flash.group8),
+                          ),
+                          DropdownMenuItem(
+                            value: 16,
+                            child: Text(AppStrings.flash.group16),
+                          ),
                           DropdownMenuItem(
                             value: 32,
-                            child: Text('32位：FFFFFFFF'),
+                            child: Text(AppStrings.flash.group32),
                           ),
                         ],
                         onChanged:
@@ -477,7 +493,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                       ),
                       AppCheckboxRow(
                         value: autoExpand,
-                        title: const Text('宽度足够时自动扩展为每行0x20字节'),
+                        title: Text(AppStrings.flash.autoExpandRows),
                         onChanged:
                             (value) => setDialogState(
                               () => autoExpand = value ?? true,
@@ -493,8 +509,8 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
 
   Future<void> _forceTerminate() async {
     if (!await _confirm(
-      '强制终止Flash后端',
-      '强制终止后目标状态将标记为未知，程序不会自动发送reset或resume补救命令。是否继续？',
+      AppStrings.flash.forceTerminate,
+      AppStrings.flash.forceTerminateMessage,
     )) {
       return;
     }
@@ -516,7 +532,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
               extent: kToolbarControlExtent,
               child: ToolbarIconButton(
                 icon: const Icon(Icons.folder_open_outlined),
-                tooltip: '打开ELF、HEX或BIN文件',
+                tooltip: AppStrings.flash.openFileTooltip,
                 onPressed: service.isBusy ? null : _pickProgramFile,
               ),
             ),
@@ -528,7 +544,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                       ? Icons.view_stream
                       : Icons.view_stream_outlined,
                 ),
-                tooltip: 'HEX显示工具',
+                tooltip: AppStrings.flash.hexViewerTooltip,
                 selected: _showHexViewer,
                 onPressed:
                     () => setState(() => _showHexViewer = !_showHexViewer),
@@ -540,7 +556,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                 icon: Icon(
                   _showToolOutput ? Icons.terminal : Icons.terminal_outlined,
                 ),
-                tooltip: '工具输出',
+                tooltip: AppStrings.flash.toolOutput,
                 selected: _showToolOutput,
                 onPressed:
                     () => setState(() => _showToolOutput = !_showToolOutput),
@@ -553,13 +569,13 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                 extent: kToolbarControlExtent,
                 child: ToolbarIconButton(
                   icon: const Icon(Icons.dangerous_outlined),
-                  tooltip: '强制终止Flash后端',
+                  tooltip: AppStrings.flash.forceTerminate,
                   onPressed: _forceTerminate,
                 ),
                 overflowActions: [
                   ToolbarOverflowAction(
                     icon: const Icon(Icons.dangerous_outlined),
-                    label: '强制终止Flash后端',
+                    label: AppStrings.flash.forceTerminate,
                     onPressed: _forceTerminate,
                   ),
                 ],
@@ -609,11 +625,11 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
   ) => ListView(
     padding: const EdgeInsets.all(14),
     children: [
-      _sectionTitle('烧写'),
+      _sectionTitle(AppStrings.flash.programSection),
       AppDialogDropdown<String>(
         value: programDocument?.id,
-        hint: '选择HEX显示中的数据',
-        labelText: '烧写数据',
+        hint: AppStrings.flash.programDataHint,
+        labelText: AppStrings.flash.programDataLabel,
         items: [
           for (var index = 0; index < _documents.length; index++)
             DropdownMenuItem(
@@ -643,17 +659,17 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
         runSpacing: 2,
         children: [
           _optionCheckbox(
-            '烧写前擦除',
+            AppStrings.flash.eraseBeforeProgram,
             _eraseBeforeProgram,
             (value) => setState(() => _eraseBeforeProgram = value),
           ),
           _optionCheckbox(
-            '烧写后校验',
+            AppStrings.flash.verifyAfterProgram,
             _verifyAfterProgram,
             (value) => setState(() => _verifyAfterProgram = value),
           ),
           _optionCheckbox(
-            '完成后复位',
+            AppStrings.flash.resetAfterProgram,
             _resetAfterProgram,
             (value) => setState(() => _resetAfterProgram = value),
           ),
@@ -668,16 +684,16 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                   ? _program
                   : null,
           icon: const Icon(Icons.memory),
-          label: const Text('擦除、烧写并校验'),
+          label: Text(AppStrings.flash.programVerify),
         ),
       ),
       const Divider(height: 28),
-      _sectionTitle('擦除'),
+      _sectionTitle(AppStrings.flash.eraseSection),
       Row(
         children: [
-          Expanded(child: _input(_eraseAddress, '起始地址')),
+          Expanded(child: _input(_eraseAddress, AppStrings.flash.startAddress)),
           const SizedBox(width: 8),
-          Expanded(child: _input(_eraseLength, '长度')),
+          Expanded(child: _input(_eraseLength, AppStrings.flash.length)),
         ],
       ),
       const SizedBox(height: 10),
@@ -687,21 +703,21 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
           OutlinedButton(
             onPressed:
                 connected && !service.isBusy ? () => _erase(false) : null,
-            child: const Text('范围擦除'),
+            child: Text(AppStrings.flash.rangeErase),
           ),
           ElevatedButton(
             onPressed: connected && !service.isBusy ? () => _erase(true) : null,
-            child: const Text('全片擦除'),
+            child: Text(AppStrings.flash.chipErase),
           ),
         ],
       ),
       const Divider(height: 28),
-      _sectionTitle('读取'),
+      _sectionTitle(AppStrings.flash.readSection),
       Row(
         children: [
-          Expanded(child: _input(_readAddress, '起始地址')),
+          Expanded(child: _input(_readAddress, AppStrings.flash.startAddress)),
           const SizedBox(width: 8),
-          Expanded(child: _input(_readLength, '长度')),
+          Expanded(child: _input(_readLength, AppStrings.flash.length)),
         ],
       ),
       const SizedBox(height: 10),
@@ -710,7 +726,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
         child: OutlinedButton.icon(
           onPressed: connected && !service.isBusy ? _read : null,
           icon: const Icon(Icons.download_outlined),
-          label: const Text('读取'),
+          label: Text(AppStrings.flash.read),
         ),
       ),
     ],
@@ -808,9 +824,9 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
         height: 38,
         child: Row(
           children: [
-            const Padding(
-              padding: EdgeInsets.only(left: 14),
-              child: Text('工具输出'),
+            Padding(
+              padding: const EdgeInsets.only(left: 14),
+              child: Text(AppStrings.flash.toolOutput),
             ),
             if (service.stage.isNotEmpty) ...[
               const SizedBox(width: 14),
@@ -836,7 +852,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
             const SizedBox(width: 6),
             ToolbarIconButton(
               icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: '清空工具输出',
+              tooltip: AppStrings.flash.clearToolOutput,
               onPressed:
                   service.outputLines.isEmpty ? null : service.clearOutput,
             ),
@@ -850,7 +866,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
           color: Theme.of(context).colorScheme.surface,
           child:
               service.outputLines.isEmpty
-                  ? const Center(child: Text('暂无工具输出'))
+                  ? Center(child: Text(AppStrings.flash.noToolOutput))
                   : ListView.builder(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,

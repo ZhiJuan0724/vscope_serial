@@ -1101,7 +1101,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       ),
       PlotToolConfig(
         icon: const Icon(Icons.crop_free),
-        tooltip: '${AppStrings.plot.boxZoom}（左键单次，右键连续）',
+        tooltip: AppStrings.plot.boxZoomTooltip,
         overflowLabel: AppStrings.plot.boxZoom,
         selected: vm.boxZoomEnabled,
         activeColor: vm.boxZoomContinuous ? Colors.orange : Colors.blue,
@@ -1252,7 +1252,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final confirmed = await showConfirmDialog(
       context,
       title: AppStrings.plot.clearData,
-      message: '确定清空当前绘图数据和历史吗？此操作不可撤销。',
+      message: AppStrings.plot.clearDataConfirmMessage,
     );
     if (confirmed) vm.clearData();
   }
@@ -2238,7 +2238,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       color: entry.color,
                     ),
                   ),
-              emptyText: '无显示通道',
+              emptyText: AppStrings.plot.noDisplayChannel,
               emptyTextStyle: TextStyle(
                 color: _floatingSubtleTextColor(vm),
                 fontSize: _plotFontSize(vm, 12),
@@ -2639,26 +2639,33 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 final start = int.tryParse(startController.text.trim());
                 final end = int.tryParse(endController.text.trim());
                 if (start == null || end == null) {
-                  setDialogState(() => errorText = '请输入整数起始点和结束点');
+                  setDialogState(
+                    () => errorText = AppStrings.plot.exportInvalidRange,
+                  );
                   return;
                 }
                 if (start < 0 || end > maxIndex || start > end) {
                   setDialogState(
-                    () => errorText = '范围应满足 0 <= 起始点 <= 结束点 <= $maxIndex',
+                    () =>
+                        errorText = AppStrings.plot.exportRangeError(maxIndex),
                   );
                   return;
                 }
                 if (selectedChannelIndices.isEmpty) {
-                  setDialogState(() => errorText = '请至少选择 1 个通道');
+                  setDialogState(
+                    () =>
+                        errorText =
+                            AppStrings.plot.exportSelectAtLeastOneChannel,
+                  );
                   return;
                 }
                 if (selectedChannelIndices.length >
                     PlotConfiguration.totalChannelCount) {
                   setDialogState(
                     () =>
-                        errorText =
-                            '最多可同时导出 '
-                            '${PlotConfiguration.totalChannelCount} 个通道',
+                        errorText = AppStrings.plot.exportMaxChannelCount(
+                          PlotConfiguration.totalChannelCount,
+                        ),
                   );
                   return;
                 }
@@ -2676,7 +2683,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               }
 
               return AlertDialog(
-                title: const Text('导出范围与通道'),
+                title: Text(AppStrings.plot.exportRangeAndChannelsTitle),
                 content: SizedBox(
                   width: 440,
                   child: Column(
@@ -2684,7 +2691,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '可导出范围: 0-$maxIndex，导出文件内 X 将从 0 重新编号。',
+                        AppStrings.plot.exportRangeHint(maxIndex),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       const SizedBox(height: 12),
@@ -2695,7 +2702,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               controller: startController,
                               autofocus: true,
                               keyboardType: TextInputType.number,
-                              labelText: '起始点',
+                              labelText: AppStrings.plot.exportStartPoint,
                               onChanged: (_) {
                                 if (errorText != null) {
                                   setDialogState(() => errorText = null);
@@ -2709,7 +2716,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             child: AppDialogTextField(
                               controller: endController,
                               keyboardType: TextInputType.number,
-                              labelText: '结束点',
+                              labelText: AppStrings.plot.exportEndPoint,
                               onChanged: (_) {
                                 if (errorText != null) {
                                   setDialogState(() => errorText = null);
@@ -2733,15 +2740,19 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       const SizedBox(height: 14),
                       Row(
                         children: [
-                          const Expanded(
+                          Expanded(
                             child: Text(
-                              '导出通道',
-                              style: TextStyle(fontWeight: FontWeight.w600),
+                              AppStrings.plot.exportChannels,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                           Text(
-                            '已选 ${selectedChannelIndices.length}/'
-                            '${PlotConfiguration.totalChannelCount}',
+                            AppStrings.plot.exportSelectedCount(
+                              selectedChannelIndices.length,
+                              PlotConfiguration.totalChannelCount,
+                            ),
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(width: 8),
@@ -2752,7 +2763,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 errorText = null;
                               });
                             },
-                            child: const Text('清空'),
+                            child: Text(AppStrings.raw.clear),
                           ),
                         ],
                       ),
@@ -2814,7 +2825,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '数学通道导出表达式计算后的实际值。',
+                        AppStrings.plot.exportMathChannelNote,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -2823,13 +2834,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 actions: [
                   TextButton(
                     onPressed: useCurrentViewport,
-                    child: const Text('使用当前视口'),
+                    child: Text(AppStrings.plot.exportUseCurrentViewport),
                   ),
                   TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('取消'),
+                    child: Text(AppStrings.common.cancel),
                   ),
-                  TextButton(onPressed: submit, child: const Text('继续')),
+                  TextButton(
+                    onPressed: submit,
+                    child: Text(AppStrings.plot.exportContinue),
+                  ),
                 ],
               );
             },
@@ -2887,7 +2901,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     if (!context.mounted) return;
     vm.showStatusMessage(
       cancelToken.isCancelled
-          ? '导出已取消'
+          ? AppStrings.plot.exportCancelled
           : path == null
           ? AppStrings.plot.exportFailed
           : '${AppStrings.plot.exportedPrefix}: $path',
@@ -3032,7 +3046,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         children: [
                           Row(
                             children: [
-                              const Expanded(child: Text('启用触发')),
+                              Expanded(
+                                child: Text(AppStrings.plot.enableTrigger),
+                              ),
                               Switch(
                                 value: enabled,
                                 onChanged:
@@ -3048,11 +3064,11 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                           const Divider(height: 1),
                           const SizedBox(height: 14),
                           if (triggerChannels.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 8),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
                               child: Text(
-                                '当前没有可用的普通或数学通道，无法选择触发通道。',
-                                style: TextStyle(color: Colors.redAccent),
+                                AppStrings.plot.noTriggerChannelAvailable,
+                                style: const TextStyle(color: Colors.redAccent),
                               ),
                             ),
                           Row(
@@ -3063,8 +3079,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                       triggerChannels.isEmpty
                                           ? null
                                           : channelIndex,
-                                  hint: '通道',
-                                  labelText: '通道',
+                                  hint: AppStrings.plot.channel,
+                                  labelText: AppStrings.plot.channel,
                                   items: [
                                     for (final channel in triggerChannels)
                                       DropdownMenuItem(
@@ -3086,8 +3102,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               Expanded(
                                 child: AppDialogDropdown<PlotTriggerComparison>(
                                   value: comparison,
-                                  hint: '条件',
-                                  labelText: '条件',
+                                  hint: AppStrings.plot.triggerCondition,
+                                  labelText: AppStrings.plot.triggerCondition,
                                   items: [
                                     for (final item
                                         in PlotTriggerComparison.values)
@@ -3119,14 +3135,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                         decimal: true,
                                         signed: true,
                                       ),
-                                  labelText: '目标值',
+                                  labelText: AppStrings.plot.triggerTargetValue,
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '数学通道按表达式原始值触发；包含 CHn[...] 数据偏移的数学通道暂不支持。',
+                            AppStrings.plot.triggerMathChannelNote,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
@@ -3136,7 +3152,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 child: AppDialogTextField(
                                   controller: hitThresholdController,
                                   keyboardType: TextInputType.number,
-                                  labelText: '累计命中次数',
+                                  labelText:
+                                      AppStrings.plot.triggerHitThreshold,
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -3144,21 +3161,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                 child: AppDialogTextField(
                                   controller: triggerLimitController,
                                   keyboardType: TextInputType.number,
-                                  labelText: '触发次数',
+                                  labelText: AppStrings.plot.triggerLimit,
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '累计命中次数表示命中 N 次算一次触发；触发次数表示 N 次触发后执行触发行为。',
+                            AppStrings.plot.triggerCountHelp,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
                           AppDialogDropdown<PlotTriggerAction>(
                             value: action,
-                            hint: '触发行为',
-                            labelText: '触发行为',
+                            hint: AppStrings.plot.triggerAction,
+                            labelText: AppStrings.plot.triggerAction,
                             items: [
                               for (final item in PlotTriggerAction.values)
                                 DropdownMenuItem(
@@ -3178,14 +3195,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                             AppDialogTextField(
                               controller: postPacketsController,
                               keyboardType: TextInputType.number,
-                              labelText: '继续接收包数',
+                              labelText: AppStrings.plot.triggerPostPackets,
                             ),
                           ],
                           const SizedBox(height: 12),
                           AppDialogDropdown<PlotTriggerObservationMode>(
                             value: observationMode,
-                            hint: '观察标记',
-                            labelText: '观察标记',
+                            hint: AppStrings.plot.triggerObservationMark,
+                            labelText: AppStrings.plot.triggerObservationMark,
                             items: [
                               for (final item
                                   in PlotTriggerObservationMode.values)
@@ -3206,7 +3223,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                               PlotTriggerObservationMode.none)
                             CheckboxListTile(
                               contentPadding: EdgeInsets.zero,
-                              title: const Text('备注记录触发系统时间'),
+                              title: Text(
+                                AppStrings.plot.triggerNoteSystemTime,
+                              ),
                               value: includeSystemTime,
                               onChanged:
                                   (value) => setDialogState(
@@ -3224,7 +3243,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: const Text('取消'),
+                      child: Text(AppStrings.common.cancel),
                     ),
                     TextButton(
                       onPressed: () {
@@ -3258,7 +3277,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                         );
                         Navigator.of(dialogContext).pop();
                       },
-                      child: const Text('确定'),
+                      child: Text(AppStrings.common.confirm),
                     ),
                   ],
                 ),
@@ -3286,7 +3305,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     height: 420,
                     child:
                         vm.observations.isEmpty
-                            ? const Center(child: Text('暂无观察'))
+                            ? Center(child: Text(AppStrings.plot.noObservation))
                             : Column(
                               children: [
                                 Container(
@@ -3301,16 +3320,30 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                         ).colorScheme.surfaceContainerHighest,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: const Row(
+                                  child: Row(
                                     children: [
-                                      SizedBox(width: 64, child: Text('观察')),
-                                      SizedBox(width: 84, child: Text('X')),
-                                      Expanded(child: Text('备注')),
+                                      SizedBox(
+                                        width: 64,
+                                        child: Text(
+                                          AppStrings.plot.observation,
+                                        ),
+                                      ),
+                                      const SizedBox(
+                                        width: 84,
+                                        child: Text('X'),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          AppStrings.plot.observationNote,
+                                        ),
+                                      ),
                                       SizedBox(
                                         width: 128,
                                         child: Align(
                                           alignment: Alignment.center,
-                                          child: Text('操作'),
+                                          child: Text(
+                                            AppStrings.plot.observationAction,
+                                          ),
                                         ),
                                       ),
                                     ],
@@ -3392,8 +3425,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                                   IconButton(
                                                     tooltip:
                                                         observation.locked
-                                                            ? '解除锁定'
-                                                            : '锁定',
+                                                            ? AppStrings
+                                                                .plot
+                                                                .observationUnlock
+                                                            : AppStrings
+                                                                .plot
+                                                                .observationLock,
                                                     onPressed: () {
                                                       vm.setObservationLocked(
                                                         index,
@@ -3408,7 +3445,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                                     ),
                                                   ),
                                                   IconButton(
-                                                    tooltip: '跳转',
+                                                    tooltip:
+                                                        AppStrings.plot.jump,
                                                     onPressed: () {
                                                       vm.jumpToObservation(
                                                         index,
@@ -3422,7 +3460,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                                                     ),
                                                   ),
                                                   IconButton(
-                                                    tooltip: '删除',
+                                                    tooltip:
+                                                        AppStrings
+                                                            .common
+                                                            .delete,
                                                     onPressed: () {
                                                       vm.removeObservation(
                                                         index,
@@ -3454,7 +3495,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.of(dialogContext).pop(),
-                      child: const Text('关闭'),
+                      child: Text(AppStrings.common.close),
                     ),
                   ],
                 ),
@@ -3483,11 +3524,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 final text = controller.text.trim();
                 final x = int.tryParse(text);
                 if (x == null) {
-                  setDialogState(() => errorText = '请输入整数 X');
+                  setDialogState(
+                    () => errorText = AppStrings.plot.jumpXInvalid,
+                  );
                   return;
                 }
                 if (!vm.canJumpToXIndex(x)) {
-                  setDialogState(() => errorText = 'X 范围应为 0-$maxX');
+                  setDialogState(
+                    () => errorText = AppStrings.plot.jumpXRangeError(maxX),
+                  );
                   return;
                 }
                 vm.jumpToXIndex(x);
@@ -3495,7 +3540,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               }
 
               return AlertDialog(
-                title: const Text('跳转到 X'),
+                title: Text(AppStrings.plot.jumpToXTitle),
                 content: SizedBox(
                   width: 260,
                   child: AppDialogTextField(
@@ -3503,7 +3548,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     autofocus: true,
                     keyboardType: TextInputType.number,
                     labelText: 'X',
-                    helperText: '范围: 0-$maxX',
+                    helperText: AppStrings.plot.jumpXHelper(maxX),
                     errorText: errorText,
                     onChanged: (_) {
                       if (errorText != null) {
@@ -3516,9 +3561,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('取消'),
+                    child: Text(AppStrings.common.cancel),
                   ),
-                  TextButton(onPressed: submit, child: const Text('跳转')),
+                  TextButton(
+                    onPressed: submit,
+                    child: Text(AppStrings.plot.jump),
+                  ),
                 ],
               );
             },
@@ -4206,7 +4254,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                       discard == null ||
                       discard < 0 ||
                       discard > PlotViewModel.maxDiscardInitialPacketCount) {
-                    throw const FormatException('请检查绘图设置中的数值范围');
+                    throw FormatException(
+                      AppStrings.plot.plotSettingsRangeError,
+                    );
                   }
                   draft
                     ..refreshFps = fps

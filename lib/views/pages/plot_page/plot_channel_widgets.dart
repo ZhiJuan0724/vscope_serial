@@ -707,7 +707,7 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
                     label: AppStrings.plot.lineWidth,
                     controller: _lineWidthController,
                     errorText: _lineWidthError,
-                    hintText: '0.5 ~ 8',
+                    hintText: AppStrings.plot.lineWidthRangeHint,
                   ),
                 const SizedBox(height: 8),
                 _buildChannelNumberField(
@@ -715,7 +715,7 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
                   label: AppStrings.plot.pointRadius,
                   controller: _pointSizeController,
                   errorText: _pointSizeError,
-                  hintText: '0.5 ~ 12',
+                  hintText: AppStrings.plot.pointRadiusRangeHint,
                 ),
                 const SizedBox(height: 8),
                 _buildOffsetEditor(
@@ -871,10 +871,12 @@ class _MathChannelEditDialogState extends State<_MathChannelEditDialog> {
         !scaleValid) {
       setState(() {
         _errorText = error;
-        _lineWidthError = lineWidthValid ? null : '范围 0.5 ~ 8';
-        _pointSizeError = pointSizeValid ? null : '范围 0.5 ~ 12';
-        _offsetError = offsetValid ? null : '请输入有效数值';
-        _scaleError = scaleValid ? null : '范围 0.001 ~ 1000';
+        _lineWidthError =
+            lineWidthValid ? null : AppStrings.plot.lineWidthRangeError;
+        _pointSizeError =
+            pointSizeValid ? null : AppStrings.plot.pointRadiusRangeError;
+        _offsetError = offsetValid ? null : AppStrings.plot.offsetInvalidValue;
+        _scaleError = scaleValid ? null : AppStrings.plot.scaleRangeError;
       });
       return;
     }
@@ -980,7 +982,7 @@ Widget _buildOffsetEditor({
           label: AppStrings.plot.scale,
           controller: scaleController,
           errorText: scaleError,
-          hintText: '0.001 ~ 1000',
+          hintText: AppStrings.plot.scaleRangeHint,
         ),
       ],
     ],
@@ -1176,7 +1178,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                     label: AppStrings.plot.lineWidth,
                     controller: _lineWidthController,
                     errorText: _lineWidthError,
-                    hintText: '0.5 ~ 8',
+                    hintText: AppStrings.plot.lineWidthRangeHint,
                   ),
                 ],
                 const SizedBox(height: 8),
@@ -1185,7 +1187,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
                   label: AppStrings.plot.pointRadius,
                   controller: _pointSizeController,
                   errorText: _pointSizeError,
-                  hintText: '0.5 ~ 12',
+                  hintText: AppStrings.plot.pointRadiusRangeHint,
                 ),
                 const SizedBox(height: 8),
                 _buildOffsetEditor(
@@ -1375,10 +1377,12 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
             yScale <= 1000);
     if (!lineWidthValid || !pointSizeValid || !offsetValid || !scaleValid) {
       setState(() {
-        _lineWidthError = lineWidthValid ? null : '范围 0.5 ~ 8';
-        _pointSizeError = pointSizeValid ? null : '范围 0.5 ~ 12';
-        _offsetError = offsetValid ? null : '请输入有效数值';
-        _scaleError = scaleValid ? null : '范围 0.001 ~ 1000';
+        _lineWidthError =
+            lineWidthValid ? null : AppStrings.plot.lineWidthRangeError;
+        _pointSizeError =
+            pointSizeValid ? null : AppStrings.plot.pointRadiusRangeError;
+        _offsetError = offsetValid ? null : AppStrings.plot.offsetInvalidValue;
+        _scaleError = scaleValid ? null : AppStrings.plot.scaleRangeError;
       });
       return;
     }
@@ -1422,7 +1426,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
         widget.vm.zobowRawFrameCount >= _progressDialogFrameThreshold;
     final progressNotifier = ValueNotifier<PlotImportProgress>(
       PlotImportProgress(
-        stage: '准备重新解释众邦数据',
+        stage: AppStrings.plot.reinterpretZobowDataStage,
         current: 0,
         total: widget.vm.zobowRawFrameCount,
       ),
@@ -1436,7 +1440,7 @@ class _ChannelEditDialogState extends State<_ChannelEditDialog> {
           barrierDismissible: false,
           builder:
               (dialogContext) => _PlotFileProgressDialog(
-                title: '更新通道数据类型',
+                title: AppStrings.plot.updateChannelDataTypeTitle,
                 progressListenable: progressNotifier,
               ),
         ).whenComplete(() => dialogClosed = true),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/constants/rtt_configuration.dart';
+import '../../core/localization/app_strings.dart';
 import '../../data/models/probe_connection_config.dart';
 import '../../services/app_settings.dart';
 import '../../services/probe_connection_service.dart';
@@ -78,7 +79,7 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
     final pollingInterval = int.tryParse(_pollingInterval.text);
     if (_mode == RttControlBlockMode.address &&
         (address == null || address < 0)) {
-      setState(() => _error = '请输入有效的 RTT 控制块地址');
+      setState(() => _error = AppStrings.probe.invalidControlBlockAddress);
       return;
     }
     if (pollingInterval == null ||
@@ -86,16 +87,16 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
         pollingInterval > RttConfiguration.maxPollingIntervalMs) {
       setState(
         () =>
-            _error =
-                'RTT 轮询间隔必须为 '
-                '${RttConfiguration.minPollingIntervalMs}～'
-                '${RttConfiguration.maxPollingIntervalMs} ms',
+            _error = AppStrings.probe.pollingIntervalRange(
+              min: RttConfiguration.minPollingIntervalMs,
+              max: RttConfiguration.maxPollingIntervalMs,
+            ),
       );
       return;
     }
     if (_mode == RttControlBlockMode.range &&
         (start == null || start < 0 || end == null || end <= start)) {
-      setState(() => _error = '搜索结束地址必须大于起始地址');
+      setState(() => _error = AppStrings.probe.rangeEndMustExceedStart);
       return;
     }
     final settings =
@@ -120,11 +121,11 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             AppLabeledField(
-              label: 'RTT 控制块定位',
+              label: AppStrings.probe.controlBlockPositioning,
               child: NoAnimDropdown<RttControlBlockMode>(
                 key: const ValueKey('rtt-activity-control-block-mode'),
                 value: _mode,
-                hint: '控制块定位',
+                hint: AppStrings.probe.controlBlockPositioningHint,
                 decoration: secondaryDialogFieldDecoration(),
                 items:
                     RttControlBlockMode.values
@@ -155,12 +156,12 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
             if (_mode == RttControlBlockMode.address) ...[
               const SizedBox(height: 12),
               AppLabeledField(
-                label: 'RTT 控制块地址',
+                label: AppStrings.probe.controlBlockAddressLabel,
                 child: TextField(
                   key: const ValueKey('rtt-activity-control-block-address'),
                   controller: _address,
                   decoration: secondaryDialogFieldDecoration(
-                    hintText: '例如 0x20000410',
+                    hintText: AppStrings.probe.controlBlockAddressHint,
                   ),
                 ),
               ),
@@ -171,7 +172,7 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
                 children: [
                   Expanded(
                     child: AppLabeledField(
-                      label: '搜索起始地址',
+                      label: AppStrings.probe.rangeStartLabel,
                       child: TextField(
                         key: const ValueKey('rtt-activity-range-start'),
                         controller: _rangeStart,
@@ -182,7 +183,7 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: AppLabeledField(
-                      label: '搜索结束地址',
+                      label: AppStrings.probe.rangeEndLabel,
                       child: TextField(
                         key: const ValueKey('rtt-activity-range-end'),
                         controller: _rangeEnd,
@@ -195,7 +196,7 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
             ],
             const SizedBox(height: 12),
             AppLabeledField(
-              label: 'RTT 轮询间隔',
+              label: AppStrings.probe.pollingIntervalLabel,
               child: TextField(
                 key: const ValueKey('rtt-activity-polling-interval'),
                 controller: _pollingInterval,
@@ -206,7 +207,7 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
             ),
             const SizedBox(height: 6),
             Text(
-              '仅 OpenOCD 后端使用；J-Link 不传递此参数。',
+              AppStrings.probe.controlBlockPollingIntervalHelp,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -224,9 +225,9 @@ class _RttControlBlockDialogState extends State<_RttControlBlockDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(AppStrings.common.cancel),
         ),
-        FilledButton(onPressed: _save, child: const Text('确定')),
+        FilledButton(onPressed: _save, child: Text(AppStrings.common.confirm)),
       ],
     );
   }

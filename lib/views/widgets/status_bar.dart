@@ -31,7 +31,7 @@ String connectionStatusLabel({
           : dataConnectionName ?? AppStrings.serial.port;
   final connectionState =
       reconnecting
-          ? '重连中...'
+          ? AppStrings.status.reconnecting
           : connected
           ? AppStrings.status.connected
           : connecting
@@ -164,14 +164,14 @@ class StatusBar extends StatelessWidget {
                         probeConnectionService?.isReconnecting ?? false,
                     dataConnectionName:
                         isFlashPage
-                            ? 'Flash编程会话'
+                            ? AppStrings.status.flashProgrammingSession
                             : isSshPage
-                            ? 'SSH'
+                            ? AppStrings.shell.ssh
                             : !isRttPage &&
                                 !connected &&
                                 !connecting &&
                                 AppSettings().networkConnectionsEnabled
-                            ? '串口/网络'
+                            ? AppStrings.status.serialNetwork
                             : service.activeConnectionType.label,
                   ),
                   style: const TextStyle(fontSize: 12),

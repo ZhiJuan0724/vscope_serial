@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/ssh_connection_config.dart';
 import '../../services/app_settings.dart';
 import '../../services/ssh_connection_service.dart';
@@ -59,7 +60,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       try {
         _password.text = widget.passwordStore.read(config) ?? '';
       } catch (error) {
-        _error = '无法读取已保存的 SSH 密码：$error';
+        _error = AppStrings.connection.sshReadPasswordFailed('$error');
       }
     }
     for (final controller in [_host, _port, _username, _privateKey]) {
@@ -140,7 +141,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     final config = _buildConfig();
     if (config == null) {
       if (showError && mounted) {
-        setState(() => _error = '请填写有效的主机、端口、用户名和认证参数');
+        setState(() => _error = AppStrings.connection.sshInvalidConfig);
       }
       return null;
     }
@@ -148,7 +149,11 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       await _queueConfigSave(config);
       return config;
     } catch (error) {
-      if (mounted) setState(() => _error = '保存 SSH 配置失败：$error');
+      if (mounted) {
+        setState(
+          () => _error = AppStrings.connection.sshSaveConfigFailed('$error'),
+        );
+      }
       return null;
     }
   }
@@ -157,7 +162,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
     final config = await _flushConfigSave();
     if (config == null) return;
     if (config.savePassword && _password.text.isEmpty) {
-      setState(() => _error = '密码为空，无法保存密码');
+      setState(() => _error = AppStrings.connection.sshEmptyPassword);
       return;
     }
     if (!mounted) return;
@@ -204,7 +209,11 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       await service.disconnect();
       if (mounted) Navigator.pop(context);
     } catch (error) {
-      if (mounted) setState(() => _error = 'SSH 断开失败：$error');
+      if (mounted) {
+        setState(
+          () => _error = AppStrings.connection.sshDisconnectFailed('$error'),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -226,16 +235,22 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
         barrierDismissible: false,
         builder:
             (context) => AlertDialog(
-              title: Text(verification.changed ? 'SSH 主机密钥已变化' : '确认 SSH 主机密钥'),
+              title: Text(
+                verification.changed
+                    ? AppStrings.connection.sshHostKeyChangedTitle
+                    : AppStrings.connection.sshHostKeyConfirmTitle,
+              ),
               content: SelectableText(
-                '${verification.changed ? '已保存的主机密钥与本次连接不一致。确认服务器身份后才能替换。' : '首次连接该主机，请核对服务器显示的指纹。'}\n\n'
-                '算法：${verification.algorithm}\n'
-                '指纹：${verification.fingerprint}',
+                AppStrings.connection.sshHostKeyMessage(
+                  changed: verification.changed,
+                  algorithm: verification.algorithm,
+                  fingerprint: verification.fingerprint,
+                ),
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消'),
+                  child: Text(AppStrings.common.cancel),
                 ),
                 FilledButton(
                   style:
@@ -245,12 +260,18 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                           )
                           : null,
                   onPressed: () => Navigator.pop(context, true),
-                  child: Text(verification.changed ? '替换并连接' : '信任并连接'),
+                  child: Text(
+                    verification.changed
+                        ? AppStrings.connection.sshReplaceAndConnect
+                        : AppStrings.connection.sshTrustAndConnect,
+                  ),
                 ),
               ],
             ),
       );
-      if (accepted != true) throw StateError('用户取消了 SSH 主机密钥确认');
+      if (accepted != true) {
+        throw StateError(AppStrings.connection.sshHostKeyConfirmationCancelled);
+      }
       settings.sshKnownHosts = {
         ...settings.sshKnownHosts,
         config.endpointKey: SshKnownHost(
@@ -277,7 +298,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
         service.isDisconnecting;
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      title: const Text('SSH 连接配置'),
+      title: Text(AppStrings.connection.sshConnectionConfigTitle),
       content: SizedBox(
         width: 460,
         child: SingleChildScrollView(
@@ -286,21 +307,35 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
             children: [
               Row(
                 children: [
-                  Expanded(child: _field(_host, '主机', enabled: !locked)),
+                  Expanded(
+                    child: _field(
+                      _host,
+                      AppStrings.connection.sshHost,
+                      enabled: !locked,
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 110,
-                    child: _field(_port, '端口', enabled: !locked),
+                    child: _field(
+                      _port,
+                      AppStrings.connection.sshPort,
+                      enabled: !locked,
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              _field(_username, '用户名', enabled: !locked),
+              _field(
+                _username,
+                AppStrings.connection.sshUsername,
+                enabled: !locked,
+              ),
               const SizedBox(height: 12),
               AppDialogDropdown<SshAuthenticationMode>(
                 value: _authenticationMode,
-                hint: '认证方式',
-                labelText: '认证方式',
+                hint: AppStrings.connection.sshAuthenticationMode,
+                labelText: AppStrings.connection.sshAuthenticationMode,
                 items:
                     SshAuthenticationMode.values
                         .map(
@@ -326,7 +361,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                   controller: _password,
                   enabled: !locked,
                   obscureText: _obscurePassword,
-                  labelText: '密码',
+                  labelText: AppStrings.connection.sshPassword,
                   suffixIcon: IconButton(
                     splashRadius: 14,
                     padding: EdgeInsets.zero,
@@ -367,7 +402,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                                 },
                       ),
                       const SizedBox(width: 4),
-                      const Text('保存密码（使用 Windows 凭据管理器）'),
+                      Text(AppStrings.connection.sshSavePassword),
                     ],
                   ),
                 ),
@@ -375,15 +410,18 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                 AppDialogTextField(
                   controller: _privateKey,
                   enabled: !locked,
-                  labelText: 'PEM 私钥文件',
+                  labelText: AppStrings.connection.sshPrivateKeyFile,
                   suffixIcon: IconButton(
-                    tooltip: '选择私钥文件',
+                    tooltip: AppStrings.connection.sshChoosePrivateKey,
                     onPressed:
                         locked
                             ? null
                             : () async {
                               final result = await FilePicker.pickFiles(
-                                dialogTitle: '选择 SSH 私钥文件',
+                                dialogTitle:
+                                    AppStrings
+                                        .connection
+                                        .sshChoosePrivateKeyDialogTitle,
                                 type: FileType.any,
                                 lockParentWindow: true,
                               );
@@ -400,7 +438,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                   controller: _passphrase,
                   enabled: !locked,
                   obscureText: true,
-                  labelText: '私钥口令（可选，不会保存）',
+                  labelText: AppStrings.connection.sshPrivateKeyPassphrase,
                 ),
               ],
               if (_error != null) ...[
@@ -422,7 +460,7 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
       actions: [
         TextButton(
           onPressed: _busy ? null : () => unawaited(_close()),
-          child: const Text('关闭'),
+          child: Text(AppStrings.common.close),
         ),
         if (service.isConnected || service.isDisconnecting)
           ElevatedButton.icon(
@@ -438,7 +476,11 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                     : const Icon(Icons.link_off),
-            label: Text(_busy ? '断开中' : '断开'),
+            label: Text(
+              _busy
+                  ? AppStrings.connection.sshDisconnecting
+                  : AppStrings.serial.disconnect,
+            ),
           )
         else
           ElevatedButton.icon(
@@ -450,7 +492,11 @@ class _SshConnectionDialogState extends State<SshConnectionDialog> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                     : const Icon(Icons.link),
-            label: Text(_busy ? '连接中' : '连接'),
+            label: Text(
+              _busy
+                  ? AppStrings.connection.sshConnecting
+                  : AppStrings.serial.connect,
+            ),
           ),
       ],
     );

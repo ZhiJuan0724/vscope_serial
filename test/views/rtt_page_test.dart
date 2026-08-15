@@ -48,10 +48,10 @@ void main() {
     expect(find.byIcon(Icons.schedule), findsOneWidget);
     expect(find.byIcon(Icons.numbers), findsOneWidget);
     expect(find.byIcon(Icons.vertical_align_bottom), findsOneWidget);
-    expect(find.text('暂停'), findsOneWidget);
-    expect(find.text('时间戳'), findsOneWidget);
-    expect(find.text('HEX显示'), findsOneWidget);
-    expect(find.text('自动滚动'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.pause), findsOneWidget);
+    expect(find.text(AppStrings.rtt.timestamp), findsOneWidget);
+    expect(find.text(AppStrings.rtt.hexDisplay), findsOneWidget);
+    expect(find.text(AppStrings.rtt.autoScroll), findsOneWidget);
     final collapseButton = find.byKey(
       const ValueKey('rtt-terminal-panel-collapse-button'),
     );
@@ -98,7 +98,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('RTT Viewer 设置'));
+    await tester.tap(find.byTooltip(AppStrings.rtt.settings));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('rtt-font-size-field')), findsOneWidget);
@@ -147,7 +147,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('RTT Viewer 接收配置'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.receiveConfigTitle), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('rtt-activity-control-block-mode')),
     );
@@ -186,23 +186,23 @@ void main() {
         child: const MaterialApp(home: Scaffold(body: RttPage())),
       ),
     );
-    await tester.tap(find.text('开始').first);
+    await tester.tap(find.text(AppStrings.rtt.start).first);
     await tester.pump();
-    expect(find.text('启动中'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.starting), findsOneWidget);
 
     backend.startGate.complete();
     await tester.pump();
     await tester.pump();
-    expect(find.text('停止'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.stop), findsOneWidget);
 
-    await tester.tap(find.text('停止').first);
+    await tester.tap(find.text(AppStrings.rtt.stop).first);
     await tester.pump();
-    expect(find.text('停止中'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.stopping), findsOneWidget);
 
     backend.stopGate.complete();
     await tester.pump();
     await tester.pump();
-    expect(find.text('开始'), findsOneWidget);
+    expect(find.text(AppStrings.rtt.start), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     viewModel.dispose();
@@ -269,13 +269,16 @@ void main() {
     await secondary.removePointer();
     await tester.pumpAndSettle();
 
-    expect(find.text('Terminal 3 标注设置'), findsOneWidget);
+    expect(
+      find.text(AppStrings.rtt.terminalAppearanceTitle(3)),
+      findsOneWidget,
+    );
     await tester.enterText(
       find.byKey(const ValueKey('rtt-terminal-label-field')),
       '电机状态',
     );
     await tester.tap(find.byKey(const ValueKey('rtt-terminal-color-option-1')));
-    await tester.tap(find.text('确定'));
+    await tester.tap(find.text(AppStrings.common.confirm));
     await tester.pumpAndSettle();
 
     final changedColor = Color(RttConfiguration.defaultTerminalColors[1]);

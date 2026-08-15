@@ -102,14 +102,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'FireWater 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        Text(
+          AppStrings.plot.fireWaterFormatLabel,
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('以 "," 分割数据'),
-        const Text('所有数据默认 double 类型'),
-        const Text('以 "\\n" 结尾'),
+        Text(AppStrings.plot.fireWaterCommaSeparated),
+        Text(AppStrings.plot.fireWaterDoubleType),
+        Text(AppStrings.plot.fireWaterNewlineEnding),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -159,13 +159,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'JustFloat 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        Text(
+          AppStrings.plot.justFloatFormatLabel,
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('小端 float32 数组'),
-        const Text('帧尾: 00 00 80 7F'),
+        Text(AppStrings.plot.justFloatLittleEndian),
+        Text(AppStrings.plot.justFloatTail),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -227,7 +227,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                     const [4, 8].map((count) {
                       return DropdownMenuItem(
                         value: count,
-                        child: Text('$count 通道'),
+                        child: Text(AppStrings.plot.channelCountOption(count)),
                       );
                     }).toList(),
                 onChanged: (value) {

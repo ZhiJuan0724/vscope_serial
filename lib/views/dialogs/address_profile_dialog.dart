@@ -98,7 +98,7 @@ class _RProtocolProfileBehavior extends _AddressProfileBehavior {
   @override
   String get defaultAddressText => '1';
   @override
-  String get addressHint => '1 或 0x1';
+  String get addressHint => AppStrings.profile.rProtocolAddressHint;
 
   @override
   String formatAddress(AddressChannelPreset preset) => preset.formatAddress();

@@ -60,7 +60,7 @@ void main() {
     await tester.pumpWidget(buildPage());
     final input = tester.widget<TextField>(find.byType(TextField).first);
     expect(input.enabled, isFalse);
-    expect(find.text('已停止'), findsOneWidget);
+    expect(find.text(AppStrings.shell.stopped), findsOneWidget);
   });
 
   testWidgets('SSH Keepalive 仅在 Shell 设置中提供', (tester) async {
@@ -68,8 +68,11 @@ void main() {
     await tester.tap(find.byTooltip(AppStrings.common.shellSettings));
     await tester.pumpAndSettle();
 
-    expect(find.text('启用 SSH Keepalive'), findsOneWidget);
-    expect(find.textContaining('每 10 秒发送一次 OpenSSH keepalive'), findsOneWidget);
+    expect(find.text(AppStrings.shell.enableSshKeepalive), findsOneWidget);
+    expect(
+      find.textContaining(AppStrings.shell.sshKeepaliveHelp),
+      findsOneWidget,
+    );
   });
 
   testWidgets('800px toolbar keeps all tools without RenderFlex overflow', (
@@ -83,11 +86,11 @@ void main() {
       find.byKey(const ValueKey('shell-start-stop-button')),
       findsOneWidget,
     );
-    expect(find.text('开始'), findsOneWidget);
+    expect(find.text(AppStrings.shell.start), findsOneWidget);
     expect(find.byTooltip('搜索终端内容'), findsNothing);
     expect(find.byTooltip('重置终端状态'), findsNothing);
-    expect(find.byTooltip('导出终端文本'), findsOneWidget);
-    expect(find.byTooltip('清屏'), findsOneWidget);
+    expect(find.byTooltip(AppStrings.shell.exportTerminalText), findsOneWidget);
+    expect(find.byTooltip(AppStrings.raw.clearScreen), findsOneWidget);
     expect(find.byTooltip(AppStrings.common.shellSettings), findsOneWidget);
     expect(find.text(AppStrings.common.shellSettings), findsNothing);
     expect(find.text('UTF-8  CR'), findsOneWidget);
@@ -105,11 +108,17 @@ void main() {
       find.byKey(const ValueKey('settings-navigation-view')),
       findsOneWidget,
     );
-    expect(find.text('输入与编码'), findsOneWidget);
-    expect(find.text('外观与光标'), findsOneWidget);
-    expect(find.text('历史记录'), findsOneWidget);
-    expect(find.text('文本编码'), findsOneWidget);
-    expect(find.text('命令行行尾'), findsOneWidget);
+    expect(
+      find.text(AppStrings.common.settingsInputAndEncoding),
+      findsOneWidget,
+    );
+    expect(
+      find.text(AppStrings.common.settingsAppearanceAndCursor),
+      findsOneWidget,
+    );
+    expect(find.text(AppStrings.common.settingsHistory), findsOneWidget);
+    expect(find.text(AppStrings.common.settingsTextEncoding), findsOneWidget);
+    expect(find.text(AppStrings.shell.commandLineEnding), findsOneWidget);
     expect(find.text('Shell 配置方案'), findsNothing);
     expect(find.text('CR'), findsWidgets);
     final lineEndingDropdown = find.byKey(
@@ -137,7 +146,7 @@ void main() {
     await tester.pump();
 
     final preview = tester.widget<Text>(
-      find.textContaining('SerialTools Shell'),
+      find.textContaining(AppStrings.shell.fontPreviewText),
     );
     expect(preview.style?.fontFamily, viewModel.fontFamily);
     expect(preview.style?.fontSize, 18);
@@ -191,7 +200,7 @@ void main() {
       expect(view.theme.cursor, Colors.transparent);
       expect(find.byKey(const ValueKey('shell-terminal-cursor')), findsNothing);
 
-      await tester.tap(find.byTooltip('逐键模式'));
+      await tester.tap(find.byTooltip(AppStrings.shell.keyMode));
       await tester.pumpAndSettle();
       view = tester.widget<TerminalView>(terminalView);
       expect(view.focusNode?.hasFocus, isTrue);
@@ -230,7 +239,7 @@ void main() {
       expect(tester.widget<Opacity>(cursorOpacity).opacity, 1);
 
       // 离开逐键模式后停止闪烁计时，避免后台保留无意义的周期任务。
-      await tester.tap(find.byTooltip('命令行模式'));
+      await tester.tap(find.byTooltip(AppStrings.shell.commandLineMode));
       await tester.pump();
       expect(find.byKey(const ValueKey('shell-terminal-cursor')), findsNothing);
     },
@@ -371,9 +380,9 @@ void main() {
     Text receivedStatus() =>
         tester.widget<Text>(find.byKey(const ValueKey('shell-received-bytes')));
 
-    expect(receivedStatus().data, '接收 64.0 KiB');
+    expect(receivedStatus().data, AppStrings.shell.receivedBytes('64.0 KiB'));
     await tester.pump();
-    expect(receivedStatus().data, '接收 70.0 KiB');
+    expect(receivedStatus().data, AppStrings.shell.receivedBytes('70.0 KiB'));
   });
 
   testWidgets('receive overload drops old blocks and reports Chinese warning', (
@@ -395,7 +404,7 @@ void main() {
       tester
           .widget<Text>(find.byKey(const ValueKey('shell-dropped-bytes')))
           .data,
-      '丢弃 5 B',
+      AppStrings.shell.droppedBytes('5 B'),
     );
   });
 }

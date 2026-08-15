@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart' as file_picker;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../data/models/multi_send_profile.dart';
 import '../../viewmodels/multi_send_viewmodel.dart';
 import 'common_widgets.dart';
@@ -42,14 +43,14 @@ class MultiSendPanel extends StatelessWidget {
                   children: [
                     const Icon(Icons.playlist_play, size: 20),
                     const SizedBox(width: 6),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        '多条发送',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                        AppStrings.multiSend.multiSend,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                     IconButton(
-                      tooltip: '收起多条发送',
+                      tooltip: AppStrings.multiSend.collapseMultiSend,
                       onPressed: onClose,
                       icon: const Icon(Icons.close),
                     ),
@@ -63,7 +64,7 @@ class MultiSendPanel extends StatelessWidget {
                     Expanded(
                       child: AppDropdown<String>(
                         value: profile?.id,
-                        hint: '选择发送配置',
+                        hint: AppStrings.multiSend.selectSendProfile,
                         decoration: const InputDecoration(
                           isDense: true,
                           border: OutlineInputBorder(),
@@ -88,7 +89,7 @@ class MultiSendPanel extends StatelessWidget {
                       width: 32,
                       height: 32,
                       child: Tooltip(
-                        message: '新建配置',
+                        message: AppStrings.multiSend.createProfile,
                         child: Material(
                           type: MaterialType.transparency,
                           child: InkResponse(
@@ -115,7 +116,7 @@ class MultiSendPanel extends StatelessWidget {
                       width: 32,
                       height: 32,
                       child: PopupMenuButton<String>(
-                        tooltip: '配置操作',
+                        tooltip: AppStrings.multiSend.profileActions,
                         enabled: !locked && profile != null,
                         padding: EdgeInsets.zero,
                         iconSize: 20,
@@ -124,23 +125,23 @@ class MultiSendPanel extends StatelessWidget {
                             (action) =>
                                 _handleProfileAction(context, vm, action),
                         itemBuilder:
-                            (_) => const [
+                            (_) => [
                               PopupMenuItem(
                                 value: 'rename',
-                                child: Text('重命名配置'),
+                                child: Text(AppStrings.multiSend.renameProfile),
                               ),
                               PopupMenuItem(
                                 value: 'import',
-                                child: Text('导入配置'),
+                                child: Text(AppStrings.multiSend.importProfile),
                               ),
                               PopupMenuItem(
                                 value: 'export',
-                                child: Text('导出配置'),
+                                child: Text(AppStrings.multiSend.exportProfile),
                               ),
-                              PopupMenuDivider(),
+                              const PopupMenuDivider(),
                               PopupMenuItem(
                                 value: 'delete',
-                                child: Text('删除配置'),
+                                child: Text(AppStrings.multiSend.deleteProfile),
                               ),
                             ],
                       ),
@@ -206,19 +207,24 @@ class MultiSendPanel extends StatelessWidget {
                               ? null
                               : () => _editEntry(context, vm),
                       icon: const Icon(Icons.add),
-                      label: const Text('添加条目'),
+                      label: Text(AppStrings.multiSend.addEntry),
                     ),
                     const SizedBox(height: 8),
                     if (locked) ...[
                       Text(
-                        '正在发送 ${vm.completedRounds > 0 ? '第${vm.completedRounds + 1}轮' : ''}',
+                        AppStrings.multiSend.sendingStatus(
+                          round:
+                              vm.completedRounds > 0
+                                  ? vm.completedRounds + 1
+                                  : null,
+                        ),
                         style: const TextStyle(fontSize: 12),
                       ),
                       const SizedBox(height: 6),
                       ElevatedButton.icon(
                         onPressed: vm.stop,
                         icon: const Icon(Icons.stop),
-                        label: const Text('停止发送'),
+                        label: Text(AppStrings.multiSend.stopSending),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.red,
                           foregroundColor: Colors.white,
@@ -231,7 +237,7 @@ class MultiSendPanel extends StatelessWidget {
                             child: OutlinedButton.icon(
                               onPressed: vm.canRun ? vm.runOnce : null,
                               icon: const Icon(Icons.skip_next),
-                              label: const Text('执行一轮'),
+                              label: Text(AppStrings.multiSend.runOnce),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -239,17 +245,20 @@ class MultiSendPanel extends StatelessWidget {
                             child: ElevatedButton.icon(
                               onPressed: vm.canRun ? vm.runLoop : null,
                               icon: const Icon(Icons.repeat),
-                              label: const Text('持续循环'),
+                              label: Text(AppStrings.multiSend.runLoop),
                             ),
                           ),
                         ],
                       ),
                       if (profile != null && vm.enabledEntries.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            '请先启用至少一个条目',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                            AppStrings.multiSend.enableAtLeastOneEntry,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
                           ),
                         ),
                     ],
@@ -282,7 +291,7 @@ class MultiSendPanel extends StatelessWidget {
         final profile = vm.selectedProfile;
         if (profile == null) return;
         final path = await file_picker.FilePicker.saveFile(
-          dialogTitle: '导出多条发送配置',
+          dialogTitle: AppStrings.multiSend.exportProfileDialogTitle,
           fileName: '${profile.name}.json',
           type: file_picker.FileType.custom,
           allowedExtensions: ['json'],
@@ -297,16 +306,20 @@ class MultiSendPanel extends StatelessWidget {
           context: context,
           builder:
               (context) => AlertDialog(
-                title: const Text('删除配置'),
-                content: Text('确定删除“${vm.selectedProfile?.name ?? ''}”吗？'),
+                title: Text(AppStrings.multiSend.deleteProfile),
+                content: Text(
+                  AppStrings.multiSend.deleteProfileMessage(
+                    vm.selectedProfile?.name ?? '',
+                  ),
+                ),
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(context, false),
-                    child: const Text('取消'),
+                    child: Text(AppStrings.common.cancel),
                   ),
                   ElevatedButton(
                     onPressed: () => Navigator.pop(context, true),
-                    child: const Text('删除'),
+                    child: Text(AppStrings.common.delete),
                   ),
                 ],
               ),
@@ -327,20 +340,24 @@ class MultiSendPanel extends StatelessWidget {
       context: context,
       builder:
           (context) => AlertDialog(
-            title: Text(rename ? '重命名配置' : '新建发送配置'),
+            title: Text(
+              rename
+                  ? AppStrings.multiSend.renameProfile
+                  : AppStrings.multiSend.createProfileDialogTitle,
+            ),
             content: AppDialogTextField(
               controller: controller,
               autofocus: true,
-              labelText: '配置名称',
+              labelText: AppStrings.multiSend.profileName,
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, controller.text),
-                child: const Text('确定'),
+                child: Text(AppStrings.common.confirm),
               ),
             ],
           ),
@@ -446,11 +463,11 @@ class _EntryRow extends StatelessWidget {
                           ),
                         ),
                         if (entry.isHex)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
                             child: Text(
-                              'HEX',
-                              style: TextStyle(
+                              AppStrings.multiSend.hexMode,
+                              style: const TextStyle(
                                 fontSize: 10,
                                 color: Colors.deepOrange,
                               ),
@@ -497,7 +514,7 @@ class _EntryRow extends StatelessWidget {
             width: 32,
             height: 32,
             child: Tooltip(
-              message: '发送此条',
+              message: AppStrings.multiSend.sendEntry,
               child: Material(
                 type: MaterialType.transparency,
                 child: InkResponse(
@@ -521,16 +538,22 @@ class _EntryRow extends StatelessWidget {
             width: 32,
             height: 32,
             child: PopupMenuButton<String>(
-              tooltip: '更多操作',
+              tooltip: AppStrings.multiSend.moreActions,
               enabled: !locked,
               padding: EdgeInsets.zero,
               iconSize: 20,
               splashRadius: 18,
               onSelected: (value) => value == 'edit' ? onEdit() : onDelete(),
               itemBuilder:
-                  (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('编辑')),
-                    PopupMenuItem(value: 'delete', child: Text('删除')),
+                  (_) => [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text(AppStrings.multiSend.edit),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text(AppStrings.common.delete),
+                    ),
                   ],
             ),
           ),
@@ -551,7 +574,9 @@ class _EntryEditor extends StatefulWidget {
 
 class _EntryEditorState extends State<_EntryEditor> {
   late final TextEditingController _name = TextEditingController(
-    text: widget.entry?.name ?? '条目${widget.nextIndex + 1}',
+    text:
+        widget.entry?.name ??
+        AppStrings.multiSend.defaultEntryName(widget.nextIndex + 1),
   );
   late final TextEditingController _content = TextEditingController(
     text: widget.entry?.content ?? '',
@@ -578,20 +603,26 @@ class _EntryEditorState extends State<_EntryEditor> {
     final content = _content.text;
     final hex = content.replaceAll(RegExp(r'\s+'), '');
     if (name.isEmpty || content.isEmpty) {
-      setState(() => _error = '名称和内容不能为空');
+      setState(() => _error = AppStrings.multiSend.nameAndContentRequired);
       return;
     }
     if (interval == null ||
         interval < MultiSendEntry.minIntervalMs ||
         interval > MultiSendEntry.maxIntervalMs) {
-      setState(() => _error = '间隔请输入 1 ~ 3600000 ms');
+      setState(
+        () =>
+            _error = AppStrings.multiSend.intervalError(
+              min: MultiSendEntry.minIntervalMs,
+              max: MultiSendEntry.maxIntervalMs,
+            ),
+      );
       return;
     }
     if (_hex &&
         (hex.isEmpty ||
             hex.length.isOdd ||
             !RegExp(r'^[0-9a-fA-F]+$').hasMatch(hex))) {
-      setState(() => _error = '请输入偶数字节的 HEX 数据');
+      setState(() => _error = AppStrings.multiSend.invalidHexData);
       return;
     }
     Navigator.pop(
@@ -632,24 +663,34 @@ class _EntryEditorState extends State<_EntryEditor> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.entry == null ? '添加发送条目' : '编辑发送条目'),
+    title: Text(
+      widget.entry == null
+          ? AppStrings.multiSend.addEntryTitle
+          : AppStrings.multiSend.editEntryTitle,
+    ),
     content: SizedBox(
       width: 430,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          AppDialogTextField(controller: _name, labelText: '名称'),
+          AppDialogTextField(
+            controller: _name,
+            labelText: AppStrings.multiSend.name,
+          ),
           if (!_hex) ...[
             const SizedBox(height: 12),
             AppDialogDropdown<String>(
               value: _textLineEnding,
-              hint: '文本行尾',
-              labelText: '文本行尾',
-              items: const [
-                DropdownMenuItem(value: '', child: Text('不追加')),
-                DropdownMenuItem(value: '\r', child: Text(r'\r')),
-                DropdownMenuItem(value: '\n', child: Text(r'\n')),
-                DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
+              hint: AppStrings.multiSend.textLineEnding,
+              labelText: AppStrings.multiSend.textLineEnding,
+              items: [
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(AppStrings.multiSend.noAppend),
+                ),
+                const DropdownMenuItem(value: '\r', child: Text(r'\r')),
+                const DropdownMenuItem(value: '\n', child: Text(r'\n')),
+                const DropdownMenuItem(value: '\r\n', child: Text(r'\r\n')),
               ],
               onChanged:
                   (value) => setState(() => _textLineEnding = value ?? ''),
@@ -658,7 +699,10 @@ class _EntryEditorState extends State<_EntryEditor> {
           const SizedBox(height: 12),
           AppSegmentedSelector<bool>(
             value: _hex,
-            items: const {false: Text('文本'), true: Text('HEX')},
+            items: {
+              false: Text(AppStrings.multiSend.textMode),
+              true: Text(AppStrings.multiSend.hexMode),
+            },
             onChanged: _setHexMode,
           ),
           const SizedBox(height: 12),
@@ -666,7 +710,10 @@ class _EntryEditorState extends State<_EntryEditor> {
             controller: _content,
             minLines: 3,
             maxLines: 7,
-            labelText: _hex ? 'HEX 内容' : '发送内容',
+            labelText:
+                _hex
+                    ? AppStrings.multiSend.hexContent
+                    : AppStrings.multiSend.sendContent,
             inputFormatters: _hex ? const [HexInputFormatter()] : null,
             onChanged: _hex ? _formatHexContent : null,
           ),
@@ -677,14 +724,14 @@ class _EntryEditorState extends State<_EntryEditor> {
                 child: AppDialogTextField(
                   controller: _interval,
                   keyboardType: TextInputType.number,
-                  labelText: '发送后间隔 (ms)',
+                  labelText: AppStrings.multiSend.sendIntervalLabel,
                 ),
               ),
               const SizedBox(width: 12),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('循环启用'),
+                  Text(AppStrings.multiSend.loopEnabled),
                   Switch(
                     value: _enabled,
                     onChanged: (value) => setState(() => _enabled = value),
@@ -704,9 +751,9 @@ class _EntryEditorState extends State<_EntryEditor> {
     actions: [
       TextButton(
         onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
+        child: Text(AppStrings.common.cancel),
       ),
-      ElevatedButton(onPressed: _submit, child: const Text('保存')),
+      ElevatedButton(onPressed: _submit, child: Text(AppStrings.common.save)),
     ],
   );
 }
@@ -721,12 +768,12 @@ class _EmptyProfile extends StatelessWidget {
       children: [
         const Icon(Icons.folder_open, size: 36, color: Colors.grey),
         const SizedBox(height: 8),
-        const Text('还没有发送配置'),
+        Text(AppStrings.multiSend.noProfile),
         const SizedBox(height: 10),
         ElevatedButton.icon(
           onPressed: onCreate,
           icon: const Icon(Icons.add),
-          label: const Text('新建配置'),
+          label: Text(AppStrings.multiSend.createProfile),
         ),
       ],
     ),
@@ -743,12 +790,12 @@ class _EmptyEntries extends StatelessWidget {
       children: [
         const Icon(Icons.playlist_add, size: 36, color: Colors.grey),
         const SizedBox(height: 8),
-        const Text('此配置还没有发送条目'),
+        Text(AppStrings.multiSend.noEntries),
         const SizedBox(height: 10),
         ElevatedButton.icon(
           onPressed: onAdd,
           icon: const Icon(Icons.add),
-          label: const Text('添加条目'),
+          label: Text(AppStrings.multiSend.addEntry),
         ),
       ],
     ),

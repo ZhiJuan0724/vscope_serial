@@ -85,7 +85,11 @@ class _PlotFileProgressDialog extends StatelessWidget {
                   TextButton(
                     onPressed:
                         cancelToken!.isCancelled ? null : cancelToken!.cancel,
-                    child: Text(cancelToken!.isCancelled ? '正在取消...' : '取消'),
+                    child: Text(
+                      cancelToken!.isCancelled
+                          ? AppStrings.probe.cancelling
+                          : AppStrings.common.cancel,
+                    ),
                   ),
                 ],
       ),

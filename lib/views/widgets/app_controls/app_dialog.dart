@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/localization/app_strings.dart';
+
 /// 弹窗路由完成关闭动画后再释放由调用方创建的控制器。
 ///
 /// `showDialog` 返回的 Future 会在路由开始退出时完成，此时退出动画中的控件
@@ -33,8 +35,8 @@ class AppSettingsDialog extends StatefulWidget {
     required this.onSave,
     this.size = AppDialogSize.medium,
     this.errorText,
-    this.saveText = '保存',
-    this.cancelText = '取消',
+    this.saveText,
+    this.cancelText,
     this.hasUnsavedChanges,
   });
 
@@ -43,8 +45,8 @@ class AppSettingsDialog extends StatefulWidget {
   final Future<void> Function() onSave;
   final AppDialogSize size;
   final String? errorText;
-  final String saveText;
-  final String cancelText;
+  final String? saveText;
+  final String? cancelText;
   final bool Function()? hasUnsavedChanges;
 
   @override
@@ -82,23 +84,23 @@ class _AppSettingsDialogState extends State<AppSettingsDialog> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('设置尚未保存'),
-            content: const Text('已有修改，是否在退出前保存？'),
+            title: Text(AppStrings.common.settingsNotSaved),
+            content: Text(AppStrings.common.unsavedChangesMessage),
             actions: [
               TextButton(
                 onPressed:
                     () => Navigator.pop(dialogContext, _UnsavedChoice.cancel),
-                child: const Text('取消'),
+                child: Text(AppStrings.common.cancel),
               ),
               TextButton(
                 onPressed:
                     () => Navigator.pop(dialogContext, _UnsavedChoice.discard),
-                child: const Text('放弃'),
+                child: Text(AppStrings.common.discard),
               ),
               AppDialogPrimaryButton(
                 onPressed:
                     () => Navigator.pop(dialogContext, _UnsavedChoice.save),
-                child: const Text('保存'),
+                child: Text(AppStrings.common.save),
               ),
             ],
           ),
@@ -153,7 +155,7 @@ class _AppSettingsDialogState extends State<AppSettingsDialog> {
         actions: [
           TextButton(
             onPressed: _saving ? null : _requestClose,
-            child: Text(widget.cancelText),
+            child: Text(widget.cancelText ?? AppStrings.common.cancel),
           ),
           AppDialogPrimaryButton(
             onPressed: _saving || !hasUnsavedChanges ? null : _save,
@@ -163,7 +165,7 @@ class _AppSettingsDialogState extends State<AppSettingsDialog> {
                       dimension: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                    : Text(widget.saveText),
+                    : Text(widget.saveText ?? AppStrings.common.save),
           ),
         ],
       ),
