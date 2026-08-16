@@ -1772,6 +1772,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             renderSnapshot,
             frameId: vm.viewportRevision,
             notify: false,
+            resetFrameSequence: vm.renderEngine == PlotRenderEngine.canvas,
           );
         }
 

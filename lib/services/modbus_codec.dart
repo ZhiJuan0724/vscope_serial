@@ -263,8 +263,10 @@ class ModbusFrameParser {
   final ModbusMode mode;
   final List<int> _buffer = [];
 
-  /// ASCII 帧最长合法长度（覆盖最长的读写帧），超限且未见帧尾时重同步。
-  static const int _maxAsciiFrameBytes = 256;
+  /// Modbus ASCII 最大 ADU 为 1 个冒号、最多 254 个二进制字节对应的
+  /// 508 个十六进制字符，以及结尾 CRLF，共 511 字节。额外保留少量余量，
+  /// 仅在超过协议上限且仍未见帧尾时才按噪声重同步。
+  static const int _maxAsciiFrameBytes = 513;
 
   List<Uint8List> add(Uint8List data) {
     _buffer.addAll(data);

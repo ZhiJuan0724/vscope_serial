@@ -59,6 +59,19 @@ void main() {
     expect(coordinator.presentedFrameId, 12);
     expect(coordinator.presentedSnapshot, same(latest));
   });
+
+  test('PlotPresentationCoordinator切换Canvas时重置帧编号域', () {
+    final coordinator = PlotPresentationCoordinator();
+    addTearDown(coordinator.dispose);
+    final d3d = _snapshot(PlotViewport(xMin: 0, xMax: 100));
+    final canvas = _snapshot(PlotViewport(xMin: 300, xMax: 400));
+
+    coordinator.present(d3d, frameId: 120);
+    coordinator.present(canvas, frameId: 3, resetFrameSequence: true);
+
+    expect(coordinator.presentedFrameId, 3);
+    expect(coordinator.presentedSnapshot, same(canvas));
+  });
 }
 
 PlotRenderSnapshot _snapshot(PlotViewport viewport) => PlotRenderSnapshot(

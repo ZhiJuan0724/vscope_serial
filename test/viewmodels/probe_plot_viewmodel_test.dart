@@ -18,6 +18,26 @@ void main() {
   setUp(owners.reset);
   tearDown(owners.reset);
 
+  test('拖动结束后的撤回恢复拖动前视口', () {
+    final service = ProbeConnectionService(
+      connectionOwners: owners,
+      backends: [_PlotBackend()],
+    );
+    final viewModel = ProbePlotViewModel(service);
+    final initial = viewModel.viewport.copy();
+
+    viewModel.updateViewport(initial.panX(120, 1000), fromDrag: true);
+    viewModel.saveDragViewport();
+    expect(viewModel.canUndoZoom, isTrue);
+
+    viewModel.undoZoom();
+    expect(viewModel.viewport.xMin, initial.xMin);
+    expect(viewModel.viewport.xMax, initial.xMax);
+
+    viewModel.dispose();
+    service.dispose();
+  });
+
   test('首次开始自动选择 J-Scope Up 通道并忽略其他 Up 数据', () async {
     final backend = _PlotBackend();
     final service = ProbeConnectionService(

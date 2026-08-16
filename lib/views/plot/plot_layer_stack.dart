@@ -67,6 +67,7 @@ class _PlotLayerStackState extends State<PlotLayerStack> {
         current,
         frameId: current.viewportRevision,
         notify: false,
+        resetFrameSequence: true,
       );
     }
     final presented = _presentedSnapshot ?? current;

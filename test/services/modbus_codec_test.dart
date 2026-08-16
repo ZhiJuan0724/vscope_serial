@@ -129,6 +129,26 @@ void main() {
     expect(parser.add(Uint8List.fromList(valid)).length, 1);
   });
 
+  test('ASCII分包器保留合法的最大寄存器读取响应', () {
+    final parser = ModbusFrameParser(ModbusMode.ascii);
+    final binary = Uint8List.fromList([
+      1,
+      ModbusFunction.readHoldingRegisters.code,
+      250,
+      for (var index = 0; index < 250; index++) index & 0xFF,
+    ]);
+    final payload = Uint8List.fromList([...binary, ModbusCodec.lrc(binary)]);
+    final text =
+        ':${payload.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join()}\r\n';
+    final bytes = Uint8List.fromList(ascii.encode(text));
+
+    expect(bytes.length, greaterThan(256));
+    expect(parser.add(Uint8List.sublistView(bytes, 0, 300)), isEmpty);
+    final frames = parser.add(Uint8List.sublistView(bytes, 300));
+    expect(frames, hasLength(1));
+    expect(frames.single, bytes);
+  });
+
   test('位功能码响应字节数不足时拒绝解析', () {
     final readCoils = ModbusRequest(
       mode: ModbusMode.rtu,

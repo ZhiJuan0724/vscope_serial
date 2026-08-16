@@ -63,6 +63,7 @@ class ProbePlotViewModel extends ChangeNotifier {
   /// 视口历史记录栈，缩放/平移前保存当前状态，用于「撤回缩放」。
   final List<PlotViewport> _viewportHistory = [];
   static const int _maxHistory = 50;
+  PlotViewport? _dragStartViewport;
 
   JScopeRttParser? _rttParser;
   int? _rttChannelIndex;
@@ -742,6 +743,7 @@ class ProbePlotViewModel extends ChangeNotifier {
     _dataYMax = null;
     _autoFitY = true;
     _viewportHistory.clear();
+    _dragStartViewport = null;
     cursor = null;
     retentionLimitReached = false;
     observations.clear();
@@ -909,7 +911,12 @@ class ProbePlotViewModel extends ChangeNotifier {
             math.max(1, previous.xRange.abs()) * 1e-9 &&
         (value.yRange - previous.yRange).abs() <=
             math.max(1, previous.yRange.abs()) * 1e-9;
-    if (!fromDrag) _saveViewport();
+    if (fromDrag) {
+      _dragStartViewport ??= previous.copy();
+    } else {
+      _dragStartViewport = null;
+      _saveViewport();
+    }
     viewport = value;
     if (fromDrag && preservesRange && (xMoved || yMoved)) {
       follow = false;
@@ -938,12 +945,19 @@ class ProbePlotViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 拖动结束后保存最终视口到历史记录栈。
+  /// 拖动结束后把拖动前的视口保存到历史记录栈。
   ///
   /// 拖动期间 [updateViewport] 以 [fromDrag] = true 逐帧更新视口但不压栈，
-  /// 这里在松手后把最终视口压入历史，保证「撤回缩放」能退回拖动前状态。
+  /// 首次拖动更新会记录起点，松手后再统一压栈，保证「撤回缩放」能真正
+  /// 返回拖动前状态，同时避免拖动期间不断增长历史记录。
   void saveDragViewport() {
-    _saveViewport();
+    final start = _dragStartViewport;
+    _dragStartViewport = null;
+    if (start == null) return;
+    _viewportHistory.add(start);
+    if (_viewportHistory.length > _maxHistory) {
+      _viewportHistory.removeAt(0);
+    }
     notifyListeners();
   }
 

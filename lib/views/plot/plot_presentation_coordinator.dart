@@ -17,8 +17,12 @@ class PlotPresentationCoordinator extends ChangeNotifier {
     PlotRenderSnapshot snapshot, {
     required int frameId,
     bool notify = true,
+    bool resetFrameSequence = false,
   }) {
-    if (frameId < _presentedFrameId) return;
+    // D3D11 使用全局递增帧号，Canvas 使用同步的 viewportRevision；两者
+    // 属于不同编号域。切换到同步渲染路径时必须重置比较基准，否则 Canvas
+    // 快照会因编号较小而被误判为过期帧。
+    if (!resetFrameSequence && frameId < _presentedFrameId) return;
     final changed =
         !identical(_presentedSnapshot, snapshot) ||
         _presentedFrameId != frameId;

@@ -623,6 +623,8 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                 renderSnapshot,
                                 frameId: vm.viewportRevision,
                                 notify: false,
+                                resetFrameSequence:
+                                    vm.renderEngine == PlotRenderEngine.canvas,
                               );
                             }
                             plotSurface = PlotLayerStack(
@@ -696,24 +698,34 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                     ),
                                     Positioned.fill(
                                       child: IgnorePointer(
-                                        child: LayoutBuilder(
+                                        child: AnimatedBuilder(
+                                          animation: _plotPresentation,
                                           builder:
-                                              (
-                                                context,
-                                                overlayConstraints,
-                                              ) => Stack(
-                                                children:
-                                                    _buildObservationWidgets(
-                                                      context,
-                                                      vm,
-                                                      renderViewport,
-                                                      Size(
-                                                        overlayConstraints
-                                                            .maxWidth,
-                                                        overlayConstraints
-                                                            .maxHeight,
-                                                      ),
-                                                    ),
+                                              (context, _) => LayoutBuilder(
+                                                builder: (
+                                                  context,
+                                                  overlayConstraints,
+                                                ) {
+                                                  final presentedViewport =
+                                                      _plotPresentation
+                                                          .presentedSnapshot
+                                                          ?.viewport ??
+                                                      renderViewport;
+                                                  return Stack(
+                                                    children:
+                                                        _buildObservationWidgets(
+                                                          context,
+                                                          vm,
+                                                          presentedViewport,
+                                                          Size(
+                                                            overlayConstraints
+                                                                .maxWidth,
+                                                            overlayConstraints
+                                                                .maxHeight,
+                                                          ),
+                                                        ),
+                                                  );
+                                                },
                                               ),
                                         ),
                                       ),
