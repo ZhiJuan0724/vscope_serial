@@ -153,7 +153,7 @@ class _ModbusPageState extends State<ModbusPage> {
 
   Future<void> _changeMode(ModbusMode mode) async {
     if (mode == ModbusMode.tcp && !AppSettings().networkConnectionsEnabled) {
-      AppNotifications.show('请先在高级设置中启用网络连接');
+      AppNotifications.show(AppStrings.modbus.enableNetworkFirst);
       return;
     }
     final connection = context.read<DataConnectionService>();
@@ -283,6 +283,7 @@ class _ModbusPageState extends State<ModbusPage> {
                 (context, setDialogState) => AppSettingsDialog(
                   title: Text(AppStrings.modbus.advancedSettings),
                   size: AppDialogSize.navigation,
+                  changeListenables: [timeoutController, logMaxLinesController],
                   hasUnsavedChanges:
                       () =>
                           timeoutController.text.trim() !=
@@ -295,7 +296,9 @@ class _ModbusPageState extends State<ModbusPage> {
                   onSave: () async {
                     final timeout = int.tryParse(timeoutController.text.trim());
                     if (timeout == null || timeout < 100 || timeout > 60000) {
-                      throw const FormatException('响应超时必须在100～60000 ms之间');
+                      throw FormatException(
+                        AppStrings.modbus.responseTimeoutInvalid,
+                      );
                     }
                     final logMaxLines = int.tryParse(
                       logMaxLinesController.text.trim(),
@@ -303,7 +306,9 @@ class _ModbusPageState extends State<ModbusPage> {
                     if (logMaxLines == null ||
                         logMaxLines < modbusMinLogMaxLines ||
                         logMaxLines > modbusMaxLogMaxLines) {
-                      throw const FormatException('日志上限必须在100～100000行之间');
+                      throw FormatException(
+                        AppStrings.modbus.logMaxLinesInvalid,
+                      );
                     }
                     service
                       ..setTimeoutMs(timeout)

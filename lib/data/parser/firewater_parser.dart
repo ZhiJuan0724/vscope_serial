@@ -107,7 +107,7 @@ class FireWaterParser extends IDataParser {
       if (trimmed.isEmpty) continue;
 
       final value = double.tryParse(trimmed);
-      if (value == null) {
+      if (value == null || !value.isFinite) {
         return ParseResult.fail('无法解析数值: "$trimmed"');
       }
       values.add(value);

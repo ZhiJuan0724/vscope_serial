@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/localization/app_strings.dart';
 import '../../services/bundled_openocd_runtime.dart';
 
 /// 内置 OpenOCD 首次解压时覆盖整个应用，明确告知用户当前正在准备运行文件。
@@ -30,9 +31,9 @@ class OpenOcdRuntimePreparationOverlay extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        '正在准备内置 OpenOCD',
-                        style: TextStyle(
+                      Text(
+                        AppStrings.appInfo.preparingBundledOpenOcd,
+                        style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
@@ -46,7 +47,7 @@ class OpenOcdRuntimePreparationOverlay extends StatelessWidget {
                       const LinearProgressIndicator(),
                       const SizedBox(height: 10),
                       Text(
-                        '运行文件将解压到程序目录，完成后会自动继续。',
+                        AppStrings.appInfo.bundledOpenOcdPreparationHelp,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),

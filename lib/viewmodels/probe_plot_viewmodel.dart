@@ -901,7 +901,11 @@ class ProbePlotViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  void updateViewport(PlotViewport value, {bool fromDrag = false}) {
+  void updateViewport(
+    PlotViewport value, {
+    bool fromDrag = false,
+    bool preserveFollow = false,
+  }) {
     final previous = viewport;
     final yChanged = value.yMin != viewport.yMin || value.yMax != viewport.yMax;
     final xMoved = value.xMin != previous.xMin || value.xMax != previous.xMax;
@@ -918,7 +922,7 @@ class ProbePlotViewModel extends ChangeNotifier {
       _saveViewport();
     }
     viewport = value;
-    if (fromDrag && preservesRange && (xMoved || yMoved)) {
+    if (fromDrag && !preserveFollow && preservesRange && (xMoved || yMoved)) {
       follow = false;
     }
     if (yChanged) _autoFitY = false;

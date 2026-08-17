@@ -346,7 +346,13 @@ class _ProgrammingTclClient {
       _pending = response;
       _socket.add([...utf8.encode(command), 0x1A]);
       await _socket.flush();
-      return await response.future.timeout(timeout);
+      try {
+        return await response.future.timeout(timeout);
+      } on TimeoutException {
+        // Tcl协议没有请求ID；关闭连接，避免迟到响应与下一条命令错配。
+        await close();
+        rethrow;
+      }
     } finally {
       _pending = null;
       release.complete();

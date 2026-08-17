@@ -906,8 +906,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
       children: [
         AppDialogTextField(
           controller: _rttJlinkPathController,
-          labelText: 'JLinkGDBServerCL.exe 路径',
-          helperText: '留空时从 SEGGER 安装目录和 PATH 自动查找',
+          labelText: AppStrings.appInfo.jlinkExecutablePath,
+          helperText: AppStrings.appInfo.jlinkExecutablePathHelp,
           onChanged: (value) {
             settings.rttJlinkExecutablePath = value.trim();
             unawaited(settings.save());
@@ -917,8 +917,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         const SizedBox(height: 12),
         AppDialogTextField(
           controller: _rttOpenocdPathController,
-          labelText: '外置 openocd.exe 路径',
-          helperText: '留空时从 PATH 查找；仅影响外置 OpenOCD',
+          labelText: AppStrings.appInfo.externalOpenOcdPath,
+          helperText: AppStrings.appInfo.externalOpenOcdPathHelp,
           onChanged: (value) {
             settings.rttOpenocdExecutablePath = value.trim();
             unawaited(settings.save());
@@ -928,8 +928,8 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         const SizedBox(height: 12),
         AppDialogTextField(
           controller: _rttPyocdPythonPathController,
-          labelText: '外置 pyOCD Python 路径',
-          helperText: '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x',
+          labelText: AppStrings.appInfo.externalPyOcdPythonPath,
+          helperText: AppStrings.appInfo.externalPyOcdPythonPathHelp,
           onChanged: (value) {
             settings.rttPyocdPythonPath = value.trim();
             unawaited(settings.save());
@@ -940,24 +940,48 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
         FutureBuilder<Map<String, ProbeBackendAvailability>>(
           future: _rttBackendAvailability,
           builder: (context, snapshot) {
-            if (!snapshot.hasData) return const Text('正在检测探针后端...');
+            if (!snapshot.hasData) {
+              return Text(AppStrings.appInfo.detectingProbeBackends);
+            }
 
             String state(String id) {
               final status = snapshot.data![id];
-              if (status == null || !status.available) return '未检测到';
+              if (status == null || !status.available) {
+                return AppStrings.appInfo.backendNotDetected;
+              }
               final version = status.version?.trim();
               return version == null || version.isEmpty
-                  ? '已检测到（版本未知）'
+                  ? AppStrings.appInfo.backendDetectedUnknownVersion
                   : version;
             }
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('J-Link: ${state('external-jlink')}'),
-                Text('内置 OpenOCD: ${state('bundled-openocd')}'),
-                Text('外置 OpenOCD: ${state('external-openocd')}'),
-                Text('外置 pyOCD: ${state('external-pyocd')}'),
+                Text(
+                  AppStrings.appInfo.probeBackendState(
+                    'J-Link',
+                    state('external-jlink'),
+                  ),
+                ),
+                Text(
+                  AppStrings.appInfo.probeBackendState(
+                    '内置 OpenOCD',
+                    state('bundled-openocd'),
+                  ),
+                ),
+                Text(
+                  AppStrings.appInfo.probeBackendState(
+                    '外置 OpenOCD',
+                    state('external-openocd'),
+                  ),
+                ),
+                Text(
+                  AppStrings.appInfo.probeBackendState(
+                    '外置 pyOCD',
+                    state('external-pyocd'),
+                  ),
+                ),
               ],
             );
           },
@@ -967,7 +991,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           child: TextButton.icon(
             onPressed: () => refreshAvailability(prepareBundledOpenOcd: true),
             icon: const Icon(Icons.refresh),
-            label: const Text('重新检测'),
+            label: Text(AppStrings.appInfo.redetect),
           ),
         ),
       ],
@@ -998,6 +1022,7 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
           (context, setDialogState) => AppSettingsDialog(
             title: Text(AppStrings.common.advancedSettings),
             size: AppDialogSize.navigation,
+            changeListenables: [_plotHistoryLimitController],
             hasUnsavedChanges:
                 () =>
                     disableNotifications != settings.disableNotifications ||
@@ -1018,7 +1043,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
               if (plotLimit == null ||
                   plotLimit < PlotConfiguration.minHistoryMemoryLimitGiB ||
                   plotLimit > PlotConfiguration.maxHistoryMemoryLimitGiB) {
-                throw const FormatException('请检查绘图历史内存上限');
+                throw FormatException(
+                  AppStrings.appInfo.invalidPlotHistoryLimit,
+                );
               }
               final dataConnection = widget.actions.dataConnection;
               if (dataConnection.isConnectionBusy() &&
@@ -1026,7 +1053,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                           settings.networkConnectionsEnabled ||
                       separateSerialProfiles !=
                           settings.separateSerialProfiles)) {
-                throw StateError('数据连接活动期间不能修改网络或串口配置记录方式');
+                throw StateError(
+                  AppStrings.appInfo.connectionBusySettingsError,
+                );
               }
               final plotViewModel = dialogContext.read<PlotViewModel>();
               final modbusActions = widget.actions.modbus;
@@ -1198,10 +1227,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   const Divider(height: 16),
                   AppSwitchRow(
                     key: shortcutsSectionKey,
-                    title: const Text('启用连接快捷键'),
-                    subtitle: const Text(
-                      'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；'
-                      '关闭后全部不响应。',
+                    title: Text(AppStrings.appInfo.enableConnectionShortcuts),
+                    subtitle: Text(
+                      AppStrings.appInfo.enableConnectionShortcutsHelp,
                     ),
                     value: connectionShortcutsEnabled,
                     onChanged: (value) {
@@ -1211,9 +1239,9 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                   const Divider(height: 16),
                   AppSwitchRow(
                     key: pageSectionKey,
-                    title: const Text('启用网络连接'),
-                    subtitle: const Text(
-                      '允许数据收发、绘图和Modbus使用TCP/UDP，并允许Shell选择SSH。',
+                    title: Text(AppStrings.appInfo.enableNetworkConnections),
+                    subtitle: Text(
+                      AppStrings.appInfo.enableNetworkConnectionsHelp,
                     ),
                     value: networkConnectionsEnabled,
                     onChanged:
@@ -1230,8 +1258,10 @@ class _AppInfoDialogState extends State<AppInfoDialog> {
                             },
                   ),
                   AppSwitchRow(
-                    title: const Text('按页面独立保存串口参数'),
-                    subtitle: const Text('关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。'),
+                    title: Text(AppStrings.appInfo.separateSerialProfiles),
+                    subtitle: Text(
+                      AppStrings.appInfo.separateSerialProfilesHelp,
+                    ),
                     value: separateSerialProfiles,
                     onChanged:
                         widget.actions.dataConnection.isConnectionBusy()

@@ -62,6 +62,14 @@ void main() {
     expect(frames, [first, second]);
   });
 
+  test('TCP大量无效长度字节使用迭代重同步', () {
+    final parser = ModbusFrameParser(ModbusMode.tcp);
+    expect(
+      () => parser.add(Uint8List.fromList(List.filled(20000, 0xFF))),
+      returnsNormally,
+    );
+  });
+
   test('写多个寄存器编码和值数量校验', () {
     final frame = ModbusCodec.encodeRequest(
       ModbusRequest(

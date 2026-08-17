@@ -1812,6 +1812,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     onViewportChanged:
                         (viewport, {fromDrag = false}) =>
                             vm.updateViewport(viewport, fromDrag: fromDrag),
+                    onContinuousZoomChanged:
+                        (viewport) => vm.updateViewport(
+                          viewport,
+                          fromDrag: true,
+                          preserveFollow: true,
+                        ),
                     onDragEnd: vm.saveDragViewport,
                     onInteractionChanged: vm.setPlotInteractionActive,
                     onCursorChanged: (cursor) {
@@ -4177,6 +4183,16 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               return AppSettingsDialog(
                 title: Text(AppStrings.plot.advancedSettings),
                 size: AppDialogSize.navigation,
+                changeListenables: [
+                  refreshFpsController,
+                  snapDiameterController,
+                  maxVisibleController,
+                  plotRetentionLimitController,
+                  discardInitialPacketController,
+                  followPositionController,
+                  yFitDisplayRatioController,
+                  floatingPanelOpacityController,
+                ],
                 hasUnsavedChanges:
                     () =>
                         draft.showGrid != vm.showGrid ||

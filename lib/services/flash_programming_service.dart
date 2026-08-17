@@ -166,15 +166,21 @@ class FlashProgrammingService extends ChangeNotifier {
     (backend) => backend.program(request, _updateProgress),
   );
 
-  Future<void> erase(FlashEraseRequest request) => _runOperation(
-    FlashOperationState.erasing,
-    (backend) => backend.erase(request, _updateProgress),
-  );
+  Future<void> erase(FlashEraseRequest request) {
+    request.validate();
+    return _runOperation(
+      FlashOperationState.erasing,
+      (backend) => backend.erase(request, _updateProgress),
+    );
+  }
 
-  Future<void> read(FlashReadRequest request) => _runOperation(
-    FlashOperationState.reading,
-    (backend) => backend.read(request, _updateProgress),
-  );
+  Future<void> read(FlashReadRequest request) {
+    request.validate();
+    return _runOperation(
+      FlashOperationState.reading,
+      (backend) => backend.read(request, _updateProgress),
+    );
+  }
 
   /// 读取结果先由既有后端写入临时BIN，再加载到内存交给HEX查看器。
   /// 临时文件仅是外部工具的交换介质，不向用户暴露，也不会作为读取操作的保存结果。

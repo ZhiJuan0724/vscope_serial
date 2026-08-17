@@ -432,6 +432,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
                 (context, setDialogState) => AppSettingsDialog(
                   title: Text(AppStrings.flash.hexDisplaySettings),
                   size: AppDialogSize.medium,
+                  changeListenables: [bytesController],
                   hasUnsavedChanges:
                       () =>
                           bytesController.text !=
@@ -649,7 +650,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
       if (programDocument != null) ...[
         const SizedBox(height: 6),
         Text(
-          '基地址：0x${programDocument.firstAddress.toRadixString(16).toUpperCase().padLeft(8, '0')}',
+          AppStrings.flash.baseAddress(programDocument.firstAddress),
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ],

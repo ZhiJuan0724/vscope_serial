@@ -52,6 +52,47 @@ void main() {
       expect(saveButton.onPressed, isNotNull);
     });
 
+    testWidgets('文本输入时无需按 Enter 即可启用保存', (tester) async {
+      final controller = TextEditingController(text: '60');
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder:
+                (context) => TextButton(
+                  onPressed:
+                      () => showDialog<void>(
+                        context: context,
+                        builder:
+                            (_) => AppSettingsDialog(
+                              title: const Text('测试设置'),
+                              changeListenables: [controller],
+                              hasUnsavedChanges: () => controller.text != '60',
+                              onSave: () async {},
+                              child: TextField(controller: controller),
+                            ),
+                      ),
+                  child: const Text('打开'),
+                ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('打开'));
+      await tester.pumpAndSettle();
+      var saveButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '保存'),
+      );
+      expect(saveButton.onPressed, isNull);
+
+      await tester.enterText(find.byType(TextField), '120');
+      await tester.pump();
+      saveButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '保存'),
+      );
+      expect(saveButton.onPressed, isNotNull);
+    });
+
     testWidgets('未保存修改时取消会显示保存、放弃和取消', (tester) async {
       var dirty = true;
       var saved = false;

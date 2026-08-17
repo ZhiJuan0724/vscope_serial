@@ -66,6 +66,28 @@ void main() {
     );
   });
 
+  test('u64完整无符号范围可编码解码和显示', () {
+    const text = '18446744073709551615';
+    final registers = ModbusValueCodec.encodeRegisters(
+      ModbusVariableType.u64,
+      text,
+    );
+    expect(registers, [0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF]);
+    final value = ModbusValueCodec.decodeRegisters(
+      ModbusVariableType.u64,
+      registers,
+    );
+    expect(value, BigInt.parse(text));
+    expect(
+      ModbusValueCodec.format(
+        ModbusVariableType.u64,
+        value,
+        radix: ModbusDisplayRadix.hexadecimal,
+      ),
+      '0xFFFFFFFFFFFFFFFF',
+    );
+  });
+
   test('稀疏行配置默认值省略且能补全', () {
     final row = ModbusRegisterRow(id: 'r', address: 1);
     expect(row.toSparseJson(ModbusRegisterArea.holdingRegisters), {

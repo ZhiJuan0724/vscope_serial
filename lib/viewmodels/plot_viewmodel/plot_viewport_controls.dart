@@ -14,14 +14,21 @@ extension PlotViewModelViewportControls on PlotViewModel {
   ///
   /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
   /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
-  void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
+  void updateViewport(
+    PlotViewport newViewport, {
+    bool fromDrag = false,
+    bool preserveFollow = false,
+  }) {
     // 保存当前的偏移通道列宽，避免 copy() 丢失
     final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
     if (!fromDrag) {
+      _dragStartViewport = null;
       _cancelPendingDragViewportNotification();
       _cancelDragWindowLoad();
+    } else {
+      _dragStartViewport ??= viewport.copy();
     }
-    if (fromDrag && _followEnabled) {
+    if (fromDrag && !preserveFollow && _followEnabled) {
       _followEnabled = false;
     }
     if (!fromDrag) {
@@ -57,7 +64,14 @@ extension PlotViewModelViewportControls on PlotViewModel {
   void saveDragViewport() {
     _cancelPendingDragViewportNotification();
     _cancelDragWindowLoad();
-    _saveViewport();
+    final start = _dragStartViewport;
+    _dragStartViewport = null;
+    if (start != null) {
+      _viewportHistory.add(start);
+      if (_viewportHistory.length > PlotViewModel._maxHistory) {
+        _viewportHistory.removeAt(0);
+      }
+    }
     _loadWindowForViewport();
     _refreshSnapHighlightColors();
     _saveSettings();

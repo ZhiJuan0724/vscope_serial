@@ -27,13 +27,16 @@ abstract final class ModbusValueCodec {
       wordOrder: wordOrder,
     );
     final data = ByteData.sublistView(Uint8List.fromList(bytes));
+    if (type == ModbusVariableType.u64) {
+      return _unsignedBigIntFromBytes(bytes);
+    }
     return switch (type) {
       ModbusVariableType.u16 => data.getUint16(0, Endian.big),
       ModbusVariableType.i16 => data.getInt16(0, Endian.big),
       ModbusVariableType.u32 => data.getUint32(0, Endian.big),
       ModbusVariableType.i32 => data.getInt32(0, Endian.big),
       ModbusVariableType.floatValue => data.getFloat32(0, Endian.big),
-      ModbusVariableType.u64 => data.getUint64(0, Endian.big),
+      ModbusVariableType.u64 => throw StateError('已在前面处理的变量类型'),
       ModbusVariableType.i64 => data.getInt64(0, Endian.big),
       ModbusVariableType.doubleValue => data.getFloat64(0, Endian.big),
       ModbusVariableType.boolean ||
@@ -58,6 +61,13 @@ abstract final class ModbusValueCodec {
     }
     final bytes = Uint8List(type.registerWidth * 2);
     final data = ByteData.sublistView(bytes);
+    if (type == ModbusVariableType.u64) {
+      var remaining = value as BigInt;
+      for (var index = bytes.length - 1; index >= 0; index--) {
+        bytes[index] = (remaining & BigInt.from(0xFF)).toInt();
+        remaining >>= 8;
+      }
+    }
     switch (type) {
       case ModbusVariableType.u16:
         data.setUint16(0, value as int, Endian.big);
@@ -70,7 +80,7 @@ abstract final class ModbusValueCodec {
       case ModbusVariableType.floatValue:
         data.setFloat32(0, value as double, Endian.big);
       case ModbusVariableType.u64:
-        data.setUint64(0, value as int, Endian.big);
+        break;
       case ModbusVariableType.i64:
         data.setInt64(0, value as int, Endian.big);
       case ModbusVariableType.doubleValue:
@@ -115,6 +125,14 @@ abstract final class ModbusValueCodec {
       }
       return value;
     }
+    if (type == ModbusVariableType.u64) {
+      final value = _parseBigInteger(trimmed);
+      final max = (BigInt.one << 64) - BigInt.one;
+      if (value < BigInt.zero || value > max) {
+        throw FormatException('${type.label} 超出范围 0..$max');
+      }
+      return value;
+    }
     final value = _parseInteger(trimmed);
     final (min, max) = switch (type) {
       ModbusVariableType.u8 => (0, 0xFF),
@@ -123,7 +141,7 @@ abstract final class ModbusValueCodec {
       ModbusVariableType.i16 => (-0x8000, 0x7FFF),
       ModbusVariableType.u32 => (0, 0xFFFFFFFF),
       ModbusVariableType.i32 => (-0x80000000, 0x7FFFFFFF),
-      ModbusVariableType.u64 => (0, 0xFFFFFFFFFFFFFFFF),
+      ModbusVariableType.u64 => throw StateError('已在前面处理的变量类型'),
       ModbusVariableType.i64 => (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF),
       _ => throw StateError('浮点类型已在前面处理'),
     };
@@ -145,23 +163,30 @@ abstract final class ModbusValueCodec {
     return '0x${bits.toRadixString(16).toUpperCase().padLeft(width, '0')}';
   }
 
-  static int _bitPattern(
+  static BigInt _bitPattern(
     ModbusVariableType type,
     Object value,
     List<int> registers,
   ) {
     if (registers.length >= type.registerWidth && type.registerWidth > 1) {
-      var result = 0;
+      var result = BigInt.zero;
       for (final register in registers.take(type.registerWidth)) {
-        result = (result << 16) | (register & 0xFFFF);
+        result = (result << 16) | BigInt.from(register & 0xFFFF);
       }
       return result;
     }
-    if (type == ModbusVariableType.boolean) return value == true ? 1 : 0;
-    if (type == ModbusVariableType.u8 || type == ModbusVariableType.i8) {
-      return (value as int) & 0xFF;
+    if (type == ModbusVariableType.boolean) {
+      return value == true ? BigInt.one : BigInt.zero;
     }
-    if (value is int) return value & ((1 << type.bitWidth) - 1);
+    if (type == ModbusVariableType.u8 || type == ModbusVariableType.i8) {
+      return BigInt.from((value as int) & 0xFF);
+    }
+    if (value is BigInt) {
+      return value & ((BigInt.one << type.bitWidth) - BigInt.one);
+    }
+    if (value is int) {
+      return BigInt.from(value) & ((BigInt.one << type.bitWidth) - BigInt.one);
+    }
     final encoded = type.isFloatingPoint ? value : 0;
     final bytes = Uint8List(type.registerWidth * 2);
     final data = ByteData.sublistView(bytes);
@@ -170,9 +195,9 @@ abstract final class ModbusValueCodec {
     } else if (type == ModbusVariableType.doubleValue) {
       data.setFloat64(0, encoded as double, Endian.big);
     }
-    var result = 0;
+    var result = BigInt.zero;
     for (final byte in bytes) {
-      result = (result << 8) | byte;
+      result = (result << 8) | BigInt.from(byte);
     }
     return result;
   }
@@ -208,5 +233,23 @@ abstract final class ModbusValueCodec {
             ? int.parse(unsigned.substring(2), radix: 16)
             : int.parse(unsigned);
     return negative ? -value : value;
+  }
+
+  static BigInt _parseBigInteger(String text) {
+    final negative = text.startsWith('-');
+    final unsigned = negative ? text.substring(1) : text;
+    final value =
+        unsigned.toLowerCase().startsWith('0x')
+            ? BigInt.parse(unsigned.substring(2), radix: 16)
+            : BigInt.parse(unsigned);
+    return negative ? -value : value;
+  }
+
+  static BigInt _unsignedBigIntFromBytes(List<int> bytes) {
+    var result = BigInt.zero;
+    for (final byte in bytes) {
+      result = (result << 8) | BigInt.from(byte);
+    }
+    return result;
   }
 }

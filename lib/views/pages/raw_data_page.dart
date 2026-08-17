@@ -409,7 +409,7 @@ class _RawDataPageState extends State<RawDataPage> {
     final confirmed = await showConfirmDialog(
       context,
       title: AppStrings.raw.clear,
-      message: '确定清空当前接收数据和完整字节记录吗？此操作不可撤销。',
+      message: AppStrings.raw.clearDataConfirm,
     );
     if (confirmed) vm.clearData();
   }
@@ -606,8 +606,8 @@ class _RawDataPageState extends State<RawDataPage> {
     final retention = vm.rawRetentionUsage;
     final retentionStatus = switch (retention.state) {
       RetentionState.normal => '',
-      RetentionState.warning => ' [容量预警]',
-      RetentionState.limitReached => ' [容量上限停止，请导出并清空]',
+      RetentionState.warning => AppStrings.raw.capacityWarning,
+      RetentionState.limitReached => AppStrings.raw.capacityLimitReached,
     };
     final retentionColor = switch (retention.state) {
       RetentionState.normal => Theme.of(context).colorScheme.onSurfaceVariant,
@@ -638,7 +638,10 @@ class _RawDataPageState extends State<RawDataPage> {
                         }
                         : null,
                 running: vm.isRawReceiving,
-                label: vm.isRawReceiving ? '停止' : '开始',
+                label:
+                    vm.isRawReceiving
+                        ? AppStrings.raw.stop
+                        : AppStrings.raw.start,
               ),
             ),
             ToolbarLayoutItem(
@@ -807,11 +810,14 @@ class _RawDataPageState extends State<RawDataPage> {
                         );
                       },
                     )
-                    : const Center(
+                    : Center(
                       child: Text(
-                        '请先点击左下角状态栏连接串口或网络，再点击"开始"接收',
+                        AppStrings.raw.connectBeforeReceive,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey, fontSize: 14),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
                 if (vm.hasRawData)
@@ -837,9 +843,15 @@ class _RawDataPageState extends State<RawDataPage> {
                         ),
                       ),
                       child: Text(
-                        vm.receiveHex
-                            ? '接收: ${vm.dataStats['完整原始数据']} | 容量: ${vm.dataStats['原始数据容量']}$retentionStatus | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}'
-                            : '编码: ${vm.textEncoding} | 原始容量: ${vm.dataStats['原始数据容量']}$retentionStatus | 行数: ${vm.dataStats['显示行数']} | 缓存: ${vm.dataStats['显示文本缓存']}',
+                        AppStrings.raw.statsSummary(
+                          hexDisplay: vm.receiveHex,
+                          encoding: vm.textEncoding,
+                          rawData: vm.dataStats['完整原始数据'] ?? '-',
+                          rawCapacity: vm.dataStats['原始数据容量'] ?? '-',
+                          lineCount: vm.dataStats['显示行数'] ?? '-',
+                          textCache: vm.dataStats['显示文本缓存'] ?? '-',
+                          retentionStatus: retentionStatus,
+                        ),
                         style: TextStyle(fontSize: 11, color: retentionColor),
                       ),
                     ),
@@ -883,7 +895,7 @@ class _RawDataPageState extends State<RawDataPage> {
                               }
                             },
                   ),
-                  const Text('扩展'),
+                  Text(AppStrings.raw.extension),
                 ],
               ),
               const SizedBox(width: 12),
@@ -1314,6 +1326,10 @@ class _RawDataPageState extends State<RawDataPage> {
                 (context, setDialogState) => AppSettingsDialog(
                   title: Text(AppStrings.raw.rawSettingsTitle),
                   size: AppDialogSize.navigation,
+                  changeListenables: [
+                    autoLineBreakTimeController,
+                    displayLineLimitController,
+                  ],
                   hasUnsavedChanges:
                       () =>
                           selectedEncoding != vm.textEncoding ||
@@ -1351,7 +1367,7 @@ class _RawDataPageState extends State<RawDataPage> {
                     });
                     if (autoLineBreakError != null ||
                         displayLineLimitError != null) {
-                      throw const FormatException('请修正无效设置');
+                      throw FormatException(AppStrings.raw.invalidSettings);
                     }
                     await vm.applyDisplaySettings(
                       RawDisplaySettingsDraft(

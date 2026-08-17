@@ -130,6 +130,16 @@ void main() {
       expect(results[0].success, false);
     });
 
+    test('拒绝NaN和无穷大', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+      final results = parser.feedBatch(
+        Uint8List.fromList('NaN,1\nInfinity,2\n'.codeUnits),
+      );
+      expect(results, hasLength(2));
+      expect(results.every((result) => !result.success), isTrue);
+    });
+
     test('超长残行保持有界并在换行后恢复', () {
       final parser = FireWaterParser();
       addTearDown(parser.dispose);

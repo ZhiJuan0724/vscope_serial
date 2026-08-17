@@ -38,6 +38,7 @@ class AppSettingsDialog extends StatefulWidget {
     this.saveText,
     this.cancelText,
     this.hasUnsavedChanges,
+    this.changeListenables = const <Listenable>[],
   });
 
   final Widget title;
@@ -49,6 +50,12 @@ class AppSettingsDialog extends StatefulWidget {
   final String? cancelText;
   final bool Function()? hasUnsavedChanges;
 
+  /// 会改变草稿内容、但自身不会触发父组件重建的输入源。
+  ///
+  /// 文本控制器输入时会通知此列表，设置弹窗据此立即刷新“保存”按钮，
+  /// 不再要求用户按 Enter 或切换焦点。
+  final List<Listenable> changeListenables;
+
   @override
   State<AppSettingsDialog> createState() => _AppSettingsDialogState();
 }
@@ -56,6 +63,41 @@ class AppSettingsDialog extends StatefulWidget {
 class _AppSettingsDialogState extends State<AppSettingsDialog> {
   bool _saving = false;
   String? _saveError;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToDraftChanges(widget.changeListenables);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppSettingsDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _stopListeningToDraftChanges(oldWidget.changeListenables);
+    _listenToDraftChanges(widget.changeListenables);
+  }
+
+  @override
+  void dispose() {
+    _stopListeningToDraftChanges(widget.changeListenables);
+    super.dispose();
+  }
+
+  void _listenToDraftChanges(List<Listenable> listenables) {
+    for (final listenable in listenables) {
+      listenable.addListener(_handleDraftChanged);
+    }
+  }
+
+  void _stopListeningToDraftChanges(List<Listenable> listenables) {
+    for (final listenable in listenables) {
+      listenable.removeListener(_handleDraftChanged);
+    }
+  }
+
+  void _handleDraftChanged() {
+    if (mounted) setState(() {});
+  }
 
   Future<void> _save() async {
     if (_saving || !(widget.hasUnsavedChanges?.call() ?? true)) return;

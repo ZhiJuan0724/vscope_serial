@@ -811,6 +811,9 @@ void main() {
                 viewport = value;
                 fromDragValues.add(fromDrag);
               },
+              onContinuousZoomChanged: (value) {
+                viewport = value;
+              },
               onDragEnd: () => dragEndCount++,
               onCursorChanged: (_) {},
               channels: const [],
@@ -833,8 +836,7 @@ void main() {
 
     expect(viewport.xRange, closeTo(initialViewport.xRange / 2, 0.001));
     expect(viewport.yRange, closeTo(initialViewport.yRange / 2, 0.001));
-    expect(fromDragValues, isNotEmpty);
-    expect(fromDragValues.every((value) => !value), isTrue);
-    expect(dragEndCount, 0);
+    expect(fromDragValues, isEmpty);
+    expect(dragEndCount, 1);
   });
 }

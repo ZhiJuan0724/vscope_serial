@@ -96,6 +96,14 @@ class JustFloatParser extends IDataParser {
         _buffer.clear();
         return;
       }
+      final recoveredTailEnd = _findCompleteTailEnd();
+      if (recoveredTailEnd >= 0) {
+        _droppedBytes += recoveredTailEnd;
+        _resyncCount++;
+        _buffer.removeRange(0, recoveredTailEnd);
+        results.add(ParseResult.fail('JustFloat帧长度异常，已在帧尾处重新同步'));
+        return;
+      }
       _enterResync();
       return;
     }
@@ -120,6 +128,23 @@ class JustFloatParser extends IDataParser {
       if (_buffer[start + i] != tail[i]) return false;
     }
     return true;
+  }
+
+  /// 固定通道帧长度异常时，优先利用缓冲区内已经完整出现的帧尾恢复。
+  ///
+  /// 这样单字节丢失不会把紧随其后的完整帧一起丢到下一处帧尾。
+  int _findCompleteTailEnd() {
+    for (var start = 0; start <= _buffer.length - tail.length; start++) {
+      var matches = true;
+      for (var index = 0; index < tail.length; index++) {
+        if (_buffer[start + index] != tail[index]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return start + tail.length;
+    }
+    return -1;
   }
 
   void _enterResync() {

@@ -875,22 +875,32 @@ class ModbusClientService extends ChangeNotifier {
       if (!value.isFinite) return current;
       return value;
     }
-    final value = (current as int) + direction * (step as int);
+    final currentValue =
+        current is BigInt ? current : BigInt.from(current as int);
+    final stepValue = step is BigInt ? step : BigInt.from(step as int);
+    final value = currentValue + BigInt.from(direction) * stepValue;
     final (min, max) = switch (type) {
-      ModbusVariableType.u8 => (0, 0xFF),
-      ModbusVariableType.i8 => (-0x80, 0x7F),
-      ModbusVariableType.u16 => (0, 0xFFFF),
-      ModbusVariableType.i16 => (-0x8000, 0x7FFF),
-      ModbusVariableType.u32 => (0, 0xFFFFFFFF),
-      ModbusVariableType.i32 => (-0x80000000, 0x7FFFFFFF),
-      ModbusVariableType.u64 => (0, 0xFFFFFFFFFFFFFFFF),
-      ModbusVariableType.i64 => (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF),
+      ModbusVariableType.u8 => (BigInt.zero, BigInt.from(0xFF)),
+      ModbusVariableType.i8 => (BigInt.from(-0x80), BigInt.from(0x7F)),
+      ModbusVariableType.u16 => (BigInt.zero, BigInt.from(0xFFFF)),
+      ModbusVariableType.i16 => (BigInt.from(-0x8000), BigInt.from(0x7FFF)),
+      ModbusVariableType.u32 => (BigInt.zero, BigInt.from(0xFFFFFFFF)),
+      ModbusVariableType.i32 => (
+        BigInt.from(-0x80000000),
+        BigInt.from(0x7FFFFFFF),
+      ),
+      ModbusVariableType.u64 => (BigInt.zero, (BigInt.one << 64) - BigInt.one),
+      ModbusVariableType.i64 => (
+        -(BigInt.one << 63),
+        (BigInt.one << 63) - BigInt.one,
+      ),
       ModbusVariableType.boolean ||
       ModbusVariableType.floatValue ||
-      ModbusVariableType.doubleValue => (0, 1),
+      ModbusVariableType.doubleValue => (BigInt.zero, BigInt.one),
     };
-    final span = max - min + 1;
-    return min + ((value - min) % span + span) % span;
+    final span = max - min + BigInt.one;
+    final result = min + ((value - min) % span + span) % span;
+    return type == ModbusVariableType.u64 ? result : result.toInt();
   }
 
   String _randomValue(ModbusVariableType type) {

@@ -937,9 +937,7 @@ class PlotLayerPainter extends CustomPainter {
           channel: channel,
           batch: geometry,
           paint: linePaint,
-          acquirePoints:
-              buffers?.points ??
-              Float32List.new,
+          acquirePoints: buffers?.points ?? Float32List.new,
         );
         if (stopwatch != null) {
           stopwatch.stop();
@@ -1082,7 +1080,11 @@ class PlotLayerPainter extends CustomPainter {
           .clamp(marginTop, marginBottom);
     }
 
-    canvas.drawRawPoints(ui.PointMode.points, rawPoints, paint);
+    canvas.drawRawPoints(
+      ui.PointMode.points,
+      Float32List.sublistView(rawPoints, 0, rawIndex),
+      paint,
+    );
   }
 
   void _drawChannelRawPath(

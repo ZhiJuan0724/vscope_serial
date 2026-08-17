@@ -2728,5 +2728,19 @@ void main() {
       vm.undoZoom();
       expect(vm.viewport.xMin, originalXMin);
     });
+
+    test('拖动结束后的撤回恢复拖动前视口', () {
+      final original = vm.viewport.copy();
+      vm.updateViewport(
+        original.copyWith(xMin: 100, xMax: 1100),
+        fromDrag: true,
+      );
+      vm.saveDragViewport();
+      expect(vm.canUndoZoom, isTrue);
+
+      vm.undoZoom();
+      expect(vm.viewport.xMin, original.xMin);
+      expect(vm.viewport.xMax, original.xMax);
+    });
   });
 }

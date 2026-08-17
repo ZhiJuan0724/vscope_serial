@@ -670,6 +670,12 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                                       onObservationPlacementCommit:
                                           vm.commitObservationPlacement,
                                       onViewportChanged: vm.updateViewport,
+                                      onContinuousZoomChanged:
+                                          (viewport) => vm.updateViewport(
+                                            viewport,
+                                            fromDrag: true,
+                                            preserveFollow: true,
+                                          ),
                                       onDragEnd: vm.saveDragViewport,
                                       onCursorChanged: vm.updateCursor,
                                       xCursor1: vm.xCursor1,
@@ -1571,6 +1577,12 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
               return AppSettingsDialog(
                 title: Text(AppStrings.plot.advancedSettings),
                 size: AppDialogSize.navigation,
+                changeListenables: [
+                  windowController,
+                  memoryController,
+                  opacityController,
+                  followController,
+                ],
                 hasUnsavedChanges:
                     () =>
                         draft.showGrid != vm.showGrid ||

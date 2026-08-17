@@ -42,6 +42,10 @@ class PlotGestureHandler extends StatefulWidget {
   /// [fromDrag] 为 true 时表示来自用户拖动，回调方可据此优化通知策略。
   final void Function(PlotViewport viewport, {bool fromDrag}) onViewportChanged;
 
+  /// 连续缩放回调。用于把触控板的一次捏合合并为一条视口历史，
+  /// 同时保持“跟随”状态；未提供时兼容旧的普通缩放回调。
+  final ValueChanged<PlotViewport>? onContinuousZoomChanged;
+
   /// 拖动结束回调
   ///
   /// 平移拖动结束时调用，用于保存视口配置和历史记录。
@@ -147,6 +151,7 @@ class PlotGestureHandler extends StatefulWidget {
     required this.viewport,
     this.presentationCoordinator,
     required this.onViewportChanged,
+    this.onContinuousZoomChanged,
     required this.onCursorChanged,
     this.vCursorEnabled = false,
     this.boxZoomEnabled = false,
@@ -501,15 +506,16 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final localPosition = event.localPosition;
       final zoomFactor = event.scrollDelta.dy > 0 ? 1.1 : 0.9;
 
+      final viewport = _presentedViewport;
       // 判断鼠标位置：在 Y 轴区域（左侧边距）还是 X 轴区域（底部边距）或绘图区
-      final inYAxisArea = localPosition.dx < widget.viewport.marginLeft;
+      final inYAxisArea = localPosition.dx < viewport.marginLeft;
       final inXAxisArea =
-          localPosition.dy > size.height - widget.viewport.marginBottom;
+          localPosition.dy > size.height - viewport.marginBottom;
 
       // 判断是否在某个偏置 Y 轴列上
       final offsetChannelIndex = _hitTestOffsetAxisColumn(localPosition, size);
 
-      var newViewport = widget.viewport;
+      var newViewport = viewport;
 
       // 修饰键 + 滚轮：根据鼠标位置决定缩放轴
       if (isZoomModifierPressed) {
@@ -520,38 +526,23 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
           return;
         } else if (inYAxisArea) {
           // 鼠标在默认 Y 轴区域 -> 缩放全局 Y 轴
-          final centerY = widget.viewport.screenToDataY(
-            localPosition.dy,
-            size.height,
-          );
+          final centerY = viewport.screenToDataY(localPosition.dy, size.height);
           newViewport = newViewport.zoomY(zoomFactor, centerY);
         } else if (inXAxisArea) {
           // 鼠标在 X 轴区域 -> 缩放 X 轴
-          final centerX = widget.viewport.screenToDataX(
-            localPosition.dx,
-            size.width,
-          );
+          final centerX = viewport.screenToDataX(localPosition.dx, size.width);
           newViewport = newViewport.zoomX(zoomFactor, centerX);
         } else {
           // 鼠标在绘图区 -> 同时缩放 X 和 Y
-          final centerX = widget.viewport.screenToDataX(
-            localPosition.dx,
-            size.width,
-          );
-          final centerY = widget.viewport.screenToDataY(
-            localPosition.dy,
-            size.height,
-          );
+          final centerX = viewport.screenToDataX(localPosition.dx, size.width);
+          final centerY = viewport.screenToDataY(localPosition.dy, size.height);
           newViewport = newViewport.zoomX(zoomFactor, centerX);
           newViewport = newViewport.zoomY(zoomFactor, centerY);
         }
       }
       // 普通滚轮 = X 轴缩放
       else {
-        final centerX = widget.viewport.screenToDataX(
-          localPosition.dx,
-          size.width,
-        );
+        final centerX = viewport.screenToDataX(localPosition.dx, size.width);
         newViewport = newViewport.zoomX(zoomFactor, centerX);
       }
 
@@ -564,7 +555,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final size = context.size ?? Size.zero;
     if (size.isEmpty) return;
 
-    _trackpadViewport = widget.viewport.copy();
+    _trackpadViewport = _presentedViewport.copy();
     _trackpadLastScale = 1;
     _trackpadDidPan = false;
     _trackpadDidChange = false;
@@ -598,6 +589,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     final scaleRatio = currentScale / _trackpadLastScale;
     final hasScale = (scaleRatio - 1).abs() > 0.0001;
     if (hasScale) {
+      _setViewportInteractionActive(true);
       // PointerPanZoom 的 scale > 1 表示双指张开；PlotViewport 的 factor < 1
       // 表示放大，因此这里取倒数，并限制单个事件的异常跳变。
       final zoomFactor = (1 / scaleRatio).clamp(0.5, 2.0).toDouble();
@@ -614,7 +606,11 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     _trackpadLastScale = currentScale;
     _trackpadViewport = viewport;
     if (_trackpadDidChange) {
-      widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
+      if (_trackpadDidPan || widget.onContinuousZoomChanged == null) {
+        widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
+      } else {
+        widget.onContinuousZoomChanged!(viewport);
+      }
     }
   }
 
@@ -654,11 +650,13 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   void _handlePointerPanZoomEnd(PointerPanZoomEndEvent event) {
     final viewport = _trackpadViewport;
     if (viewport != null && _trackpadDidChange) {
-      widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
-      if (_trackpadDidPan) {
-        _setViewportInteractionActive(false);
-        widget.onDragEnd?.call();
+      if (_trackpadDidPan || widget.onContinuousZoomChanged == null) {
+        widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
+      } else {
+        widget.onContinuousZoomChanged!(viewport);
       }
+      _setViewportInteractionActive(false);
+      widget.onDragEnd?.call();
     }
 
     _trackpadViewport = null;
@@ -859,26 +857,20 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   }
 
   void _initializeShiftZoom(Offset position, Size size, int? offsetAxisHit) {
+    final viewport = _presentedViewport;
     final centerScreenX = position.dx.clamp(
-      widget.viewport.marginLeft,
-      size.width - widget.viewport.marginRight,
+      viewport.marginLeft,
+      size.width - viewport.marginRight,
     );
     final centerScreenY = position.dy.clamp(
       PlotViewport().marginTop,
       size.height - PlotViewport().marginBottom,
     );
-    _shiftZoomCenterX = widget.viewport.screenToDataX(
-      centerScreenX,
-      size.width,
-    );
-    _shiftZoomCenterY = widget.viewport.screenToDataY(
-      centerScreenY,
-      size.height,
-    );
+    _shiftZoomCenterX = viewport.screenToDataX(centerScreenX, size.width);
+    _shiftZoomCenterY = viewport.screenToDataY(centerScreenY, size.height);
 
-    final inYAxisArea = position.dx < widget.viewport.marginLeft;
-    final inXAxisArea =
-        position.dy > size.height - widget.viewport.marginBottom;
+    final inYAxisArea = position.dx < viewport.marginLeft;
+    final inXAxisArea = position.dy > size.height - viewport.marginBottom;
     if (offsetAxisHit != null && widget.onChannelYScaleZoom != null) {
       _shiftZoomAxis = _ShiftZoomAxis.channelY;
       _shiftZoomChannelIndex = offsetAxisHit;
@@ -897,7 +889,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   void _initializeDragViewport() {
     // 开始平移立即退出跟随，但延迟精确窗口加载，连续拖动期间由 LOD 保持响应。
-    _dragViewport = widget.viewport.copy();
+    _dragViewport = _presentedViewport.copy();
     _lastNotifiedViewport = _dragViewport!.copy();
     _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
     _targetFps = widget.refreshFps.clamp(
@@ -1452,28 +1444,29 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       }
 
       // 计算框选区域的数据坐标
-      final x1 = widget.viewport.screenToDataX(
+      final viewport = _presentedViewport;
+      final x1 = viewport.screenToDataX(
         _boxStart!.dx.clamp(
-          widget.viewport.marginLeft,
-          size.width - widget.viewport.marginRight,
+          viewport.marginLeft,
+          size.width - viewport.marginRight,
         ),
         size.width,
       );
-      final x2 = widget.viewport.screenToDataX(
+      final x2 = viewport.screenToDataX(
         _boxEnd!.dx.clamp(
-          widget.viewport.marginLeft,
-          size.width - widget.viewport.marginRight,
+          viewport.marginLeft,
+          size.width - viewport.marginRight,
         ),
         size.width,
       );
-      final y1 = widget.viewport.screenToDataY(
+      final y1 = viewport.screenToDataY(
         _boxStart!.dy.clamp(
           PlotViewport().marginTop,
           size.height - PlotViewport().marginBottom,
         ),
         size.height,
       );
-      final y2 = widget.viewport.screenToDataY(
+      final y2 = viewport.screenToDataY(
         _boxEnd!.dy.clamp(
           PlotViewport().marginTop,
           size.height - PlotViewport().marginBottom,
@@ -1482,7 +1475,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       );
 
       // 放大到框选区域
-      final newViewport = widget.viewport.zoomTo(
+      final newViewport = viewport.zoomTo(
         x1 < x2 ? x1 : x2,
         x1 < x2 ? x2 : x1,
         y1 < y2 ? y1 : y2,

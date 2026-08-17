@@ -108,6 +108,7 @@ class ModbusProfileService {
   Future<void> save(ModbusProfile profile) async {
     final directory = _directory;
     if (directory == null) throw StateError('Modbus配置服务尚未初始化');
+    _validateId(profile.id);
     final normalized = profile.copyWith(
       source: _withMetadata(profile.source, profile.id, profile.name),
     );
@@ -135,6 +136,7 @@ class ModbusProfileService {
   }
 
   Future<void> delete(String id) async {
+    _validateId(id);
     final directory = _directory;
     _profiles.removeWhere((profile) => profile.id == id);
     if (directory != null) {
@@ -190,6 +192,7 @@ class ModbusProfileService {
     if (id.trim().isEmpty || name.trim().isEmpty) {
       throw const FormatException('Modbus配置名称或ID无效');
     }
+    _validateId(id);
     return ModbusProfile(
       id: id,
       name: name,
@@ -220,6 +223,12 @@ class ModbusProfileService {
   ).convert({'schemaVersion': 1, 'modbus': <String, Object?>{}});
 
   String _newId() => 'modbus_${DateTime.now().microsecondsSinceEpoch}';
+
+  void _validateId(String id) {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id)) {
+      throw const FormatException('Modbus配置ID无效');
+    }
+  }
 
   String _uniqueName(String value, {String? exceptId}) {
     final base = value.trim().isEmpty ? '新建配置' : value.trim();

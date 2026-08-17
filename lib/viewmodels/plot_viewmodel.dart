@@ -273,6 +273,7 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   // ========== 视口历史记录（用于撤回） ==========
   /// 视口历史记录栈，每次缩放/平移前保存当前状态
   final List<PlotViewport> _viewportHistory = [];
+  PlotViewport? _dragStartViewport;
 
   /// 视口历史最大深度
   static const int _maxHistory = 50;
@@ -2378,6 +2379,7 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
     _lastRateLogBytes = 0;
     _setViewport(viewport.reset());
     _viewportHistory.clear();
+    _dragStartViewport = null;
     _resetCursorPositions();
     Future.microtask(notifyListeners);
   }
@@ -2444,6 +2446,7 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
       _hasStartedPlottingOnce = true;
     }
     _viewportHistory.clear();
+    _dragStartViewport = null;
     _resetCursorPositions();
   }
 
@@ -3632,6 +3635,7 @@ class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   @override
   void clearViewportHistory() {
     _viewportHistory.clear();
+    _dragStartViewport = null;
   }
 
   @override

@@ -92,6 +92,26 @@ void main() {
   setUp(owners.reset);
   tearDown(owners.reset);
 
+  test('擦除和读取请求拒绝越过32位地址空间', () {
+    expect(
+      () =>
+          const FlashEraseRequest.range(
+            address: 0xFFFFFFF0,
+            length: 0x20,
+          ).validate(),
+      throwsFormatException,
+    );
+    expect(
+      () =>
+          const FlashReadRequest(
+            address: 0xFFFFFFFF,
+            length: 2,
+            outputPath: 'read.bin',
+          ).validate(),
+      throwsFormatException,
+    );
+  });
+
   test('自动模式只因工具不可用回退并锁定已连接后端', () async {
     final external = _FakeBackend(
       ProgrammingBackendSelection.externalOpenocd,

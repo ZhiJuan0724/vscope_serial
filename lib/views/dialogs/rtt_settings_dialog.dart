@@ -63,6 +63,7 @@ class _RttSettingsDialogState extends State<_RttSettingsDialog> {
     return AppSettingsDialog(
       title: Text(AppStrings.rtt.settings),
       size: AppDialogSize.navigation,
+      changeListenables: [_historyController, _fontSizeController],
       hasUnsavedChanges: () {
         final settings = AppSettings();
         return _encoding != settings.rttEncoding ||

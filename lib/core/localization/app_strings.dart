@@ -34,6 +34,7 @@ final class _NavStrings {
   String get plot => '绘图';
   String get rtt => 'RTT Viewer';
   String get protocol => '协议';
+  String get protocolComingSoon => '后续版本实现';
 }
 
 final class _CommonStrings {
@@ -74,6 +75,9 @@ final class _CommonStrings {
   String get settingsNotSaved => '设置尚未保存';
   String get unsavedChangesMessage => '已有修改，是否在退出前保存？';
   String get discard => '放弃';
+  String get more => '更多';
+  String get noBackgroundColor => '无背景色';
+  String get customColor => '自定义颜色';
 }
 
 final class _StatusStrings {
@@ -544,6 +548,26 @@ final class _RawDataStrings {
   String get shellSettingsSaved => 'Shell 设置已保存';
   String get displayOptions => '显示选项';
   String get actions => '操作';
+  String get extension => '扩展';
+  String get start => '开始';
+  String get stop => '停止';
+  String get clearDataConfirm => '确定清空当前接收数据和完整字节记录吗？此操作不可撤销。';
+  String get invalidSettings => '请修正无效设置';
+  String get connectBeforeReceive => '请先点击左下角状态栏连接串口或网络，再点击“开始”接收';
+  String get capacityWarning => ' [容量预警]';
+  String get capacityLimitReached => ' [容量上限停止，请导出并清空]';
+  String statsSummary({
+    required bool hexDisplay,
+    required String encoding,
+    required String rawData,
+    required String rawCapacity,
+    required String lineCount,
+    required String textCache,
+    required String retentionStatus,
+  }) =>
+      hexDisplay
+          ? '接收: $rawData | 容量: $rawCapacity$retentionStatus | 行数: $lineCount | 缓存: $textCache'
+          : '编码: $encoding | 原始容量: $rawCapacity$retentionStatus | 行数: $lineCount | 缓存: $textCache';
 }
 
 final class _UpdateStrings {
@@ -631,6 +655,30 @@ final class _AppInfoStrings {
   String get triggerTestCrashMessage =>
       '应用将立即发生真实的原生访问冲突并退出，不会执行正常断开和数据保存流程。'
       '请先停止串口、探针及其他重要任务；重新启动后应看到崩溃转储提示。';
+  String get jlinkExecutablePath => 'JLinkGDBServerCL.exe 路径';
+  String get jlinkExecutablePathHelp => '留空时从 SEGGER 安装目录和 PATH 自动查找';
+  String get externalOpenOcdPath => '外置 openocd.exe 路径';
+  String get externalOpenOcdPathHelp => '留空时从 PATH 查找；仅影响外置 OpenOCD';
+  String get externalPyOcdPythonPath => '外置 pyOCD Python 路径';
+  String get externalPyOcdPythonPathHelp =>
+      '指向能够 import pyocd 的 python.exe；当前仅支持 pyOCD 0.45.x';
+  String get detectingProbeBackends => '正在检测探针后端...';
+  String get backendNotDetected => '未检测到';
+  String get backendDetectedUnknownVersion => '已检测到（版本未知）';
+  String probeBackendState(String name, String state) => '$name: $state';
+  String get redetect => '重新检测';
+  String get enableConnectionShortcuts => '启用连接快捷键';
+  String get enableConnectionShortcutsHelp =>
+      'F1 打开连接配置，F2 快捷连接，F3 快捷断开，F5 快捷重连；关闭后全部不响应。';
+  String get enableNetworkConnections => '启用网络连接';
+  String get enableNetworkConnectionsHelp =>
+      '允许数据收发、绘图和Modbus使用TCP/UDP，并允许Shell选择SSH。';
+  String get separateSerialProfiles => '按页面独立保存串口参数';
+  String get separateSerialProfilesHelp => '关闭时数据收发、Shell和绘图共用原全局参数；开启后分别保存。';
+  String get invalidPlotHistoryLimit => '请检查绘图历史内存上限';
+  String get connectionBusySettingsError => '数据连接活动期间不能修改网络或串口配置记录方式';
+  String get preparingBundledOpenOcd => '正在准备内置 OpenOCD';
+  String get bundledOpenOcdPreparationHelp => '运行文件将解压到程序目录，完成后会自动继续。';
   String get memoryLimits => '内存上限';
   String get plotHistoryMemoryLimit => '绘图历史';
   String get plotHistoryMemoryLimitSummary => '达到上限后停止绘图并保留已有历史';
@@ -902,6 +950,9 @@ final class _ModbusStrings {
   String get wordOrder => '字序';
   String currentLayout(String preview) => '当前排列：$preview';
   String logMaxLines(int min, int max) => '日志上限（$min～$max 行）';
+  String get responseTimeoutInvalid => '响应超时必须在100～60000 ms之间';
+  String get logMaxLinesInvalid => '日志上限必须在100～100000行之间';
+  String get enableNetworkFirst => '请先在高级设置中启用网络连接';
 
   // 寄存器页面
   String get addPageTitle => '添加寄存器页面';
@@ -1046,6 +1097,8 @@ final class _FlashStrings {
   String get setBinBaseAddress => '设置BIN基地址';
   String get binBaseAddressLabel => '基地址（32位）';
   String get open => '打开';
+  String baseAddress(int address) =>
+      '基地址：0x${address.toRadixString(16).toUpperCase().padLeft(8, '0')}';
 
   // 烧写
   String get programSection => '烧写';

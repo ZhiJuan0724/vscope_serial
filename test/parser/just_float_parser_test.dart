@@ -137,5 +137,21 @@ void main() {
       expect(result, hasLength(1));
       expect(result.single.values, [3.0, 4.0]);
     });
+
+    test('固定通道帧丢失一字节后保留紧随的完整帧', () {
+      final parser = JustFloatParser(
+        ParserConfig.justFloatDefault()..channelCount = 2,
+      );
+      addTearDown(parser.dispose);
+      final damaged = buildFrame([1, 2]).toList()..removeAt(3);
+      final results = parser.feedBatch(
+        Uint8List.fromList([
+          ...damaged,
+          ...buildFrame([3, 4]),
+        ]),
+      );
+      expect(results.any((result) => !result.success), isTrue);
+      expect(results.last.values, [3.0, 4.0]);
+    });
   });
 }

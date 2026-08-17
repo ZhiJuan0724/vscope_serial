@@ -4,6 +4,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/localization/app_strings.dart';
+
 export 'app_controls/app_dialog.dart';
 export 'app_controls/app_form.dart';
 
@@ -612,7 +614,7 @@ class _ToolbarMoreButtonState extends State<_ToolbarMoreButton> {
   @override
   Widget build(BuildContext context) => ToolbarIconButton(
     key: const ValueKey('toolbar-more-button'),
-    tooltip: '更多',
+    tooltip: AppStrings.common.more,
     onPressed: _toggleMenu,
     icon: const Icon(Icons.more_vert),
   );
@@ -805,7 +807,7 @@ class AppColorSwatchPicker extends StatelessWidget {
       children: [
         if (allowClear)
           Tooltip(
-            message: '无背景色',
+            message: AppStrings.common.noBackgroundColor,
             child: InkWell(
               borderRadius: BorderRadius.circular(4),
               onTap: () => onChanged(null),
@@ -829,7 +831,7 @@ class AppColorSwatchPicker extends StatelessWidget {
           ),
         for (final color in presetColors) swatch(color),
         Tooltip(
-          message: '自定义颜色',
+          message: AppStrings.common.customColor,
           child: InkWell(
             borderRadius: BorderRadius.circular(4),
             onTap: () async {
@@ -1808,8 +1810,8 @@ Future<bool> showConfirmDialog(
   BuildContext context, {
   required String title,
   required String message,
-  String confirmLabel = '确定',
-  String cancelLabel = '取消',
+  String? confirmLabel,
+  String? cancelLabel,
 }) async {
   final confirmed = await showDialog<bool>(
     context: context,
@@ -1821,11 +1823,11 @@ Future<bool> showConfirmDialog(
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(cancelLabel),
+              child: Text(cancelLabel ?? AppStrings.common.cancel),
             ),
             DialogPrimaryActionButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              label: confirmLabel,
+              label: confirmLabel ?? AppStrings.common.confirm,
             ),
           ],
         ),

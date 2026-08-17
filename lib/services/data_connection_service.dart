@@ -829,7 +829,11 @@ class DataConnectionService extends ChangeNotifier {
     NetworkConnectionConfig networkConfig,
     String pageId,
   ) async {
-    if (isConnected) return;
+    if (isConnected) {
+      isConnecting = false;
+      _notifyListenersSoon();
+      return;
+    }
     if (!_connectionOwners.tryAcquire(ConnectionOwner.data)) {
       isConnecting = false;
       AppNotifications.show('探针已连接，请先手动断开探针');

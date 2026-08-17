@@ -170,6 +170,24 @@ class FlashEraseRequest {
   final int? address;
   final int? length;
   bool get wholeChip => address == null;
+
+  void validate() {
+    if (wholeChip) {
+      if (length != null) throw const FormatException('全片擦除参数无效');
+      return;
+    }
+    final start = address!;
+    final byteLength = length;
+    if (start < 0 ||
+        start > 0xFFFFFFFF ||
+        byteLength == null ||
+        byteLength <= 0) {
+      throw const FormatException('擦除范围必须是有效的32位地址和正长度');
+    }
+    if (byteLength > 0x100000000 || start > 0x100000000 - byteLength) {
+      throw const FormatException('擦除范围超出32位地址空间');
+    }
+  }
 }
 
 class FlashReadRequest {
@@ -182,4 +200,16 @@ class FlashReadRequest {
   final int address;
   final int length;
   final String outputPath;
+
+  void validate() {
+    if (address < 0 || address > 0xFFFFFFFF || length <= 0) {
+      throw const FormatException('读取范围必须是有效的32位地址和正长度');
+    }
+    if (length > 0x100000000 || address > 0x100000000 - length) {
+      throw const FormatException('读取范围超出32位地址空间');
+    }
+    if (outputPath.trim().isEmpty) {
+      throw const FormatException('读取输出路径不能为空');
+    }
+  }
 }

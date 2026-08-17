@@ -241,8 +241,13 @@ class _JLinkCommanderSession {
       runInShell: false,
     );
     final session = _JLinkCommanderSession._(process, onOutput);
-    await session._waitForPrompt().timeout(const Duration(seconds: 20));
-    return session;
+    try {
+      await session._waitForPrompt().timeout(const Duration(seconds: 20));
+      return session;
+    } catch (_) {
+      await session.terminate();
+      rethrow;
+    }
   }
 
   void _handleOutput(List<int> data) {
@@ -286,7 +291,13 @@ class _JLinkCommanderSession {
       final response = _waitForPrompt();
       _process.stdin.writeln(command);
       await _process.stdin.flush();
-      return await response.timeout(timeout);
+      try {
+        return await response.timeout(timeout);
+      } on TimeoutException {
+        // Commander没有请求ID；超时响应可能被下一条命令误认，必须终止会话。
+        await terminate();
+        rethrow;
+      }
     } finally {
       release.complete();
     }

@@ -217,8 +217,9 @@ class ParserConfig {
     if (channelCount < 1 || channelCount > PlotConfiguration.rawChannelCount) {
       return '固定帧协议通道数必须为 1~${PlotConfiguration.rawChannelCount}';
     }
-    if (hasFrameHeader && frameHeader.take(frameHeaderLength).isEmpty) {
-      return '启用帧头后至少需要填写一个字节';
+    if (hasFrameHeader &&
+        (frameHeaderLength <= 0 || frameHeader.length < frameHeaderLength)) {
+      return '帧头字节数少于配置的帧头长度';
     }
     final tail = hasFrameTail ? (frameTail ?? const <int>[]) : const <int>[];
     if (hasFrameTail && tail.isEmpty) {

@@ -180,7 +180,7 @@ void main() {
             ..frameHeader = []
             ..frameHeaderLength = 0;
 
-      expect(config.fixedFrameValidationError, '启用帧头后至少需要填写一个字节');
+      expect(config.fixedFrameValidationError, '帧头字节数少于配置的帧头长度');
     });
 
     test('启用帧尾后不能为空', () {

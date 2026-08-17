@@ -315,13 +315,14 @@ class ModbusFrameParser {
   }
 
   Uint8List? _takeTcp() {
-    if (_buffer.length < 6) return null;
-    final length = (_buffer[4] << 8) | _buffer[5];
-    if (length < 3 || length > 260) {
+    while (_buffer.length >= 6) {
+      final length = (_buffer[4] << 8) | _buffer[5];
+      if (length >= 3 && length <= 260) {
+        return _take(length + 6);
+      }
       _buffer.removeAt(0);
-      return _takeTcp();
     }
-    return _take(length + 6);
+    return null;
   }
 
   Uint8List? _take(int length) {

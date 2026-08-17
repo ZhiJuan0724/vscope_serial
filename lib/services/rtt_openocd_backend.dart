@@ -761,7 +761,13 @@ class _OpenOcdTclClient {
       _pending = response;
       _socket.add([...utf8.encode(command), 0x1a]);
       await _socket.flush();
-      return await response.future.timeout(const Duration(seconds: 5));
+      try {
+        return await response.future.timeout(const Duration(seconds: 5));
+      } on TimeoutException {
+        // Tcl没有请求ID，超时后关闭控制连接，避免迟到响应错配下一条命令。
+        await close();
+        rethrow;
+      }
     } finally {
       _pending = null;
       release.complete();

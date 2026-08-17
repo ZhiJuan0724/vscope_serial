@@ -85,6 +85,25 @@ void _respondRead(_FakeLink link, {int value = 42}) {
 }
 
 void main() {
+  test('Modbus配置ID不能越出配置目录', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'vscope_modbus_profile_id_test_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = ModbusProfileService(directoryOverride: directory);
+    await service.init();
+    await expectLater(
+      service.save(
+        const ModbusProfile(
+          id: '../outside',
+          name: '非法配置',
+          source: '{"schemaVersion":1,"modbus":{}}',
+        ),
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('Modbus配置自动保存且重命名默认配置后补建空默认配置', () async {
     final directory = await Directory.systemTemp.createTemp(
       'vscope_modbus_profile_test_',

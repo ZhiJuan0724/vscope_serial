@@ -850,7 +850,10 @@ extension PlotViewModelDisplayControls on PlotViewModel {
   }
 
   void startObservationPlacement() {
-    if (displayDataPoints.isEmpty) return;
+    if (displayDataPoints.isEmpty ||
+        _observations.length >= PlotViewModel.maxObservationCount) {
+      return;
+    }
     _observationPlacementActive = true;
     _observationPreview = null;
     _markOverlayChanged();
