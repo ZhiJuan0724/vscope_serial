@@ -1811,11 +1811,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                     onObservationPlacementCommit: vm.commitObservationPlacement,
                     onViewportChanged:
                         (viewport, {fromDrag = false}) =>
-                            vm.updateViewport(viewport, fromDrag: fromDrag),
+                            fromDrag
+                                ? vm.updateFramePacedViewport(viewport)
+                                : vm.updateViewport(viewport),
                     onContinuousZoomChanged:
-                        (viewport) => vm.updateViewport(
+                        (viewport) => vm.updateFramePacedViewport(
                           viewport,
-                          fromDrag: true,
                           preserveFollow: true,
                         ),
                     onDragEnd: vm.saveDragViewport,

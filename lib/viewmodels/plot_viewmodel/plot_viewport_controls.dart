@@ -18,6 +18,32 @@ extension PlotViewModelViewportControls on PlotViewModel {
     PlotViewport newViewport, {
     bool fromDrag = false,
     bool preserveFollow = false,
+  }) => _updateViewport(
+    newViewport,
+    fromDrag: fromDrag,
+    preserveFollow: preserveFollow,
+    alreadyFramePaced: false,
+  );
+
+  /// 接收已经由视图层 Ticker 按目标刷新率放行的连续交互视口。
+  ///
+  /// 此路径直接通知 UI，不再经过 ViewModel 的下一帧合并。定位条等其它
+  /// [fromDrag] 来源仍使用 [updateViewport] 的原有合帧保护。
+  void updateFramePacedViewport(
+    PlotViewport newViewport, {
+    bool preserveFollow = false,
+  }) => _updateViewport(
+    newViewport,
+    fromDrag: true,
+    preserveFollow: preserveFollow,
+    alreadyFramePaced: true,
+  );
+
+  void _updateViewport(
+    PlotViewport newViewport, {
+    required bool fromDrag,
+    required bool preserveFollow,
+    required bool alreadyFramePaced,
   }) {
     // 保存当前的偏移通道列宽，避免 copy() 丢失
     final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
@@ -51,7 +77,11 @@ extension PlotViewModelViewportControls on PlotViewModel {
       );
     }
     if (fromDrag) {
-      _notifyDragViewportAtNextFrame();
+      if (alreadyFramePaced) {
+        notifyListeners();
+      } else {
+        _notifyDragViewportAtNextFrame();
+      }
     } else {
       Future.microtask(notifyListeners);
     }
