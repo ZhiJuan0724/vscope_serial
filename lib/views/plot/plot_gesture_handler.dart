@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../../core/constants/plot_configuration.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/plot_data.dart';
 import 'plot_painter.dart';
+import 'plot_interaction_frame_pacer.dart';
 import 'plot_presentation_coordinator.dart';
 import 'plot_viewport.dart';
 
@@ -285,14 +287,18 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   double? _offsetDragStartDataY;
   double _offsetDragStartYOffset = 0;
 
-  /// 上次通知 UI 重绘的视口（用于节流）
+  /// 上次实际提交给 UI 的视口，用于避免手势结束时重复提交。
   PlotViewport? _lastNotifiedViewport;
-
-  /// 上次通知时间戳
-  int _lastNotifyTime = 0;
 
   /// 目标刷新帧率（fps），由外部传入，与高级设置同步
   int _targetFps = 30;
+
+  late final Ticker _viewportFrameTicker;
+  final PlotInteractionFramePacer _viewportFramePacer =
+      PlotInteractionFramePacer();
+  PlotViewport? _pendingViewport;
+  bool _pendingViewportFromDrag = true;
+  bool _pendingViewportUsesContinuousZoom = false;
 
   /// 触控板手势期间累积的视口。
   ///
@@ -304,11 +310,95 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   bool _trackpadDidChange = false;
   bool _viewportInteractionActive = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _viewportFrameTicker = Ticker(_handleViewportFrame);
+  }
+
+  @override
+  void didUpdateWidget(covariant PlotGestureHandler oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshFps != widget.refreshFps) {
+      _targetFps = widget.refreshFps.clamp(
+        PlotConfiguration.minRefreshFps,
+        PlotConfiguration.maxRefreshFps,
+      );
+      _viewportFramePacer.updateTargetFps(_targetFps);
+    }
+  }
+
+  @override
+  void dispose() {
+    _viewportFrameTicker.dispose();
+    super.dispose();
+  }
+
   void _setViewportInteractionActive(bool value) {
     if (_viewportInteractionActive == value) return;
     _viewportInteractionActive = value;
     widget.onInteractionChanged?.call(value);
   }
+
+  void _startViewportFrameScheduling() {
+    _targetFps = widget.refreshFps.clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
+    _viewportFramePacer.start(targetFps: _targetFps);
+    if (!_viewportFrameTicker.isActive) _viewportFrameTicker.start();
+  }
+
+  void _queueViewportForNextFrame(
+    PlotViewport viewport, {
+    required bool fromDrag,
+    required bool useContinuousZoom,
+  }) {
+    if (!_viewportFramePacer.isActive) _startViewportFrameScheduling();
+    _pendingViewport = viewport.copy();
+    _pendingViewportFromDrag = fromDrag;
+    _pendingViewportUsesContinuousZoom = useContinuousZoom;
+  }
+
+  void _handleViewportFrame(Duration elapsed) {
+    if (!_viewportFramePacer.shouldSubmit(
+      elapsedMicros: elapsed.inMicroseconds,
+      hasPendingViewport: _pendingViewport != null,
+    )) {
+      return;
+    }
+    _submitPendingViewport();
+  }
+
+  void _submitPendingViewport() {
+    final viewport = _pendingViewport;
+    if (viewport == null) return;
+    final fromDrag = _pendingViewportFromDrag;
+    final useContinuousZoom = _pendingViewportUsesContinuousZoom;
+    _pendingViewport = null;
+
+    if (_sameViewport(_lastNotifiedViewport, viewport)) return;
+    _lastNotifiedViewport = viewport.copy();
+    if (useContinuousZoom && widget.onContinuousZoomChanged != null) {
+      widget.onContinuousZoomChanged!(viewport);
+    } else {
+      widget.onViewportChanged(viewport, fromDrag: fromDrag);
+    }
+  }
+
+  void _stopViewportFrameScheduling({required bool flushPending}) {
+    if (flushPending) _submitPendingViewport();
+    _pendingViewport = null;
+    _viewportFramePacer.stop();
+    if (_viewportFrameTicker.isActive) _viewportFrameTicker.stop();
+  }
+
+  bool _sameViewport(PlotViewport? left, PlotViewport right) =>
+      left != null &&
+      left.xMin == right.xMin &&
+      left.xMax == right.xMax &&
+      left.yMin == right.yMin &&
+      left.yMax == right.yMax;
 
   double _fontSize(double base) {
     return (base + 1 + widget.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
@@ -559,6 +649,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     _trackpadLastScale = 1;
     _trackpadDidPan = false;
     _trackpadDidChange = false;
+    _lastNotifiedViewport = null;
   }
 
   /// 处理触控板双指移动和捏合。
@@ -571,6 +662,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
     var viewport = _trackpadViewport;
     if (size.isEmpty || viewport == null) return;
 
+    var changedThisEvent = false;
     const panThresholdSquared = 0.25;
     final panDelta = event.localPanDelta;
     final hasPan = panDelta.distanceSquared > panThresholdSquared;
@@ -580,6 +672,7 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       viewport = viewport.panY(panDelta.dy, size.height);
       _trackpadDidPan = true;
       _trackpadDidChange = true;
+      changedThisEvent = true;
     }
 
     final currentScale =
@@ -601,16 +694,18 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         size,
       );
       _trackpadDidChange = true;
+      changedThisEvent = true;
     }
 
     _trackpadLastScale = currentScale;
     _trackpadViewport = viewport;
-    if (_trackpadDidChange) {
-      if (_trackpadDidPan || widget.onContinuousZoomChanged == null) {
-        widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
-      } else {
-        widget.onContinuousZoomChanged!(viewport);
-      }
+    if (changedThisEvent) {
+      _queueViewportForNextFrame(
+        viewport,
+        fromDrag: _trackpadDidPan,
+        useContinuousZoom:
+            !_trackpadDidPan && widget.onContinuousZoomChanged != null,
+      );
     }
   }
 
@@ -648,15 +743,12 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
 
   /// 触控板平移结束时提交最终视口并持久化；纯捏合沿用滚轮缩放逻辑。
   void _handlePointerPanZoomEnd(PointerPanZoomEndEvent event) {
-    final viewport = _trackpadViewport;
-    if (viewport != null && _trackpadDidChange) {
-      if (_trackpadDidPan || widget.onContinuousZoomChanged == null) {
-        widget.onViewportChanged(viewport, fromDrag: _trackpadDidPan);
-      } else {
-        widget.onContinuousZoomChanged!(viewport);
-      }
+    if (_trackpadViewport != null && _trackpadDidChange) {
+      _stopViewportFrameScheduling(flushPending: true);
       _setViewportInteractionActive(false);
       widget.onDragEnd?.call();
+    } else {
+      _stopViewportFrameScheduling(flushPending: false);
     }
 
     _trackpadViewport = null;
@@ -890,12 +982,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   void _initializeDragViewport() {
     // 开始平移立即退出跟随，但延迟精确窗口加载，连续拖动期间由 LOD 保持响应。
     _dragViewport = _presentedViewport.copy();
-    _lastNotifiedViewport = _dragViewport!.copy();
-    _lastNotifyTime = DateTime.now().millisecondsSinceEpoch;
-    _targetFps = widget.refreshFps.clamp(
-      PlotConfiguration.minRefreshFps,
-      PlotConfiguration.maxRefreshFps,
-    );
+    _lastNotifiedViewport = null;
+    _startViewportFrameScheduling();
     _setViewportInteractionActive(true);
   }
 
@@ -1195,8 +1283,9 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
       final dy = event.localPosition.dy - _lastPosition!.dy;
       _lastPosition = event.localPosition;
 
+      var viewportChanged = false;
       if (_shiftZoomAxis != _ShiftZoomAxis.none) {
-        _handleShiftZoomDrag(dx, dy);
+        viewportChanged = _handleShiftZoomDrag(dx, dy);
         if (_shiftZoomAxis == _ShiftZoomAxis.channelY) {
           return;
         }
@@ -1204,29 +1293,23 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         // 使用本地视口副本进行累积平移，避免依赖 widget.viewport 的实时更新
         _dragViewport = _dragViewport!.panX(dx, size.width);
         _dragViewport = _dragViewport!.panY(dy, size.height);
+        viewportChanged = dx != 0 || dy != 0;
       }
 
-      // 节流：根据目标帧率计算间隔，与高级设置同步
-      final notifyIntervalMs = (1000 / _targetFps).round();
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final elapsed = now - _lastNotifyTime;
-      final viewportChanged =
-          _lastNotifiedViewport == null ||
-          (_lastNotifiedViewport!.xMin - _dragViewport!.xMin).abs() > 1.0 ||
-          (_lastNotifiedViewport!.yMin - _dragViewport!.yMin).abs() > 1.0;
-
-      if (elapsed >= notifyIntervalMs && viewportChanged) {
-        _lastNotifiedViewport = _dragViewport!.copy();
-        _lastNotifyTime = now;
-        widget.onViewportChanged(_dragViewport!, fromDrag: true);
+      if (viewportChanged) {
+        _queueViewportForNextFrame(
+          _dragViewport!,
+          fromDrag: true,
+          useContinuousZoom: false,
+        );
       }
     }
   }
 
-  void _handleShiftZoomDrag(double dx, double dy) {
+  bool _handleShiftZoomDrag(double dx, double dy) {
     const zoomSensitivity = 240.0;
     if (_shiftZoomAxis == _ShiftZoomAxis.pending) {
-      if (dx.abs() < 2 && dy.abs() < 2) return;
+      if (dx.abs() < 2 && dy.abs() < 2) return false;
       _shiftZoomAxis =
           dy.abs() > dx.abs() ? _ShiftZoomAxis.y : _ShiftZoomAxis.x;
       AppLogger().trace(
@@ -1239,22 +1322,24 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         // 右拖时 factor < 1（放大），左拖时 factor > 1（缩小）。
         final factor = math.exp(-dx / zoomSensitivity);
         _dragViewport = _dragViewport!.zoomX(factor, _shiftZoomCenterX!);
-        break;
+        return true;
       case _ShiftZoomAxis.y:
         // 上拖时 factor < 1（放大），下拖时 factor > 1（缩小）。
         final factor = math.exp(dy / zoomSensitivity);
         _dragViewport = _dragViewport!.zoomY(factor, _shiftZoomCenterY!);
-        break;
+        return true;
       case _ShiftZoomAxis.channelY:
         final channelIndex = _shiftZoomChannelIndex;
-        if (channelIndex == null || widget.onChannelYScaleZoom == null) return;
+        if (channelIndex == null || widget.onChannelYScaleZoom == null) {
+          return false;
+        }
         // 上拖增大通道比例，下拖减小通道比例。
         final scaleDelta = math.exp(-dy / zoomSensitivity);
         widget.onChannelYScaleZoom!(channelIndex, scaleDelta);
-        break;
+        return false;
       case _ShiftZoomAxis.none:
       case _ShiftZoomAxis.pending:
-        break;
+        return false;
     }
   }
 
@@ -1490,8 +1575,8 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
         _dragTarget == _DragTarget.none &&
         _dragViewport != null &&
         _shiftZoomAxis != _ShiftZoomAxis.channelY) {
-      // 平移拖动结束，确保最终视口被应用并保存
-      widget.onViewportChanged(_dragViewport!, fromDrag: true);
+      // 帧节拍器只保留最新目标；结束时刷新尚未呈现的最终视口。
+      _stopViewportFrameScheduling(flushPending: true);
       _setViewportInteractionActive(false);
       widget.onDragEnd?.call();
     }
@@ -1499,10 +1584,12 @@ class _PlotGestureHandlerState extends State<PlotGestureHandler> {
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
+    _stopViewportFrameScheduling(flushPending: false);
     _resetDragState();
   }
 
   void _resetDragState() {
+    _stopViewportFrameScheduling(flushPending: false);
     _setViewportInteractionActive(false);
     _isDragging = false;
     _isBoxSelecting = false;

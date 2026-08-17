@@ -287,7 +287,8 @@ final class _PlotStrings {
   String get unitPacket => '包';
   String get unitGiB => 'GiB';
 
-  String get refreshFpsHelp => '范围: 30~120 fps，默认 60 fps\n值越高绘图越流畅，但可能增加界面渲染压力';
+  String get refreshFpsHelp =>
+      '范围: 30~120 fps，默认 60 fps\n这是绘图数据层的目标更新上限；实际帧率还受显示刷新率、输入频率和渲染性能限制';
   String get plotFontSizeHelp => '范围: -3~+6，影响绘图区坐标轴及所有悬浮窗字体大小';
   String get snapHighlightHelp => '范围: 6~12 px，默认 8 px。仅显示当前窗口内的吸附点';
   String get plotHistoryMemoryLimitHelp =>
