@@ -921,6 +921,7 @@ class _FlashProgrammingPageState extends State<FlashProgrammingPage> {
           Checkbox(
             value: value,
             visualDensity: VisualDensity.compact,
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
             onChanged: (next) => onChanged(next ?? false),
           ),
           Text(label),

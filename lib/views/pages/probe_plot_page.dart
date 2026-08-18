@@ -32,6 +32,7 @@ import '../plot/plot_painter.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/plot_color_picker.dart';
 import '../widgets/plot_tools_toolbar.dart';
 
 /// 将 ViewModel 暴露的 ARGB32 整数颜色转换回 Flutter `Color`。
@@ -226,18 +227,14 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
           ],
         ),
       ],
-      trailingItems: [
-        ..._zoomToolItems(vm),
-        ..._fitToolItems(vm),
-        ..._clearSettingsToolItems(context, vm),
-      ],
+      trailingItems: [..._clearSettingsToolItems(context, vm)],
     );
   }
 
   Widget _buildSecondaryToolbar(BuildContext context, ProbePlotViewModel vm) {
     return UnifiedToolbar(
       leadingItems: [..._interactionToolItems(context, vm)],
-      trailingItems: const [],
+      trailingItems: [..._zoomToolItems(vm), ..._fitToolItems(vm)],
     );
   }
 
@@ -1299,140 +1296,138 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
     );
   }
 
-  Future<Color?> _chooseMeasurementColor(BuildContext context, Color current) {
-    final colors = <Color>[
-      Colors.blue,
-      Colors.lightBlue,
-      Colors.cyan,
-      Colors.teal,
-      Colors.green,
-      Colors.lime,
-      Colors.amber,
-      Colors.orange,
-      Colors.red,
-      Colors.pink,
-      Colors.purple,
-      Colors.white,
-      Colors.black,
-    ];
-    return showDialog<Color>(
-      context: context,
-      builder:
-          (dialogContext) => AlertDialog(
-            title: Text(AppStrings.probe.selectColor),
-            content: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final color in colors)
-                  InkWell(
-                    onTap: () => Navigator.pop(dialogContext, color),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: color,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color:
-                              color == current
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.grey,
-                          width: color == current ? 3 : 1,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-    );
-  }
-
   Future<void> _showMeasurementSettings(
     BuildContext context,
     ProbePlotViewModel vm, {
     required bool isX,
   }) async {
+    final defaultPrimary =
+        vm.backgroundStyle == PlotBackgroundStyle.light
+            ? const Color(0xFF0369A1)
+            : Colors.cyan;
+    final defaultSecondary =
+        vm.backgroundStyle == PlotBackgroundStyle.light
+            ? const Color(0xFFB45309)
+            : Colors.yellow;
     var line1Color =
         _argbToColor(
           isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color,
         ) ??
-        (isX ? Colors.blue : Colors.red);
+        defaultPrimary;
     var line2Color =
         _argbToColor(
           isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color,
         ) ??
-        (isX ? Colors.lightBlue : Colors.purple);
+        defaultSecondary;
     var line1Opacity =
         isX ? vm.xMeasurementLine1Opacity : vm.yMeasurementLine1Opacity;
     var line2Opacity =
         isX ? vm.xMeasurementLine2Opacity : vm.yMeasurementLine2Opacity;
     var snapEnabled = vm.yMeasurementSnapEnabled;
+    final opacityInputFormatter = TextInputFormatter.withFunction((
+      oldValue,
+      newValue,
+    ) {
+      if (newValue.text.isEmpty) return newValue;
+      final value = int.tryParse(newValue.text);
+      return value != null && value <= 100 ? newValue : oldValue;
+    });
 
     await showDialog<void>(
       context: context,
       builder:
           (dialogContext) => StatefulBuilder(
             builder: (context, setDialogState) {
-              Widget lineEditor(
-                String label,
-                Color color,
-                double opacity,
-                ValueChanged<Color> onColor,
-                ValueChanged<double> onOpacity,
-              ) {
-                return Row(
+              Widget buildLineEditor({
+                required String label,
+                required Color color,
+                required double opacity,
+                required ValueKey<String> colorKey,
+                required ValueKey<String> opacityKey,
+                required VoidCallback onChooseColor,
+                required ValueChanged<double> onOpacityChanged,
+              }) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(width: 34, child: Text(label)),
-                    InkWell(
-                      onTap: () async {
-                        final selected = await _chooseMeasurementColor(
-                          dialogContext,
-                          color,
-                        );
-                        if (selected != null) {
-                          setDialogState(() => onColor(selected));
-                        }
-                      },
-                      child: Container(
-                        width: 42,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: Colors.grey),
-                        ),
-                      ),
+                    Text(
+                      label,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    const Spacer(),
-                    Text(AppStrings.plot.measurementLineOpacity),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 82,
-                      child: TextFormField(
-                        initialValue: (opacity * 100).round().toString(),
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                        ],
-                        decoration: secondaryDialogFieldDecoration(
-                          suffixText: '%',
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(AppStrings.plot.measurementLineColor),
+                        const SizedBox(width: 12),
+                        InkWell(
+                          key: colorKey,
+                          onTap: onChooseColor,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            width: 42,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                          ),
                         ),
-                        onChanged: (text) {
-                          final value = int.tryParse(text);
-                          if (value != null) {
-                            onOpacity(value.clamp(0, 100) / 100);
-                          }
-                        },
-                      ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          AppStrings.plot.measurementLineOpacity,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: kSecondaryDialogFieldWidth,
+                          child: TextFormField(
+                            key: opacityKey,
+                            initialValue: (opacity * 100).round().toString(),
+                            decoration: secondaryDialogFieldDecoration(
+                              suffixText: '%',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              opacityInputFormatter,
+                            ],
+                            onChanged: (text) {
+                              final value = int.tryParse(text);
+                              if (value != null) {
+                                onOpacityChanged(value / 100);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 );
               }
 
+              Future<void> chooseColor(bool first) async {
+                final selected = await showPlotCustomColorPicker(
+                  dialogContext,
+                  first ? line1Color : line2Color,
+                );
+                if (selected == null) return;
+                setDialogState(() {
+                  if (first) {
+                    line1Color = selected;
+                  } else {
+                    line2Color = selected;
+                  }
+                });
+              }
+
+              final prefix = isX ? 'x' : 'y';
               return AlertDialog(
+                shape: kAdvancedSettingsDialogShape,
                 title: Text(
                   isX
                       ? AppStrings.plot.measureXSettings
@@ -1443,25 +1438,31 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      lineEditor(
-                        isX ? 'X1' : 'Y1',
-                        line1Color,
-                        line1Opacity,
-                        (value) => line1Color = value,
-                        (value) => line1Opacity = value,
+                      buildLineEditor(
+                        label: isX ? 'X1' : 'Y1',
+                        color: line1Color,
+                        opacity: line1Opacity,
+                        colorKey: ValueKey('$prefix-measure-line1-color'),
+                        opacityKey: ValueKey('$prefix-measure-line1-opacity'),
+                        onChooseColor: () => chooseColor(true),
+                        onOpacityChanged: (value) => line1Opacity = value,
                       ),
-                      const SizedBox(height: 12),
-                      lineEditor(
-                        isX ? 'X2' : 'Y2',
-                        line2Color,
-                        line2Opacity,
-                        (value) => line2Color = value,
-                        (value) => line2Opacity = value,
+                      const Divider(height: 20),
+                      buildLineEditor(
+                        label: isX ? 'X2' : 'Y2',
+                        color: line2Color,
+                        opacity: line2Opacity,
+                        colorKey: ValueKey('$prefix-measure-line2-color'),
+                        opacityKey: ValueKey('$prefix-measure-line2-opacity'),
+                        onChooseColor: () => chooseColor(false),
+                        onOpacityChanged: (value) => line2Opacity = value,
                       ),
                       if (!isX) ...[
-                        const Divider(height: 24),
+                        const Divider(height: 20),
                         AppSwitchRow(
+                          key: const ValueKey('y-measure-snap-toggle'),
                           title: Text(AppStrings.plot.measurementSnap),
+                          subtitle: Text(AppStrings.plot.measurementSnapHelp),
                           value: snapEnabled,
                           onChanged:
                               (value) =>
@@ -1477,6 +1478,7 @@ class _ProbePlotPageState extends State<ProbePlotPage> {
                     child: Text(AppStrings.common.cancel),
                   ),
                   FilledButton(
+                    key: ValueKey('$prefix-measure-settings-save'),
                     onPressed: () {
                       if (isX) {
                         vm.setXMeasurementStyle(
