@@ -740,33 +740,46 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                           _backend == ProbeBackendSelection.externalPyocd
                               ? AppStrings.probe.scanUsbDevices
                               : AppStrings.probe.refreshProbes,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(4),
-                        onTap:
-                            isConnected || _refreshing || _connecting
-                                ? null
-                                : () => unawaited(_refresh()),
-                        child: SizedBox.square(
-                          dimension: kToolbarControlExtent,
-                          child: Center(
-                            child:
-                                _refreshing
-                                    ? const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                    : Icon(
-                                      Icons.refresh,
-                                      size: kToolbarIconSize,
-                                      color:
-                                          isConnected || _connecting
-                                              ? Theme.of(context).disabledColor
-                                              : null,
-                                    ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 占位标签：与同行下拉框 label 同高，让刷新按钮与输入框对齐。
+                          Text(
+                            ' ',
+                            style: Theme.of(context).textTheme.bodyMedium,
                           ),
-                        ),
+                          const SizedBox(height: 4),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(4),
+                            onTap:
+                                isConnected || _refreshing || _connecting
+                                    ? null
+                                    : () => unawaited(_refresh()),
+                            child: SizedBox.square(
+                              dimension: kSecondaryDialogControlHeight,
+                              child: Center(
+                                child:
+                                    _refreshing
+                                        ? const SizedBox.square(
+                                          dimension: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                        : Icon(
+                                          Icons.refresh,
+                                          size: kToolbarIconSize,
+                                          color:
+                                              isConnected || _connecting
+                                                  ? Theme.of(
+                                                    context,
+                                                  ).disabledColor
+                                                  : null,
+                                        ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -875,6 +888,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                 if (_backend != ProbeBackendSelection.externalOpenocd &&
                     _backend != ProbeBackendSelection.bundledOpenocd)
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         flex: 3,
@@ -893,31 +907,50 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      IconButton(
-                        key: const ValueKey('rtt-target-search-button'),
-                        tooltip: AppStrings.probe.searchSupportedChips,
-                        onPressed:
-                            _autoDetect || isConnected || _connecting
-                                ? null
-                                : () => unawaited(_selectTarget()),
-                        icon: const Icon(Icons.manage_search),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // 占位标签：与「目标芯片」label 同高，让检索按钮和自动识别与输入框对齐。
+                          Text(
+                            ' ',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AppFieldIconButton(
+                                key: const ValueKey('rtt-target-search-button'),
+                                tooltip: AppStrings.probe.searchSupportedChips,
+                                onPressed:
+                                    _autoDetect || isConnected || _connecting
+                                        ? null
+                                        : () => unawaited(_selectTarget()),
+                                icon: const Icon(Icons.manage_search),
+                              ),
+                              const SizedBox(width: 4),
+                              Checkbox(
+                                value: _autoDetect,
+                                onChanged:
+                                    isConnected || _isProgramming
+                                        ? null
+                                        : (value) {
+                                          setState(
+                                            () => _autoDetect = value ?? false,
+                                          );
+                                          _scheduleConfigSave();
+                                        },
+                              ),
+                              Text(AppStrings.probe.autoDetect),
+                            ],
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 4),
-                      Checkbox(
-                        value: _autoDetect,
-                        onChanged:
-                            isConnected || _isProgramming
-                                ? null
-                                : (value) {
-                                  setState(() => _autoDetect = value ?? false);
-                                  _scheduleConfigSave();
-                                },
-                      ),
-                      Text(AppStrings.probe.autoDetect),
                     ],
                   ),
                 const SizedBox(height: 12),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: AppDialogDropdown<ProbeWireProtocol>(
@@ -957,6 +990,7 @@ class _ProbeConnectionDialogState extends State<ProbeConnectionDialog> {
                           keyboardType: TextInputType.number,
                           decoration: _connectionFieldDecoration(
                             suffixText: 'kHz',
+                            verticalPadding: 10,
                           ),
                         ),
                       ),
@@ -1231,16 +1265,17 @@ bool _containsOrderedCharacters(String candidate, String query) {
 InputDecoration _connectionFieldDecoration({
   String? hintText,
   String? suffixText,
+  double verticalPadding = 8,
 }) {
   return InputDecoration(
     hintText: hintText,
     suffixText: suffixText,
     isDense: true,
-    constraints: const BoxConstraints.tightFor(
-      height: kSecondaryDialogControlHeight,
-    ),
     border: const OutlineInputBorder(),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    contentPadding: EdgeInsets.symmetric(
+      horizontal: 12,
+      vertical: verticalPadding,
+    ),
   );
 }
 
