@@ -13,6 +13,17 @@ void main() {
       expect(buffer.readRange(6, 8), [6, 7, 8, 9, 10, 11, 12, 13]);
       expect(buffer.toBytes().length, 20);
     });
+
+    test('exposes readable chunks without full copy', () {
+      final buffer = ChunkedByteBuffer(chunkSize: 4);
+      buffer.append(Uint8List.fromList([0, 1, 2, 3, 4, 5, 6, 7, 8]));
+
+      final chunks = buffer.readChunks(offset: 2, length: 5).toList();
+
+      expect(chunks, hasLength(2));
+      expect(chunks[0], [2, 3]);
+      expect(chunks[1], [4, 5, 6]);
+    });
   });
 
   group('FixedPacketByteBuffer', () {

@@ -102,14 +102,14 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'FireWater 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        Text(
+          AppStrings.plot.fireWaterFormatLabel,
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('以 "," 分割数据'),
-        const Text('所有数据默认 double 类型'),
-        const Text('以 "\\n" 结尾'),
+        Text(AppStrings.plot.fireWaterCommaSeparated),
+        Text(AppStrings.plot.fireWaterDoubleType),
+        Text(AppStrings.plot.fireWaterNewlineEnding),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -132,7 +132,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(width: 8),
             Text(
               AppStrings.plot.autoDetectHint,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
@@ -159,13 +159,13 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'JustFloat 格式:',
-          style: TextStyle(fontWeight: FontWeight.bold),
+        Text(
+          AppStrings.plot.justFloatFormatLabel,
+          style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const Text('小端 float32 数组'),
-        const Text('帧尾: 00 00 80 7F'),
+        Text(AppStrings.plot.justFloatLittleEndian),
+        Text(AppStrings.plot.justFloatTail),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -189,7 +189,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(width: 8),
             Text(
               AppStrings.plot.autoDetectHint,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),
@@ -227,7 +227,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
                     const [4, 8].map((count) {
                       return DropdownMenuItem(
                         value: count,
-                        child: Text('$count 通道'),
+                        child: Text(AppStrings.plot.channelCountOption(count)),
                       );
                     }).toList(),
                 onChanged: (value) {
@@ -247,7 +247,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
         const SizedBox(height: 8),
         Text(
           AppStrings.plot.zobowChannelPanelHelp,
-          style: TextStyle(fontSize: 11, color: Colors.grey),
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
         ),
       ],
     );
@@ -285,12 +285,10 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             },
           ),
           if (_config.hasFrameHeader)
-            TextField(
+            AppDialogTextField(
               controller: _fixedFrameHeaderController,
-              decoration: secondaryDialogFieldDecoration(
-                labelText: AppStrings.plot.frameHeaderBytes,
-                hintText: AppStrings.plot.frameHeaderExample,
-              ),
+              labelText: AppStrings.plot.frameHeaderBytes,
+              hintText: AppStrings.plot.frameHeaderExample,
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);
@@ -311,12 +309,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
           Row(
             children: [
               SizedBox(
-                width: kFixedFrameConfigLabelWidth,
+                width: PlotConfiguration.fixedFrameConfigLabelWidth,
                 child: Text(AppStrings.plot.channelType, softWrap: false),
               ),
               const SizedBox(width: 8),
               SizedBox(
-                width: kDataTypeDropdownWidth,
+                width: PlotConfiguration.dataTypeDropdownWidth,
                 child: NoAnimDropdown<bool>(
                   value: _config.fixedFrameUniformDataType,
                   hint: AppStrings.plot.channelTypeModeHint,
@@ -356,12 +354,12 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             Row(
               children: [
                 SizedBox(
-                  width: kFixedFrameConfigLabelWidth,
+                  width: PlotConfiguration.fixedFrameConfigLabelWidth,
                   child: Text('${AppStrings.plot.dataType}:', softWrap: false),
                 ),
                 const SizedBox(width: 8),
                 SizedBox(
-                  width: kDataTypeDropdownWidth,
+                  width: PlotConfiguration.dataTypeDropdownWidth,
                   child: NoAnimDropdown<DataType>(
                     value: _config.dataType,
                     hint: AppStrings.plot.typeHint,
@@ -388,7 +386,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             const SizedBox(height: 8),
             Text(
               AppStrings.plot.selectDataTypeInChannelList,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
           const SizedBox(height: 8),
@@ -446,12 +444,10 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
             },
           ),
           if (_config.hasFrameTail)
-            TextField(
+            AppDialogTextField(
               controller: _fixedFrameTailController,
-              decoration: secondaryDialogFieldDecoration(
-                labelText: AppStrings.plot.frameTailBytes,
-                hintText: AppStrings.plot.frameTailExample,
-              ),
+              labelText: AppStrings.plot.frameTailBytes,
+              hintText: AppStrings.plot.frameTailExample,
               inputFormatters: const [_HexByteInputFormatter()],
               onChanged: (value) {
                 final bytes = _parseHexBytes(value);
@@ -617,6 +613,7 @@ class _ParserConfigDialogState extends State<_ParserConfigDialog> {
   }
 }
 
+/// 帧头、帧尾等字节输入的格式化器，统一将输入限制为两位十六进制字节。
 class _HexByteInputFormatter extends TextInputFormatter {
   const _HexByteInputFormatter();
 

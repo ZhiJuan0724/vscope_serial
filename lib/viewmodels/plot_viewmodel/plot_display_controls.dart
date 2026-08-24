@@ -1,0 +1,1051 @@
+part of '../plot_viewmodel.dart';
+
+extension PlotViewModelDisplayControls on PlotViewModel {
+  /// 原子提交串口绘图设置草稿；保存失败时恢复提交前运行态。
+  Future<void> applyPlotSettings(PlotUiSettingsDraft draft) async {
+    final settings = AppSettings();
+    final oldSettings = (
+      refresh: settings.refreshFps,
+      fontSize: settings.plotFontSizeDelta,
+      fontBold: settings.plotFontBold,
+      window: settings.maxVisiblePoints,
+      history: settings.plotHistoryMemoryLimitGiB,
+      discard: settings.discardInitialPacketCount,
+      snap: settings.snapHighlightEnabled,
+      snapDiameter: settings.snapHighlightDiameter,
+      snapColor: settings.snapHighlightColorMode,
+      stats: settings.statsToolbarEnabled,
+      trigger: settings.triggerToolbarEnabled,
+      preview: settings.previewToolbarEnabled,
+      quality: settings.plotLodQuality,
+      renderEngine: settings.plotRenderEngine,
+      keep: settings.keepPlotOnRestart,
+      showGrid: settings.showGrid,
+      gridDensity: settings.gridDensity,
+      background: settings.plotBackground,
+      opacity: settings.floatingPanelOpacity,
+      observation: settings.observationClickToPlace,
+      gestureModifier: settings.plotGestureModifier,
+      showPlotSendDataInRaw: settings.showPlotSendDataInRaw,
+      receiveAggregation: settings.plotReceiveAggregationEnabled,
+      follow: settings.followPositionRatio,
+      yFit: settings.yFitDisplayRatio,
+    );
+    final oldValues = (
+      showGrid: _showGrid,
+      gridDensity: _gridDensity,
+      background: _plotBackground,
+      opacity: _floatingPanelOpacity,
+      fontSize: _plotFontSizeDelta,
+      fontBold: _plotFontBold,
+      follow: _followPositionRatio,
+      yFit: _yFitDisplayRatio,
+      observation: _observationClickToPlace,
+      gestureModifier: _gestureModifier,
+      showPlotSendDataInRaw: _showPlotSendDataInRaw,
+      quality: _lodQuality,
+      renderEngine: _renderEngine,
+      window: _maxVisiblePoints,
+      history: _plotRetentionLimitBytes,
+      refresh: _refreshFps,
+      keep: _keepPlotOnRestart,
+      discard: _discardInitialPacketCount,
+      preview: _previewToolbarEnabled,
+      trigger: _triggerToolbarEnabled,
+      stats: _statsToolbarEnabled,
+      snap: _snapHighlightEnabled,
+      snapDiameter: _snapHighlightDiameter,
+      snapColor: _snapHighlightColorMode,
+    );
+    _showGrid = draft.showGrid;
+    _gridDensity = draft.gridDensity;
+    _plotBackground = draft.background;
+    _floatingPanelOpacity = draft.floatingPanelOpacity.clamp(0.0, 1.0);
+    _plotFontSizeDelta = draft.fontSizeDelta.clamp(-3, 6);
+    _plotFontBold = draft.fontBold;
+    _followPositionRatio = draft.followPositionRatio.clamp(0.5, 0.95);
+    _yFitDisplayRatio = (draft.yFitDisplayRatio ?? _yFitDisplayRatio).clamp(
+      0.5,
+      0.95,
+    );
+    _observationClickToPlace = draft.observationClickToPlace;
+    _gestureModifier = draft.gestureModifier ?? _gestureModifier;
+    _showPlotSendDataInRaw =
+        draft.showPlotSendDataInRaw ?? _showPlotSendDataInRaw;
+    settings.plotReceiveAggregationEnabled =
+        draft.receiveAggregationEnabled ??
+        settings.plotReceiveAggregationEnabled;
+    _lodQuality = draft.quality;
+    _renderEngine = draft.renderEngine ?? _renderEngine;
+    _maxVisiblePoints = draft.windowPointLimit.clamp(
+      PlotViewModel.minVisiblePoints,
+      PlotViewModel.maxVisiblePointsLimit,
+    );
+    _plotRetentionLimitBytes =
+        draft.historyLimit.clamp(
+          PlotConfiguration.minHistoryMemoryLimitGiB,
+          PlotConfiguration.maxHistoryMemoryLimitGiB,
+        ) *
+        PlotConfiguration.bytesPerGiB;
+    _refreshFps = (draft.refreshFps ?? _refreshFps).clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
+    _keepPlotOnRestart = draft.keepPlotOnRestart ?? _keepPlotOnRestart;
+    _discardInitialPacketCount = (draft.discardInitialPacketCount ??
+            _discardInitialPacketCount)
+        .clamp(0, PlotViewModel.maxDiscardInitialPacketCount);
+    _previewToolbarEnabled =
+        draft.previewToolbarEnabled ?? _previewToolbarEnabled;
+    _triggerToolbarEnabled =
+        draft.triggerToolbarEnabled ?? _triggerToolbarEnabled;
+    _statsToolbarEnabled = draft.statsToolbarEnabled ?? _statsToolbarEnabled;
+    _snapHighlightEnabled = draft.snapHighlightEnabled ?? _snapHighlightEnabled;
+    _snapHighlightDiameter = (draft.snapHighlightDiameter ??
+            _snapHighlightDiameter)
+        .clamp(6.0, 12.0);
+    _snapHighlightColorMode =
+        draft.snapHighlightColorMode ?? _snapHighlightColorMode;
+    try {
+      await _saveSettingsAsync();
+    } catch (_) {
+      settings
+        ..refreshFps = oldSettings.refresh
+        ..plotFontSizeDelta = oldSettings.fontSize
+        ..plotFontBold = oldSettings.fontBold
+        ..maxVisiblePoints = oldSettings.window
+        ..plotHistoryMemoryLimitGiB = oldSettings.history
+        ..discardInitialPacketCount = oldSettings.discard
+        ..snapHighlightEnabled = oldSettings.snap
+        ..snapHighlightDiameter = oldSettings.snapDiameter
+        ..snapHighlightColorMode = oldSettings.snapColor
+        ..statsToolbarEnabled = oldSettings.stats
+        ..triggerToolbarEnabled = oldSettings.trigger
+        ..previewToolbarEnabled = oldSettings.preview
+        ..plotLodQuality = oldSettings.quality
+        ..plotRenderEngine = oldSettings.renderEngine
+        ..keepPlotOnRestart = oldSettings.keep
+        ..showGrid = oldSettings.showGrid
+        ..gridDensity = oldSettings.gridDensity
+        ..plotBackground = oldSettings.background
+        ..floatingPanelOpacity = oldSettings.opacity
+        ..observationClickToPlace = oldSettings.observation
+        ..plotGestureModifier = oldSettings.gestureModifier
+        ..showPlotSendDataInRaw = oldSettings.showPlotSendDataInRaw
+        ..plotReceiveAggregationEnabled = oldSettings.receiveAggregation
+        ..followPositionRatio = oldSettings.follow
+        ..yFitDisplayRatio = oldSettings.yFit;
+      _showGrid = oldValues.showGrid;
+      _gridDensity = oldValues.gridDensity;
+      _plotBackground = oldValues.background;
+      _floatingPanelOpacity = oldValues.opacity;
+      _plotFontSizeDelta = oldValues.fontSize;
+      _plotFontBold = oldValues.fontBold;
+      _followPositionRatio = oldValues.follow;
+      _yFitDisplayRatio = oldValues.yFit;
+      _observationClickToPlace = oldValues.observation;
+      _gestureModifier = oldValues.gestureModifier;
+      _showPlotSendDataInRaw = oldValues.showPlotSendDataInRaw;
+      _lodQuality = oldValues.quality;
+      _renderEngine = oldValues.renderEngine;
+      _maxVisiblePoints = oldValues.window;
+      _plotRetentionLimitBytes = oldValues.history;
+      _refreshFps = oldValues.refresh;
+      _keepPlotOnRestart = oldValues.keep;
+      _discardInitialPacketCount = oldValues.discard;
+      _previewToolbarEnabled = oldValues.preview;
+      _triggerToolbarEnabled = oldValues.trigger;
+      _statsToolbarEnabled = oldValues.stats;
+      _snapHighlightEnabled = oldValues.snap;
+      _snapHighlightDiameter = oldValues.snapDiameter;
+      _snapHighlightColorMode = oldValues.snapColor;
+      rethrow;
+    }
+    connectionService.setPlotReceiveAggregationEnabled(
+      settings.plotReceiveAggregationEnabled,
+    );
+    _applyPlotBackgroundPalette();
+    _refreshSnapHighlightColors();
+    _markChannelConfigChanged();
+    _markOverlayChanged();
+    if (!_observationClickToPlace) {
+      _observationPlacementActive = false;
+      _observationPreview = null;
+    }
+    if (!_triggerToolbarEnabled && _triggerConfig.enabled) {
+      _triggerConfig.enabled = false;
+      _resetTriggerRuntimeState();
+    }
+    if (_historyPointCount > 0) {
+      _setViewport(_limitXRange(viewport).copy());
+      _loadWindowForViewport(force: true);
+    }
+    unawaited(Future.microtask(notifyListeners));
+  }
+
+  // ========== 显示控制 ==========
+  /// 设置网格显示开关
+  void setShowGrid(bool show) {
+    _showGrid = show;
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置 UI 刷新帧率（30~120 fps）。
+  void setRefreshFps(int fps) {
+    _refreshFps = fps.clamp(
+      PlotConfiguration.minRefreshFps,
+      PlotConfiguration.maxRefreshFps,
+    );
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setSnapHighlightEnabled(bool value) {
+    if (_snapHighlightEnabled == value) return;
+    _snapHighlightEnabled = value;
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setSnapHighlightDiameter(double value) {
+    final next = value.clamp(6.0, 12.0).toDouble();
+    if ((_snapHighlightDiameter - next).abs() < 1e-9) return;
+    _snapHighlightDiameter = next;
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setSnapHighlightColorMode(String value) {
+    final next = value == 'channel' ? 'channel' : 'cursor';
+    if (_snapHighlightColorMode == next) return;
+    _snapHighlightColorMode = next;
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setXMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    _xMeasurementLine1Color = _opaqueMeasurementColor(line1Color);
+    _xMeasurementLine2Color = _opaqueMeasurementColor(line2Color);
+    _xMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0).toDouble();
+    _xMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0).toDouble();
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setYMeasurementStyle({
+    required Color line1Color,
+    required double line1Opacity,
+    required Color line2Color,
+    required double line2Opacity,
+  }) {
+    _yMeasurementLine1Color = _opaqueMeasurementColor(line1Color);
+    _yMeasurementLine2Color = _opaqueMeasurementColor(line2Color);
+    _yMeasurementLine1Opacity = line1Opacity.clamp(0.0, 1.0).toDouble();
+    _yMeasurementLine2Opacity = line2Opacity.clamp(0.0, 1.0).toDouble();
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setYMeasurementSnapEnabled(bool value) {
+    if (_yMeasurementSnapEnabled == value) return;
+    _yMeasurementSnapEnabled = value;
+    if (value) {
+      _refreshSnapHighlightColors();
+    } else {
+      _yCursor1SnapHighlights = const [];
+      _yCursor2SnapHighlights = const [];
+    }
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setMultiMeasurementEnabled({required bool isX, required bool value}) {
+    if (isX) {
+      if (_xMultiMeasurementEnabled == value) return;
+      _xMultiMeasurementEnabled = value;
+    } else {
+      if (_yMultiMeasurementEnabled == value) return;
+      _yMultiMeasurementEnabled = value;
+    }
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  Color _opaqueMeasurementColor(Color color) =>
+      Color(0xFF000000 | (color.toARGB32() & 0x00FFFFFF));
+
+  void setStatsToolbarEnabled(bool value) {
+    if (_statsToolbarEnabled == value) return;
+    _statsToolbarEnabled = value;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setTriggerToolbarEnabled(bool value) {
+    if (_triggerToolbarEnabled == value) return;
+    _triggerToolbarEnabled = value;
+    if (!value && _triggerConfig.enabled) {
+      _triggerConfig.enabled = false;
+      _resetTriggerRuntimeState();
+      _markOverlayChanged();
+    }
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setPreviewToolbarEnabled(bool value) {
+    if (_previewToolbarEnabled == value) return;
+    _previewToolbarEnabled = value;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setLodQuality(PlotLodQuality value) {
+    if (_lodQuality == value) return;
+    _lodQuality = value;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void movePreviewViewportTo(double centerX, {bool fromDrag = false}) {
+    final maxX = math.max(0, _historyPointCount - 1).toDouble();
+    final range = math.min(viewport.xRange, math.max(1.0, maxX));
+    final minX =
+        (centerX - range / 2)
+            .clamp(0.0, math.max(0.0, maxX - range))
+            .toDouble();
+    final next = viewport.copyWith(xMin: minX, xMax: minX + range);
+    if (_followEnabled) _followEnabled = false;
+    updateViewport(next, fromDrag: fromDrag);
+  }
+
+  void setKeepPlotOnRestart(bool value) {
+    if (_keepPlotOnRestart == value) return;
+    _keepPlotOnRestart = value;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置单次绘图历史内存上限。
+  ///
+  /// 调低到当前已用量以下时立即进入容量停止状态；调高后若已有
+  /// 历史仍在新上限内，则重新允许继续绘图。
+  void setPlotRetentionLimitGiB(int value) {
+    final nextGiB = value.clamp(
+      PlotConfiguration.minHistoryMemoryLimitGiB,
+      PlotConfiguration.maxHistoryMemoryLimitGiB,
+    );
+    final nextBytes = nextGiB * PlotConfiguration.bytesPerGiB;
+    if (nextBytes == _plotRetentionLimitBytes) return;
+    _plotRetentionLimitBytes = nextBytes;
+    _saveSettings();
+
+    if (_estimatedPlotAllocatedBytes >= _plotRetentionLimitBytes) {
+      _resetPlotRetentionState();
+      _reachPlotRetentionLimit(
+        '绘图历史已达到 ${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限，绘图已停止',
+      );
+      return;
+    }
+
+    _resetPlotRetentionState();
+    _updatePlotRetentionWarning();
+    Future.microtask(notifyListeners);
+  }
+
+  /// AppSettings 已完成事务保存后，仅同步绘图运行态，避免重复写设置文件。
+  void syncPlotRetentionLimitFromSettings(int value) {
+    final nextGiB = value.clamp(
+      PlotConfiguration.minHistoryMemoryLimitGiB,
+      PlotConfiguration.maxHistoryMemoryLimitGiB,
+    );
+    _plotRetentionLimitBytes = nextGiB * PlotConfiguration.bytesPerGiB;
+    _resetPlotRetentionState();
+    _updatePlotRetentionWarning();
+    Future.microtask(notifyListeners);
+  }
+
+  void setFollowPositionRatio(double value) {
+    final next = value.clamp(0.5, 0.95).toDouble();
+    if ((_followPositionRatio - next).abs() < 1e-9) return;
+    _followPositionRatio = next;
+    if (_followEnabled && _historyPointCount > 0) {
+      _setViewport(_followViewportForLatestIndex(_latestFollowIndex()));
+      _loadWindowForViewport(force: true);
+    }
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setYFitDisplayRatio(double value) {
+    final next = value.clamp(0.5, 0.95).toDouble();
+    if ((_yFitDisplayRatio - next).abs() < 1e-9) return;
+    _yFitDisplayRatio = next;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
+  void setPlotFontSizeDelta(int delta) {
+    _plotFontSizeDelta = delta.clamp(-3, 6);
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setPlotFontBold(bool enabled) {
+    if (_plotFontBold == enabled) return;
+    _plotFontBold = enabled;
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置绘图窗口点数上限，范围由 [PlotConfiguration] 统一约束。
+  void setMaxVisiblePoints(int points) {
+    final next =
+        points
+            .clamp(
+              PlotViewModel.minVisiblePoints,
+              PlotViewModel.maxVisiblePointsLimit,
+            )
+            .toInt();
+    if (next == _maxVisiblePoints) return;
+    _maxVisiblePoints = next;
+
+    if (_historyPointCount > 0) {
+      _setViewport(_limitXRange(viewport).copy());
+      _loadWindowForViewport(force: true);
+    }
+
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置每次开始绘图时丢弃的前置有效数据包数量。
+  ///
+  /// 该设置只影响下一次 startPlotting 后新进入解析链的数据，不处理导入文件。
+  void setDiscardInitialPacketCount(int count) {
+    final next =
+        count.clamp(0, PlotViewModel.maxDiscardInitialPacketCount).toInt();
+    if (next == _discardInitialPacketCount) return;
+    _discardInitialPacketCount = next;
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置网格密度（sparse/normal/dense）
+  void setGridDensity(GridDensity density) {
+    _gridDensity = density;
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setPlotBackground(PlotBackgroundStyle background) {
+    if (_plotBackground == background) return;
+    _plotBackground = background;
+    _applyPlotBackgroundPalette();
+    _markChannelConfigChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setFloatingPanelOpacity(double opacity) {
+    final next = opacity.clamp(0.0, 1.0);
+    if ((_floatingPanelOpacity - next).abs() < 0.0001) return;
+    _floatingPanelOpacity = next;
+    _markOverlayChanged();
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void setLegendPanelPosition({required double right, required double top}) {
+    final nextRight = _normalizeFloatingPanelPosition(right);
+    final nextTop = _normalizeFloatingPanelPosition(top);
+    if (nextRight == null || nextTop == null) return;
+    if (_legendPanelRight == nextRight && _legendPanelTop == nextTop) return;
+    _legendPanelRight = nextRight;
+    _legendPanelTop = nextTop;
+    _saveSettings();
+  }
+
+  void setLiveValuesPanelPosition({
+    required double right,
+    required double top,
+  }) {
+    final nextRight = _normalizeFloatingPanelPosition(right);
+    final nextTop = _normalizeFloatingPanelPosition(top);
+    if (nextRight == null || nextTop == null) return;
+    if (_liveValuesPanelRight == nextRight && _liveValuesPanelTop == nextTop) {
+      return;
+    }
+    _liveValuesPanelRight = nextRight;
+    _liveValuesPanelTop = nextTop;
+    _saveSettings();
+  }
+
+  double? _normalizeFloatingPanelPosition(double value) {
+    if (!value.isFinite || value < 0) return null;
+    return double.parse(value.toStringAsFixed(1));
+  }
+
+  void setObservationClickToPlace(bool value) {
+    if (_observationClickToPlace == value) return;
+    _observationClickToPlace = value;
+    if (!value) {
+      _observationPlacementActive = false;
+      _observationPreview = null;
+      _markOverlayChanged();
+    }
+    _saveSettings();
+    Future.microtask(notifyListeners);
+  }
+
+  void _applyPlotBackgroundPalette() {
+    for (final channel in channels) {
+      channel.color = ChannelConfig.colorForBackground(
+        channel.color,
+        _plotBackground.name,
+      );
+    }
+    for (final channel in mathChannels) {
+      channel.display.color = ChannelConfig.colorForBackground(
+        channel.display.color,
+        _plotBackground.name,
+      );
+    }
+    _invalidateDisplayChannelCaches();
+    _refreshSnapHighlightColors();
+  }
+
+  /// 切换 X-X 测量开关
+  ///
+  /// 开启时自动在视口中心初始化两条测量线，间隔为 X 范围的 1/4。
+  void toggleXMeasurement() {
+    _xMeasurementEnabled = !_xMeasurementEnabled;
+    if (_xMeasurementEnabled && _xCursor1 == null) {
+      // 自动初始化两条线，间隔为X范围的1/4
+      final range = viewport.xRange;
+      final center = viewport.xMin + range / 2;
+      _xCursor1 = _snapXToNearestVisiblePoint(center - range / 8);
+      _xCursor2 = _snapXToNearestVisiblePoint(center + range / 8);
+    }
+    if (!_xMeasurementEnabled) {
+      _xCursor1 = null;
+      _xCursor2 = null;
+      _xCursor1SnapHighlights = const [];
+      _xCursor2SnapHighlights = const [];
+      _extraXMeasurementGroups.clear();
+      // 如果垂直光标也关闭，清除 cursor
+      if (!_vCursorEnabled) _cursor = null;
+    }
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 按功能键追加一组 X 测量，最多 10 组。
+  void addXMeasurementGroup() {
+    if (!_xMultiMeasurementEnabled || !_xMeasurementEnabled) return;
+    if (xMeasurementGroups.length >= 10) return;
+    final range = viewport.xRange;
+    final center = viewport.xMin + range / 2;
+    final offset = xMeasurementGroups.length * range / 40;
+    _extraXMeasurementGroups.add(
+      PlotMeasurementGroup(
+        cursor1: _snapXToNearestVisiblePoint(center - range / 8 + offset),
+        cursor2: _snapXToNearestVisiblePoint(center + range / 8 + offset),
+      ),
+    );
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 切换 Y-Y 测量开关
+  ///
+  /// 开启时自动在视口中心初始化两条测量线，Y2 在上（值更大）。
+  void toggleYMeasurement() {
+    _yMeasurementEnabled = !_yMeasurementEnabled;
+    if (_yMeasurementEnabled && _yCursor1 == null) {
+      // 自动初始化两条线，Y2在上（值更大），间隔为Y范围的1/4
+      final range = viewport.yRange;
+      final center = viewport.yMin + range / 2;
+      _yCursor1 = center - range / 8; // 下方（值小）
+      _yCursor2 = center + range / 8; // 上方（值大）
+    }
+    if (!_yMeasurementEnabled) {
+      _yCursor1 = null;
+      _yCursor2 = null;
+      _yCursor1SnapHighlights = const [];
+      _yCursor2SnapHighlights = const [];
+      _extraYMeasurementGroups.clear();
+      // 如果垂直光标也关闭，清除 cursor
+      if (!_vCursorEnabled) _cursor = null;
+    }
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 按功能键追加一组 Y 测量，最多 10 组。
+  void addYMeasurementGroup() {
+    if (!_yMultiMeasurementEnabled || !_yMeasurementEnabled) return;
+    if (yMeasurementGroups.length >= 10) return;
+    final range = viewport.yRange;
+    final center = viewport.yMin + range / 2;
+    final offset = yMeasurementGroups.length * range / 40;
+    _extraYMeasurementGroups.add(
+      PlotMeasurementGroup(
+        cursor1: center - range / 8 + offset,
+        cursor2: center + range / 8 + offset,
+      ),
+    );
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 切换统计测量开关
+  ///
+  /// 开启时默认统计整个波形（当前视口范围）。
+  void toggleStats() {
+    _statsEnabled = !_statsEnabled;
+    if (_statsEnabled && _statsX1 == null) {
+      // 默认统计整个波形，范围设为当前视口
+      _statsX1 = viewport.xMin;
+      _statsX2 = viewport.xMax;
+    }
+    if (!_statsEnabled) {
+      _statsX1 = null;
+      _statsX2 = null;
+      _statsRangeEnabled = false;
+    }
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 切换统计范围开关
+  ///
+  /// 开启时 S1/S2 初始位置在视口 1/4 和 3/4 处；
+  /// 关闭时恢复为整个视口范围。
+  void toggleStatsRange() {
+    if (!_statsEnabled) return;
+    _statsRangeEnabled = !_statsRangeEnabled;
+    if (_statsRangeEnabled) {
+      // S1/S2 初始位置在 1/4 和 3/4 处
+      final range = viewport.xRange;
+      _statsX1 = viewport.xMin + range * 0.25;
+      _statsX2 = viewport.xMin + range * 0.75;
+    } else {
+      // 关闭范围时恢复为整个视口
+      _statsX1 = viewport.xMin;
+      _statsX2 = viewport.xMax;
+    }
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置统计范围左边界
+  void setStatsX1(double x) {
+    _statsX1 = x;
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  /// 设置统计范围右边界
+  void setStatsX2(double x) {
+    _statsX2 = x;
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  void _handleTriggerForPoint(PlotDataPoint point, DateTime now) {
+    final triggerChannelIndex = _triggerConfig.channelIndex;
+    final currentValue = _triggerValueForPoint(point, triggerChannelIndex);
+    final evaluation = _triggerRuntime.process(
+      item: point,
+      value: _canUseTriggerChannel(triggerChannelIndex) ? currentValue : null,
+      enabled: _triggerConfig.enabled,
+      hitThreshold: _triggerConfig.hitThreshold,
+      triggerLimit: _triggerConfig.triggerLimit,
+      stopAtLimit: _triggerConfig.action != PlotTriggerAction.markOnly,
+      postStopItemCount:
+          _triggerConfig.action == PlotTriggerAction.stopAfterPackets
+              ? _triggerConfig.postTriggerPacketCount
+              : 0,
+      matches: _matchesTriggerCondition,
+    );
+    if (evaluation.stopRequested && !evaluation.thresholdReached) {
+      _requestTriggerStop();
+      return;
+    }
+    if (!evaluation.thresholdReached) return;
+
+    final note = _buildTriggerObservationNote(now);
+    _addTriggerObservations(evaluation.hitItems, note);
+
+    if (!evaluation.limitReached) {
+      _markOverlayChanged();
+      Future.microtask(notifyListeners);
+      return;
+    }
+
+    _triggerConfig.enabled = false;
+
+    switch (_triggerConfig.action) {
+      case PlotTriggerAction.markOnly:
+        _markOverlayChanged();
+        Future.microtask(notifyListeners);
+        break;
+      case PlotTriggerAction.stopImmediately:
+        _requestTriggerStop();
+        break;
+      case PlotTriggerAction.stopAfterPackets:
+        if (_triggerConfig.postTriggerPacketCount <= 0) {
+          _requestTriggerStop();
+        }
+        break;
+    }
+  }
+
+  bool _canUseTriggerChannel(int index) {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    if (index >= 0 && index < rawCount && index < channels.length) {
+      return channels[index].visible;
+    }
+    final mathIndex = index - PlotConfiguration.rawChannelCount;
+    return mathIndex >= 0 &&
+        mathIndex < mathChannels.length &&
+        _canUseMathChannelForTrigger(mathChannels[mathIndex]);
+  }
+
+  double? _triggerValueForPoint(PlotDataPoint point, int channelIndex) {
+    if (channelIndex >= 0 && channelIndex < PlotConfiguration.rawChannelCount) {
+      if (channelIndex >= point.values.length) return null;
+      final value = point.values[channelIndex];
+      return value.isFinite ? value : null;
+    }
+    final mathIndex = channelIndex - PlotConfiguration.rawChannelCount;
+    if (mathIndex < 0 || mathIndex >= mathChannels.length) return null;
+    final channel = mathChannels[mathIndex];
+    if (!_canUseMathChannelForTrigger(channel)) return null;
+    final value = _mathEngine.evaluateValues(mathIndex, point.values);
+    return value.isFinite ? value : null;
+  }
+
+  bool _matchesTriggerCondition(double value, double? previousValue) {
+    return switch (_triggerConfig.comparison) {
+      PlotTriggerComparison.greater => value > _triggerConfig.targetValue,
+      PlotTriggerComparison.less => value < _triggerConfig.targetValue,
+      PlotTriggerComparison.equal =>
+        (value - _triggerConfig.targetValue).abs() <=
+            PlotTriggerConfig.equalTolerance,
+      PlotTriggerComparison.crossUp =>
+        previousValue != null &&
+            previousValue < _triggerConfig.targetValue &&
+            value >= _triggerConfig.targetValue,
+      PlotTriggerComparison.crossDown =>
+        previousValue != null &&
+            previousValue > _triggerConfig.targetValue &&
+            value <= _triggerConfig.targetValue,
+    };
+  }
+
+  void _addTriggerObservations(List<PlotDataPoint> hitPoints, String note) {
+    switch (_triggerConfig.observationMode) {
+      case PlotTriggerObservationMode.none:
+        return;
+      case PlotTriggerObservationMode.triggerPoint:
+        if (hitPoints.isNotEmpty) {
+          _addObservationFromPoint(hitPoints.last, note: note);
+        }
+        break;
+      case PlotTriggerObservationMode.allHits:
+        for (final point in hitPoints) {
+          if (!_addObservationFromPoint(point, note: note)) break;
+        }
+        break;
+    }
+  }
+
+  String _buildTriggerObservationNote(DateTime now) {
+    final channel = displayChannelName(_triggerConfig.channelIndex);
+    final parts = <String>[];
+    if (_triggerConfig.includeSystemTimeInNote) {
+      parts.add('触发于 ${_formatTriggerTime(now)}');
+    }
+    parts.add(
+      '$channel ${_triggerConfig.comparison.label} ${formatPlotValue(_triggerConfig.targetValue)}',
+    );
+    parts.add('累计 ${_triggerConfig.hitThreshold} 次');
+    parts.add('第 ${_triggerRuntime.triggeredCount} 次触发');
+    return parts.join('，');
+  }
+
+  String _formatTriggerTime(DateTime value) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${value.year}-${two(value.month)}-${two(value.day)} '
+        '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+
+  void _requestTriggerStop() {
+    if (_triggerStopDispatchScheduled) return;
+    _triggerStopDispatchScheduled = true;
+    _triggerRuntime.requestStop();
+    _triggerConfig.enabled = false;
+    Future.microtask(() {
+      if (!_disposed) unawaited(stopPlotting());
+    });
+  }
+
+  void _resetTriggerRuntimeState() {
+    _triggerRuntime.reset();
+    _triggerStopDispatchScheduled = false;
+  }
+
+  /// 更新垂直光标（跟随鼠标模式）
+  ///
+  /// - X 值吸附到最近的整数（数据点索引都是整数）
+  /// - 使用二分查找精确匹配数据点，避免线性扫描
+  /// - 未绘制到数据点的区域设置 hasData=false，tooltip 不显示
+  void updateFollowCursor(double x, double y, Offset screenPosition) {
+    _cursor = _buildCursorAtX(x, y: y, screenPosition: screenPosition);
+    _markOverlayChanged();
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
+  }
+
+  /// 更新光标状态（由外部直接设置）
+  void updateCursor(CursorState? cursor) {
+    _cursor = cursor;
+    _markOverlayChanged();
+    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void addObservation() {
+    final cursorX = _cursor?.x;
+    final sourceX =
+        cursorX != null && viewport.isVisibleX(cursorX)
+            ? cursorX
+            : viewport.xMin + viewport.xRange / 2;
+    if (_addObservationAtX(sourceX)) {
+      _markOverlayChanged();
+      scheduleMicrotask(notifyListeners);
+    }
+  }
+
+  void startObservationPlacement() {
+    if (displayDataPoints.isEmpty ||
+        _observations.length >= PlotViewModel.maxObservationCount) {
+      return;
+    }
+    _observationPlacementActive = true;
+    _observationPreview = null;
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservationPlacement(double x) {
+    if (!_observationPlacementActive) return;
+    _observationPreview = _buildCursorAtX(x);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void commitObservationPlacement(double x) {
+    if (!_observationPlacementActive) return;
+    _addObservationAtX(x);
+    _observationPlacementActive = false;
+    _observationPreview = null;
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservation(int index, double x) {
+    if (index < 0 || index >= _observations.length) return;
+    if (_observations[index].locked) return;
+    _observations[index] = _observations[index].copyWith(
+      cursor: _buildObservationCursorAtX(x),
+    );
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void updateObservationNote(int index, String note) {
+    if (index < 0 || index >= _observations.length) return;
+    _observations[index] = _observations[index].copyWith(note: note);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void setObservationLocked(int index, bool locked) {
+    if (index < 0 || index >= _observations.length) return;
+    if (_observations[index].locked == locked) return;
+    _observations[index] = _observations[index].copyWith(locked: locked);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void removeObservation(int index) {
+    if (index < 0 || index >= _observations.length) return;
+    _observations.removeAt(index);
+    _markOverlayChanged();
+    scheduleMicrotask(notifyListeners);
+  }
+
+  void jumpToObservation(int index) {
+    if (index < 0 || index >= _observations.length) return;
+    jumpToXIndex(_observations[index].x.round());
+  }
+
+  bool canJumpToXIndex(int x) {
+    return x >= 0 && x < _nextIndex;
+  }
+
+  void jumpToXIndex(int x) {
+    if (!canJumpToXIndex(x)) return;
+    final range = viewport.xRange;
+    final halfRange = range / 2;
+    final center = x.toDouble();
+    _setViewport(
+      viewport.copyWith(xMin: center - halfRange, xMax: center + halfRange),
+    );
+    _loadWindowForViewport();
+    Future.microtask(notifyListeners);
+  }
+
+  bool _addObservationAtX(double x, {String note = ''}) {
+    if (_observations.length >= PlotViewModel.maxObservationCount) return false;
+    var nextNote = note;
+    if (_observations.length + 1 == PlotViewModel.maxObservationCount) {
+      nextNote = _appendObservationLimitNote(nextNote);
+    }
+    _observations.add(
+      PlotObservation(cursor: _buildObservationCursorAtX(x), note: nextNote),
+    );
+    return true;
+  }
+
+  bool _addObservationFromPoint(PlotDataPoint point, {String note = ''}) {
+    if (_observations.length >= PlotViewModel.maxObservationCount) return false;
+    var nextNote = note;
+    if (_observations.length + 1 == PlotViewModel.maxObservationCount) {
+      nextNote = _appendObservationLimitNote(nextNote);
+    }
+    _observations.add(
+      PlotObservation(
+        cursor: CursorState(
+          x: point.index.toDouble(),
+          channelValues: _buildTriggerObservationValues(point),
+          hasData: true,
+        ),
+        note: nextNote,
+        locked: true,
+      ),
+    );
+    return true;
+  }
+
+  List<double> _buildTriggerObservationValues(PlotDataPoint point) {
+    return _observationAssembler.fromPoint(
+      point: point,
+      rawChannelCount: rawDisplayChannelCount,
+      mathChannels: mathChannels,
+      mathEngine: _mathEngine,
+    );
+  }
+
+  String _appendObservationLimitNote(String note) {
+    const limitNote = '观察已达 100 条上限，后续触发不再新增观察';
+    if (note.isEmpty) return limitNote;
+    if (note.contains(limitNote)) return note;
+    return '$note；$limitNote';
+  }
+
+  CursorState _buildCursorAtX(double x, {double? y, Offset? screenPosition}) {
+    final point = _nearestVisiblePointByX(x);
+    final snappedX =
+        point?.index.toDouble() ??
+        x.clamp(viewport.xMin, viewport.xMax).toDouble();
+    final channelValues =
+        point == null ? null : List<double>.from(point.values);
+    final hasData = point != null;
+
+    return CursorState(
+      x: snappedX,
+      y: y,
+      screenPosition: screenPosition,
+      channelValues: channelValues,
+      hasData: hasData,
+    );
+  }
+
+  CursorState _buildObservationCursorAtX(double x) {
+    if (!viewport.isVisibleX(x)) {
+      return CursorState(x: x, hasData: false);
+    }
+    final point = _nearestVisiblePointByX(x);
+    if (point == null) {
+      return CursorState(x: x, hasData: false);
+    }
+    return CursorState(
+      x: point.index.toDouble(),
+      channelValues: List<double>.from(point.values),
+      hasData: true,
+    );
+  }
+
+  PlotDataPoint? _displayPointAtHistoryIndex(int pointIndex) {
+    if (pointIndex < 0 || pointIndex >= _historyPointCount) return null;
+    final rawValues = _rawValuesAtHistoryIndex(pointIndex);
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    final values = <double>[
+      for (var i = 0; i < rawCount; i++)
+        i < rawValues.length ? rawValues[i] : double.nan,
+    ];
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      values.add(
+        _mathEngine.evaluateAt(
+          channelIndex: channel.index,
+          currentIndex: pointIndex,
+          pointCount: _historyPointCount,
+          valueAt: _rawHistoryValueAt,
+        ),
+      );
+    }
+    return PlotDataPoint(
+      index: pointIndex,
+      timestamp: pointIndex.toDouble(),
+      values: values,
+    );
+  }
+
+  PlotDataPoint? _nearestVisiblePointByX(double x) {
+    if (_historyPointCount <= 0) return null;
+    final first = math.max(0, viewport.xMin.ceil());
+    final last = math.min(_historyPointCount - 1, viewport.xMax.floor());
+    if (first > last) return null;
+    return _displayPointAtHistoryIndex(x.round().clamp(first, last).toInt());
+  }
+
+  double _snapXToNearestVisiblePoint(double x) {
+    return _nearestVisiblePointByX(x)?.index.toDouble() ??
+        x.clamp(viewport.xMin, viewport.xMax).toDouble();
+  }
+}

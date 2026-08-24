@@ -9,23 +9,41 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/plot_configuration.dart';
 import '../../core/utils/crc.dart';
 import '../../core/utils/plot_value_formatter.dart';
 import '../../core/utils/plot_performance_metrics.dart';
 import '../../core/localization/app_strings.dart';
+import '../../core/theme/app_theme.dart';
 import '../../data/models/channel_config.dart';
 import '../../data/models/math_channel_config.dart';
+import '../../data/models/plot_lod_index.dart';
+import '../../data/models/plot_render_engine.dart';
+import '../../data/models/plot_gesture_modifier.dart';
 import '../../data/models/address_config_profile.dart';
 import '../../data/models/parser_config.dart';
+import '../../data/protocol/r_protocol_codec.dart';
 import '../../services/app_settings.dart';
 import '../../viewmodels/plot_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
 import '../dialogs/address_profile_dialog.dart';
 import '../plot/plot_gesture_handler.dart';
+import '../plot/plot_frame_rate_counter.dart';
+import '../plot/plot_draggable_info_box.dart';
+import '../plot/plot_layer_stack.dart';
+import '../plot/plot_legend_box.dart';
+import '../plot/plot_live_values_box.dart';
+import '../plot/plot_measurement_box.dart';
+import '../plot/plot_channel_row.dart';
 import '../plot/plot_painter.dart';
+import '../plot/plot_presentation_coordinator.dart';
+import '../plot/plot_locator_bar.dart';
 import '../plot/plot_viewport.dart';
 import '../widgets/app_icon.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/plot_color_picker.dart';
 import '../widgets/plot_status_bar.dart';
+import '../widgets/plot_tools_toolbar.dart';
 
 part 'plot_page/plot_file_widgets.dart';
 part 'plot_page/plot_channel_widgets.dart';
@@ -37,6 +55,8 @@ part 'plot_page/plot_preset_selector_dialog.dart';
 ///
 /// PlotViewModel 已提升为全局 Provider（在 main.dart 中注册），
 /// 此处直接消费全局实例，确保页面切换后数据不丢失。
+/// 绘图页面 Provider 入口；实际交互状态保存在 [_PlotPageContent]，以便页面切换时
+/// 保留全局 [PlotViewModel] 中的运行会话和历史数据。
 class PlotPage extends StatelessWidget {
   const PlotPage({super.key});
 
@@ -52,6 +72,7 @@ class PlotPage extends StatelessWidget {
 /// - 工具栏：开始/停止、数据源设置、解析器、光标/测量、缩放、导出等
 /// - 主区域：左侧通道面板 + 右侧绘图区域
 /// - 状态栏：视口范围、数据点数、光标信息
+/// 绘图布局、悬浮层和菜单路由的局部状态容器。
 class _PlotPageContent extends StatefulWidget {
   const _PlotPageContent();
 
@@ -59,23 +80,10 @@ class _PlotPageContent extends StatefulWidget {
   State<_PlotPageContent> createState() => _PlotPageContentState();
 }
 
-/// 通道面板尺寸常量
-const double kMinChannelPanelWidth = 260;
-const double kCompactChannelPanelWidth = 212;
-const double kMaxChannelPanelWidth = 400;
-const double kDefaultChannelPanelWidth = 260;
-const double kCollapsedPanelWidth = 26;
-const double kRProtocolAddressWidth = 108;
-const double kRProtocolAddressMinWidth = 54;
-const double kRProtocolAddressMaxWidth = 112;
-const double kFixedFrameConfigLabelWidth = 72;
-const double kDataTypeDropdownWidth = 148;
-const double kChannelPanelHorizontalPadding = 6;
-const double kChannelPanelListRightPadding = 12;
-
 typedef _PlotToolbarSelection =
     ({
       bool isPlotting,
+      bool isStarting,
       bool isStopping,
       bool hasData,
       ParserType parserType,
@@ -83,16 +91,20 @@ typedef _PlotToolbarSelection =
       double randomFrequency,
       bool canUndoZoom,
       bool vCursorEnabled,
+      bool triggerToolbarEnabled,
+      bool triggerEnabled,
       bool observationPlacementActive,
       bool boxZoomEnabled,
+      bool boxZoomContinuous,
       bool xMeasurementEnabled,
       bool yMeasurementEnabled,
       bool statsToolbarEnabled,
       bool statsEnabled,
       bool statsRangeEnabled,
+      bool previewToolbarEnabled,
       bool followEnabled,
       bool showGrid,
-      String gridDensity,
+      GridDensity gridDensity,
       SendProtocolType sendProtocolType,
       int profileRevision,
       String selectedZobowProfileId,
@@ -103,6 +115,7 @@ typedef _PlotChannelPanelSelection =
     ({
       int channelConfigRevision,
       bool isPlotting,
+      bool isStarting,
       bool isStopping,
       ParserType parserType,
       int activeChannelCount,
@@ -120,8 +133,12 @@ typedef _PlotAreaSelection =
       int channelConfigRevision,
       int viewportRevision,
       int overlayRevision,
-      String plotBackground,
+      bool boxZoomEnabled,
+      PlotBackgroundStyle plotBackground,
       double floatingPanelOpacity,
+      PlotLodQuality lodQuality,
+      PlotRenderEngine renderEngine,
+      bool interactionActive,
     });
 
 int? _parseCompactCount(String input) {
@@ -154,11 +171,30 @@ String _formatCompactCount(int value) {
 }
 
 class _PlotPageContentState extends State<_PlotPageContent> {
+  final PlotPresentationCoordinator _plotPresentation =
+      PlotPresentationCoordinator();
+  final PlotFrameRateCounter _plotFrameRate = PlotFrameRateCounter();
+  bool _measurementModifierPressed(PlotViewModel vm) =>
+      vm.gestureModifier == PlotGestureModifier.shift
+          ? HardwareKeyboard.instance.isShiftPressed
+          : HardwareKeyboard.instance.isControlPressed;
+
+  void _handleMeasurementButton(PlotViewModel vm, {required bool isX}) {
+    if (_measurementModifierPressed(vm)) {
+      isX ? vm.addXMeasurementGroup() : vm.addYMeasurementGroup();
+      return;
+    }
+    isX ? vm.toggleXMeasurement() : vm.toggleYMeasurement();
+  }
+
+  /// 绘图首层工具栏较密集，下拉框边框需要比公共默认位置再低 1px。
+  static const double _toolbarDropdownOffsetY = 2;
+
   /// 面板是否折叠
   bool _isPanelCollapsed = false;
 
   /// 面板宽度（展开时）
-  double _panelWidth = kDefaultChannelPanelWidth;
+  double _panelWidth = PlotConfiguration.channelPanelDefaultWidth;
 
   /// 是否正在拖动调整宽度
   bool _isResizing = false;
@@ -168,6 +204,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   /// 是否显示最新通道值浮窗
   bool _liveValuesVisible = false;
+  bool _previewVisible = false;
 
   OverlayEntry? _channelContextMenuEntry;
   Rect? _channelContextMenuRect;
@@ -177,60 +214,76 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   @override
   void dispose() {
     _hideChannelContextMenu();
+    _plotPresentation.dispose();
+    _plotFrameRate.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     PlotPerformanceMetrics.instance.increment(PlotPerformanceMetric.pageBuild);
-    return Column(
-      children: [
-        Selector<PlotViewModel, _PlotToolbarSelection>(
-          selector: (_, vm) => _selectToolbar(vm),
-          builder:
-              (context, _, _) =>
-                  _buildPrimaryToolbar(context, context.read<PlotViewModel>()),
-        ),
-        Selector<PlotViewModel, _PlotToolbarSelection>(
-          selector: (_, vm) => _selectToolbar(vm),
-          builder:
-              (context, _, _) => _buildSecondaryToolbar(
-                context,
-                context.read<PlotViewModel>(),
-              ),
-        ),
-        Expanded(
-          child: Row(
-            children: [
-              Selector<PlotViewModel, _PlotChannelPanelSelection>(
-                selector: (_, vm) => _selectChannelPanel(vm),
-                builder:
-                    (context, _, _) => _buildChannelPanelArea(
-                      context,
-                      context.read<PlotViewModel>(),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): () {
+          final vm = context.read<PlotViewModel>();
+          if (vm.canUndoZoom) vm.undoZoom();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Column(
+          children: [
+            Selector<PlotViewModel, _PlotToolbarSelection>(
+              selector: (_, vm) => _selectToolbar(vm),
+              builder:
+                  (context, _, _) => _buildPrimaryToolbar(
+                    context,
+                    context.read<PlotViewModel>(),
+                  ),
+            ),
+            Selector<PlotViewModel, _PlotToolbarSelection>(
+              selector: (_, vm) => _selectToolbar(vm),
+              builder:
+                  (context, _, _) => _buildSecondaryToolbar(
+                    context,
+                    context.read<PlotViewModel>(),
+                  ),
+            ),
+            Expanded(
+              child: Row(
+                children: [
+                  Selector<PlotViewModel, _PlotChannelPanelSelection>(
+                    selector: (_, vm) => _selectChannelPanel(vm),
+                    builder:
+                        (context, _, _) => _buildChannelPanelArea(
+                          context,
+                          context.read<PlotViewModel>(),
+                        ),
+                  ),
+                  Expanded(
+                    child: Selector<PlotViewModel, _PlotAreaSelection>(
+                      selector: (_, vm) => _selectPlotArea(vm),
+                      builder:
+                          (context, _, _) => _buildPlotArea(
+                            context,
+                            context.read<PlotViewModel>(),
+                          ),
                     ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: Selector<PlotViewModel, _PlotAreaSelection>(
-                  selector: (_, vm) => _selectPlotArea(vm),
-                  builder:
-                      (context, _, _) => _buildPlotArea(
-                        context,
-                        context.read<PlotViewModel>(),
-                      ),
-                ),
-              ),
-            ],
-          ),
+            ),
+            PlotStatusBar(frameRate: _plotFrameRate.fps),
+          ],
         ),
-        const PlotStatusBar(),
-      ],
+      ),
     );
   }
 
   _PlotToolbarSelection _selectToolbar(PlotViewModel vm) {
     return (
       isPlotting: vm.isPlotting,
+      isStarting: vm.isStarting,
       isStopping: vm.isStopping,
       hasData: vm.dataPoints.isNotEmpty,
       parserType: vm.parserType,
@@ -238,13 +291,17 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       randomFrequency: vm.randomFrequency,
       canUndoZoom: vm.canUndoZoom,
       vCursorEnabled: vm.vCursorEnabled,
+      triggerToolbarEnabled: vm.triggerToolbarEnabled,
+      triggerEnabled: vm.triggerEnabled,
       observationPlacementActive: vm.observationPlacementActive,
       boxZoomEnabled: vm.boxZoomEnabled,
+      boxZoomContinuous: vm.boxZoomContinuous,
       xMeasurementEnabled: vm.xMeasurementEnabled,
       yMeasurementEnabled: vm.yMeasurementEnabled,
       statsToolbarEnabled: vm.statsToolbarEnabled,
       statsEnabled: vm.statsEnabled,
       statsRangeEnabled: vm.statsRangeEnabled,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
       followEnabled: vm.followEnabled,
       showGrid: vm.showGrid,
       gridDensity: vm.gridDensity,
@@ -259,6 +316,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     return (
       channelConfigRevision: vm.channelConfigRevision,
       isPlotting: vm.isPlotting,
+      isStarting: vm.isStarting,
       isStopping: vm.isStopping,
       parserType: vm.parserType,
       activeChannelCount: vm.activeChannelCount,
@@ -277,8 +335,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       channelConfigRevision: vm.channelConfigRevision,
       viewportRevision: vm.viewportRevision,
       overlayRevision: vm.overlayRevision,
+      boxZoomEnabled: vm.boxZoomEnabled,
       plotBackground: vm.plotBackground,
       floatingPanelOpacity: vm.floatingPanelOpacity,
+      lodQuality: vm.lodQuality,
+      renderEngine: vm.renderEngine,
+      interactionActive: vm.plotInteractionActive,
     );
   }
 
@@ -296,8 +358,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// 折叠后的窄条（32px）
   Widget _buildCollapsedPanel(BuildContext context) {
     return Container(
-      width: kCollapsedPanelWidth,
+      width: PlotConfiguration.channelPanelCollapsedWidth,
       decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -347,7 +410,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children: [
         // 通道面板内容
         SizedBox(
-          width: _panelWidth.clamp(minPanelWidth, kMaxChannelPanelWidth),
+          width: _panelWidth.clamp(
+            minPanelWidth,
+            PlotConfiguration.channelPanelMaxWidth,
+          ),
           child: _buildChannelPanelContent(context, vm),
         ),
         // 右边缘拖动条
@@ -362,7 +428,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 _panelWidth += details.delta.dx;
                 _panelWidth = _panelWidth.clamp(
                   minPanelWidth,
-                  kMaxChannelPanelWidth,
+                  PlotConfiguration.channelPanelMaxWidth,
                 );
               });
             },
@@ -398,14 +464,18 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   double _minimumChannelPanelWidth(PlotViewModel vm) {
     if (vm.effectiveSendProtocolType == SendProtocolType.rProtocol) {
-      return kCompactChannelPanelWidth;
+      return PlotConfiguration.channelPanelCompactWidth;
     }
-    if (vm.parserType != ParserType.zobow) return kMinChannelPanelWidth;
+    if (vm.parserType != ParserType.zobow) {
+      return PlotConfiguration.channelPanelMinWidth;
+    }
     final channelCount = vm.parserConfig.zobowChannelCount;
     final allShort = vm.parserConfig.zobowChannelIds
         .take(channelCount)
         .every((address) => (address & 0xFFFF0000) == 0);
-    return allShort ? kCompactChannelPanelWidth : kMinChannelPanelWidth;
+    return allShort
+        ? PlotConfiguration.channelPanelCompactWidth
+        : PlotConfiguration.channelPanelMinWidth;
   }
 
   // ========== 工具栏 ==========
@@ -420,7 +490,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   List<Widget> _withToolbarSpacing(List<Widget> children) {
     return [
       for (var i = 0; i < children.length; i++) ...[
-        if (i > 0) const SizedBox(width: 8),
+        if (i > 0) const SizedBox(width: kToolbarItemSpacing),
         children[i],
       ],
     ];
@@ -433,51 +503,35 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     PlotPerformanceMetrics.instance.increment(
       PlotPerformanceMetric.primaryToolbarBuild,
     );
-    return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          bottom: BorderSide(color: Theme.of(context).dividerColor),
+    return UnifiedToolbar(
+      leadingItems: [
+        ToolbarLayoutItem(
+          extent: 76,
+          child: _buildStartStopButton(context, vm),
         ),
-      ),
-      child: Row(
-        children: [
-          // 开始/停止按钮
-          _buildStartStopButton(context, vm),
-          const SizedBox(width: 12),
-          if (vm.parserType == ParserType.fireWater) ...[
-            _buildRandomSourceToggle(context, vm),
-            const SizedBox(width: 12),
-          ],
-          // 解析器选择
-          _buildParserSelector(context, vm),
-          const SizedBox(width: 8),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  reverse: true,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: _withToolbarSpacing([
-                        // 文件工具组
-                        _buildFileTools(context, vm),
-                        // 清空 + 高级设置
-                        _buildClearAndSettings(context, vm),
-                      ]),
-                    ),
-                  ),
-                );
-              },
-            ),
+        if (vm.parserType == ParserType.fireWater)
+          ToolbarLayoutItem(
+            extent: 128,
+            child: _buildRandomSourceToggle(context, vm),
+            overflowActions: _randomSourceOverflowActions(context, vm),
           ),
-        ],
-      ),
+        ToolbarLayoutItem(
+          extent: _parserSelectorExtent(vm),
+          child: _buildParserSelector(context, vm),
+        ),
+      ],
+      trailingItems: [
+        ToolbarLayoutItem(
+          extent: 68,
+          child: _buildFileTools(context, vm),
+          overflowActions: _fileOverflowActions(context, vm),
+        ),
+        ToolbarLayoutItem(
+          extent: 68,
+          child: _buildClearAndSettings(context, vm),
+          overflowActions: _clearSettingsOverflowActions(context, vm),
+        ),
+      ],
     );
   }
 
@@ -486,49 +540,130 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     PlotPerformanceMetrics.instance.increment(
       PlotPerformanceMetric.secondaryToolbarBuild,
     );
-    return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          bottom: BorderSide(color: Theme.of(context).dividerColor),
+    return UnifiedToolbar(
+      leadingItems: [
+        ToolbarLayoutItem(
+          extent: _cursorToolsExtent(vm),
+          child: _buildCursorTools(context, vm),
+          overflowActions: _cursorOverflowActions(context, vm),
         ),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // 光标和测量工具组
-                  _buildCursorTools(context, vm),
-                  const SizedBox(width: 12),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: _withToolbarSpacing([
-                      // 缩放和框选工具组
-                      _buildZoomTools(context, vm),
-                      // 自适应工具组
-                      _buildFitTools(context, vm),
-                    ]),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+      ],
+      trailingItems: [
+        ToolbarLayoutItem(
+          extent: 212,
+          child: _buildZoomTools(context, vm),
+          overflowActions: _zoomOverflowActions(vm),
+        ),
+        ToolbarLayoutItem(
+          extent: 104,
+          child: _buildFitTools(context, vm),
+          overflowActions: _fitOverflowActions(vm),
+        ),
+      ],
     );
   }
 
+  double _parserSelectorExtent(PlotViewModel vm) {
+    final profileExtent =
+        vm.parserType == ParserType.zobow ||
+                vm.effectiveSendProtocolType == SendProtocolType.rProtocol
+            ? 520.0
+            : 304.0;
+    // 触发按钮属于解析器工具组，启用入口后必须计入折叠宽度估算。
+    return profileExtent +
+        (vm.triggerToolbarEnabled || vm.triggerEnabled ? 76 : 0);
+  }
+
+  double _cursorToolsExtent(PlotViewModel vm) {
+    // 文本按钮宽度受本地化字体度量影响，预留余量可确保折叠发生在实际溢出前。
+    var extent = 560.0;
+    if (vm.previewToolbarEnabled) extent += 72;
+    if (vm.statsToolbarEnabled || vm.statsEnabled) extent += 108;
+    return extent;
+  }
+
+  List<ToolbarOverflowAction> _randomSourceOverflowActions(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    final canChange = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
+    return [
+      ToolbarOverflowAction(
+        icon: const Icon(Icons.casino_outlined),
+        label: AppStrings.plot.randomSource,
+        selected: vm.useRandomSource,
+        onPressed:
+            canChange ? () => vm.setUseRandomSource(!vm.useRandomSource) : null,
+      ),
+      ToolbarOverflowAction(
+        icon: const Icon(Icons.speed),
+        label: AppStrings.plot.randomSourceFrequencyTooltip(vm.randomFrequency),
+        onPressed: () => _showRandomFreqDialog(context, vm),
+      ),
+    ];
+  }
+
+  List<ToolbarOverflowAction> _fileOverflowActions(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    final enabled = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
+    return [
+      ToolbarOverflowAction(
+        icon: const AppIcon(AppIcons.plotImport),
+        label: AppStrings.plot.importDataTooltip,
+        onPressed: enabled ? () => _importPlotData(context, vm) : null,
+      ),
+      ToolbarOverflowAction(
+        icon: const Icon(Icons.save),
+        label: AppStrings.plot.exportDataTooltip,
+        onPressed:
+            enabled && vm.dataPoints.isNotEmpty
+                ? () => _exportPlotData(context, vm)
+                : null,
+      ),
+    ];
+  }
+
+  List<ToolbarOverflowAction> _clearSettingsOverflowActions(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    return [
+      for (final tool in _clearSettingsToolConfigs(context, vm))
+        if (tool.visible) tool.toOverflowAction(),
+    ];
+  }
+
+  List<ToolbarOverflowAction> _cursorOverflowActions(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    return [
+      for (final tool in _cursorToolConfigs(context, vm))
+        if (tool.visible) tool.toOverflowAction(),
+    ];
+  }
+
+  List<ToolbarOverflowAction> _zoomOverflowActions(PlotViewModel vm) {
+    return [
+      for (final tool in _zoomToolConfigs(vm))
+        if (tool.visible) tool.toOverflowAction(),
+    ];
+  }
+
+  List<ToolbarOverflowAction> _fitOverflowActions(PlotViewModel vm) {
+    return [
+      for (final tool in _fitToolConfigs(vm))
+        if (tool.visible) tool.toOverflowAction(),
+    ];
+  }
+
   Widget _buildStartStopButton(BuildContext context, PlotViewModel vm) {
-    return ElevatedButton.icon(
+    return ToolbarStartStopButton(
+      key: const ValueKey('plot-start-stop-button'),
       onPressed:
-          vm.isStopping
+          vm.isStarting || vm.isStopping
               ? null
               : () {
                 if (vm.isPlotting) {
@@ -537,735 +672,569 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   unawaited(vm.startPlotting());
                 }
               },
-      icon: Icon(
-        vm.isStopping
-            ? Icons.hourglass_empty
-            : vm.isPlotting
-            ? Icons.stop
-            : Icons.play_arrow,
-        size: 16,
-      ),
-      label: Text(
-        vm.isStopping
-            ? AppStrings.plot.stopping
-            : vm.isPlotting
-            ? AppStrings.plot.stop
-            : AppStrings.plot.start,
-        style: const TextStyle(fontFamily: 'SarasaUiSC'),
-      ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor:
-            vm.isStopping
-                ? Colors.grey
-                : vm.isPlotting
-                ? Colors.red
-                : Colors.green,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        minimumSize: const Size(0, 28),
-      ),
+      running: vm.isPlotting,
+      busy: vm.isStarting || vm.isStopping,
+      label:
+          vm.isStarting
+              ? AppStrings.plot.starting
+              : vm.isStopping
+              ? AppStrings.plot.stopping
+              : vm.isPlotting
+              ? AppStrings.plot.stop
+              : AppStrings.plot.start,
     );
   }
 
   /// 随机数据源 + 频率设置
   Widget _buildRandomSourceToggle(BuildContext context, PlotViewModel vm) {
-    final canChangeSource = !vm.isPlotting && !vm.isStopping;
+    final canChangeSource = !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        Checkbox(
+      children: _withToolbarSpacing([
+        ToolbarToggleTextButton(
           key: const ValueKey('plot-random-source-checkbox'),
-          value: vm.useRandomSource,
-          onChanged:
-              canChangeSource ? (value) => vm.setUseRandomSource(value!) : null,
+          icon: const Icon(Icons.casino_outlined),
+          label: AppStrings.plot.randomSource,
+          tooltip: AppStrings.plot.randomSource,
+          selected: vm.useRandomSource,
+          activeColor: Colors.green,
+          onPressed:
+              canChangeSource
+                  ? () => vm.setUseRandomSource(!vm.useRandomSource)
+                  : null,
         ),
-        Text(
-          AppStrings.plot.randomSource,
-          style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
-        ),
-        Tooltip(
-          message: AppStrings.plot.randomSourceFrequencyTooltip(
+        ToolbarIconButton(
+          key: const ValueKey('plot-random-frequency-button'),
+          icon: const Icon(Icons.settings),
+          tooltip: AppStrings.plot.randomSourceFrequencyTooltip(
             vm.randomFrequency,
           ),
-          child: InkWell(
-            key: const ValueKey('plot-random-frequency-button'),
-            onTap: () => _showRandomFreqDialog(context, vm),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(
-                Icons.settings,
-                size: 16,
-                color:
-                    vm.useRandomSource
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey,
-              ),
-            ),
-          ),
+          onPressed: () => _showRandomFreqDialog(context, vm),
         ),
-      ],
+      ]),
     );
   }
 
   /// 收发协议选择 + 配置按钮 + 地址配置文件选择
   Widget _buildParserSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
+        ToolbarDropdown<ParserType>(
+          key: const ValueKey('plot-parser-selector'),
           width: 120,
-          child: NoAnimDropdown<ParserType>(
-            key: const ValueKey('plot-parser-selector'),
-            value: vm.parserType,
-            hint: AppStrings.plot.receiveProtocolHint,
-            decoration: const InputDecoration(
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              border: OutlineInputBorder(),
-            ),
-            items:
-                ParserType.values.map((type) {
-                  return DropdownMenuItem(
-                    value: type,
-                    child: Text(
-                      type.label,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontFamily: 'SarasaUiSC',
-                      ),
+          visibleFieldOffsetY: _toolbarDropdownOffsetY,
+          value: vm.parserType,
+          hint: AppStrings.plot.receiveProtocolHint,
+          items:
+              ParserType.values.map((type) {
+                return DropdownMenuItem(
+                  value: type,
+                  child: Text(
+                    type.label,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontFamily: 'SarasaUiSC',
                     ),
-                  );
-                }).toList(),
-            onChanged:
-                canChangeConfiguration
-                    ? (value) {
-                      if (value != null) vm.setParserType(value);
-                    }
-                    : null,
-          ),
+                  ),
+                );
+              }).toList(),
+          onChanged:
+              canChangeConfiguration
+                  ? (value) {
+                    if (value != null) vm.setParserType(value);
+                  }
+                  : null,
         ),
-        const SizedBox(width: 8),
-        IconButton(
+        const SizedBox(width: kToolbarItemSpacing),
+        ToolbarIconButton(
           key: const ValueKey('plot-parser-config-button'),
+          icon: const Icon(Icons.settings),
+          tooltip: AppStrings.plot.parserConfig,
           onPressed:
               canChangeConfiguration
                   ? () => _showParserConfigDialog(context, vm)
                   : null,
-          icon: const Icon(Icons.settings, size: 18),
-          tooltip: AppStrings.plot.parserConfig,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
-        const SizedBox(width: 8),
-        SizedBox(
+        const SizedBox(width: kToolbarItemSpacing),
+        ToolbarDropdown<SendProtocolType>(
+          key: const ValueKey('plot-send-protocol-selector'),
           width: 112,
-          child: NoAnimDropdown<SendProtocolType>(
-            key: const ValueKey('plot-send-protocol-selector'),
-            value:
-                vm.parserType == ParserType.zobow
-                    ? vm.effectiveSendProtocolType
-                    : vm.sendProtocolType,
-            hint: AppStrings.plot.sendProtocolHint,
-            decoration: const InputDecoration(
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              border: OutlineInputBorder(),
-            ),
-            items:
-                (vm.parserType == ParserType.zobow
-                        ? const [SendProtocolType.zobowBuiltIn]
-                        : const [
-                          SendProtocolType.none,
-                          SendProtocolType.rProtocol,
-                        ])
-                    .map(
-                      (type) => DropdownMenuItem(
-                        value: type,
-                        child: Text(
-                          type.label,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontFamily: 'SarasaUiSC',
-                          ),
+          visibleFieldOffsetY: _toolbarDropdownOffsetY,
+          value:
+              vm.parserType == ParserType.zobow
+                  ? vm.effectiveSendProtocolType
+                  : vm.sendProtocolType,
+          hint: AppStrings.plot.sendProtocolHint,
+          items:
+              (vm.parserType == ParserType.zobow
+                      ? const [SendProtocolType.zobowBuiltIn]
+                      : const [
+                        SendProtocolType.none,
+                        SendProtocolType.rProtocol,
+                      ])
+                  .map(
+                    (type) => DropdownMenuItem(
+                      value: type,
+                      child: Text(
+                        type.label,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'SarasaUiSC',
                         ),
                       ),
-                    )
-                    .toList(),
-            onChanged:
-                !canChangeConfiguration || vm.parserType == ParserType.zobow
-                    ? null
-                    : (value) {
-                      if (value != null) vm.setSendProtocolType(value);
-                    },
-          ),
+                    ),
+                  )
+                  .toList(),
+          onChanged:
+              !canChangeConfiguration || vm.parserType == ParserType.zobow
+                  ? null
+                  : (value) {
+                    if (value != null) vm.setSendProtocolType(value);
+                  },
         ),
-        IconButton(
+        ToolbarIconButton(
           key: const ValueKey('send-protocol-config-button'),
+          icon: const Icon(Icons.settings),
+          tooltip: AppStrings.plot.sendProtocolConfig,
           onPressed:
               canChangeConfiguration &&
                       vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                   ? () => _showSendProtocolConfigDialog(context, vm)
                   : null,
-          icon: const Icon(Icons.settings, size: 18),
-          tooltip: AppStrings.plot.sendProtocolConfig,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         ),
         // Zobow模式下显示配置文件下拉框
         if (vm.parserType == ParserType.zobow) ...[
-          const SizedBox(width: 8),
+          const SizedBox(width: kToolbarItemSpacing),
           _buildZobowProfileSelector(context, vm),
           // 新建配置按钮
-          Tooltip(
-            message: AppStrings.plot.createConfig,
-            child: InkWell(
-              key: const ValueKey('plot-create-zobow-profile-button'),
-              onTap:
-                  canChangeConfiguration
-                      ? () => _showCreateZobowProfileDialog(context, vm)
-                      : null,
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: Icon(
-                  Icons.add,
-                  size: 16,
-                  color:
-                      canChangeConfiguration
-                          ? null
-                          : Theme.of(context).disabledColor,
-                ),
-              ),
-            ),
+          ToolbarIconButton(
+            key: const ValueKey('plot-create-zobow-profile-button'),
+            icon: const Icon(Icons.add),
+            tooltip: AppStrings.plot.createConfig,
+            onPressed:
+                canChangeConfiguration
+                    ? () => _showCreateZobowProfileDialog(context, vm)
+                    : null,
           ),
           // 编辑配置按钮
-          Tooltip(
-            message: AppStrings.plot.editConfig,
-            child: InkWell(
-              key: const ValueKey('plot-edit-zobow-profile-button'),
-              onTap:
-                  canChangeConfiguration
-                      ? () => _showEditZobowProfileDialog(context, vm)
-                      : null,
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: Icon(
-                  Icons.edit,
-                  size: 16,
-                  color:
-                      canChangeConfiguration
-                          ? null
-                          : Theme.of(context).disabledColor,
-                ),
-              ),
-            ),
+          ToolbarIconButton(
+            key: const ValueKey('plot-edit-zobow-profile-button'),
+            icon: const Icon(Icons.edit),
+            tooltip: AppStrings.plot.editConfig,
+            onPressed:
+                canChangeConfiguration
+                    ? () => _showEditZobowProfileDialog(context, vm)
+                    : null,
           ),
         ] else if (vm.sendProtocolType == SendProtocolType.rProtocol) ...[
-          const SizedBox(width: 8),
+          const SizedBox(width: kToolbarItemSpacing),
           _buildRProfileSelector(context, vm),
-          Tooltip(
-            message: AppStrings.plot.createRProtocolConfig,
-            child: InkWell(
-              key: const ValueKey('plot-create-r-profile-button'),
-              onTap:
-                  canChangeConfiguration
-                      ? () => _showCreateRProfileDialog(context, vm)
-                      : null,
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: Icon(
-                  Icons.add,
-                  size: 16,
-                  color:
-                      canChangeConfiguration
-                          ? null
-                          : Theme.of(context).disabledColor,
-                ),
-              ),
-            ),
+          ToolbarIconButton(
+            key: const ValueKey('plot-create-r-profile-button'),
+            icon: const Icon(Icons.add),
+            tooltip: AppStrings.plot.createRProtocolConfig,
+            onPressed:
+                canChangeConfiguration
+                    ? () => _showCreateRProfileDialog(context, vm)
+                    : null,
           ),
-          Tooltip(
-            message: AppStrings.plot.editRProtocolConfig,
-            child: InkWell(
-              key: const ValueKey('plot-edit-r-profile-button'),
-              onTap:
-                  canChangeConfiguration
-                      ? () => _showEditRProfileDialog(context, vm)
-                      : null,
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: Icon(
-                  Icons.edit,
-                  size: 16,
-                  color:
-                      canChangeConfiguration
-                          ? null
-                          : Theme.of(context).disabledColor,
-                ),
-              ),
-            ),
+          ToolbarIconButton(
+            key: const ValueKey('plot-edit-r-profile-button'),
+            icon: const Icon(Icons.edit),
+            tooltip: AppStrings.plot.editRProtocolConfig,
+            onPressed:
+                canChangeConfiguration
+                    ? () => _showEditRProfileDialog(context, vm)
+                    : null,
           ),
+        ],
+        if (vm.triggerToolbarEnabled || vm.triggerEnabled) ...[
+          const SizedBox(width: kToolbarItemSpacing),
+          _buildTriggerButton(context, vm),
         ],
       ],
     );
   }
 
   Widget _buildRProfileSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
-    return SizedBox(
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
+    return ToolbarDropdown<String?>(
+      key: const ValueKey('plot-r-profile-selector'),
       width: 140,
-      child: NoAnimDropdown<String?>(
-        key: const ValueKey('plot-r-profile-selector'),
-        value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
-        hint: AppStrings.plot.noConfig,
-        decoration: const InputDecoration(
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          border: OutlineInputBorder(),
+      visibleFieldOffsetY: _toolbarDropdownOffsetY,
+      value: vm.selectedRProfileId.isEmpty ? null : vm.selectedRProfileId,
+      hint: AppStrings.plot.noConfig,
+      items: [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(
+            AppStrings.plot.noConfig,
+            style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+          ),
         ),
-        items: [
-          DropdownMenuItem<String?>(
-            value: null,
+        ...vm.rProfiles.map(
+          (profile) => DropdownMenuItem(
+            value: profile.id,
             child: Text(
-              AppStrings.plot.noConfig,
+              profile.name,
               style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
           ),
-          ...vm.rProfiles.map(
-            (profile) => DropdownMenuItem(
-              value: profile.id,
-              child: Text(
-                profile.name,
-                style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
-              ),
-            ),
-          ),
-        ],
-        onChanged: canChangeConfiguration ? vm.selectRProfile : null,
+        ),
+      ],
+      onChanged: canChangeConfiguration ? vm.selectRProfile : null,
+    );
+  }
+
+  Widget _buildTriggerButton(BuildContext context, PlotViewModel vm) {
+    return Listener(
+      onPointerDown: (event) {
+        if (event.buttons == kSecondaryMouseButton) {
+          _showTriggerConfigDialog(context, vm);
+        }
+      },
+      child: ToolbarToggleTextButton(
+        icon: const Icon(Icons.online_prediction),
+        label: AppStrings.plot.trigger,
+        tooltip: AppStrings.plot.triggerTooltip,
+        selected: vm.triggerEnabled,
+        activeColor: Colors.green,
+        onPressed: () => vm.setTriggerEnabled(!vm.triggerEnabled),
       ),
     );
   }
 
   /// Zobow配置文件选择器
   Widget _buildZobowProfileSelector(BuildContext context, PlotViewModel vm) {
-    final canChangeConfiguration = !vm.isPlotting && !vm.isStopping;
-    return SizedBox(
+    final canChangeConfiguration =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
+    return ToolbarDropdown<String?>(
+      key: const ValueKey('plot-zobow-profile-selector'),
       width: 140,
-      child: NoAnimDropdown<String?>(
-        key: const ValueKey('plot-zobow-profile-selector'),
-        value:
-            vm.selectedZobowProfileId.isEmpty
-                ? null
-                : vm.selectedZobowProfileId,
-        hint: AppStrings.plot.noConfig,
-        decoration: const InputDecoration(
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          border: OutlineInputBorder(),
+      visibleFieldOffsetY: _toolbarDropdownOffsetY,
+      value:
+          vm.selectedZobowProfileId.isEmpty ? null : vm.selectedZobowProfileId,
+      hint: AppStrings.plot.noConfig,
+      items: [
+        // "不使用"选项
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(
+            AppStrings.plot.noConfig,
+            style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
+          ),
         ),
-        items: [
-          // "不使用"选项
-          DropdownMenuItem<String?>(
-            value: null,
+        // 所有配置文件
+        ...vm.zobowProfiles.map((profile) {
+          return DropdownMenuItem(
+            value: profile.id,
             child: Text(
-              AppStrings.plot.noConfig,
+              profile.name,
               style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
             ),
-          ),
-          // 所有配置文件
-          ...vm.zobowProfiles.map((profile) {
-            return DropdownMenuItem(
-              value: profile.id,
-              child: Text(
-                profile.name,
-                style: const TextStyle(fontSize: 12, fontFamily: 'SarasaUiSC'),
-              ),
-            );
-          }),
-        ],
-        onChanged:
-            canChangeConfiguration
-                ? (value) {
-                  if (value == null) {
-                    vm.selectZobowProfile(null);
-                  } else {
-                    vm.selectZobowProfile(value);
-                  }
+          );
+        }),
+      ],
+      onChanged:
+          canChangeConfiguration
+              ? (value) {
+                if (value == null) {
+                  vm.selectZobowProfile(null);
+                } else {
+                  vm.selectZobowProfile(value);
                 }
-                : null,
-      ),
+              }
+              : null,
     );
+  }
+
+  /// 交互工具（光标/测量/预览/统计/跟随/图例/实时值）的共享配置。
+  ///
+  /// 与探针页共用 [PlotToolConfig]/[PlotToolbarButton]，仅形态不同：
+  /// 本页用图标+文字按钮，探针页用纯图标按钮。
+  List<PlotToolConfig> _cursorToolConfigs(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    return [
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotCursor),
+        label: AppStrings.plot.cursor,
+        tooltip: AppStrings.plot.verticalCursor,
+        overflowLabel: AppStrings.plot.cursor,
+        selected: vm.vCursorEnabled,
+        activeColor: Colors.orange,
+        onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
+        onSecondaryPressed:
+            vm.pointCount == 0
+                ? null
+                : () => _showCursorJumpDialog(context, vm),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.add_location_alt),
+        label: AppStrings.plot.observation,
+        tooltip:
+            vm.observationPlacementActive
+                ? AppStrings.plot.placeObservation
+                : AppStrings.plot.addObservation,
+        overflowLabel: AppStrings.plot.observation,
+        selected: vm.observationPlacementActive,
+        activeColor: Colors.amber,
+        onPressed: () {
+          if (vm.dataPoints.isEmpty) return;
+          if (vm.observationClickToPlace) {
+            vm.startObservationPlacement();
+          } else {
+            vm.addObservation();
+          }
+        },
+        overflowOnPressed:
+            vm.dataPoints.isEmpty
+                ? null
+                : () {
+                  if (vm.observationClickToPlace) {
+                    vm.startObservationPlacement();
+                  } else {
+                    vm.addObservation();
+                  }
+                },
+        onSecondaryPressed: () => _showObservationManagerDialog(context, vm),
+      ),
+      PlotToolConfig(
+        key: const ValueKey('plot-measure-x-button'),
+        icon: const AppIcon(AppIcons.plotMeasureXx),
+        label: AppStrings.plot.measureXx,
+        tooltip: AppStrings.plot.measureXxTooltip,
+        overflowLabel: AppStrings.plot.measureXx,
+        selected: vm.xMeasurementEnabled,
+        activeColor: Colors.blue,
+        onPressed: () => _handleMeasurementButton(vm, isX: true),
+        onSecondaryPressed:
+            () => _showMeasurementSettingsDialog(context, vm, isX: true),
+      ),
+      PlotToolConfig(
+        key: const ValueKey('plot-measure-y-button'),
+        icon: const AppIcon(AppIcons.plotMeasureYy),
+        label: AppStrings.plot.measureYy,
+        tooltip: AppStrings.plot.measureYyTooltip,
+        overflowLabel: AppStrings.plot.measureYy,
+        selected: vm.yMeasurementEnabled,
+        activeColor: Colors.blue,
+        onPressed: () => _handleMeasurementButton(vm, isX: false),
+        onSecondaryPressed:
+            () => _showMeasurementSettingsDialog(context, vm, isX: false),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.preview),
+        label: AppStrings.plot.preview,
+        tooltip: AppStrings.plot.previewTooltip,
+        overflowLabel: AppStrings.plot.preview,
+        selected: _previewVisible,
+        activeColor: Colors.teal,
+        visible: vm.previewToolbarEnabled,
+        onPressed: () => setState(() => _previewVisible = !_previewVisible),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.query_stats),
+        label: AppStrings.plot.stats,
+        tooltip: AppStrings.plot.statsTooltip,
+        overflowLabel: AppStrings.plot.stats,
+        selected: vm.statsEnabled,
+        activeColor: Colors.blue,
+        visible: vm.statsToolbarEnabled || vm.statsEnabled,
+        onPressed: vm.toggleStats,
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.swap_horiz),
+        tooltip: AppStrings.plot.statsRangeTooltip,
+        overflowLabel: AppStrings.plot.statsRangeTooltip,
+        selected: vm.statsRangeEnabled,
+        activeColor: Colors.blue,
+        visible: vm.statsToolbarEnabled || vm.statsEnabled,
+        onPressed: vm.statsEnabled ? vm.toggleStatsRange : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFollow),
+        label: AppStrings.plot.follow,
+        tooltip: AppStrings.plot.followTooltip,
+        overflowLabel: AppStrings.plot.follow,
+        selected: vm.followEnabled,
+        activeColor: Colors.orange,
+        onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.list_alt),
+        label: AppStrings.plot.legend,
+        tooltip: AppStrings.plot.legend,
+        overflowLabel: AppStrings.plot.legend,
+        selected: _legendVisible,
+        activeColor: Colors.teal,
+        onPressed: () => setState(() => _legendVisible = !_legendVisible),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.format_list_numbered),
+        label: AppStrings.plot.liveValues,
+        tooltip: AppStrings.plot.liveValues,
+        overflowLabel: AppStrings.plot.liveValues,
+        selected: _liveValuesVisible,
+        activeColor: Colors.lightBlue,
+        onPressed:
+            () => setState(() => _liveValuesVisible = !_liveValuesVisible),
+      ),
+    ];
+  }
+
+  /// 缩放/框选工具组配置。
+  List<PlotToolConfig> _zoomToolConfigs(PlotViewModel vm) {
+    final hasData = vm.dataPoints.isNotEmpty;
+    return [
+      PlotToolConfig(
+        icon: const Icon(Icons.undo),
+        tooltip: AppStrings.plot.undoZoom,
+        overflowLabel: AppStrings.plot.undoZoom,
+        toggle: false,
+        onPressed: vm.canUndoZoom ? vm.undoZoom : null,
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.crop_free),
+        tooltip: AppStrings.plot.boxZoomTooltip,
+        overflowLabel: AppStrings.plot.boxZoom,
+        selected: vm.boxZoomEnabled,
+        activeColor: vm.boxZoomContinuous ? Colors.orange : Colors.blue,
+        onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
+        onSecondaryPressed:
+            () => vm.setBoxZoomEnabled(
+              !(vm.boxZoomEnabled && vm.boxZoomContinuous),
+              continuous: true,
+            ),
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomXIn),
+        tooltip: AppStrings.plot.zoomXIn,
+        overflowLabel: AppStrings.plot.zoomXIn,
+        toggle: false,
+        onPressed: hasData ? vm.zoomXIn : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomXOut),
+        tooltip: AppStrings.plot.zoomXOut,
+        overflowLabel: AppStrings.plot.zoomXOut,
+        toggle: false,
+        onPressed: hasData ? vm.zoomXOut : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomYIn),
+        tooltip: AppStrings.plot.zoomYIn,
+        overflowLabel: AppStrings.plot.zoomYIn,
+        toggle: false,
+        onPressed: hasData ? vm.zoomYIn : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotZoomYOut),
+        tooltip: AppStrings.plot.zoomYOut,
+        overflowLabel: AppStrings.plot.zoomYOut,
+        toggle: false,
+        onPressed: hasData ? vm.zoomYOut : null,
+      ),
+    ];
+  }
+
+  /// 自适应工具组配置。
+  List<PlotToolConfig> _fitToolConfigs(PlotViewModel vm) {
+    final hasData = vm.dataPoints.isNotEmpty;
+    return [
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitY),
+        tooltip: AppStrings.plot.fitYTooltip,
+        overflowLabel: AppStrings.plot.fitYTooltip,
+        toggle: false,
+        onPressed: hasData ? vm.fitYAxis : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitX),
+        tooltip: AppStrings.plot.fitXTooltip,
+        overflowLabel: AppStrings.plot.fitXTooltip,
+        toggle: false,
+        onPressed: hasData ? vm.fitXAxis : null,
+      ),
+      PlotToolConfig(
+        icon: const AppIcon(AppIcons.plotFitAll),
+        tooltip: AppStrings.plot.fitAll,
+        overflowLabel: AppStrings.plot.fitAll,
+        toggle: false,
+        onPressed: hasData ? vm.fitAll : null,
+      ),
+    ];
+  }
+
+  /// 清空 + 高级设置工具组配置。
+  List<PlotToolConfig> _clearSettingsToolConfigs(
+    BuildContext context,
+    PlotViewModel vm,
+  ) {
+    return [
+      PlotToolConfig(
+        icon: const Icon(Icons.clear),
+        tooltip: AppStrings.plot.clearData,
+        overflowLabel: AppStrings.plot.clearData,
+        toggle: false,
+        onPressed:
+            vm.dataPoints.isEmpty
+                ? null
+                : () => unawaited(_confirmClearData(context, vm)),
+      ),
+      PlotToolConfig(
+        icon: const Icon(Icons.tune),
+        tooltip: AppStrings.plot.advancedSettings,
+        overflowLabel: AppStrings.plot.advancedSettings,
+        toggle: false,
+        onPressed: () => _showAdvancedSettingsDialog(context, vm),
+      ),
+    ];
   }
 
   /// 光标和测量工具组
   ///
   /// 顺序：垂直光标 | X-X | Y-Y | 跟随
   Widget _buildCursorTools(BuildContext context, PlotViewModel vm) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: _withToolbarSpacing([
-        // 垂直光标开关
-        Tooltip(
-          message: AppStrings.plot.verticalCursor,
-          child: TextButton.icon(
-            onPressed: () => vm.setVCursorEnabled(!vm.vCursorEnabled),
-            icon: AppIcon(
-              AppIcons.plotCursor,
-              color: vm.vCursorEnabled ? Colors.orange : null,
-            ),
-            label: Text(
-              AppStrings.plot.cursor,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.vCursorEnabled ? Colors.orange : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.vCursorEnabled
-                      ? Colors.orange.withValues(alpha: 0.1)
-                      : null,
-            ),
-          ),
-        ),
-        Tooltip(
-          message:
-              vm.observationPlacementActive
-                  ? AppStrings.plot.placeObservation
-                  : AppStrings.plot.addObservation,
-          child: TextButton.icon(
-            onPressed: () {
-              if (vm.dataPoints.isEmpty) return;
-              if (vm.observationClickToPlace) {
-                vm.startObservationPlacement();
-              } else {
-                vm.addObservation();
-              }
-            },
-            icon: Icon(
-              Icons.add_location_alt,
-              size: 18,
-              color: vm.observationPlacementActive ? Colors.amber : null,
-            ),
-            label: Text(
-              AppStrings.plot.observation,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.observationPlacementActive ? Colors.amber : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.observationPlacementActive
-                      ? Colors.amber.withValues(alpha: 0.1)
-                      : null,
-            ),
-          ),
-        ),
-        // X-X 测量
-        Tooltip(
-          message: AppStrings.plot.measureXxTooltip,
-          child: TextButton.icon(
-            onPressed: () => vm.toggleXMeasurement(),
-            icon: AppIcon(
-              AppIcons.plotMeasureXx,
-              color: vm.xMeasurementEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              AppStrings.plot.measureXx,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.xMeasurementEnabled ? Colors.blue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.xMeasurementEnabled
-                      ? Colors.blue.withValues(alpha: 0.15)
-                      : null,
-            ),
-          ),
-        ),
-        // Y-Y 测量
-        Tooltip(
-          message: AppStrings.plot.measureYyTooltip,
-          child: TextButton.icon(
-            onPressed: () => vm.toggleYMeasurement(),
-            icon: AppIcon(
-              AppIcons.plotMeasureYy,
-              color: vm.yMeasurementEnabled ? Colors.blue : null,
-            ),
-            label: Text(
-              AppStrings.plot.measureYy,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.yMeasurementEnabled ? Colors.blue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.yMeasurementEnabled
-                      ? Colors.blue.withValues(alpha: 0.15)
-                      : null,
-            ),
-          ),
-        ),
-        if (vm.statsToolbarEnabled || vm.statsEnabled) ...[
-          Tooltip(
-            message: AppStrings.plot.statsTooltip,
-            child: TextButton.icon(
-              onPressed: () => vm.toggleStats(),
-              icon: Icon(
-                Icons.query_stats,
-                size: 18,
-                color: vm.statsEnabled ? Colors.blue : null,
-              ),
-              label: Text(
-                AppStrings.plot.stats,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontFamily: 'SarasaUiSC',
-                  color: vm.statsEnabled ? Colors.blue : null,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: const Size(0, 28),
-                backgroundColor:
-                    vm.statsEnabled
-                        ? Colors.blue.withValues(alpha: 0.15)
-                        : null,
-              ),
-            ),
-          ),
-          Tooltip(
-            message: AppStrings.plot.statsRangeTooltip,
-            child: IconButton(
-              onPressed: vm.statsEnabled ? () => vm.toggleStatsRange() : null,
-              icon: Icon(
-                Icons.swap_horiz,
-                size: 18,
-                color: vm.statsRangeEnabled ? Colors.blue : null,
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              style: IconButton.styleFrom(
-                backgroundColor:
-                    vm.statsRangeEnabled
-                        ? Colors.blue.withValues(alpha: 0.15)
-                        : null,
-              ),
-            ),
-          ),
-        ],
-        // 最新点跟随
-        Tooltip(
-          message: AppStrings.plot.followTooltip,
-          child: TextButton.icon(
-            onPressed: () => vm.setFollowEnabled(!vm.followEnabled),
-            icon: AppIcon(
-              AppIcons.plotFollow,
-              color: vm.followEnabled ? Colors.orange : null,
-            ),
-            label: Text(
-              AppStrings.plot.follow,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: vm.followEnabled ? Colors.orange : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  vm.followEnabled
-                      ? Colors.orange.withValues(alpha: 0.1)
-                      : null,
-            ),
-          ),
-        ),
-        Tooltip(
-          message: AppStrings.plot.legend,
-          child: TextButton.icon(
-            onPressed: () => setState(() => _legendVisible = !_legendVisible),
-            icon: Icon(
-              Icons.list_alt,
-              size: 18,
-              color: _legendVisible ? Colors.teal : null,
-            ),
-            label: Text(
-              AppStrings.plot.legend,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: _legendVisible ? Colors.teal : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  _legendVisible ? Colors.teal.withValues(alpha: 0.12) : null,
-            ),
-          ),
-        ),
-        Tooltip(
-          message: AppStrings.plot.liveValues,
-          child: TextButton.icon(
-            onPressed:
-                () => setState(() => _liveValuesVisible = !_liveValuesVisible),
-            icon: Icon(
-              Icons.format_list_numbered,
-              size: 18,
-              color: _liveValuesVisible ? Colors.lightBlue : null,
-            ),
-            label: Text(
-              AppStrings.plot.liveValues,
-              style: TextStyle(
-                fontSize: 11,
-                fontFamily: 'SarasaUiSC',
-                color: _liveValuesVisible ? Colors.lightBlue : null,
-              ),
-            ),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(0, 28),
-              backgroundColor:
-                  _liveValuesVisible
-                      ? Colors.lightBlue.withValues(alpha: 0.12)
-                      : null,
-            ),
-          ),
-        ),
-      ]),
-    );
+    return PlotToolsToolbar(tools: _cursorToolConfigs(context, vm));
   }
 
   /// 缩放和框选工具组
   ///
   /// 顺序：撤回缩放 | 框选 | X放 | X缩 | Y放 | Y缩
   Widget _buildZoomTools(BuildContext context, PlotViewModel vm) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: _withToolbarSpacing([
-        // 撤回缩放
-        Tooltip(
-          message: AppStrings.plot.undoZoom,
-          child: IconButton(
-            onPressed: vm.canUndoZoom ? () => vm.undoZoom() : null,
-            icon: const Icon(Icons.undo, size: 18),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        // 框选放大
-        Tooltip(
-          message: AppStrings.plot.boxZoom,
-          child: IconButton(
-            onPressed: () => vm.setBoxZoomEnabled(!vm.boxZoomEnabled),
-            icon: Icon(
-              Icons.crop_free,
-              size: 18,
-              color: vm.boxZoomEnabled ? Colors.blue : null,
-            ),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        // X 轴放大
-        Tooltip(
-          message: AppStrings.plot.zoomXIn,
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXIn(),
-            icon: const AppIcon(AppIcons.plotZoomXIn),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        // X 轴缩小
-        Tooltip(
-          message: AppStrings.plot.zoomXOut,
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomXOut(),
-            icon: const AppIcon(AppIcons.plotZoomXOut),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        // Y 轴放大
-        Tooltip(
-          message: AppStrings.plot.zoomYIn,
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYIn(),
-            icon: const AppIcon(AppIcons.plotZoomYIn),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        // Y 轴缩小
-        Tooltip(
-          message: AppStrings.plot.zoomYOut,
-          child: IconButton(
-            onPressed: vm.dataPoints.isEmpty ? null : () => vm.zoomYOut(),
-            icon: const AppIcon(AppIcons.plotZoomYOut),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-      ]),
-    );
+    return PlotToolsToolbar(tools: _zoomToolConfigs(vm));
   }
 
   /// 文件工具组
   ///
   /// 顺序：导入数据 | 导出数据
   Widget _buildFileTools(BuildContext context, PlotViewModel vm) {
-    final fileOperationsEnabled = !vm.isPlotting && !vm.isStopping;
+    final fileOperationsEnabled =
+        !vm.isPlotting && !vm.isStarting && !vm.isStopping;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: _withToolbarSpacing([
-        Tooltip(
-          message: AppStrings.plot.importDataTooltip,
-          child: IconButton(
-            key: const ValueKey('plot-import-data-button'),
-            onPressed:
-                fileOperationsEnabled
-                    ? () => _importPlotData(context, vm)
-                    : null,
-            icon: const AppIcon(AppIcons.plotImport),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
+        ToolbarIconButton(
+          key: const ValueKey('plot-import-data-button'),
+          icon: const AppIcon(AppIcons.plotImport),
+          tooltip: AppStrings.plot.importDataTooltip,
+          onPressed:
+              fileOperationsEnabled ? () => _importPlotData(context, vm) : null,
         ),
-        Tooltip(
-          message: AppStrings.plot.exportDataTooltip,
-          child: IconButton(
-            key: const ValueKey('plot-export-data-button'),
-            onPressed:
-                !fileOperationsEnabled || vm.dataPoints.isEmpty
-                    ? null
-                    : () => _exportPlotData(context, vm),
-            icon: const Icon(Icons.save, size: 18),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
+        ToolbarIconButton(
+          key: const ValueKey('plot-export-data-button'),
+          icon: const Icon(Icons.save),
+          tooltip: AppStrings.plot.exportDataTooltip,
+          onPressed:
+              !fileOperationsEnabled || vm.dataPoints.isEmpty
+                  ? null
+                  : () => _exportPlotData(context, vm),
         ),
       ]),
     );
@@ -1275,73 +1244,21 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   ///
   /// 顺序：Y自适应 | X自适应 | 全自适应
   Widget _buildFitTools(BuildContext context, PlotViewModel vm) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: _withToolbarSpacing([
-        Tooltip(
-          message: AppStrings.plot.fitYTooltip,
-          child: IconButton(
-            onPressed: () {
-              if (vm.dataPoints.isEmpty) return;
-              vm.fitYAxis();
-            },
-            icon: const AppIcon(AppIcons.plotFitY),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        Tooltip(
-          message: AppStrings.plot.fitXTooltip,
-          child: IconButton(
-            onPressed: () {
-              if (vm.dataPoints.isEmpty) return;
-              vm.fitXAxis();
-            },
-            icon: const AppIcon(AppIcons.plotFitX),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-        Tooltip(
-          message: AppStrings.plot.fitAll,
-          child: IconButton(
-            onPressed: () {
-              if (vm.dataPoints.isEmpty) return;
-              vm.fitAll();
-            },
-            icon: const AppIcon(AppIcons.plotFitAll),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-      ]),
-    );
+    return PlotToolsToolbar(tools: _fitToolConfigs(vm));
   }
 
   /// 清空 + 高级设置
-  Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: _withToolbarSpacing([
-        IconButton(
-          onPressed: vm.dataPoints.isEmpty ? null : () => vm.clearData(),
-          icon: const Icon(Icons.clear, size: 18),
-          tooltip: AppStrings.plot.clearData,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-        ),
-        Tooltip(
-          message: AppStrings.common.advancedSettings,
-          child: IconButton(
-            onPressed: () => _showAdvancedSettingsDialog(context, vm),
-            icon: const Icon(Icons.tune, size: 18),
-            tooltip: AppStrings.common.advancedSettings,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-          ),
-        ),
-      ]),
+  Future<void> _confirmClearData(BuildContext context, PlotViewModel vm) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: AppStrings.plot.clearData,
+      message: AppStrings.plot.clearDataConfirmMessage,
     );
+    if (confirmed) vm.clearData();
+  }
+
+  Widget _buildClearAndSettings(BuildContext context, PlotViewModel vm) {
+    return PlotToolsToolbar(tools: _clearSettingsToolConfigs(context, vm));
   }
 
   /// 通道面板内容（展开状态）
@@ -1353,6 +1270,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
     return Container(
       decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
         border: Border(
           right: BorderSide(color: Theme.of(context).dividerColor),
         ),
@@ -1362,13 +1280,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
           Container(
             height: 36,
             padding: const EdgeInsets.only(
-              left: kChannelPanelHorizontalPadding,
+              left: PlotConfiguration.channelPanelHorizontalPadding,
               right:
-                  kChannelPanelHorizontalPadding +
-                  kChannelPanelListRightPadding,
+                  PlotConfiguration.channelPanelHorizontalPadding +
+                  PlotConfiguration.channelPanelListRightPadding,
             ),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: Theme.of(context).scaffoldBackgroundColor,
               border: Border(
                 bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
@@ -1389,7 +1307,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 const SizedBox(width: 4),
                 Text(
                   AppStrings.plot.channel,
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
                 ),
                 const Spacer(),
                 Tooltip(
@@ -1406,7 +1327,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                 ),
                 const SizedBox(width: 5),
                 // 全显/全隐按钮
-                _ChannelVisibilityButton(
+                PlotChannelVisibilityButton(
                   visible: vm.displayChannels.any((ch) => ch.visible),
                   tooltip:
                       vm.displayChannels.any((ch) => ch.visible)
@@ -1441,7 +1362,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               },
               child: ListView.builder(
                 padding: const EdgeInsets.only(
-                  right: kChannelPanelListRightPadding,
+                  right: PlotConfiguration.channelPanelListRightPadding,
                 ),
                 itemCount: displayCount + 1,
                 itemBuilder: (context, index) {
@@ -1675,7 +1596,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     BuildContext context,
     PlotViewModel vm,
   ) async {
-    if (vm.isPlotting || vm.isStopping) {
+    if (vm.isPlotting || vm.isStarting || vm.isStopping) {
       vm.showStatusMessage(AppStrings.plot.resetAllChannelsStoppedOnly);
       return;
     }
@@ -1683,12 +1604,10 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       context: context,
       builder:
           (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
+            shape: kAdvancedSettingsDialogShape,
             title: Text(AppStrings.plot.resetAllChannelsTitle),
             content: SizedBox(
-              width: 420,
+              width: kAdvancedSettingsDialogWidth,
               child: Text(AppStrings.plot.resetAllChannelsMessage),
             ),
             actions: [
@@ -1739,13 +1658,14 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   /// - [PlotLayerPainter]：分层绘制波形
   /// - 测量/统计信息框（可拖动）
   Widget _buildPlotArea(BuildContext context, PlotViewModel vm) {
+    // 绘图区只订阅渲染快照相关 revision，工具栏和通道面板不随高频数据重建。
     PlotPerformanceMetrics.instance.increment(
       PlotPerformanceMetric.plotAreaBuild,
     );
     if (vm.dataPoints.isEmpty) {
       return ColoredBox(
         key: const ValueKey('plot-empty-background'),
-        color: _plotBackgroundColor(vm.plotBackground),
+        color: AppTheme.pageBackgroundColor,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -1778,8 +1698,15 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     final activeChannelCount = vm.displayActiveChannelCount;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final gridDensity = _parseGridDensity(vm.gridDensity);
-        final plotBackground = _parsePlotBackground(vm.plotBackground);
+        final gridDensity = vm.gridDensity;
+        final plotBackground = vm.plotBackground;
+        final leftAxisWidth = PlotLayerPainter.calculateLeftAxisWidth(
+          viewport: vm.viewport,
+          canvasHeight: constraints.maxHeight,
+          gridDensity: gridDensity,
+          plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+          plotFontBold: vm.plotFontBold,
+        );
         final offsetAxisColumnWidths =
             PlotLayerPainter.calculateOffsetAxisColumnWidths(
               viewport: vm.viewport,
@@ -1788,154 +1715,253 @@ class _PlotPageContentState extends State<_PlotPageContent> {
               canvasHeight: constraints.maxHeight,
               gridDensity: gridDensity,
               plotFontSizeDelta: vm.plotFontSizeDelta.toDouble(),
+              plotFontBold: vm.plotFontBold,
               yValuesAreInteger: vm.displayYValuesAreInteger,
             );
-        final renderViewport =
-            vm.viewport.copy()
-              ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
+        final renderViewport = vm.viewport.copyWith(marginLeft: leftAxisWidth)
+          ..setOffsetAxisColumnWidths(offsetAxisColumnWidths);
 
-        PlotLayerPainter createPainter(PlotPaintLayer layer) {
-          return PlotLayerPainter(
-            layer: layer,
-            viewport: renderViewport,
-            data: displayDataPoints,
-            dataRevision: vm.dataRevision,
-            channelConfigRevision: vm.channelConfigRevision,
-            viewportRevision: vm.viewportRevision,
-            overlayRevision: vm.overlayRevision,
-            lodIndex: vm.lodIndex,
-            channels: displayChannels,
-            activeChannelCount: activeChannelCount,
-            showGrid: vm.showGrid,
-            gridDensity: gridDensity,
-            backgroundStyle: plotBackground,
-            floatingPanelOpacity: vm.floatingPanelOpacity,
-            cursor: vm.cursor,
-            xCursor1: vm.xCursor1,
-            xCursor2: vm.xCursor2,
-            yCursor1: vm.yCursor1,
-            yCursor2: vm.yCursor2,
-            statsEnabled: vm.statsEnabled,
-            statsRangeEnabled: vm.statsRangeEnabled,
-            statsX1: vm.statsX1,
-            statsX2: vm.statsX2,
-            snapHighlights: vm.snapHighlights,
-            snapHighlightEnabled: vm.snapHighlightEnabled,
-            snapHighlightDiameter: vm.snapHighlightDiameter,
-            antiAliasEnabled: vm.antiAliasEnabled,
-            yValuesAreInteger: vm.displayYValuesAreInteger,
-            plotFontSizeDelta: vm.plotFontSizeDelta,
+        final renderSnapshot = PlotRenderSnapshot(
+          viewport: renderViewport,
+          data: displayDataPoints,
+          dataRevision: vm.dataRevision,
+          channelConfigRevision: vm.channelConfigRevision,
+          viewportRevision: vm.viewportRevision,
+          overlayRevision: vm.overlayRevision,
+          lodIndex: vm.lodIndex,
+          lodQuality: vm.lodQuality,
+          renderEngine: vm.renderEngine,
+          interactionActive: vm.plotInteractionActive,
+          devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+          channels: displayChannels,
+          activeChannelCount: activeChannelCount,
+          showGrid: vm.showGrid,
+          gridDensity: gridDensity,
+          backgroundStyle: plotBackground,
+          floatingPanelOpacity: vm.floatingPanelOpacity,
+          cursor: vm.cursor,
+          xCursor1: vm.xCursor1,
+          xCursor2: vm.xCursor2,
+          yCursor1: vm.yCursor1,
+          yCursor2: vm.yCursor2,
+          xMeasurementGroups: vm.xMeasurementGroups,
+          yMeasurementGroups: vm.yMeasurementGroups,
+          xMeasurementLine1Color: vm.xMeasurementLine1Color,
+          xMeasurementLine2Color: vm.xMeasurementLine2Color,
+          yMeasurementLine1Color: vm.yMeasurementLine1Color,
+          yMeasurementLine2Color: vm.yMeasurementLine2Color,
+          xMeasurementLine1Opacity: vm.xMeasurementLine1Opacity,
+          xMeasurementLine2Opacity: vm.xMeasurementLine2Opacity,
+          yMeasurementLine1Opacity: vm.yMeasurementLine1Opacity,
+          yMeasurementLine2Opacity: vm.yMeasurementLine2Opacity,
+          statsEnabled: vm.statsEnabled,
+          statsRangeEnabled: vm.statsRangeEnabled,
+          statsX1: vm.statsX1,
+          statsX2: vm.statsX2,
+          snapHighlights: vm.snapHighlights,
+          snapHighlightEnabled: vm.snapHighlightEnabled,
+          snapHighlightDiameter: vm.snapHighlightDiameter,
+          antiAliasEnabled: vm.antiAliasEnabled,
+          yValuesAreInteger: vm.displayYValuesAreInteger,
+          plotFontSizeDelta: vm.plotFontSizeDelta,
+          plotFontBold: vm.plotFontBold,
+        );
+        if (vm.renderEngine == PlotRenderEngine.canvas ||
+            _plotPresentation.presentedSnapshot == null) {
+          _plotPresentation.present(
+            renderSnapshot,
+            frameId: vm.viewportRevision,
+            notify: false,
+            resetFrameSequence: vm.renderEngine == PlotRenderEngine.canvas,
           );
         }
 
-        Widget buildLayer(PlotPaintLayer layer) {
-          return RepaintBoundary(
-            key: ValueKey<String>('plot-layer-${layer.name}'),
-            child: CustomPaint(
-              painter: createPainter(layer),
-              size: Size.infinite,
-            ),
-          );
-        }
-
+        final previewPanelHeight =
+            _previewVisible && vm.previewToolbarEnabled
+                ? PlotConfiguration.locatorBarHeight
+                : 0.0;
         return Stack(
           children: [
-            PlotGestureHandler(
-              viewport: renderViewport,
-              vCursorEnabled: vm.vCursorEnabled,
-              boxZoomEnabled: vm.boxZoomEnabled,
-              refreshFps: vm.effectiveRefreshFps,
-              plotFontSizeDelta: vm.plotFontSizeDelta,
-              channels: displayChannels,
-              activeChannelCount: activeChannelCount,
-              data: displayDataPoints,
-              observations: vm.observations,
-              onObservationDrag: (index, x) => vm.updateObservation(index, x),
-              onObservationDelete: (index) => vm.removeObservation(index),
-              observationPlacementActive: vm.observationPlacementActive,
-              onObservationPlacementHover: vm.updateObservationPlacement,
-              onObservationPlacementCommit: vm.commitObservationPlacement,
-              onViewportChanged:
-                  (viewport, {fromDrag = false}) =>
-                      vm.updateViewport(viewport, fromDrag: fromDrag),
-              onDragEnd: vm.saveDragViewport,
-              onCursorChanged: (cursor) {
-                if (cursor != null) {
-                  vm.updateFollowCursor(
-                    cursor.x,
-                    cursor.y ?? 0,
-                    cursor.screenPosition ?? Offset.zero,
-                  );
-                } else {
-                  vm.updateCursor(null);
-                }
-              },
-              // 测量线位置
-              xCursor1: vm.xCursor1,
-              xCursor2: vm.xCursor2,
-              yCursor1: vm.yCursor1,
-              yCursor2: vm.yCursor2,
-              // 测量线拖动回调
-              onXCursor1Drag:
-                  vm.xMeasurementEnabled ? (x) => vm.setXCursor1(x) : null,
-              onXCursor2Drag:
-                  vm.xMeasurementEnabled ? (x) => vm.setXCursor2(x) : null,
-              onYCursor1Drag:
-                  vm.yMeasurementEnabled ? (y) => vm.setYCursor1(y) : null,
-              onYCursor2Drag:
-                  vm.yMeasurementEnabled ? (y) => vm.setYCursor2(y) : null,
-              // 统计范围位置
-              statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
-              statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
-              // 统计范围拖动回调
-              onStatsX1Drag:
-                  vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
-              onStatsX2Drag:
-                  vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
-              // 通道偏移拖动回调
-              onChannelOffsetDrag:
-                  (index, yOffset) => vm.setChannelYOffset(index, yOffset),
-              // 通道 Y 轴缩放回调（Shift+滚轮在偏置Y轴列上）
-              onChannelYScaleZoom:
-                  (index, scaleDelta) =>
-                      vm.zoomChannelYScale(index, scaleDelta),
+            Positioned.fill(
+              bottom: previewPanelHeight,
               child: Stack(
-                fit: StackFit.expand,
                 children: [
-                  buildLayer(PlotPaintLayer.background),
-                  buildLayer(PlotPaintLayer.data),
-                  buildLayer(PlotPaintLayer.axis),
-                  buildLayer(PlotPaintLayer.overlay),
+                  PlotGestureHandler(
+                    viewport: renderViewport,
+                    presentationCoordinator: _plotPresentation,
+                    vCursorEnabled: vm.vCursorEnabled,
+                    boxZoomEnabled: vm.boxZoomEnabled,
+                    onBoxZoomCompleted: () {
+                      if (!vm.boxZoomContinuous) {
+                        vm.setBoxZoomEnabled(false);
+                      }
+                    },
+                    refreshFps: vm.effectiveRefreshFps,
+                    plotFontSizeDelta: vm.plotFontSizeDelta,
+                    gestureModifier: vm.gestureModifier,
+                    channels: displayChannels,
+                    activeChannelCount: activeChannelCount,
+                    data: displayDataPoints,
+                    observations: vm.observations,
+                    onObservationDrag:
+                        (index, x) => vm.updateObservation(index, x),
+                    onObservationDelete: (index) => vm.removeObservation(index),
+                    observationPlacementActive: vm.observationPlacementActive,
+                    onObservationPlacementHover: vm.updateObservationPlacement,
+                    onObservationPlacementCommit: vm.commitObservationPlacement,
+                    onViewportChanged:
+                        (viewport, {fromDrag = false}) =>
+                            fromDrag
+                                ? vm.updateFramePacedViewport(viewport)
+                                : vm.updateViewport(viewport),
+                    onContinuousZoomChanged:
+                        (viewport) => vm.updateFramePacedViewport(
+                          viewport,
+                          preserveFollow: true,
+                        ),
+                    onDragEnd: vm.saveDragViewport,
+                    onInteractionChanged: vm.setPlotInteractionActive,
+                    onCursorChanged: (cursor) {
+                      if (cursor != null) {
+                        vm.updateFollowCursor(
+                          cursor.x,
+                          cursor.y ?? 0,
+                          cursor.screenPosition ?? Offset.zero,
+                        );
+                      } else {
+                        vm.updateCursor(null);
+                      }
+                    },
+                    // 测量线位置
+                    xCursor1: vm.xCursor1,
+                    xCursor2: vm.xCursor2,
+                    yCursor1: vm.yCursor1,
+                    yCursor2: vm.yCursor2,
+                    xMeasurementGroups: vm.xMeasurementGroups,
+                    yMeasurementGroups: vm.yMeasurementGroups,
+                    yMeasurementSnapEnabled: vm.yMeasurementSnapEnabled,
+                    onXMeasurementDrag:
+                        vm.xMeasurementEnabled
+                            ? vm.setXMeasurementCursor
+                            : null,
+                    onYMeasurementDrag:
+                        vm.yMeasurementEnabled
+                            ? vm.setYMeasurementCursor
+                            : null,
+                    onXMeasurementDelete:
+                        (index) => vm.removeMeasurementGroup(
+                          isX: true,
+                          groupIndex: index,
+                        ),
+                    onYMeasurementDelete:
+                        (index) => vm.removeMeasurementGroup(
+                          isX: false,
+                          groupIndex: index,
+                        ),
+                    // 测量线拖动回调
+                    onXCursor1Drag:
+                        vm.xMeasurementEnabled
+                            ? (x) => vm.setXCursor1(x)
+                            : null,
+                    onXCursor2Drag:
+                        vm.xMeasurementEnabled
+                            ? (x) => vm.setXCursor2(x)
+                            : null,
+                    onYCursor1Drag:
+                        vm.yMeasurementEnabled
+                            ? (y) => vm.setYCursor1(y)
+                            : null,
+                    onYCursor2Drag:
+                        vm.yMeasurementEnabled
+                            ? (y) => vm.setYCursor2(y)
+                            : null,
+                    // 统计范围位置
+                    statsX1: vm.statsRangeEnabled ? vm.statsX1 : null,
+                    statsX2: vm.statsRangeEnabled ? vm.statsX2 : null,
+                    // 统计范围拖动回调
+                    onStatsX1Drag:
+                        vm.statsRangeEnabled ? (x) => vm.setStatsX1(x) : null,
+                    onStatsX2Drag:
+                        vm.statsRangeEnabled ? (x) => vm.setStatsX2(x) : null,
+                    // 通道偏移拖动回调
+                    onChannelOffsetDrag:
+                        (index, yOffset) =>
+                            vm.setChannelYOffset(index, yOffset),
+                    // 通道 Y 轴缩放回调（修饰键+滚轮在偏置Y轴列上）
+                    onChannelYScaleZoom:
+                        (index, scaleDelta) =>
+                            vm.zoomChannelYScale(index, scaleDelta),
+                    child: PlotLayerStack(
+                      snapshot: renderSnapshot,
+                      presentationCoordinator: _plotPresentation,
+                      frameRateCounter: _plotFrameRate,
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: AnimatedBuilder(
+                      animation: _plotPresentation,
+                      builder:
+                          (context, _) => LayoutBuilder(
+                            builder: (context, constraints) {
+                              final presentedViewport =
+                                  _plotPresentation
+                                      .presentedSnapshot
+                                      ?.viewport ??
+                                  renderViewport;
+                              return Stack(
+                                children: _buildObservationWidgets(
+                                  context,
+                                  vm,
+                                  presentedViewport,
+                                  Size(
+                                    constraints.maxWidth,
+                                    constraints.maxHeight,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                    ),
+                  ),
+                  // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
+                  if (vm.measurementText != null || vm.statsText != null)
+                    _buildCombinedInfoBox(context, vm),
+                  if (_legendVisible) _buildLegendBox(vm),
+                  if (_liveValuesVisible) _buildLiveValuesBox(vm),
                 ],
               ),
             ),
-            Positioned.fill(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return Stack(
-                    children: _buildObservationWidgets(
-                      context,
-                      vm,
-                      renderViewport,
-                      Size(constraints.maxWidth, constraints.maxHeight),
-                    ),
-                  );
-                },
+            if (_previewVisible && vm.previewToolbarEnabled)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: previewPanelHeight,
+                child: _buildLocatorBar(context, vm),
               ),
-            ),
-            // 测量信息框（X-X / Y-Y 测量值显示 + 统计信息）
-            if (vm.measurementText != null || vm.statsText != null)
-              _buildCombinedInfoBox(context, vm),
-            if (_legendVisible) _buildLegendBox(vm),
-            if (_liveValuesVisible) _buildLiveValuesBox(vm),
           ],
         );
       },
     );
   }
 
+  Widget _buildLocatorBar(BuildContext context, PlotViewModel vm) {
+    // 定位条只反映完整 X 范围与当前视口；它不绘制曲线，也不依赖主图 Y 轴状态。
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: PlotLocatorBar(
+        pointCount: vm.pointCount,
+        viewport: vm.viewport,
+        onNavigate:
+            (centerX, {required fromDrag}) =>
+                vm.movePreviewViewportTo(centerX, fromDrag: fromDrag),
+        onDragEnd: vm.saveDragViewport,
+      ),
+    );
+  }
+
   double _plotFontSize(PlotViewModel vm, double base) {
-    return (base + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
+    return (base + 1 + vm.plotFontSizeDelta).clamp(6.0, 24.0).toDouble();
   }
 
   List<Widget> _buildObservationWidgets(
@@ -2064,7 +2090,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
 
   Widget _buildObservationTooltip(
     int index,
-    CursorState observation,
+    PlotObservation observation,
     PlotViewModel vm,
   ) {
     final values = observation.channelValues;
@@ -2118,6 +2144,22 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         );
       }
     }
+    if (observation.note.trim().isNotEmpty) {
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            observation.note,
+            style: TextStyle(
+              color: _floatingSubtleTextColor(vm),
+              fontSize: _plotFontSize(vm, 11),
+              fontFamily: 'SarasaUiSC',
+              fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ),
+      );
+    }
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 240),
@@ -2136,8 +2178,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   Widget _buildLiveValuesBox(PlotViewModel vm) {
-    final latestPoint =
-        vm.displayDataPoints.isEmpty ? null : vm.displayDataPoints.last;
+    final latestPoint = vm.latestDisplayDataPoint;
     if (latestPoint == null) return const SizedBox.shrink();
 
     final displayChannels = vm.displayChannels;
@@ -2147,18 +2188,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       fontSize: fontSize,
       fontWeight: FontWeight.bold,
     );
-    final rows = <Widget>[
-      Text(
-        AppStrings.plot.liveValues,
-        style: TextStyle(
-          color: _floatingTextColor(vm),
-          fontSize: _plotFontSize(vm, 12),
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-      const SizedBox(height: 6),
-    ];
 
+    final entries = <PlotLiveValueEntry>[];
     for (
       int i = 0;
       i < latestPoint.values.length && i < displayChannels.length;
@@ -2171,65 +2202,58 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       final value = formatPlotValue(latestPoint.values[i]);
       contentWidth = math.max(
         contentWidth,
-        14 + _measureFloatingTextWidth('$name: $value', fontSize: fontSize),
+        14 +
+            _measureFloatingTextWidth(
+              '$name: $value',
+              fontSize: fontSize,
+              fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+            ),
       );
-      rows.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: channel.color,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                fit: FlexFit.loose,
-                child: _buildFloatingChannelValueRow(
-                  vm: vm,
-                  name: name,
-                  value: value,
-                  color: channel.color,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    if (rows.length == 2) {
-      rows.add(
-        Text(
-          '无显示通道',
-          style: TextStyle(
-            color: _floatingSubtleTextColor(vm),
-            fontSize: _plotFontSize(vm, 12),
-            fontFamily: 'SarasaUiSC',
-          ),
-        ),
+      entries.add(
+        PlotLiveValueEntry(color: channel.color, name: name, value: value),
       );
     }
 
-    return _DraggableInfoBox(
-      initialRight: 16,
-      initialTop: _legendVisible ? 240 : 96,
+    return PlotDraggableInfoBox(
+      key: const ValueKey('plot-live-values-box'),
+      initialRight: vm.liveValuesPanelRight,
+      initialTop: vm.liveValuesPanelTop(legendVisible: _legendVisible),
       backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.lightBlue.withValues(alpha: 0.55),
+      onPositionChanged:
+          (right, top) => vm.setLiveValuesPanelPosition(right: right, top: top),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 240, maxHeight: 320),
         child: SizedBox(
           key: const ValueKey('plot-live-values-content'),
           width: contentWidth.clamp(120, 240),
           child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: rows,
+            child: PlotLiveValuesBox(
+              entries: entries,
+              titleStyle: TextStyle(
+                color: _floatingTextColor(vm),
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
+              ),
+              rowPadding: const EdgeInsets.symmetric(vertical: 1),
+              rowBuilder:
+                  (entry) => Flexible(
+                    fit: FlexFit.loose,
+                    child: _buildFloatingChannelValueRow(
+                      vm: vm,
+                      name: entry.name,
+                      value: entry.value,
+                      color: entry.color,
+                    ),
+                  ),
+              emptyText: AppStrings.plot.noDisplayChannel,
+              emptyTextStyle: TextStyle(
+                color: _floatingSubtleTextColor(vm),
+                fontSize: _plotFontSize(vm, 12),
+                fontFamily: 'SarasaUiSC',
+                fontWeight:
+                    vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+              ),
             ),
           ),
         ),
@@ -2247,6 +2271,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       color: color,
       fontSize: _plotFontSize(vm, 12),
       fontFamily: 'SarasaUiSC',
+      fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
     );
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -2293,62 +2318,55 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             .where((channel) => channel.visible)
             .toList();
     if (visibleChannels.isEmpty) return const SizedBox.shrink();
+    final fontSize = _plotFontSize(vm, 12);
+    final fontWeight = vm.plotFontBold ? FontWeight.bold : FontWeight.normal;
+    // 图例按最长名称扩展，优先显示完整名称；极长名称仍限制宽度，避免遮住
+    // 大部分绘图区。外层 Positioned 的可用宽度还会继续约束窄窗口。
+    final longestNameWidth = visibleChannels.fold<double>(
+      0,
+      (width, channel) => math.max(
+        width,
+        _measureFloatingTextWidth(
+          channel.alias.isNotEmpty ? channel.alias : 'Ch${channel.index}',
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+        ),
+      ),
+    );
+    final contentWidth = (16 + longestNameWidth).clamp(96.0, 480.0);
 
-    return _DraggableInfoBox(
-      initialRight: 16,
-      initialTop: 96,
+    return PlotDraggableInfoBox(
+      key: const ValueKey('plot-legend-box'),
+      initialRight: vm.legendPanelRight,
+      initialTop: vm.legendPanelTop,
       backgroundColor: _floatingBoxBackgroundColor(vm),
       borderColor: Colors.teal.withValues(alpha: 0.55),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 220, maxHeight: 320),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '图例',
-                style: TextStyle(
-                  color: _floatingTextColor(vm),
-                  fontSize: _plotFontSize(vm, 12),
-                  fontWeight: FontWeight.bold,
-                ),
+      onPositionChanged:
+          (right, top) => vm.setLegendPanelPosition(right: right, top: top),
+      child: SizedBox(
+        width: contentWidth,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: SingleChildScrollView(
+            child: PlotLegendBox(
+              channels: visibleChannels,
+              titleStyle: TextStyle(
+                color: _floatingTextColor(vm),
+                fontSize: fontSize,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(height: 6),
-              ...visibleChannels.map((channel) {
-                final name =
-                    channel.alias.isNotEmpty
-                        ? channel.alias
-                        : 'Ch${channel.index}';
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: channel.color,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _floatingTextColor(vm),
-                            fontSize: _plotFontSize(vm, 12),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
+              nameStyle: TextStyle(
+                color: _floatingTextColor(vm),
+                fontSize: fontSize,
+                fontFamily: 'SarasaUiSC',
+                fontWeight: fontWeight,
+              ),
+              nameFor:
+                  (channel) =>
+                      channel.alias.isNotEmpty
+                          ? channel.alias
+                          : 'Ch${channel.index}',
+            ),
           ),
         ),
       ),
@@ -2408,9 +2426,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
                   vm.effectiveSendProtocolType == SendProtocolType.rProtocol
                       ? StatefulBuilder(
                         builder:
-                            (context, setDialogState) => SwitchListTile(
+                            (context, setDialogState) => AppSwitchRow(
                               value: vm.rProtocolLooseChannelSettings,
-                              contentPadding: EdgeInsets.zero,
                               title: Text(
                                 AppStrings.plot.rProtocolLooseChannelSettings,
                               ),
@@ -2453,15 +2470,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
+                AppDialogTextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
-                    labelText: AppStrings.plot.frequencyHz,
-                    hintText: '1 ~ 100000',
-                    suffixText: 'Hz',
-                  ),
+                  labelText: AppStrings.plot.frequencyHz,
+                  hintText: '1 ~ 100000',
+                  suffixText: 'Hz',
                   autofocus: true,
                 ),
                 const SizedBox(height: 8),
@@ -2543,6 +2558,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   void _exportCsv(BuildContext context, PlotViewModel vm) async {
+    final options = await _showPlotExportOptionsDialog(context, vm);
+    if (options == null || !context.mounted) return;
+
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveCsvFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.csv',
@@ -2550,14 +2568,28 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       allowedExtensions: ['csv'],
     );
     if (result == null) return; // 用户取消
+    if (!context.mounted) return;
 
-    final path = await vm.exportToCsv(result);
-    if (path != null && context.mounted) {
-      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
-    }
+    await _runExportWithProgress(
+      context: context,
+      vm: vm,
+      title: AppStrings.plot.exportCsvTitle,
+      exportFile:
+          ({onProgress, cancelToken}) => vm.exportToCsv(
+            result,
+            startIndex: options.startIndex,
+            endIndex: options.endIndex,
+            channelIndices: options.channelIndices,
+            onProgress: onProgress,
+            cancelToken: cancelToken,
+          ),
+    );
   }
 
   void _exportBin(BuildContext context, PlotViewModel vm) async {
+    final options = await _showPlotExportOptionsDialog(context, vm);
+    if (options == null || !context.mounted) return;
+
     final result = await FilePicker.saveFile(
       dialogTitle: AppStrings.plot.saveBinFile,
       fileName: 'vscope_plot_${DateTime.now().millisecondsSinceEpoch}.bin',
@@ -2565,11 +2597,323 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       allowedExtensions: ['bin'],
     );
     if (result == null) return;
+    if (!context.mounted) return;
 
-    final path = await vm.exportToBin(result);
-    if (path != null && context.mounted) {
-      vm.showStatusMessage('${AppStrings.plot.exportedPrefix}: $path');
+    await _runExportWithProgress(
+      context: context,
+      vm: vm,
+      title: AppStrings.plot.exportBinTitle,
+      exportFile:
+          ({onProgress, cancelToken}) => vm.exportToBin(
+            result,
+            startIndex: options.startIndex,
+            endIndex: options.endIndex,
+            channelIndices: options.channelIndices,
+            onProgress: onProgress,
+            cancelToken: cancelToken,
+          ),
+    );
+  }
+
+  Future<_PlotExportOptions?> _showPlotExportOptionsDialog(
+    BuildContext context,
+    PlotViewModel vm,
+  ) async {
+    final maxIndex = vm.pointCount - 1;
+    if (maxIndex < 0) return null;
+    final candidateChannels = vm.exportCandidateChannels;
+    if (candidateChannels.isEmpty) return null;
+    final startController = TextEditingController(text: '0');
+    final endController = TextEditingController(text: maxIndex.toString());
+    final selectedChannelIndices = <int>{
+      for (final channel in candidateChannels) channel.index,
+    };
+    String? errorText;
+
+    return showDialog<_PlotExportOptions>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              void useCurrentViewport() {
+                final start = vm.viewport.xMin.floor().clamp(0, maxIndex);
+                final end = vm.viewport.xMax.ceil().clamp(0, maxIndex);
+                startController.text = start.toString();
+                endController.text = math.max(start, end).toString();
+                setDialogState(() => errorText = null);
+              }
+
+              void submit() {
+                final start = int.tryParse(startController.text.trim());
+                final end = int.tryParse(endController.text.trim());
+                if (start == null || end == null) {
+                  setDialogState(
+                    () => errorText = AppStrings.plot.exportInvalidRange,
+                  );
+                  return;
+                }
+                if (start < 0 || end > maxIndex || start > end) {
+                  setDialogState(
+                    () =>
+                        errorText = AppStrings.plot.exportRangeError(maxIndex),
+                  );
+                  return;
+                }
+                if (selectedChannelIndices.isEmpty) {
+                  setDialogState(
+                    () =>
+                        errorText =
+                            AppStrings.plot.exportSelectAtLeastOneChannel,
+                  );
+                  return;
+                }
+                if (selectedChannelIndices.length >
+                    PlotConfiguration.totalChannelCount) {
+                  setDialogState(
+                    () =>
+                        errorText = AppStrings.plot.exportMaxChannelCount(
+                          PlotConfiguration.totalChannelCount,
+                        ),
+                  );
+                  return;
+                }
+                Navigator.of(dialogContext).pop(
+                  _PlotExportOptions(
+                    startIndex: start,
+                    endIndex: end,
+                    channelIndices: [
+                      for (final channel in candidateChannels)
+                        if (selectedChannelIndices.contains(channel.index))
+                          channel.index,
+                    ],
+                  ),
+                );
+              }
+
+              return AlertDialog(
+                title: Text(AppStrings.plot.exportRangeAndChannelsTitle),
+                content: SizedBox(
+                  width: 440,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        AppStrings.plot.exportRangeHint(maxIndex),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: AppDialogTextField(
+                              controller: startController,
+                              autofocus: true,
+                              keyboardType: TextInputType.number,
+                              labelText: AppStrings.plot.exportStartPoint,
+                              onChanged: (_) {
+                                if (errorText != null) {
+                                  setDialogState(() => errorText = null);
+                                }
+                              },
+                              onSubmitted: (_) => submit(),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: AppDialogTextField(
+                              controller: endController,
+                              keyboardType: TextInputType.number,
+                              labelText: AppStrings.plot.exportEndPoint,
+                              onChanged: (_) {
+                                if (errorText != null) {
+                                  setDialogState(() => errorText = null);
+                                }
+                              },
+                              onSubmitted: (_) => submit(),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          errorText!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              AppStrings.plot.exportChannels,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            AppStrings.plot.exportSelectedCount(
+                              selectedChannelIndices.length,
+                              PlotConfiguration.totalChannelCount,
+                            ),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () {
+                              setDialogState(() {
+                                selectedChannelIndices.clear();
+                                errorText = null;
+                              });
+                            },
+                            child: Text(AppStrings.raw.clear),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        height: math.min(240, candidateChannels.length * 48),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: Theme.of(context).dividerColor,
+                          ),
+                        ),
+                        child: ListView.builder(
+                          itemCount: candidateChannels.length,
+                          itemBuilder: (context, index) {
+                            final channel = candidateChannels[index];
+                            final selected = selectedChannelIndices.contains(
+                              channel.index,
+                            );
+                            final atLimit =
+                                selectedChannelIndices.length >=
+                                    PlotConfiguration.totalChannelCount &&
+                                !selected;
+                            return CheckboxListTile(
+                              dense: true,
+                              value: selected,
+                              title: Text(vm.displayChannelName(channel.index)),
+                              subtitle:
+                                  channel.index >=
+                                          PlotConfiguration.rawChannelCount
+                                      ? Text(
+                                        vm
+                                            .mathChannels[channel.index -
+                                                PlotConfiguration
+                                                    .rawChannelCount]
+                                            .expression,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      )
+                                      : Text('Ch${channel.index}'),
+                              onChanged:
+                                  atLimit
+                                      ? null
+                                      : (value) {
+                                        setDialogState(() {
+                                          if (value ?? false) {
+                                            selectedChannelIndices.add(
+                                              channel.index,
+                                            );
+                                          } else {
+                                            selectedChannelIndices.remove(
+                                              channel.index,
+                                            );
+                                          }
+                                          errorText = null;
+                                        });
+                                      },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        AppStrings.plot.exportMathChannelNote,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: useCurrentViewport,
+                    child: Text(AppStrings.plot.exportUseCurrentViewport),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: Text(AppStrings.common.cancel),
+                  ),
+                  TextButton(
+                    onPressed: submit,
+                    child: Text(AppStrings.plot.exportContinue),
+                  ),
+                ],
+              );
+            },
+          ),
+    ).whenComplete(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        startController.dispose();
+        endController.dispose();
+      });
+    });
+  }
+
+  Future<void> _runExportWithProgress({
+    // 文件 IO 在 ViewModel 分批执行；页面仅托管可取消的进度弹窗和最终提示。
+    required BuildContext context,
+    required PlotViewModel vm,
+    required String title,
+    required Future<String?> Function({
+      PlotExportProgressCallback? onProgress,
+      PlotExportCancelToken? cancelToken,
+    })
+    exportFile,
+  }) async {
+    final cancelToken = PlotExportCancelToken();
+    final progressNotifier = ValueNotifier<PlotImportProgress>(
+      PlotImportProgress(
+        stage: AppStrings.plot.exportPreparing,
+        current: 0,
+        total: 0,
+      ),
+    );
+    var dialogClosed = false;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder:
+            (dialogContext) => _PlotFileProgressDialog(
+              title: title,
+              progressListenable: progressNotifier,
+              cancelToken: cancelToken,
+            ),
+      ).whenComplete(() => dialogClosed = true),
+    );
+    await _waitForImportDialogPresentation();
+
+    final path = await exportFile(
+      onProgress: (progress) => progressNotifier.value = progress,
+      cancelToken: cancelToken,
+    );
+    if (context.mounted && !dialogClosed) {
+      Navigator.of(context, rootNavigator: true).pop();
     }
+    progressNotifier.dispose();
+    if (!context.mounted) return;
+    vm.showStatusMessage(
+      cancelToken.isCancelled
+          ? AppStrings.plot.exportCancelled
+          : path == null
+          ? AppStrings.plot.exportFailed
+          : '${AppStrings.plot.exportedPrefix}: $path',
+    );
   }
 
   void _importPlotData(BuildContext context, PlotViewModel vm) async {
@@ -2596,7 +2940,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   bool _canUsePlotFileOperations(PlotViewModel vm) {
-    if (!vm.isPlotting && !vm.isStopping) return true;
+    if (!vm.isPlotting && !vm.isStarting && !vm.isStopping) return true;
     vm.showStatusMessage(AppStrings.plot.fileOperationDisabledWhilePlotting);
     return false;
   }
@@ -2604,8 +2948,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _importCsv(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
       dialogTitle: AppStrings.plot.chooseCsvFile,
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
+      type: FileType.any,
       allowMultiple: false,
     );
     if (result == null || result.files.isEmpty) return;
@@ -2627,8 +2970,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   void _importBin(BuildContext context, PlotViewModel vm) async {
     final result = await FilePicker.pickFiles(
       dialogTitle: AppStrings.plot.chooseBinFile,
-      type: FileType.custom,
-      allowedExtensions: ['bin'],
+      type: FileType.any,
       allowMultiple: false,
     );
     if (result == null || result.files.isEmpty) return;
@@ -2669,7 +3011,579 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
+  void _showTriggerConfigDialog(BuildContext context, PlotViewModel vm) {
+    final initial = vm.triggerConfig;
+    final triggerChannels = vm.triggerCandidateChannels;
+    var enabled = initial.enabled;
+    var channelIndex =
+        triggerChannels.any((channel) => channel.index == initial.channelIndex)
+            ? initial.channelIndex
+            : (triggerChannels.isNotEmpty
+                ? triggerChannels.first.index
+                : initial.channelIndex);
+    var comparison = initial.comparison;
+    var action = initial.action;
+    var observationMode = initial.observationMode;
+    var includeSystemTime = initial.includeSystemTimeInNote;
+    final targetController = TextEditingController(
+      text: formatPlotValue(initial.targetValue),
+    );
+    final hitThresholdController = TextEditingController(
+      text: initial.hitThreshold.toString(),
+    );
+    final triggerLimitController = TextEditingController(
+      text: initial.triggerLimit.toString(),
+    );
+    final postPacketsController = TextEditingController(
+      text: initial.postTriggerPacketCount.toString(),
+    );
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.plot.triggerConfig),
+                  content: SizedBox(
+                    width: 520,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(AppStrings.plot.enableTrigger),
+                              ),
+                              Switch(
+                                value: enabled,
+                                onChanged:
+                                    triggerChannels.isEmpty
+                                        ? null
+                                        : (value) => setDialogState(
+                                          () => enabled = value,
+                                        ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Divider(height: 1),
+                          const SizedBox(height: 14),
+                          if (triggerChannels.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                AppStrings.plot.noTriggerChannelAvailable,
+                                style: const TextStyle(color: Colors.redAccent),
+                              ),
+                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: AppDialogDropdown<int>(
+                                  value:
+                                      triggerChannels.isEmpty
+                                          ? null
+                                          : channelIndex,
+                                  hint: AppStrings.plot.channel,
+                                  labelText: AppStrings.plot.channel,
+                                  items: [
+                                    for (final channel in triggerChannels)
+                                      DropdownMenuItem(
+                                        value: channel.index,
+                                        child: Text(
+                                          vm.displayChannelName(channel.index),
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged:
+                                      triggerChannels.isEmpty
+                                          ? null
+                                          : (value) => setDialogState(
+                                            () => channelIndex = value ?? 0,
+                                          ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: AppDialogDropdown<PlotTriggerComparison>(
+                                  value: comparison,
+                                  hint: AppStrings.plot.triggerCondition,
+                                  labelText: AppStrings.plot.triggerCondition,
+                                  items: [
+                                    for (final item
+                                        in PlotTriggerComparison.values)
+                                      DropdownMenuItem(
+                                        value: item,
+                                        child: Text(
+                                          item.label,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 13),
+                                        ),
+                                      ),
+                                  ],
+                                  onChanged:
+                                      (value) => setDialogState(
+                                        () =>
+                                            comparison =
+                                                value ??
+                                                PlotTriggerComparison.greater,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 120,
+                                child: AppDialogTextField(
+                                  controller: targetController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                        signed: true,
+                                      ),
+                                  labelText: AppStrings.plot.triggerTargetValue,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            AppStrings.plot.triggerMathChannelNote,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: AppDialogTextField(
+                                  controller: hitThresholdController,
+                                  keyboardType: TextInputType.number,
+                                  labelText:
+                                      AppStrings.plot.triggerHitThreshold,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: AppDialogTextField(
+                                  controller: triggerLimitController,
+                                  keyboardType: TextInputType.number,
+                                  labelText: AppStrings.plot.triggerLimit,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            AppStrings.plot.triggerCountHelp,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          AppDialogDropdown<PlotTriggerAction>(
+                            value: action,
+                            hint: AppStrings.plot.triggerAction,
+                            labelText: AppStrings.plot.triggerAction,
+                            items: [
+                              for (final item in PlotTriggerAction.values)
+                                DropdownMenuItem(
+                                  value: item,
+                                  child: Text(item.label),
+                                ),
+                            ],
+                            onChanged:
+                                (value) => setDialogState(
+                                  () =>
+                                      action =
+                                          value ?? PlotTriggerAction.markOnly,
+                                ),
+                          ),
+                          if (action == PlotTriggerAction.stopAfterPackets) ...[
+                            const SizedBox(height: 12),
+                            AppDialogTextField(
+                              controller: postPacketsController,
+                              keyboardType: TextInputType.number,
+                              labelText: AppStrings.plot.triggerPostPackets,
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          AppDialogDropdown<PlotTriggerObservationMode>(
+                            value: observationMode,
+                            hint: AppStrings.plot.triggerObservationMark,
+                            labelText: AppStrings.plot.triggerObservationMark,
+                            items: [
+                              for (final item
+                                  in PlotTriggerObservationMode.values)
+                                DropdownMenuItem(
+                                  value: item,
+                                  child: Text(item.label),
+                                ),
+                            ],
+                            onChanged:
+                                (value) => setDialogState(
+                                  () =>
+                                      observationMode =
+                                          value ??
+                                          PlotTriggerObservationMode.none,
+                                ),
+                          ),
+                          if (observationMode !=
+                              PlotTriggerObservationMode.none)
+                            CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                AppStrings.plot.triggerNoteSystemTime,
+                              ),
+                              value: includeSystemTime,
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => includeSystemTime = value ?? false,
+                                  ),
+                            ),
+                          Text(
+                            AppStrings.plot.triggerObservationLimitHelp,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: Text(AppStrings.common.cancel),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        vm.updateTriggerConfig(
+                          PlotTriggerConfig(
+                            enabled: enabled && triggerChannels.isNotEmpty,
+                            channelIndex: channelIndex,
+                            comparison: comparison,
+                            targetValue:
+                                double.tryParse(targetController.text.trim()) ??
+                                initial.targetValue,
+                            hitThreshold:
+                                int.tryParse(
+                                  hitThresholdController.text.trim(),
+                                ) ??
+                                1,
+                            triggerLimit:
+                                int.tryParse(
+                                  triggerLimitController.text.trim(),
+                                ) ??
+                                1,
+                            action: action,
+                            postTriggerPacketCount:
+                                int.tryParse(
+                                  postPacketsController.text.trim(),
+                                ) ??
+                                0,
+                            observationMode: observationMode,
+                            includeSystemTimeInNote: includeSystemTime,
+                          ),
+                        );
+                        Navigator.of(dialogContext).pop();
+                      },
+                      child: Text(AppStrings.common.confirm),
+                    ),
+                  ],
+                ),
+          ),
+    ).whenComplete(() {
+      targetController.dispose();
+      hitThresholdController.dispose();
+      triggerLimitController.dispose();
+      postPacketsController.dispose();
+    });
+  }
+
+  void _showObservationManagerDialog(BuildContext context, PlotViewModel vm) {
+    final noteControllers = <int, TextEditingController>{};
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.plot.observationManage),
+                  content: SizedBox(
+                    width: 680,
+                    height: 420,
+                    child:
+                        vm.observations.isEmpty
+                            ? Center(child: Text(AppStrings.plot.noObservation))
+                            : Column(
+                              children: [
+                                Container(
+                                  height: 34,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        Theme.of(
+                                          context,
+                                        ).colorScheme.surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 64,
+                                        child: Text(
+                                          AppStrings.plot.observation,
+                                        ),
+                                      ),
+                                      const SizedBox(
+                                        width: 84,
+                                        child: Text('X'),
+                                      ),
+                                      Expanded(
+                                        child: Text(
+                                          AppStrings.plot.observationNote,
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 128,
+                                        child: Align(
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            AppStrings.plot.observationAction,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Expanded(
+                                  child: ListView.separated(
+                                    itemCount: vm.observations.length,
+                                    separatorBuilder:
+                                        (context, index) =>
+                                            const Divider(height: 1),
+                                    itemBuilder: (context, index) {
+                                      final observation =
+                                          vm.observations[index];
+                                      final controller = noteControllers
+                                          .putIfAbsent(
+                                            index,
+                                            () => TextEditingController(
+                                              text: observation.note,
+                                            ),
+                                          );
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            SizedBox(
+                                              width: 64,
+                                              child: Text(
+                                                'O${index + 1}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              width: 84,
+                                              child: Text(
+                                                observation.x
+                                                    .toInt()
+                                                    .toString(),
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: TextField(
+                                                controller: controller,
+                                                minLines: 1,
+                                                maxLines: 2,
+                                                decoration:
+                                                    const InputDecoration(
+                                                      border:
+                                                          OutlineInputBorder(),
+                                                      isDense: true,
+                                                      contentPadding:
+                                                          EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                            vertical: 8,
+                                                          ),
+                                                    ),
+                                                onChanged:
+                                                    (value) => vm
+                                                        .updateObservationNote(
+                                                          index,
+                                                          value,
+                                                        ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              width: 128,
+                                              child: Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: [
+                                                  IconButton(
+                                                    tooltip:
+                                                        observation.locked
+                                                            ? AppStrings
+                                                                .plot
+                                                                .observationUnlock
+                                                            : AppStrings
+                                                                .plot
+                                                                .observationLock,
+                                                    onPressed: () {
+                                                      vm.setObservationLocked(
+                                                        index,
+                                                        !observation.locked,
+                                                      );
+                                                      setDialogState(() {});
+                                                    },
+                                                    icon: Icon(
+                                                      observation.locked
+                                                          ? Icons.lock
+                                                          : Icons.lock_open,
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    tooltip:
+                                                        AppStrings.plot.jump,
+                                                    onPressed: () {
+                                                      vm.jumpToObservation(
+                                                        index,
+                                                      );
+                                                      Navigator.of(
+                                                        dialogContext,
+                                                      ).pop();
+                                                    },
+                                                    icon: const Icon(
+                                                      Icons.my_location,
+                                                    ),
+                                                  ),
+                                                  IconButton(
+                                                    tooltip:
+                                                        AppStrings
+                                                            .common
+                                                            .delete,
+                                                    onPressed: () {
+                                                      vm.removeObservation(
+                                                        index,
+                                                      );
+                                                      for (final controller
+                                                          in noteControllers
+                                                              .values) {
+                                                        controller.dispose();
+                                                      }
+                                                      noteControllers.clear();
+                                                      setDialogState(() {});
+                                                    },
+                                                    icon: const Icon(
+                                                      Icons.delete_outline,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: Text(AppStrings.common.close),
+                    ),
+                  ],
+                ),
+          ),
+    ).whenComplete(() {
+      for (final controller in noteControllers.values) {
+        controller.dispose();
+      }
+    });
+  }
+
+  void _showCursorJumpDialog(BuildContext context, PlotViewModel vm) {
+    final maxX = vm.maxJumpXIndex;
+    if (maxX == null) return;
+    final initialX = vm.cursor?.x ?? vm.viewport.xMin + vm.viewport.xRange / 2;
+    final initialIndex = initialX.round().clamp(0, maxX).toInt();
+    final controller = TextEditingController(text: initialIndex.toString());
+    String? errorText;
+
+    showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              void submit() {
+                final text = controller.text.trim();
+                final x = int.tryParse(text);
+                if (x == null) {
+                  setDialogState(
+                    () => errorText = AppStrings.plot.jumpXInvalid,
+                  );
+                  return;
+                }
+                if (!vm.canJumpToXIndex(x)) {
+                  setDialogState(
+                    () => errorText = AppStrings.plot.jumpXRangeError(maxX),
+                  );
+                  return;
+                }
+                vm.jumpToXIndex(x);
+                Navigator.of(dialogContext).pop();
+              }
+
+              return AlertDialog(
+                title: Text(AppStrings.plot.jumpToXTitle),
+                content: SizedBox(
+                  width: 260,
+                  child: AppDialogTextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    labelText: 'X',
+                    helperText: AppStrings.plot.jumpXHelper(maxX),
+                    errorText: errorText,
+                    onChanged: (_) {
+                      if (errorText != null) {
+                        setDialogState(() => errorText = null);
+                      }
+                    },
+                    onSubmitted: (_) => submit(),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: Text(AppStrings.common.cancel),
+                  ),
+                  TextButton(
+                    onPressed: submit,
+                    child: Text(AppStrings.plot.jump),
+                  ),
+                ],
+              );
+            },
+          ),
+    ).whenComplete(controller.dispose);
+  }
+
   Future<void> _runImportWithProgress({
+    // 导入预检失败时 ViewModel 保留旧历史，页面不应预先清空图面。
     required BuildContext context,
     required PlotViewModel vm,
     required String filePath,
@@ -2695,7 +3609,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         context: context,
         barrierDismissible: false,
         builder:
-            (dialogContext) => _PlotImportProgressDialog(
+            (dialogContext) => _PlotFileProgressDialog(
               title: title,
               progressListenable: progressNotifier,
             ),
@@ -2727,31 +3641,8 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     await SchedulerBinding.instance.endOfFrame;
   }
 
-  /// 将字符串网格密度转换为 [GridDensity] 枚举
-  GridDensity _parseGridDensity(String density) {
-    return switch (density) {
-      'sparse' => GridDensity.sparse,
-      'dense' => GridDensity.dense,
-      _ => GridDensity.normal,
-    };
-  }
-
-  PlotBackgroundStyle _parsePlotBackground(String background) {
-    return switch (background) {
-      'light' => PlotBackgroundStyle.light,
-      _ => PlotBackgroundStyle.dark,
-    };
-  }
-
-  Color _plotBackgroundColor(String background) {
-    return switch (background) {
-      'light' => const Color(0xFFF8FAFC),
-      _ => const Color(0xFF1A1A2E),
-    };
-  }
-
   bool _usesLightPlotBackground(PlotViewModel vm) {
-    return vm.plotBackground == 'light';
+    return vm.plotBackground == PlotBackgroundStyle.light;
   }
 
   Color _floatingBoxBackgroundColor(PlotViewModel vm) {
@@ -2778,69 +3669,6 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         : Colors.white70;
   }
 
-  /// 构建网格密度选择按钮
-  Widget _buildDensityButton(
-    String label,
-    String density,
-    PlotViewModel vm,
-    StateSetter setState,
-  ) {
-    final isSelected = vm.gridDensity == density;
-    return Expanded(
-      child: TextButton(
-        onPressed: () {
-          vm.setGridDensity(density);
-          setState(() {});
-        },
-        style: TextButton.styleFrom(
-          backgroundColor:
-              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: const Size(0, 32),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isSelected ? Colors.blue : null,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBackgroundButton(
-    String label,
-    String background,
-    PlotViewModel vm,
-    StateSetter setState,
-  ) {
-    final isSelected = vm.plotBackground == background;
-    return Expanded(
-      child: TextButton(
-        onPressed: () {
-          vm.setPlotBackground(background);
-          setState(() {});
-        },
-        style: TextButton.styleFrom(
-          backgroundColor:
-              isSelected ? Colors.blue.withValues(alpha: 0.2) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          minimumSize: const Size(0, 32),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isSelected ? Colors.blue : null,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
   /// 构建合并的信息框（X-X/Y-Y + 统计信息在同一框内，从左到右排列）
   Widget _buildCombinedInfoBox(BuildContext context, PlotViewModel vm) {
     final children = <Widget>[];
@@ -2848,14 +3676,12 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     // 第一列：X-X / Y-Y 测量值
     if (vm.measurementText != null) {
       children.add(
-        Text(
-          vm.measurementText!,
-          style: TextStyle(
-            color: _floatingTextColor(vm),
-            fontSize: _plotFontSize(vm, 12),
-            fontFamily: 'SarasaUiSC',
-            height: 1.5,
-          ),
+        PlotMeasurementBox(
+          text: vm.measurementText!,
+          fontSize: _plotFontSize(vm, 12),
+          color: _floatingTextColor(vm),
+          fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+          height: 1.5,
         ),
       );
     }
@@ -2879,7 +3705,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       children.add(_buildStatsContent(vm.statsText!, vm));
     }
 
-    return _DraggableInfoBox(
+    return PlotDraggableInfoBox(
       initialRight: 16,
       initialTop: 16,
       backgroundColor: _floatingBoxBackgroundColor(vm),
@@ -2901,7 +3727,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   Widget _buildStatsContent(String text, PlotViewModel vm) {
     final lines = text.split('\n');
     final channelBlocks = <List<String>>[];
-    List<String> currentBlock = [];
+    final List<String> currentBlock = [];
 
     // 按 --- 分割成各通道块
     for (final line in lines) {
@@ -2925,15 +3751,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
         .clamp(1, 4);
 
     if (columnCount == 1) {
-      return Text(
-        text,
-        style: TextStyle(
-          color: _floatingTextColor(vm),
-          fontSize: _plotFontSize(vm, 11),
-          fontFamily: 'SarasaUiSC',
-          height: 1.5,
-        ),
-      );
+      return _buildColoredStatsText(lines, vm);
     }
 
     // 多列布局
@@ -2946,25 +3764,13 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       if (start >= end) break;
 
       final colBlocks = channelBlocks.sublist(start, end);
-      final colText = StringBuffer();
+      final colLines = <String>[];
       for (int i = 0; i < colBlocks.length; i++) {
-        if (i > 0) colText.writeln('---');
-        for (final line in colBlocks[i]) {
-          colText.writeln(line);
-        }
+        if (i > 0) colLines.add('---');
+        colLines.addAll(colBlocks[i]);
       }
 
-      columns.add(
-        Text(
-          colText.toString().trim(),
-          style: TextStyle(
-            color: _floatingTextColor(vm),
-            fontSize: _plotFontSize(vm, 11),
-            fontFamily: 'SarasaUiSC',
-            height: 1.5,
-          ),
-        ),
-      );
+      columns.add(_buildColoredStatsText(colLines, vm));
 
       if (col < columnCount - 1) {
         columns.add(const SizedBox(width: 16));
@@ -2978,10 +3784,291 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
   }
 
+  Widget _buildColoredStatsText(List<String> lines, PlotViewModel vm) {
+    final baseStyle = TextStyle(
+      color: _floatingTextColor(vm),
+      fontSize: _plotFontSize(vm, 11),
+      fontFamily: 'SarasaUiSC',
+      fontWeight: vm.plotFontBold ? FontWeight.bold : FontWeight.normal,
+      height: 1.5,
+    );
+    final spans = <InlineSpan>[];
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      Color? channelColor;
+      if (line.endsWith(':')) {
+        final name = line.substring(0, line.length - 1);
+        for (
+          var channelIndex = 0;
+          channelIndex < vm.displayChannels.length;
+          channelIndex++
+        ) {
+          final channel = vm.displayChannels[channelIndex];
+          final channelName =
+              channel.alias.isNotEmpty ? channel.alias : 'Ch$channelIndex';
+          if (channelName == name) {
+            channelColor = channel.color;
+            break;
+          }
+        }
+      }
+      spans.add(
+        TextSpan(
+          text: i == lines.length - 1 ? line : '$line\n',
+          style:
+              channelColor == null
+                  ? baseStyle
+                  : baseStyle.copyWith(color: channelColor),
+        ),
+      );
+    }
+    return RichText(text: TextSpan(children: spans));
+  }
+
+  Future<void> _showMeasurementSettingsDialog(
+    BuildContext context,
+    PlotViewModel vm, {
+    required bool isX,
+  }) async {
+    var line1Color =
+        isX ? vm.xMeasurementLine1Color : vm.yMeasurementLine1Color;
+    var line2Color =
+        isX ? vm.xMeasurementLine2Color : vm.yMeasurementLine2Color;
+    var line1Opacity =
+        isX ? vm.xMeasurementLine1Opacity : vm.yMeasurementLine1Opacity;
+    var line2Opacity =
+        isX ? vm.xMeasurementLine2Opacity : vm.yMeasurementLine2Opacity;
+    var snapEnabled = vm.yMeasurementSnapEnabled;
+    var multiEnabled =
+        isX ? vm.xMultiMeasurementEnabled : vm.yMultiMeasurementEnabled;
+    final opacityInputFormatter = TextInputFormatter.withFunction((
+      oldValue,
+      newValue,
+    ) {
+      if (newValue.text.isEmpty) return newValue;
+      final value = int.tryParse(newValue.text);
+      return value != null && value <= 100 ? newValue : oldValue;
+    });
+
+    await showDialog<void>(
+      context: context,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              Widget buildLineEditor({
+                required String label,
+                required Color color,
+                required double opacity,
+                required ValueKey<String> colorKey,
+                required ValueKey<String> opacityKey,
+                required VoidCallback onChooseColor,
+                required ValueChanged<double> onOpacityChanged,
+              }) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text(AppStrings.plot.measurementLineColor),
+                        const SizedBox(width: 12),
+                        InkWell(
+                          key: colorKey,
+                          onTap: onChooseColor,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            width: 42,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          AppStrings.plot.measurementLineOpacity,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: kSecondaryDialogFieldWidth,
+                          child: TextFormField(
+                            key: opacityKey,
+                            initialValue: (opacity * 100).round().toString(),
+                            decoration: secondaryDialogFieldDecoration(
+                              suffixText: '%',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              opacityInputFormatter,
+                            ],
+                            onChanged: (text) {
+                              final value = int.tryParse(text);
+                              if (value != null) {
+                                onOpacityChanged(value / 100);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }
+
+              Future<void> chooseColor(bool first) async {
+                final selected = await showPlotCustomColorPicker(
+                  dialogContext,
+                  first ? line1Color : line2Color,
+                );
+                if (selected == null) return;
+                setDialogState(() {
+                  if (first) {
+                    line1Color = selected;
+                  } else {
+                    line2Color = selected;
+                  }
+                });
+              }
+
+              final prefix = isX ? 'x' : 'y';
+              return AlertDialog(
+                shape: kAdvancedSettingsDialogShape,
+                title: Text(
+                  isX
+                      ? AppStrings.plot.measureXSettings
+                      : AppStrings.plot.measureYSettings,
+                ),
+                content: SizedBox(
+                  width: 360,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      buildLineEditor(
+                        label: isX ? 'X1' : 'Y1',
+                        color: line1Color,
+                        opacity: line1Opacity,
+                        colorKey: ValueKey('$prefix-measure-line1-color'),
+                        opacityKey: ValueKey('$prefix-measure-line1-opacity'),
+                        onChooseColor: () => chooseColor(true),
+                        onOpacityChanged: (value) => line1Opacity = value,
+                      ),
+                      const Divider(height: 20),
+                      buildLineEditor(
+                        label: isX ? 'X2' : 'Y2',
+                        color: line2Color,
+                        opacity: line2Opacity,
+                        colorKey: ValueKey('$prefix-measure-line2-color'),
+                        opacityKey: ValueKey('$prefix-measure-line2-opacity'),
+                        onChooseColor: () => chooseColor(false),
+                        onOpacityChanged: (value) => line2Opacity = value,
+                      ),
+                      const Divider(height: 20),
+                      AppSwitchRow(
+                        key: ValueKey('$prefix-multi-measure-toggle'),
+                        title: Text(AppStrings.plot.multiMeasurement),
+                        subtitle: Text(AppStrings.plot.multiMeasurementHelp),
+                        value: multiEnabled,
+                        onChanged:
+                            (value) =>
+                                setDialogState(() => multiEnabled = value),
+                      ),
+                      if (!isX) ...[
+                        const Divider(height: 20),
+                        AppSwitchRow(
+                          key: const ValueKey('y-measure-snap-toggle'),
+                          title: Text(AppStrings.plot.measurementSnap),
+                          subtitle: Text(AppStrings.plot.measurementSnapHelp),
+                          value: snapEnabled,
+                          onChanged:
+                              (value) =>
+                                  setDialogState(() => snapEnabled = value),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(AppStrings.common.cancel),
+                  ),
+                  FilledButton(
+                    key: ValueKey('$prefix-measure-settings-save'),
+                    onPressed: () {
+                      if (isX) {
+                        vm.setXMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                      } else {
+                        vm.setYMeasurementStyle(
+                          line1Color: line1Color,
+                          line1Opacity: line1Opacity,
+                          line2Color: line2Color,
+                          line2Opacity: line2Opacity,
+                        );
+                        vm.setYMeasurementSnapEnabled(snapEnabled);
+                      }
+                      vm.setMultiMeasurementEnabled(
+                        isX: isX,
+                        value: multiEnabled,
+                      );
+                      Navigator.pop(dialogContext);
+                    },
+                    child: Text(AppStrings.common.save),
+                  ),
+                ],
+              );
+            },
+          ),
+    );
+  }
+
   /// 显示高级设置对话框
   ///
   /// 包含：网格开关、网格密度、刷新帧率、绘图窗口上限。
   void _showAdvancedSettingsDialog(BuildContext context, PlotViewModel vm) {
+    final draft = PlotUiSettingsDraft(
+      showGrid: vm.showGrid,
+      gridDensity: vm.gridDensity,
+      background: vm.plotBackground,
+      floatingPanelOpacity: vm.floatingPanelOpacity,
+      fontSizeDelta: vm.plotFontSizeDelta,
+      fontBold: vm.plotFontBold,
+      followPositionRatio: vm.followPositionRatio,
+      observationClickToPlace: vm.observationClickToPlace,
+      gestureModifier: vm.gestureModifier,
+      showPlotSendDataInRaw: vm.showPlotSendDataInRaw,
+      receiveAggregationEnabled: AppSettings().plotReceiveAggregationEnabled,
+      quality: vm.lodQuality,
+      renderEngine: vm.renderEngine,
+      windowPointLimit: vm.maxVisiblePoints,
+      historyLimit: vm.plotRetentionLimitGiB,
+      refreshFps: vm.refreshFps,
+      yFitDisplayRatio: vm.yFitDisplayRatio,
+      keepPlotOnRestart: vm.keepPlotOnRestart,
+      discardInitialPacketCount: vm.discardInitialPacketCount,
+      previewToolbarEnabled: vm.previewToolbarEnabled,
+      triggerToolbarEnabled: vm.triggerToolbarEnabled,
+      statsToolbarEnabled: vm.statsToolbarEnabled,
+      snapHighlightEnabled: vm.snapHighlightEnabled,
+      snapHighlightDiameter: vm.snapHighlightDiameter,
+      snapHighlightColorMode: vm.snapHighlightColorMode,
+    );
     final refreshFpsController = TextEditingController(
       text: vm.refreshFps.toString(),
     );
@@ -2990,6 +4077,9 @@ class _PlotPageContentState extends State<_PlotPageContent> {
     );
     final maxVisibleController = TextEditingController(
       text: _formatCompactCount(vm.maxVisiblePoints),
+    );
+    final plotRetentionLimitController = TextEditingController(
+      text: vm.plotRetentionLimitGiB.toString(),
     );
     final discardInitialPacketController = TextEditingController(
       text: _formatCompactCount(vm.discardInitialPacketCount),
@@ -3004,659 +4094,914 @@ class _PlotPageContentState extends State<_PlotPageContent> {
       text: (vm.floatingPanelOpacity * 100).round().toString(),
     );
     final advancedSettingsScrollController = ScrollController();
+    final appearanceSectionKey = GlobalKey();
+    final performanceSectionKey = GlobalKey();
+    final fontSectionKey = GlobalKey();
+    final viewportSectionKey = GlobalKey();
+    final toolbarSectionKey = GlobalKey();
+    final interactionSectionKey = GlobalKey();
+    final dataSectionKey = GlobalKey();
 
     void applyFloatingPanelOpacity(StateSetter setDialogState) {
       final percent = double.tryParse(
         floatingPanelOpacityController.text.trim(),
       );
       if (percent != null) {
-        vm.setFloatingPanelOpacity(percent / 100);
+        draft.floatingPanelOpacity = percent / 100;
       }
-      floatingPanelOpacityController.text =
-          (vm.floatingPanelOpacity * 100).round().toString();
       setDialogState(() {});
     }
 
     void applyFollowPosition(StateSetter setDialogState) {
       final percent = double.tryParse(followPositionController.text.trim());
       if (percent != null) {
-        vm.setFollowPositionRatio(percent / 100);
+        draft.followPositionRatio = percent / 100;
       }
-      followPositionController.text =
-          (vm.followPositionRatio * 100).round().toString();
       setDialogState(() {});
     }
 
     void applyYFitRatio(StateSetter setDialogState) {
       final percent = double.tryParse(yFitDisplayRatioController.text.trim());
       if (percent != null) {
-        vm.setYFitDisplayRatio(percent / 100);
+        draft.yFitDisplayRatio = percent / 100;
       }
-      yFitDisplayRatioController.text =
-          (vm.yFitDisplayRatio * 100).round().toString();
       setDialogState(() {});
     }
 
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-            title: Text(AppStrings.plot.advancedSettings),
-            content: SizedBox(
-              width: 420,
-              child: StatefulBuilder(
-                builder: (context, setState) {
-                  return Scrollbar(
-                    controller: advancedSettingsScrollController,
-                    child: SingleChildScrollView(
-                      controller: advancedSettingsScrollController,
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            AppStrings.plot.plotBackground,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              _buildBackgroundButton(
-                                AppStrings.plot.plotBackgroundDark,
-                                'dark',
-                                vm,
-                                setState,
-                              ),
-                              const SizedBox(width: 8),
-                              _buildBackgroundButton(
-                                AppStrings.plot.plotBackgroundLight,
-                                'light',
-                                vm,
-                                setState,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Text(
-                                AppStrings.plot.floatingPanelOpacity,
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                              const Spacer(),
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: floatingPanelOpacityController,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly,
-                                  ],
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: '%',
-                                  ),
-                                  onSubmitted:
-                                      (_) =>
-                                          applyFloatingPanelOpacity(setState),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed:
-                                    () => applyFloatingPanelOpacity(setState),
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      AppStrings.plot.observationClickToPlace,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    Text(
-                                      AppStrings
-                                          .plot
-                                          .observationClickToPlaceHelp,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Switch(
-                                value: vm.observationClickToPlace,
-                                onChanged: (value) {
-                                  vm.setObservationClickToPlace(value);
-                                  setState(() {});
-                                },
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // 网格开关
-                          Row(
-                            children: [
-                              Text(
-                                AppStrings.plot.showGrid,
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                              const Spacer(),
-                              Switch(
-                                value: vm.showGrid,
-                                onChanged: (value) {
-                                  vm.setShowGrid(value);
-                                  setState(() {}); // 刷新对话框内部状态
-                                },
-                              ),
-                            ],
-                          ),
-                          // 网格密度
-                          if (vm.showGrid) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              AppStrings.plot.gridDensity,
-                              style: const TextStyle(fontSize: 14),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                _buildDensityButton(
-                                  AppStrings.plot.densitySparse,
-                                  'sparse',
-                                  vm,
-                                  setState,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildDensityButton(
-                                  AppStrings.plot.densityNormal,
-                                  'normal',
-                                  vm,
-                                  setState,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildDensityButton(
-                                  AppStrings.plot.densityDense,
-                                  'dense',
-                                  vm,
-                                  setState,
-                                ),
-                              ],
-                            ),
-                          ],
-                          const Divider(),
-                          // 刷新帧率
-                          Text(
-                            AppStrings.plot.refreshFps,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: refreshFpsController,
-                                  keyboardType: TextInputType.number,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: AppStrings.plot.unitFps,
-                                  ),
-                                  onSubmitted: (value) {
-                                    final fps = int.tryParse(value);
-                                    if (fps != null) {
-                                      vm.setRefreshFps(fps);
-                                      refreshFpsController.text =
-                                          vm.refreshFps.toString();
-                                      setState(() {});
-                                    }
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: () {
-                                  final fps = int.tryParse(
-                                    refreshFpsController.text,
-                                  );
-                                  if (fps != null) {
-                                    vm.setRefreshFps(fps);
-                                    refreshFpsController.text =
-                                        vm.refreshFps.toString();
-                                    setState(() {});
-                                  }
-                                },
-                                child: Text(AppStrings.common.apply),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '${(1000 / vm.refreshFps).round()}ms',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.refreshFpsHelp,
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                          const Divider(),
-                          Text(
-                            AppStrings.plot.plotFontSize,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Text(
-                                vm.plotFontSizeDelta == 0
-                                    ? AppStrings.plot.defaultValue
-                                    : vm.plotFontSizeDelta > 0
-                                    ? '+${vm.plotFontSizeDelta}'
-                                    : '${vm.plotFontSizeDelta}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                AppStrings.plot.fontPreview,
-                                style: TextStyle(
-                                  fontSize: _plotFontSize(vm, 14),
-                                  fontFamily: 'SarasaUiSC',
-                                  color:
-                                      Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                          Slider(
-                            value: vm.plotFontSizeDelta.toDouble(),
-                            min: -3,
-                            max: 6,
-                            divisions: 9,
-                            label:
-                                vm.plotFontSizeDelta == 0
-                                    ? AppStrings.plot.defaultValue
-                                    : vm.plotFontSizeDelta > 0
-                                    ? '+${vm.plotFontSizeDelta}'
-                                    : '${vm.plotFontSizeDelta}',
-                            onChanged: (value) {
-                              vm.setPlotFontSizeDelta(value.round());
-                              setState(() {});
-                            },
-                          ),
-                          Text(
-                            AppStrings.plot.plotFontSizeHelp,
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                          const Divider(),
-                          Text(
-                            AppStrings.plot.followPosition,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: followPositionController,
-                                  keyboardType: TextInputType.number,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: '%',
-                                  ),
-                                  onSubmitted:
-                                      (_) => applyFollowPosition(setState),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: () => applyFollowPosition(setState),
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.followPositionHelp,
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            AppStrings.plot.yFitDisplayRatio,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: yFitDisplayRatioController,
-                                  keyboardType: TextInputType.number,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: '%',
-                                  ),
-                                  onSubmitted: (_) => applyYFitRatio(setState),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: () => applyYFitRatio(setState),
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.yFitDisplayRatioHelp,
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                          const Divider(),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      AppStrings.plot.statsFeatureToggle,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      AppStrings.plot.statsFeatureHelp,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Switch(
-                                value: vm.statsToolbarEnabled,
-                                onChanged: (value) {
-                                  vm.setStatsToolbarEnabled(value);
-                                  setState(() {});
-                                },
-                              ),
-                            ],
-                          ),
-                          const Divider(),
-                          // 吸附点高亮
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  AppStrings.plot.snapHighlight,
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                              ),
-                              Switch(
-                                value: vm.snapHighlightEnabled,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                onChanged: (value) {
-                                  vm.setSnapHighlightEnabled(value);
-                                  setState(() {});
-                                },
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: snapDiameterController,
-                                  keyboardType: TextInputType.number,
-                                  enabled: vm.snapHighlightEnabled,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: AppStrings.plot.unitPixel,
-                                  ),
-                                  onSubmitted: (value) {
-                                    final diameter = double.tryParse(value);
-                                    if (diameter != null) {
-                                      vm.setSnapHighlightDiameter(diameter);
-                                      snapDiameterController.text = vm
-                                          .snapHighlightDiameter
-                                          .toStringAsFixed(0);
-                                      setState(() {});
-                                    }
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed:
-                                    vm.snapHighlightEnabled
-                                        ? () {
-                                          final diameter = double.tryParse(
-                                            snapDiameterController.text,
-                                          );
-                                          if (diameter != null) {
-                                            vm.setSnapHighlightDiameter(
-                                              diameter,
-                                            );
-                                            snapDiameterController.text = vm
-                                                .snapHighlightDiameter
-                                                .toStringAsFixed(0);
-                                            setState(() {});
-                                          }
-                                        }
-                                        : null,
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.snapHighlightHelp,
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            AppStrings.plot.snapHighlightColorMode,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 4),
-                          SegmentedButton<String>(
-                            segments: [
-                              ButtonSegment<String>(
-                                value: 'cursor',
-                                label: Text(
-                                  AppStrings.plot.snapHighlightColorCursor,
-                                ),
-                              ),
-                              ButtonSegment<String>(
-                                value: 'channel',
-                                label: Text(
-                                  AppStrings.plot.snapHighlightColorChannel,
-                                ),
-                              ),
-                            ],
-                            selected: {vm.snapHighlightColorMode},
-                            onSelectionChanged:
-                                vm.snapHighlightEnabled
-                                    ? (values) {
-                                      vm.setSnapHighlightColorMode(
-                                        values.first,
-                                      );
-                                      setState(() {});
-                                    }
-                                    : null,
-                          ),
-                          const Divider(),
-                          Text(
-                            AppStrings.plot.plotWindowLimit,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: maxVisibleController,
-                                  keyboardType: TextInputType.text,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: AppStrings.plot.unitPacket,
-                                  ),
-                                  onSubmitted: (value) {
-                                    final points = _parseCompactCount(value);
-                                    if (points != null) {
-                                      vm.setMaxVisiblePoints(points);
-                                      maxVisibleController
-                                          .text = _formatCompactCount(
-                                        vm.maxVisiblePoints,
-                                      );
-                                      setState(() {});
-                                    }
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: () {
-                                  final points = _parseCompactCount(
-                                    maxVisibleController.text,
-                                  );
-                                  if (points != null) {
-                                    vm.setMaxVisiblePoints(points);
-                                    maxVisibleController
-                                        .text = _formatCompactCount(
-                                      vm.maxVisiblePoints,
-                                    );
-                                    setState(() {});
-                                  }
-                                },
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.plotWindowLimitHelp(
-                              min: _formatCompactCount(
-                                PlotViewModel.minVisiblePoints,
-                              ),
-                              max: _formatCompactCount(
-                                PlotViewModel.maxVisiblePointsLimit,
-                              ),
-                              defaultValue: _formatCompactCount(
-                                PlotViewModel.defaultVisiblePoints,
-                              ),
-                              current: _formatCompactCount(
-                                vm.visiblePointCount,
-                              ),
-                            ),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const Divider(),
-                          Text(
-                            AppStrings.plot.droppedPackets,
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: kSecondaryDialogFieldWidth,
-                                child: TextField(
-                                  controller: discardInitialPacketController,
-                                  keyboardType: TextInputType.text,
-                                  decoration: secondaryDialogFieldDecoration(
-                                    suffixText: AppStrings.plot.unitPacket,
-                                  ),
-                                  onSubmitted: (value) {
-                                    final count = _parseCompactCount(value);
-                                    if (count != null) {
-                                      vm.setDiscardInitialPacketCount(count);
-                                      discardInitialPacketController
-                                          .text = _formatCompactCount(
-                                        vm.discardInitialPacketCount,
-                                      );
-                                      setState(() {});
-                                    }
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: () {
-                                  final count = _parseCompactCount(
-                                    discardInitialPacketController.text,
-                                  );
-                                  if (count != null) {
-                                    vm.setDiscardInitialPacketCount(count);
-                                    discardInitialPacketController
-                                        .text = _formatCompactCount(
-                                      vm.discardInitialPacketCount,
-                                    );
-                                    setState(() {});
-                                  }
-                                },
-                                child: Text(AppStrings.common.apply),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            AppStrings.plot.droppedPacketsHelp(
-                              max: _formatCompactCount(
-                                PlotViewModel.maxDiscardInitialPacketCount,
-                              ),
-                            ),
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setState) {
+              void applyRefreshFps() {
+                final fps = int.tryParse(refreshFpsController.text.trim());
+                if (fps != null) {
+                  draft.refreshFps = fps;
+                  setState(() {});
+                }
+              }
+
+              void applySnapDiameter() {
+                final diameter = double.tryParse(
+                  snapDiameterController.text.trim(),
+                );
+                if (diameter != null) {
+                  draft.snapHighlightDiameter = diameter;
+                  setState(() {});
+                }
+              }
+
+              void applyHistoryLimit() {
+                final gib = int.tryParse(
+                  plotRetentionLimitController.text.trim(),
+                );
+                if (gib != null) {
+                  draft.historyLimit = gib;
+                  setState(() {});
+                }
+              }
+
+              void applyWindowPointLimit() {
+                final points = _parseCompactCount(
+                  maxVisibleController.text.trim(),
+                );
+                if (points != null) {
+                  draft.windowPointLimit = points;
+                  setState(() {});
+                }
+              }
+
+              void applyDiscardInitialPacketCount() {
+                final count = _parseCompactCount(
+                  discardInitialPacketController.text.trim(),
+                );
+                if (count != null) {
+                  draft.discardInitialPacketCount = count;
+                  setState(() {});
+                }
+              }
+
+              return AppSettingsDialog(
+                title: Text(AppStrings.plot.advancedSettings),
+                size: AppDialogSize.navigation,
+                changeListenables: [
+                  refreshFpsController,
+                  snapDiameterController,
+                  maxVisibleController,
+                  plotRetentionLimitController,
+                  discardInitialPacketController,
+                  followPositionController,
+                  yFitDisplayRatioController,
+                  floatingPanelOpacityController,
+                ],
+                hasUnsavedChanges:
+                    () =>
+                        draft.showGrid != vm.showGrid ||
+                        draft.gridDensity != vm.gridDensity ||
+                        draft.background != vm.plotBackground ||
+                        floatingPanelOpacityController.text !=
+                            '${(vm.floatingPanelOpacity * 100).round()}' ||
+                        draft.fontSizeDelta != vm.plotFontSizeDelta ||
+                        draft.fontBold != vm.plotFontBold ||
+                        followPositionController.text !=
+                            '${(vm.followPositionRatio * 100).round()}' ||
+                        yFitDisplayRatioController.text !=
+                            '${(vm.yFitDisplayRatio * 100).round()}' ||
+                        draft.observationClickToPlace !=
+                            vm.observationClickToPlace ||
+                        draft.gestureModifier != vm.gestureModifier ||
+                        draft.showPlotSendDataInRaw !=
+                            vm.showPlotSendDataInRaw ||
+                        draft.receiveAggregationEnabled !=
+                            AppSettings().plotReceiveAggregationEnabled ||
+                        draft.quality != vm.lodQuality ||
+                        draft.renderEngine != vm.renderEngine ||
+                        refreshFpsController.text != '${vm.refreshFps}' ||
+                        draft.previewToolbarEnabled !=
+                            vm.previewToolbarEnabled ||
+                        draft.triggerToolbarEnabled !=
+                            vm.triggerToolbarEnabled ||
+                        draft.statsToolbarEnabled != vm.statsToolbarEnabled ||
+                        draft.snapHighlightEnabled != vm.snapHighlightEnabled ||
+                        snapDiameterController.text !=
+                            vm.snapHighlightDiameter.toStringAsFixed(0) ||
+                        draft.snapHighlightColorMode !=
+                            vm.snapHighlightColorMode ||
+                        draft.keepPlotOnRestart != vm.keepPlotOnRestart ||
+                        plotRetentionLimitController.text !=
+                            '${vm.plotRetentionLimitGiB}' ||
+                        maxVisibleController.text !=
+                            _formatCompactCount(vm.maxVisiblePoints) ||
+                        discardInitialPacketController.text !=
+                            _formatCompactCount(vm.discardInitialPacketCount),
+                onSave: () async {
+                  applyFloatingPanelOpacity(setState);
+                  applyFollowPosition(setState);
+                  applyYFitRatio(setState);
+                  final fps = int.tryParse(refreshFpsController.text.trim());
+                  final diameter = double.tryParse(
+                    snapDiameterController.text.trim(),
                   );
+                  final history = int.tryParse(
+                    plotRetentionLimitController.text.trim(),
+                  );
+                  final window = _parseCompactCount(
+                    maxVisibleController.text.trim(),
+                  );
+                  final discard = _parseCompactCount(
+                    discardInitialPacketController.text.trim(),
+                  );
+                  if (fps == null ||
+                      fps < PlotConfiguration.minRefreshFps ||
+                      fps > PlotConfiguration.maxRefreshFps ||
+                      diameter == null ||
+                      diameter < 6 ||
+                      diameter > 12 ||
+                      draft.floatingPanelOpacity < 0 ||
+                      draft.floatingPanelOpacity > 1 ||
+                      draft.followPositionRatio < 0.5 ||
+                      draft.followPositionRatio > 0.95 ||
+                      draft.yFitDisplayRatio! < 0.5 ||
+                      draft.yFitDisplayRatio! > 0.95 ||
+                      history == null ||
+                      history < PlotConfiguration.minHistoryMemoryLimitGiB ||
+                      history > PlotConfiguration.maxHistoryMemoryLimitGiB ||
+                      window == null ||
+                      window < PlotViewModel.minVisiblePoints ||
+                      window > PlotViewModel.maxVisiblePointsLimit ||
+                      discard == null ||
+                      discard < 0 ||
+                      discard > PlotViewModel.maxDiscardInitialPacketCount) {
+                    throw FormatException(
+                      AppStrings.plot.plotSettingsRangeError,
+                    );
+                  }
+                  draft
+                    ..refreshFps = fps
+                    ..snapHighlightDiameter = diameter
+                    ..historyLimit = history
+                    ..windowPointLimit = window
+                    ..discardInitialPacketCount = discard;
+                  await vm.applyPlotSettings(draft);
+                  if (!(draft.previewToolbarEnabled ?? true)) {
+                    _previewVisible = false;
+                  }
                 },
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(AppStrings.common.close),
-              ),
-            ],
+                child: SettingsNavigationView(
+                  scrollController: advancedSettingsScrollController,
+                  items: [
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsAppearance,
+                      anchorKey: appearanceSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsPerformance,
+                      anchorKey: performanceSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsText,
+                      anchorKey: fontSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsViewport,
+                      anchorKey: viewportSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsToolbar,
+                      anchorKey: toolbarSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsInteraction,
+                      anchorKey: interactionSectionKey,
+                    ),
+                    SettingsNavigationItem(
+                      label: AppStrings.common.settingsData,
+                      anchorKey: dataSectionKey,
+                    ),
+                  ],
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ..._buildAppearanceSection(
+                        draft: draft,
+                        setDialogState: setState,
+                        floatingPanelOpacityController:
+                            floatingPanelOpacityController,
+                        applyFloatingPanelOpacity: applyFloatingPanelOpacity,
+                        appearanceSectionKey: appearanceSectionKey,
+                      ),
+                      ..._buildPerformanceSection(
+                        draft: draft,
+                        vm: vm,
+                        setDialogState: setState,
+                        refreshFpsController: refreshFpsController,
+                        applyRefreshFps: applyRefreshFps,
+                        performanceSectionKey: performanceSectionKey,
+                      ),
+                      ..._buildFontSection(
+                        context: context,
+                        draft: draft,
+                        setDialogState: setState,
+                        fontSectionKey: fontSectionKey,
+                      ),
+                      ..._buildViewportSection(
+                        setDialogState: setState,
+                        followPositionController: followPositionController,
+                        yFitDisplayRatioController: yFitDisplayRatioController,
+                        applyFollowPosition: applyFollowPosition,
+                        applyYFitRatio: applyYFitRatio,
+                        viewportSectionKey: viewportSectionKey,
+                      ),
+                      ..._buildToolbarSection(
+                        draft: draft,
+                        setDialogState: setState,
+                        toolbarSectionKey: toolbarSectionKey,
+                      ),
+                      ..._buildInteractionSection(
+                        draft: draft,
+                        setDialogState: setState,
+                        snapDiameterController: snapDiameterController,
+                        applySnapDiameter: applySnapDiameter,
+                        interactionSectionKey: interactionSectionKey,
+                      ),
+                      ..._buildDataSection(
+                        draft: draft,
+                        vm: vm,
+                        setDialogState: setState,
+                        plotRetentionLimitController:
+                            plotRetentionLimitController,
+                        maxVisibleController: maxVisibleController,
+                        discardInitialPacketController:
+                            discardInitialPacketController,
+                        applyHistoryLimit: applyHistoryLimit,
+                        applyWindowPointLimit: applyWindowPointLimit,
+                        applyDiscardInitialPacketCount:
+                            applyDiscardInitialPacketCount,
+                        dataSectionKey: dataSectionKey,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
     ).whenComplete(() {
-      refreshFpsController.dispose();
-      snapDiameterController.dispose();
-      maxVisibleController.dispose();
-      discardInitialPacketController.dispose();
-      followPositionController.dispose();
-      yFitDisplayRatioController.dispose();
-      advancedSettingsScrollController.dispose();
+      disposeAfterDialogTransition(() {
+        refreshFpsController.dispose();
+        snapDiameterController.dispose();
+        maxVisibleController.dispose();
+        plotRetentionLimitController.dispose();
+        discardInitialPacketController.dispose();
+        followPositionController.dispose();
+        yFitDisplayRatioController.dispose();
+        floatingPanelOpacityController.dispose();
+        advancedSettingsScrollController.dispose();
+      });
     });
+  }
+
+  /// 高级设置弹窗：外观 section。
+  ///
+  /// 包含：绘图背景、网格开关/密度、悬浮面板不透明度、渲染引擎。
+  List<Widget> _buildAppearanceSection({
+    required PlotUiSettingsDraft draft,
+    required StateSetter setDialogState,
+    required TextEditingController floatingPanelOpacityController,
+    required void Function(StateSetter) applyFloatingPanelOpacity,
+    required GlobalKey appearanceSectionKey,
+  }) {
+    return [
+      Text(
+        key: appearanceSectionKey,
+        AppStrings.plot.plotBackground,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 4),
+      AppSegmentedSelector<PlotBackgroundStyle>(
+        value: draft.background,
+        items: {
+          PlotBackgroundStyle.dark: Text(AppStrings.plot.plotBackgroundDark),
+          PlotBackgroundStyle.light: Text(AppStrings.plot.plotBackgroundLight),
+        },
+        onChanged: (value) => setDialogState(() => draft.background = value),
+      ),
+      const SizedBox(height: 8),
+      // 网格开关
+      Row(
+        children: [
+          Text(AppStrings.plot.showGrid, style: const TextStyle(fontSize: 14)),
+          const Spacer(),
+          Switch(
+            value: draft.showGrid,
+            onChanged: (value) {
+              setDialogState(() => draft.showGrid = value);
+            },
+          ),
+        ],
+      ),
+      // 网格密度
+      if (draft.showGrid) ...[
+        const SizedBox(height: 8),
+        Text(AppStrings.plot.gridDensity, style: const TextStyle(fontSize: 14)),
+        const SizedBox(height: 4),
+        AppSegmentedSelector<GridDensity>(
+          value: draft.gridDensity,
+          items: {
+            GridDensity.sparse: Text(AppStrings.plot.densitySparse),
+            GridDensity.normal: Text(AppStrings.plot.densityNormal),
+            GridDensity.dense: Text(AppStrings.plot.densityDense),
+          },
+          onChanged: (value) => setDialogState(() => draft.gridDensity = value),
+        ),
+      ],
+      const SizedBox(height: 8),
+      AppNumberRow(
+        label: AppStrings.plot.floatingPanelOpacity,
+        controller: floatingPanelOpacityController,
+        suffixText: '%',
+        onApply: () => applyFloatingPanelOpacity(setDialogState),
+      ),
+      const Divider(),
+      Text(AppStrings.plot.renderEngine, style: const TextStyle(fontSize: 14)),
+      const SizedBox(height: 6),
+      AppSegmentedSelector<PlotRenderEngine>(
+        key: const ValueKey('plotRenderEngineSelector'),
+        value: draft.renderEngine ?? PlotRenderEngine.d3d11,
+        items: {
+          PlotRenderEngine.canvas: Text(AppStrings.plot.renderEngineCanvas),
+          PlotRenderEngine.d3d11: Text(AppStrings.plot.renderEngineD3d11),
+        },
+        onChanged: (value) => setDialogState(() => draft.renderEngine = value),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.renderEngineHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+    ];
+  }
+
+  /// 高级设置弹窗：性能 section。
+  ///
+  /// 包含：LOD 质量档位、刷新帧率、接收聚合开关。
+  List<Widget> _buildPerformanceSection({
+    required PlotUiSettingsDraft draft,
+    required PlotViewModel vm,
+    required StateSetter setDialogState,
+    required TextEditingController refreshFpsController,
+    required VoidCallback applyRefreshFps,
+    required GlobalKey performanceSectionKey,
+  }) {
+    return [
+      Text(
+        key: performanceSectionKey,
+        AppStrings.plot.lodQuality,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 6),
+      AppSegmentedSelector<PlotLodQuality>(
+        key: const ValueKey('plotLodQualitySelector'),
+        value: draft.quality,
+        items: {
+          PlotLodQuality.performance: Text(
+            AppStrings.plot.lodQualityPerformance,
+          ),
+          PlotLodQuality.balanced: Text(AppStrings.plot.lodQualityBalanced),
+          PlotLodQuality.quality: Text(AppStrings.plot.lodQualityQuality),
+        },
+        onChanged: (value) => setDialogState(() => draft.quality = value),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.lodQualityHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+      // 刷新帧率是对质量档位的进一步性能约束，因此放在质量选择之后。
+      Text(AppStrings.plot.refreshFps, style: const TextStyle(fontSize: 14)),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          SizedBox(
+            width: kSecondaryDialogFieldWidth,
+            child: AppNumberField(
+              controller: refreshFpsController,
+              suffixText: AppStrings.plot.unitFps,
+              onSubmitted: (_) => applyRefreshFps(),
+              onEditingComplete: applyRefreshFps,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${(1000 / (draft.refreshFps ?? vm.refreshFps)).round()}ms',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.refreshFpsHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 8),
+      AppSwitchRow(
+        key: const ValueKey('plot-receive-aggregation-toggle'),
+        title: Text(AppStrings.plot.receiveAggregation),
+        subtitle: Text(AppStrings.plot.receiveAggregationHelp),
+        value: draft.receiveAggregationEnabled ?? false,
+        onChanged:
+            (value) =>
+                setDialogState(() => draft.receiveAggregationEnabled = value),
+      ),
+      const Divider(),
+    ];
+  }
+
+  /// 高级设置弹窗：文字 section。
+  ///
+  /// 包含：字号增量滑杆、粗体开关。
+  List<Widget> _buildFontSection({
+    required BuildContext context,
+    required PlotUiSettingsDraft draft,
+    required StateSetter setDialogState,
+    required GlobalKey fontSectionKey,
+  }) {
+    return [
+      Text(
+        key: fontSectionKey,
+        AppStrings.plot.plotFontSize,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Text(
+            draft.fontSizeDelta == 0
+                ? AppStrings.plot.defaultValue
+                : draft.fontSizeDelta > 0
+                ? '+${draft.fontSizeDelta}'
+                : '${draft.fontSizeDelta}',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const Spacer(),
+          Text(
+            AppStrings.plot.fontPreview,
+            style: TextStyle(
+              fontSize: (14 + draft.fontSizeDelta).clamp(10, 24).toDouble(),
+              fontFamily: 'SarasaUiSC',
+              fontWeight: draft.fontBold ? FontWeight.bold : FontWeight.normal,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+      Slider(
+        value: draft.fontSizeDelta.toDouble(),
+        min: -3,
+        max: 6,
+        divisions: 9,
+        label:
+            draft.fontSizeDelta == 0
+                ? AppStrings.plot.defaultValue
+                : draft.fontSizeDelta > 0
+                ? '+${draft.fontSizeDelta}'
+                : '${draft.fontSizeDelta}',
+        onChanged: (value) {
+          setDialogState(() => draft.fontSizeDelta = value.round());
+        },
+      ),
+      AppSwitchRow(
+        title: Text(AppStrings.plot.plotFontBold),
+        value: draft.fontBold,
+        onChanged: (value) {
+          setDialogState(() => draft.fontBold = value);
+        },
+      ),
+      Text(
+        AppStrings.plot.plotFontSizeHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const Divider(),
+    ];
+  }
+
+  /// 高级设置弹窗：视口 section。
+  ///
+  /// 包含：跟随位置比例、Y 轴自适应显示比例。
+  List<Widget> _buildViewportSection({
+    required StateSetter setDialogState,
+    required TextEditingController followPositionController,
+    required TextEditingController yFitDisplayRatioController,
+    required void Function(StateSetter) applyFollowPosition,
+    required void Function(StateSetter) applyYFitRatio,
+    required GlobalKey viewportSectionKey,
+  }) {
+    return [
+      Text(
+        key: viewportSectionKey,
+        AppStrings.plot.followPosition,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: AppNumberField(
+          controller: followPositionController,
+          suffixText: '%',
+          onSubmitted: (_) => applyFollowPosition(setDialogState),
+          onEditingComplete: () => applyFollowPosition(setDialogState),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.followPositionHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        AppStrings.plot.yFitDisplayRatio,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: AppNumberField(
+          controller: yFitDisplayRatioController,
+          suffixText: '%',
+          allowDecimal: true,
+          onSubmitted: (_) => applyYFitRatio(setDialogState),
+          onEditingComplete: () => applyYFitRatio(setDialogState),
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.yFitDisplayRatioHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const Divider(),
+    ];
+  }
+
+  /// 高级设置弹窗：工具栏 section。
+  ///
+  /// 包含：预览/触发/统计三个工具栏开关。
+  List<Widget> _buildToolbarSection({
+    required PlotUiSettingsDraft draft,
+    required StateSetter setDialogState,
+    required GlobalKey toolbarSectionKey,
+  }) {
+    return [
+      Row(
+        key: toolbarSectionKey,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppStrings.plot.previewFeatureToggle,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.plot.previewFeatureHelp,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: draft.previewToolbarEnabled!,
+            onChanged: (value) {
+              setDialogState(() => draft.previewToolbarEnabled = value);
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppStrings.plot.triggerFeatureToggle,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.plot.triggerFeatureHelp,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: draft.triggerToolbarEnabled!,
+            onChanged: (value) {
+              setDialogState(() => draft.triggerToolbarEnabled = value);
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppStrings.plot.statsFeatureToggle,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.plot.statsFeatureHelp,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: draft.statsToolbarEnabled!,
+            onChanged: (value) {
+              setDialogState(() => draft.statsToolbarEnabled = value);
+            },
+          ),
+        ],
+      ),
+      const Divider(),
+    ];
+  }
+
+  /// 高级设置弹窗：交互 section。
+  ///
+  /// 包含：观测点放置、发送原样显示、轴缩放修饰键、吸附点高亮。
+  List<Widget> _buildInteractionSection({
+    required PlotUiSettingsDraft draft,
+    required StateSetter setDialogState,
+    required TextEditingController snapDiameterController,
+    required VoidCallback applySnapDiameter,
+    required GlobalKey interactionSectionKey,
+  }) {
+    return [
+      AppSwitchRow(
+        key: interactionSectionKey,
+        title: Text(AppStrings.plot.observationClickToPlace),
+        subtitle: Text(AppStrings.plot.observationClickToPlaceHelp),
+        value: draft.observationClickToPlace,
+        onChanged: (value) {
+          setDialogState(() => draft.observationClickToPlace = value);
+        },
+      ),
+      const SizedBox(height: 12),
+      AppSwitchRow(
+        title: Text(AppStrings.plot.showPlotSendDataInRaw),
+        subtitle: Text(AppStrings.plot.showPlotSendDataInRawHelp),
+        value: draft.showPlotSendDataInRaw ?? true,
+        onChanged:
+            (value) =>
+                setDialogState(() => draft.showPlotSendDataInRaw = value),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        AppStrings.plot.axisZoomModifier,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 4),
+      AppSegmentedSelector<PlotGestureModifier>(
+        value: draft.gestureModifier ?? PlotGestureModifier.shift,
+        items: const {
+          PlotGestureModifier.shift: Text('Shift'),
+          PlotGestureModifier.control: Text('Ctrl'),
+        },
+        onChanged:
+            (value) => setDialogState(() => draft.gestureModifier = value),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.axisZoomModifierHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+      // 吸附点高亮
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              AppStrings.plot.snapHighlight,
+              style: const TextStyle(fontSize: 14),
+            ),
+          ),
+          Switch(
+            value: draft.snapHighlightEnabled!,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            onChanged: (value) {
+              setDialogState(() => draft.snapHighlightEnabled = value);
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 4),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: AppNumberField(
+          controller: snapDiameterController,
+          enabled: draft.snapHighlightEnabled ?? true,
+          suffixText: AppStrings.plot.unitPixel,
+          allowDecimal: true,
+          onSubmitted: (_) => applySnapDiameter(),
+          onEditingComplete: applySnapDiameter,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.snapHighlightHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        AppStrings.plot.snapHighlightColorMode,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 4),
+      AppSegmentedSelector<String>(
+        value: draft.snapHighlightColorMode!,
+        enabled: draft.snapHighlightEnabled!,
+        items: {
+          'cursor': Text(AppStrings.plot.snapHighlightColorCursor),
+          'channel': Text(AppStrings.plot.snapHighlightColorChannel),
+        },
+        onChanged:
+            (value) =>
+                setDialogState(() => draft.snapHighlightColorMode = value),
+      ),
+      const Divider(),
+    ];
+  }
+
+  /// 高级设置弹窗：数据 section。
+  ///
+  /// 包含：重启保留绘图、历史内存上限、绘图窗口上限、丢弃初始包数。
+  List<Widget> _buildDataSection({
+    required PlotUiSettingsDraft draft,
+    required PlotViewModel vm,
+    required StateSetter setDialogState,
+    required TextEditingController plotRetentionLimitController,
+    required TextEditingController maxVisibleController,
+    required TextEditingController discardInitialPacketController,
+    required VoidCallback applyHistoryLimit,
+    required VoidCallback applyWindowPointLimit,
+    required VoidCallback applyDiscardInitialPacketCount,
+    required GlobalKey dataSectionKey,
+  }) {
+    return [
+      Row(
+        key: dataSectionKey,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppStrings.plot.keepPlotOnRestart,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppStrings.plot.keepPlotOnRestartHelp,
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: draft.keepPlotOnRestart!,
+            onChanged: (value) {
+              setDialogState(() => draft.keepPlotOnRestart = value);
+            },
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Text(
+        AppStrings.plot.plotHistoryMemoryLimit,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: AppNumberField(
+          key: const ValueKey('plot-retention-limit-field'),
+          controller: plotRetentionLimitController,
+          suffixText: AppStrings.plot.unitGiB,
+          onSubmitted: (_) => applyHistoryLimit(),
+          onEditingComplete: applyHistoryLimit,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.plotHistoryMemoryLimitHelp,
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        AppStrings.plot.plotWindowLimit,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: TextField(
+          controller: maxVisibleController,
+          keyboardType: TextInputType.text,
+          decoration: secondaryDialogFieldDecoration(
+            suffixText: AppStrings.plot.unitPacket,
+          ),
+          onSubmitted: (_) => applyWindowPointLimit(),
+          onEditingComplete: applyWindowPointLimit,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.plotWindowLimitHelp(
+          min: _formatCompactCount(PlotViewModel.minVisiblePoints),
+          max: _formatCompactCount(PlotViewModel.maxVisiblePointsLimit),
+          defaultValue: _formatCompactCount(PlotViewModel.defaultVisiblePoints),
+          current: _formatCompactCount(vm.visiblePointCount),
+        ),
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+      Text(
+        AppStrings.plot.droppedPackets,
+        style: const TextStyle(fontSize: 14),
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        width: kSecondaryDialogFieldWidth,
+        child: TextField(
+          controller: discardInitialPacketController,
+          keyboardType: TextInputType.text,
+          decoration: secondaryDialogFieldDecoration(
+            suffixText: AppStrings.plot.unitPacket,
+          ),
+          onSubmitted: (_) => applyDiscardInitialPacketCount(),
+          onEditingComplete: applyDiscardInitialPacketCount,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        AppStrings.plot.droppedPacketsHelp(
+          max: _formatCompactCount(PlotViewModel.maxDiscardInitialPacketCount),
+        ),
+        style: const TextStyle(fontSize: 11, color: Colors.grey),
+      ),
+    ];
   }
 
   /// 显示新建Zobow配置文件对话框
@@ -3704,7 +5049,7 @@ class _PlotPageContentState extends State<_PlotPageContent> {
   }
 
   bool _canOpenInputConfiguration(PlotViewModel vm) {
-    if (!vm.isPlotting && !vm.isStopping) return true;
+    if (!vm.isPlotting && !vm.isStarting && !vm.isStopping) return true;
     vm.showStatusMessage(
       AppStrings.plot.inputConfigurationDisabledWhilePlotting,
     );

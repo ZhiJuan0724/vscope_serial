@@ -1,9 +1,11 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <userenv.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -31,6 +33,31 @@ struct UpdatePlan {
 struct ManagedFile {
   fs::path relative_path;
   std::string sha256;
+};
+
+class ScopedUpdateMutex {
+ public:
+  ScopedUpdateMutex() {
+    handle_ = CreateMutexW(nullptr, FALSE, L"Local\\vscope_serial_update_lock");
+    if (!handle_) throw std::runtime_error("cannot create update lock");
+    const DWORD result = WaitForSingleObject(handle_, 0);
+    if (result != WAIT_OBJECT_0) {
+      throw std::runtime_error("another update is already running");
+    }
+    owns_mutex_ = true;
+  }
+
+  ~ScopedUpdateMutex() {
+    if (owns_mutex_) ReleaseMutex(handle_);
+    if (handle_) CloseHandle(handle_);
+  }
+
+  ScopedUpdateMutex(const ScopedUpdateMutex&) = delete;
+  ScopedUpdateMutex& operator=(const ScopedUpdateMutex&) = delete;
+
+ private:
+  HANDLE handle_ = nullptr;
+  bool owns_mutex_ = false;
 };
 
 std::wstring ReadUtf8File(const fs::path& path) {
@@ -289,6 +316,86 @@ void WaitForProcess(DWORD pid) {
   if (result != WAIT_OBJECT_0) {
     throw std::runtime_error("application did not exit in time");
   }
+}
+
+std::wstring NormalizePathForCompare(const fs::path& path) {
+  std::wstring value = fs::absolute(path).lexically_normal().wstring();
+  std::replace(value.begin(), value.end(), L'/', L'\\');
+  std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) {
+    return static_cast<wchar_t>(std::towlower(c));
+  });
+  return value;
+}
+
+bool PathIsWithin(const fs::path& root, const fs::path& child) {
+  std::wstring root_norm = NormalizePathForCompare(root);
+  std::wstring child_norm = NormalizePathForCompare(child);
+  if (!root_norm.empty() && root_norm.back() != L'\\') {
+    root_norm.push_back(L'\\');
+  }
+  return child_norm.size() >= root_norm.size() &&
+         child_norm.compare(0, root_norm.size(), root_norm) == 0;
+}
+
+// plan.json is written by the app under <exe_dir>/updates and could be
+// tampered with locally. Constrain install/cleanup/result/rollback paths to
+// <exe_dir>/updates before fs::remove_all / fs::remove / WriteResult, so a
+// malformed plan cannot become an arbitrary-directory-deletion primitive.
+void ValidatePlanPaths(const UpdatePlan& plan) {
+  const fs::path install = fs::absolute(plan.install_dir).lexically_normal();
+  const fs::path installed_exe = install / plan.executable;
+  if (!fs::exists(installed_exe) ||
+      !fs::equivalent(installed_exe.parent_path(), install)) {
+    throw std::runtime_error("invalid installation directory");
+  }
+
+  const fs::path updates_root = install / L"updates";
+  if (plan.payload_dir.empty() || plan.cleanup_dir.empty() ||
+      !PathIsWithin(updates_root, plan.payload_dir) ||
+      !PathIsWithin(updates_root, plan.cleanup_dir)) {
+    throw std::runtime_error("update plan paths must be inside the updates directory");
+  }
+  if (!plan.result_file.empty() &&
+      !PathIsWithin(updates_root, plan.result_file)) {
+    throw std::runtime_error("update result file must be inside the updates directory");
+  }
+  if (!plan.rollback_dir.empty() &&
+      !PathIsWithin(updates_root, plan.rollback_dir)) {
+    throw std::runtime_error("rollback directory must be inside the updates directory");
+  }
+}
+
+std::wstring ProcessImagePath(DWORD pid) {
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) return {};
+  std::wstring path(32768, L'\0');
+  DWORD size = static_cast<DWORD>(path.size());
+  const BOOL ok = QueryFullProcessImageNameW(process, 0, path.data(), &size);
+  CloseHandle(process);
+  if (!ok || size == 0) return {};
+  path.resize(size);
+  return path;
+}
+
+bool HasRunningApplicationInstance(const fs::path& executable) {
+  const auto expected = NormalizePathForCompare(executable);
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return false;
+
+  PROCESSENTRY32W entry = {};
+  entry.dwSize = sizeof(entry);
+  bool found = false;
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      const auto image = ProcessImagePath(entry.th32ProcessID);
+      if (!image.empty() && NormalizePathForCompare(image) == expected) {
+        found = true;
+        break;
+      }
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
+  return found;
 }
 
 void CopyFileReplacing(const fs::path& source, const fs::path& destination) {
@@ -553,11 +660,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   UpdatePlan plan;
   try {
     plan = ParsePlan(plan_path);
+    ValidatePlanPaths(plan);
     if (!elevated && !CanWriteDirectory(plan.install_dir)) {
       RelaunchElevated(plan_path);
       return 0;
     }
+    ScopedUpdateMutex update_mutex;
     WaitForProcess(plan.pid);
+    if (HasRunningApplicationInstance(plan.install_dir / plan.executable)) {
+      throw std::runtime_error("other application instances are still running");
+    }
     ApplyUpdate(plan);
     return 0;
   } catch (const std::exception& error) {

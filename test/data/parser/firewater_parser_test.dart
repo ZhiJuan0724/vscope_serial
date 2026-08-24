@@ -9,7 +9,7 @@ void main() {
     test('解析单行数据', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       parser.feed(Uint8List.fromList('1.0,2.0,3.0,4.0\n'.codeUnits));
 
@@ -24,7 +24,7 @@ void main() {
     test('解析多行数据', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       parser.feed(Uint8List.fromList('1.0,2.0\n3.0,4.0\n5.0,6.0\n'.codeUnits));
 
@@ -37,10 +37,26 @@ void main() {
       expect(results[2].values, [5.0, 6.0]);
     });
 
+    test('批量入口一次返回字节块内的全部数据行', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+
+      final results = parser.feedBatch(
+        Uint8List.fromList('1,2\n3,4\n5,6\n'.codeUnits),
+      );
+
+      expect(results, hasLength(3));
+      expect(results.map((result) => result.values).toList(), [
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+      ]);
+    });
+
     test('分多次feed解析', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 分两次发送，模拟网络/串口分包
       parser.feed(Uint8List.fromList('1.0,2.0,'.codeUnits));
@@ -57,7 +73,7 @@ void main() {
     test('高频数据解析 - 模拟1KHz', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 模拟1KHz数据：1ms一包
       final line = '100.0,200.0,300.0,400.0\n';
@@ -83,7 +99,7 @@ void main() {
       final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 4;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 发送8通道数据，应截断为4通道
       parser.feed(
@@ -102,7 +118,7 @@ void main() {
       final config = ParserConfig.fireWaterDefault()..fireWaterChannelCount = 8;
       final parser = FireWaterParser(config);
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       // 只发送4通道数据，但要求8通道
       parser.feed(Uint8List.fromList('1.0,2.0,3.0,4.0\n'.codeUnits));
@@ -112,6 +128,31 @@ void main() {
 
       expect(results.length, 1);
       expect(results[0].success, false);
+    });
+
+    test('拒绝NaN和无穷大', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+      final results = parser.feedBatch(
+        Uint8List.fromList('NaN,1\nInfinity,2\n'.codeUnits),
+      );
+      expect(results, hasLength(2));
+      expect(results.every((result) => !result.success), isTrue);
+    });
+
+    test('超长残行保持有界并在换行后恢复', () {
+      final parser = FireWaterParser();
+      addTearDown(parser.dispose);
+
+      parser.feedBatch(Uint8List(FireWaterParser.maxLineBytes + 1024));
+      final recovered = parser.feedBatch(
+        Uint8List.fromList('\n1,2,3,4\n'.codeUnits),
+      );
+
+      expect(parser.diagnostics.resyncCount, 1);
+      expect(parser.diagnostics.droppedBytes, greaterThan(0));
+      expect(recovered, hasLength(1));
+      expect(recovered.single.values, [1.0, 2.0, 3.0, 4.0]);
     });
   });
 }

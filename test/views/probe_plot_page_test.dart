@@ -1,0 +1,317 @@
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/data/models/probe_plot_config.dart';
+import 'package:vscope_serial/services/connection_owner_service.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
+import 'package:vscope_serial/viewmodels/probe_plot_viewmodel.dart';
+import 'package:vscope_serial/views/pages/probe_plot_page.dart';
+import 'package:vscope_serial/views/widgets/common_widgets.dart';
+
+class _JumpProbePlotViewModel extends ProbePlotViewModel {
+  _JumpProbePlotViewModel(super.service) {
+    pointCount = 10;
+  }
+
+  int? jumpedIndex;
+
+  @override
+  int? get minJumpPacketIndex => 0;
+
+  @override
+  int? get maxJumpPacketIndex => 9;
+
+  @override
+  bool canJumpToPacketIndex(int index) => index >= 0 && index <= 9;
+
+  @override
+  void jumpToPacketIndex(int index) {
+    jumpedIndex = index;
+    notifyListeners();
+  }
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('HSS 导入 ELF 后显示可搜索变量列表并可直接添加', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final service = ProbeConnectionService(
+      connectionOwners: ConnectionOwnerService(),
+      backends: [],
+    );
+    final viewModel =
+        ProbePlotViewModel(service)
+          ..setMode(ProbePlotMode.hss)
+          ..programPath = 'sample.elf'
+          ..symbols = const [
+            ProbeSymbolInfo(name: 'motor_speed', address: 0x20000000, size: 4),
+            ProbeSymbolInfo(
+              name: 'sample_counter',
+              address: 0x20000004,
+              size: 4,
+            ),
+          ];
+    addTearDown(() {
+      viewModel.dispose();
+      service.dispose();
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: viewModel,
+        child: const MaterialApp(home: Scaffold(body: ProbePlotPage())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('HSS 数据配置'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('hss-symbol-search')), findsOneWidget);
+    expect(find.text('motor_speed'), findsOneWidget);
+    expect(find.text('sample_counter'), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('hss-symbol-search')),
+      'motor',
+    );
+    await tester.pump();
+    expect(find.text('motor_speed'), findsOneWidget);
+    expect(find.text('sample_counter'), findsNothing);
+
+    await tester.tap(find.text('motor_speed'));
+    await tester.pump();
+    expect(viewModel.hssVariables.single.name, 'motor_speed');
+    expect(viewModel.activeChannelCount, 1);
+
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(find.text('motor_speed'), findsOneWidget);
+    expect(find.text('Value 2'), findsNothing);
+
+    final modeSelector = find.byType(SegmentedButton<ProbePlotMode>);
+    expect(modeSelector, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('probe-plot-measure-x-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('probe-plot-measure-y-button')),
+      findsOneWidget,
+    );
+    expect(AppStrings.plot.placeObservation, contains('右键'));
+    expect(find.text(AppStrings.plot.cursor), findsOneWidget);
+    expect(find.text(AppStrings.plot.measureXx), findsOneWidget);
+    expect(find.text(AppStrings.plot.measureYy), findsOneWidget);
+    expect(find.text(AppStrings.plot.follow), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.undoZoom), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitYTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitXTooltip), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.fitAll), findsOneWidget);
+    expect(
+      tester.getCenter(find.byTooltip(AppStrings.plot.verticalCursor)).dx,
+      lessThan(tester.getCenter(find.byTooltip(AppStrings.plot.zoomXIn)).dx),
+    );
+    expect(
+      tester.getCenter(find.byTooltip(AppStrings.plot.followTooltip)).dx,
+      lessThan(tester.getCenter(find.byTooltip(AppStrings.plot.zoomXIn)).dx),
+    );
+
+    await tester.tap(find.byTooltip(AppStrings.plot.collapseChannelPanel));
+    await tester.pump();
+    expect(find.byTooltip(AppStrings.plot.expandChannelPanel), findsOneWidget);
+
+    await tester.tap(find.byTooltip(AppStrings.plot.legend));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('probe-plot-legend-box')), findsOneWidget);
+    expect(find.byTooltip(AppStrings.plot.liveValues), findsOneWidget);
+
+    viewModel.pointCount = 1;
+    viewModel.notifyListeners();
+    await tester.pump();
+    await tester.tap(find.text('RTT'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('将清空当前绘图数据'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(viewModel.mode, ProbePlotMode.hss);
+    expect(viewModel.pointCount, 1);
+
+    await tester.tap(find.text('RTT'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('清空并切换'));
+    await tester.pumpAndSettle();
+    expect(viewModel.mode, ProbePlotMode.rtt);
+    expect(viewModel.pointCount, 0);
+  });
+
+  testWidgets('光标右键跳转在弹窗关闭后更新页面且不触发生命周期异常', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final service = ProbeConnectionService(
+      connectionOwners: ConnectionOwnerService(),
+      backends: [],
+    );
+    final viewModel = _JumpProbePlotViewModel(service);
+    addTearDown(() {
+      viewModel.dispose();
+      service.dispose();
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<ProbePlotViewModel>.value(
+        value: viewModel,
+        child: const MaterialApp(home: Scaffold(body: ProbePlotPage())),
+      ),
+    );
+
+    final cursorButton = find.byTooltip(AppStrings.plot.verticalCursor);
+    final position = tester.getCenter(cursorButton);
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: position);
+    await secondary.down(position);
+    await secondary.up();
+    await secondary.removePointer();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('probe-cursor-jump-input')),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('probe-cursor-jump-input')),
+      '7',
+    );
+    await tester.tap(find.text('跳转'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.jumpedIndex, 7);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('RTT 数据配置集中控制块、通道和格式，右侧仅保留绘图设置', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = ProbeConnectionService(
+      connectionOwners: ConnectionOwnerService(),
+      backends: const [],
+    );
+    final viewModel = ProbePlotViewModel(service);
+    addTearDown(() {
+      viewModel.dispose();
+      service.dispose();
+    });
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<ProbePlotViewModel>.value(
+        value: viewModel,
+        child: const MaterialApp(home: Scaffold(body: ProbePlotPage())),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('RTT 数据配置'));
+    await tester.pumpAndSettle();
+    expect(find.text('RTT 数据配置'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('probe-rtt-control-block-mode')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('probe-rtt-refresh-channels')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('probe-rtt-polling-interval')),
+      findsOneWidget,
+    );
+    expect(find.text('J-Scope 数据格式'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('探针绘图设置'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SettingsNavigationView), findsOneWidget);
+    expect(
+      tester.widget<AlertDialog>(find.byType(AlertDialog)).shape,
+      kAdvancedSettingsDialogShape,
+    );
+    for (final category in ['外观', '性能', '文字', '视口', '工具栏', '交互', '数据']) {
+      expect(find.text(category), findsOneWidget);
+    }
+    expect(find.text('精确窗口点数上限'), findsOneWidget);
+    expect(find.text(AppStrings.plot.plotHistoryMemoryLimit), findsOneWidget);
+    expect(find.text(AppStrings.plot.lodQuality), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('probe-plot-lod-quality-selector')),
+      findsOneWidget,
+    );
+    expect(find.text(AppStrings.plot.floatingPanelOpacity), findsOneWidget);
+    expect(find.text('跟随位置'), findsOneWidget);
+    expect(find.text(AppStrings.plot.observationClickToPlace), findsOneWidget);
+    final initialOpacity = viewModel.floatingPanelOpacity;
+    final initialFollowPosition = viewModel.followPositionRatio;
+    await tester.enterText(
+      find.byKey(const ValueKey('probe-floating-panel-opacity-field')),
+      '75',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.floatingPanelOpacity, initialOpacity);
+
+    final followField = find.byKey(
+      const ValueKey('probe-follow-position-field'),
+    );
+    await tester.ensureVisible(followField);
+    await tester.enterText(followField, '80');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.followPositionRatio, initialFollowPosition);
+
+    final memoryField = find.byKey(
+      const ValueKey('probe-history-memory-limit-field'),
+    );
+    await tester.ensureVisible(memoryField);
+    await tester.enterText(
+      memoryField,
+      '${ProbePlotViewModel.minHistoryMemoryLimitMiB}',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.historyMemoryLimitMiB, 256);
+
+    final pointLimitField = find.byKey(
+      const ValueKey('probe-window-point-limit-field'),
+    );
+    await tester.ensureVisible(pointLimitField);
+    await tester.enterText(
+      pointLimitField,
+      '${ProbePlotViewModel.minWindowPointLimit}',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    expect(viewModel.windowPointLimit, 100000);
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(viewModel.floatingPanelOpacity, 0.75);
+    expect(viewModel.followPositionRatio, 0.8);
+    expect(
+      viewModel.historyMemoryLimitMiB,
+      ProbePlotViewModel.minHistoryMemoryLimitMiB,
+    );
+    expect(viewModel.windowPointLimit, ProbePlotViewModel.minWindowPointLimit);
+    expect(
+      find.descendant(
+        of: find.byTooltip('探针绘图设置'),
+        matching: find.byIcon(Icons.tune),
+      ),
+      findsOneWidget,
+    );
+  });
+}

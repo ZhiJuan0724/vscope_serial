@@ -13,9 +13,18 @@ class _PresetSelectorDialog extends StatefulWidget {
 
 enum _PresetViewMode { list, grid }
 
+class _PresetSelectorSessionState {
+  String searchText = '';
+  double scrollOffset = 0;
+}
+
 class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
+  static final Map<String, _PresetSelectorSessionState> _sessionStates = {};
+
   late _PresetViewMode _viewMode;
   late final TextEditingController _searchController;
+  late final ScrollController _scrollController;
+  late final _PresetSelectorSessionState _sessionState;
   String _searchText = '';
 
   List<AddressChannelPreset> get _filteredPresets {
@@ -36,17 +45,42 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   @override
   void initState() {
     super.initState();
-    _searchController = TextEditingController();
+    _sessionState = _sessionStates.putIfAbsent(
+      widget.profile.id,
+      _PresetSelectorSessionState.new,
+    );
+    _searchText = _sessionState.searchText;
+    _searchController = TextEditingController(text: _searchText);
+    _scrollController = ScrollController();
+    _scrollController.addListener(_saveScrollOffset);
     _viewMode =
         AppSettings().zobowPresetViewMode == 'list'
             ? _PresetViewMode.list
             : _PresetViewMode.grid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(
+        _sessionState.scrollOffset.clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        ),
+      );
+    });
   }
 
   @override
   void dispose() {
+    _scrollController
+      ..removeListener(_saveScrollOffset)
+      ..dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _saveScrollOffset() {
+    if (_scrollController.hasClients) {
+      _sessionState.scrollOffset = _scrollController.offset;
+    }
   }
 
   void _toggleViewMode() {
@@ -107,15 +141,22 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                 isDense: true,
                 hintText: AppStrings.plot.searchNameOrAddress,
                 prefixIcon: const Icon(Icons.search, size: 18),
+                suffixIconConstraints: const BoxConstraints.tightFor(
+                  width: kFieldIconButtonExtent,
+                  height: kFieldIconButtonExtent,
+                ),
                 suffixIcon:
                     _searchText.isEmpty
                         ? null
-                        : IconButton(
+                        : AppFieldIconButton(
                           tooltip: AppStrings.plot.selectAddressSearchClear,
                           icon: const Icon(Icons.clear, size: 16),
                           onPressed: () {
                             _searchController.clear();
-                            setState(() => _searchText = '');
+                            setState(() {
+                              _searchText = '';
+                              _sessionState.searchText = '';
+                            });
                           },
                         ),
                 contentPadding: const EdgeInsets.symmetric(
@@ -126,7 +167,11 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
-              onChanged: (value) => setState(() => _searchText = value),
+              onChanged:
+                  (value) => setState(() {
+                    _searchText = value;
+                    _sessionState.searchText = value;
+                  }),
             ),
             const SizedBox(height: 8),
             Expanded(
@@ -164,6 +209,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   Widget _buildListView() {
     final presets = _filteredPresets;
     return ListView.builder(
+      controller: _scrollController,
       itemCount: presets.length,
       itemBuilder: (context, index) {
         final preset = presets[index];
@@ -171,6 +217,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
+            _saveScrollOffset();
             Navigator.pop(context);
           },
           child: Container(
@@ -224,6 +271,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
   Widget _buildGridView() {
     final presets = _filteredPresets;
     return GridView.builder(
+      controller: _scrollController,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 5,
         childAspectRatio: 1.8,
@@ -237,6 +285,7 @@ class _PresetSelectorDialogState extends State<_PresetSelectorDialog> {
         return InkWell(
           onTap: () {
             widget.onSelect(preset);
+            _saveScrollOffset();
             Navigator.pop(context);
           },
           child: Container(

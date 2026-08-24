@@ -3,17 +3,20 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 
-/// 自定义文件输出 - 每次启动新建日志，旧日志自动归档，最多保留20份
+/// 自定义文件输出 - 每个进程写入独立日志文件，最多保留20份
 class FileLogOutput extends LogOutput {
   RandomAccessFile? _raf;
   File? _file;
   static const int _maxLogFiles = 20;
-  static const String _latestName = 'latest.log';
 
   /// 批量flush：累计一定量或定时flush，减少磁盘IO
   static const int _flushThresholdBytes = 4096;
   int _pendingBytes = 0;
   DateTime? _lastFlushTime;
+  bool flushImmediately = false;
+
+  @visibleForTesting
+  String? get filePathForTest => _file?.path;
 
   @override
   Future<void> init() async {
@@ -21,32 +24,20 @@ class FileLogOutput extends LogOutput {
     final logDir = Directory('${exeDir.path}/logs');
     await logDir.create(recursive: true);
 
-    // 归档旧日志
-    await _archiveOldLog(logDir);
     // 清理超期日志
     await _cleanupOldLogs(logDir);
 
-    // 新建 latest.log
-    _file = File('${logDir.path}/$_latestName');
-    _raf = await _file!.open(mode: FileMode.write);
+    _file = File('${logDir.path}/${_newLogFileName()}');
+    _raf = await _file!.open(mode: FileMode.append);
   }
 
-  /// 将已有的 latest.log 重命名为带时间戳的归档文件
-  Future<void> _archiveOldLog(Directory logDir) async {
-    final latest = File('${logDir.path}/$_latestName');
-    if (!await latest.exists()) return;
-
+  String _newLogFileName() {
     final now = DateTime.now();
     final timestamp =
-        '${now.year}${_two(now.month)}${_two(now.day)}_${_two(now.hour)}${_two(now.minute)}${_two(now.second)}';
-    final archiveName = 'vscope_log_$timestamp.log';
-    final archive = File('${logDir.path}/$archiveName');
-
-    try {
-      await latest.rename(archive.path);
-    } catch (_) {
-      // 重命名失败则忽略（可能被占用）
-    }
+        '${now.year}${_two(now.month)}${_two(now.day)}_'
+        '${_two(now.hour)}${_two(now.minute)}${_two(now.second)}_'
+        '${now.millisecond.toString().padLeft(3, '0')}';
+    return 'vscope_log_${timestamp}_$pid.log';
   }
 
   /// 清理超期日志，只保留最新的 _maxLogFiles 份
@@ -101,7 +92,7 @@ class FileLogOutput extends LogOutput {
         _pendingBytes >= _flushThresholdBytes ||
         (_lastFlushTime != null &&
             now.difference(_lastFlushTime!).inMilliseconds > 100);
-    if (shouldFlush) {
+    if (flushImmediately || shouldFlush) {
       _raf!.flushSync();
       _pendingBytes = 0;
       _lastFlushTime = now;
@@ -113,24 +104,28 @@ class FileLogOutput extends LogOutput {
     await _raf?.close();
     _raf = null;
   }
+
+  Future<void> flush() async {
+    await _raf?.flush();
+  }
 }
 
 /// 自定义日志打印机 - 使用完整级别名称 + ANSI 颜色
 class _AppLogPrinter extends LogPrinter {
   static final _levelColors = {
     Level.trace: AnsiColor.fg(AnsiColor.grey(0.5)),
-    Level.debug: AnsiColor.fg(6),
-    Level.info: AnsiColor.fg(2),
-    Level.warning: AnsiColor.fg(3),
-    Level.error: AnsiColor.fg(196),
-    Level.fatal: AnsiColor.fg(199),
+    Level.debug: const AnsiColor.fg(6),
+    Level.info: const AnsiColor.fg(2),
+    Level.warning: const AnsiColor.fg(3),
+    Level.error: const AnsiColor.fg(196),
+    Level.fatal: const AnsiColor.fg(199),
   };
 
   @override
   List<String> log(LogEvent event) {
     final time = event.time.toIso8601String();
     final level = _levelName(event.level);
-    final color = _levelColors[event.level] ?? AnsiColor.none();
+    final color = _levelColors[event.level] ?? const AnsiColor.none();
     final message = event.message;
     final error = event.error;
     final stackTrace = event.stackTrace;
@@ -176,6 +171,24 @@ class AppLogger {
   late final Logger _logger;
   final _fileOutput = FileLogOutput();
   bool _initialized = false;
+  bool _diagnosticEnabled = false;
+
+  bool get diagnosticEnabled => _diagnosticEnabled;
+  String? get logFilePath => _fileOutput.filePathForTest;
+
+  /// 控制高密度 TRACE/DEBUG 诊断日志是否写入历史文件。
+  ///
+  /// 开启后每条日志立即刷盘，尽量保留原生崩溃前的最后一个检查点。
+  void setDiagnosticEnabled(bool enabled) {
+    if (_diagnosticEnabled == enabled) return;
+    _diagnosticEnabled = enabled;
+    _fileOutput.flushImmediately = enabled;
+    info(
+      '调试模式已${enabled ? '开启' : '关闭'}'
+      '${enabled ? '；TRACE/DEBUG 日志将立即写入磁盘' : ''}',
+      category: 'APP',
+    );
+  }
 
   Future<void> init() async {
     if (_initialized) return;
@@ -194,35 +207,50 @@ class AppLogger {
     await _fileOutput.close();
   }
 
-  void _log(String level, String msg, {String? category}) {
+  /// 在即将主动终止测试进程前确保现有日志已经落盘。
+  Future<void> flush() async {
+    await _fileOutput.flush();
+  }
+
+  void _log(
+    String level,
+    String msg, {
+    String? category,
+    dynamic error,
+    StackTrace? stackTrace,
+  }) {
     if (!_initialized) return; // 未初始化时静默丢弃（避免单元测试报错）
     final formatted = category != null ? '[$category] $msg' : msg;
     switch (level) {
       case 'T':
-        _logger.t(formatted);
+        _logger.t(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'D':
-        _logger.d(formatted);
+        _logger.d(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'I':
-        _logger.i(formatted);
+        _logger.i(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'W':
-        _logger.w(formatted);
+        _logger.w(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'E':
-        _logger.e(formatted);
+        _logger.e(formatted, error: error, stackTrace: stackTrace);
         break;
       case 'F':
-        _logger.f(formatted);
+        _logger.f(formatted, error: error, stackTrace: stackTrace);
         break;
     }
   }
 
-  void trace(String msg, {String? category}) =>
-      _log('T', msg, category: category);
-  void debug(String msg, {String? category}) =>
-      _log('D', msg, category: category);
+  void trace(String msg, {String? category}) {
+    if (_diagnosticEnabled) _log('T', msg, category: category);
+  }
+
+  void debug(String msg, {String? category}) {
+    if (_diagnosticEnabled) _log('D', msg, category: category);
+  }
+
   void info(String msg, {String? category}) =>
       _log('I', msg, category: category);
   void warning(String msg, {String? category}) =>
@@ -232,11 +260,13 @@ class AppLogger {
     String? category,
     dynamic error,
     StackTrace? stackTrace,
-  }) => _log('E', msg, category: category);
+  }) =>
+      _log('E', msg, category: category, error: error, stackTrace: stackTrace);
   void fatal(
     String msg, {
     String? category,
     dynamic error,
     StackTrace? stackTrace,
-  }) => _log('F', msg, category: category);
+  }) =>
+      _log('F', msg, category: category, error: error, stackTrace: stackTrace);
 }

@@ -1,15 +1,31 @@
 part of '../plot_page.dart';
 
-/// 绘图页面的文件导入导出辅助 UI，包括格式枚举和导入进度弹窗。
+/// 绘图页面的文件导入导出辅助 UI，包括格式枚举和文件进度弹窗。
 enum _PlotFileFormat { csv, bin, legacyDat }
 
-class _PlotImportProgressDialog extends StatelessWidget {
+class _PlotExportOptions {
+  final int startIndex;
+  final int endIndex;
+  final List<int> channelIndices;
+
+  const _PlotExportOptions({
+    required this.startIndex,
+    required this.endIndex,
+    required this.channelIndices,
+  });
+
+  int get count => endIndex - startIndex + 1;
+}
+
+class _PlotFileProgressDialog extends StatelessWidget {
   final String title;
   final ValueListenable<PlotImportProgress> progressListenable;
+  final PlotExportCancelToken? cancelToken;
 
-  const _PlotImportProgressDialog({
+  const _PlotFileProgressDialog({
     required this.title,
     required this.progressListenable,
+    this.cancelToken,
   });
 
   @override
@@ -30,6 +46,10 @@ class _PlotImportProgressDialog extends StatelessWidget {
                   progress.total <= 0
                       ? ''
                       : '${progress.current}/${progress.total}';
+              final speedText =
+                  progress.bytesPerSecond == null
+                      ? null
+                      : '${(progress.bytesPerSecond! / 1024 / 1024).toStringAsFixed(1)} MB/s';
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -45,6 +65,7 @@ class _PlotImportProgressDialog extends StatelessWidget {
                     [
                       if (percent != null) '${percent.toStringAsFixed(1)}%',
                       if (countText.isNotEmpty) countText,
+                      if (speedText != null) speedText,
                       if (progress.detail != null) progress.detail!,
                     ].join('  '),
                     style: TextStyle(
@@ -57,6 +78,20 @@ class _PlotImportProgressDialog extends StatelessWidget {
             },
           ),
         ),
+        actions:
+            cancelToken == null
+                ? null
+                : [
+                  TextButton(
+                    onPressed:
+                        cancelToken!.isCancelled ? null : cancelToken!.cancel,
+                    child: Text(
+                      cancelToken!.isCancelled
+                          ? AppStrings.probe.cancelling
+                          : AppStrings.common.cancel,
+                    ),
+                  ),
+                ],
       ),
     );
   }

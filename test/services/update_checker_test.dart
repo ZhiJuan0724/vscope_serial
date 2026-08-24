@@ -5,6 +5,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('UpdateChecker', () {
+    test('rollback slot follows the currently installed version channel', () {
+      expect(UpdateChannel.fromVersion('1.2.3'), UpdateChannel.stable);
+      expect(UpdateChannel.fromVersion('v1.2.3'), UpdateChannel.stable);
+      expect(UpdateChannel.fromVersion('1.2.3-beta.4'), UpdateChannel.beta);
+      expect(UpdateChannel.fromVersion('V1.2.3-BETA.4'), UpdateChannel.beta);
+    });
+
     test('reports no update when latest beta equals current version', () async {
       const currentVersion = '1.0.6-beta.9';
       final checker = UpdateChecker(

@@ -1,3 +1,5 @@
+import '../../core/constants/plot_configuration.dart';
+
 /// 绘图视口管理
 ///
 /// 管理可见的数据区域和屏幕/数据坐标转换。
@@ -23,13 +25,16 @@ class PlotViewport {
   bool autoScaleY;
 
   /// 绘图区域左边距（留给 Y 轴刻度）
-  final double marginLeft = 60;
+  static const double defaultMarginLeft = PlotConfiguration.viewportMarginLeft;
+
+  final double marginLeft;
 
   /// 绘图区域基础右边距
-  static const double _baseMarginRight = 20;
+  static const double _baseMarginRight = PlotConfiguration.viewportMarginRight;
 
   /// 每列偏移 Y 轴宽度
-  static const double offsetAxisColumnWidth = 42;
+  static const double offsetAxisColumnWidth =
+      PlotConfiguration.offsetAxisColumnMinWidth;
 
   /// 偏移 Y 轴列最小宽度
   static const double minOffsetAxisColumnWidth = offsetAxisColumnWidth;
@@ -53,7 +58,7 @@ class PlotViewport {
 
   /// 设置偏移通道数量
   void setOffsetChannelCount(int count) {
-    _offsetChannelCount = count.clamp(0, 20);
+    _offsetChannelCount = count.clamp(0, PlotConfiguration.totalChannelCount);
     _offsetAxisColumnWidths = List<double>.filled(
       _offsetChannelCount,
       minOffsetAxisColumnWidth,
@@ -63,7 +68,7 @@ class PlotViewport {
   /// 设置偏移通道列宽。列宽会根据刻度文本动态变化，但保留最小交互宽度。
   void setOffsetAxisColumnWidths(List<double> widths) {
     final normalized = widths
-        .take(20)
+        .take(PlotConfiguration.totalChannelCount)
         .map(
           (width) =>
               width < minOffsetAxisColumnWidth
@@ -76,30 +81,31 @@ class PlotViewport {
   }
 
   /// 绘图区域上边距
-  final double marginTop = 20;
+  final double marginTop = PlotConfiguration.viewportMarginTop;
 
   /// 绘图区域下边距（留给 X 轴刻度）
-  final double marginBottom = 40;
+  final double marginBottom = PlotConfiguration.viewportMarginBottom;
 
   /// X 轴最小显示范围
-  static const double minXRange = 10;
+  static const double minXRange = PlotConfiguration.viewportMinXRange;
 
   /// X 轴最大显示范围
-  static const double maxXRange = 40000000;
+  static const double maxXRange = PlotConfiguration.viewportMaxXRange;
 
   /// Y 轴最小显示范围
-  static const double minYRange = 1;
+  static const double minYRange = PlotConfiguration.viewportMinYRange;
 
   /// Y 轴最大显示范围
-  static const double maxYRange = 1000000000;
+  static const double maxYRange = PlotConfiguration.viewportMaxYRange;
 
-  /// 创建视口，使用默认值（X: 0~1000, Y: 0~32768）
+  /// 使用 [PlotConfiguration] 中的默认坐标范围创建视口。
   PlotViewport({
-    this.xMin = 0,
-    this.xMax = 1000,
-    this.yMin = 0,
-    this.yMax = 32768,
+    this.xMin = PlotConfiguration.viewportDefaultXMin,
+    this.xMax = PlotConfiguration.viewportDefaultXMax,
+    this.yMin = PlotConfiguration.viewportDefaultYMin,
+    this.yMax = PlotConfiguration.viewportDefaultYMax,
     this.autoScaleY = false,
+    this.marginLeft = defaultMarginLeft,
   });
 
   /// X 轴显示范围宽度
@@ -203,31 +209,109 @@ class PlotViewport {
     return copyWith(yMin: yMin + dy, yMax: yMax + dy);
   }
 
-  /// 重置为默认视图（X: 0~1000, Y: 0~32768），返回新的视口
+  /// 重置为 [PlotConfiguration] 定义的默认视图。
   PlotViewport reset() {
     return PlotViewport(
-      xMin: 0,
-      xMax: 1000,
-      yMin: 0,
-      yMax: 32768,
+      xMin: PlotConfiguration.viewportDefaultXMin,
+      xMax: PlotConfiguration.viewportDefaultXMax,
+      yMin: PlotConfiguration.viewportDefaultYMin,
+      yMax: PlotConfiguration.viewportDefaultYMax,
       autoScaleY: autoScaleY,
+      marginLeft: marginLeft,
     );
   }
 
   /// 缩放到指定的数据范围，返回新的视口
   ///
-  /// 用于框选放大功能。X 轴范围受 [minXRange] 和 [maxXRange] 限制。
+  /// 用于框选放大功能。X/Y 轴范围均受最小值和最大值限制。
   PlotViewport zoomTo(double x1, double x2, double y1, double y2) {
-    var newXRange = (x2 - x1).abs();
-    if (newXRange < minXRange) newXRange = minXRange;
-    if (newXRange > maxXRange) newXRange = maxXRange;
-
     return copyWith(
       xMin: x1 < x2 ? x1 : x2,
-      xMax: (x1 < x2 ? x1 : x2) + newXRange,
+      xMax: x1 < x2 ? x2 : x1,
       yMin: y1 < y2 ? y1 : y2,
       yMax: y1 < y2 ? y2 : y1,
+    ).normalized(fallback: this);
+  }
+
+  /// 修正无效、反向或过小的坐标范围。
+  ///
+  /// 已保存的旧视口可能包含框选产生的零 Y 范围；归一化时保留原中心，
+  /// 并扩展到允许的最小范围。非有限值则回退到 [fallback] 或默认视口。
+  PlotViewport normalized({PlotViewport? fallback}) =>
+      _normalized(fallback: fallback, constrainX: true);
+
+  /// 仅修正 Y 轴，保留调用方用于精确统计等场景的短 X 范围。
+  PlotViewport normalizedY({PlotViewport? fallback}) =>
+      _normalized(fallback: fallback, constrainX: false);
+
+  PlotViewport _normalized({
+    required PlotViewport? fallback,
+    required bool constrainX,
+  }) {
+    final defaultViewport = PlotViewport();
+    final fallbackViewport = fallback ?? defaultViewport;
+    final normalizedX =
+        constrainX
+            ? _normalizeAxis(
+              xMin,
+              xMax,
+              minXRange,
+              maxXRange,
+              fallbackViewport.xMin,
+              fallbackViewport.xMax,
+              defaultViewport.xMin,
+              defaultViewport.xMax,
+            )
+            : (xMin, xMax);
+    final normalizedY = _normalizeAxis(
+      yMin,
+      yMax,
+      minYRange,
+      maxYRange,
+      fallbackViewport.yMin,
+      fallbackViewport.yMax,
+      defaultViewport.yMin,
+      defaultViewport.yMax,
     );
+    final result = copyWith(
+      xMin: normalizedX.$1,
+      xMax: normalizedX.$2,
+      yMin: normalizedY.$1,
+      yMax: normalizedY.$2,
+    );
+    result.setOffsetAxisColumnWidths(_offsetAxisColumnWidths);
+    return result;
+  }
+
+  static (double, double) _normalizeAxis(
+    double first,
+    double second,
+    double minRange,
+    double maxRange,
+    double fallbackFirst,
+    double fallbackSecond,
+    double defaultFirst,
+    double defaultSecond,
+  ) {
+    if (!first.isFinite || !second.isFinite) {
+      if (fallbackFirst.isFinite && fallbackSecond.isFinite) {
+        first = fallbackFirst;
+        second = fallbackSecond;
+      } else {
+        first = defaultFirst;
+        second = defaultSecond;
+      }
+    }
+
+    final lower = first < second ? first : second;
+    final upper = first < second ? second : first;
+    final rawRange = upper - lower;
+    if (!rawRange.isFinite) return (defaultFirst, defaultSecond);
+
+    final range = rawRange.clamp(minRange, maxRange).toDouble();
+    final center = lower + rawRange / 2;
+    if (!center.isFinite) return (defaultFirst, defaultSecond);
+    return (center - range / 2, center + range / 2);
   }
 
   /// 将 X 轴限制在允许范围内，返回新的视口
@@ -258,6 +342,7 @@ class PlotViewport {
     double? yMin,
     double? yMax,
     bool? autoScaleY,
+    double? marginLeft,
   }) {
     return PlotViewport(
       xMin: xMin ?? this.xMin,
@@ -265,6 +350,7 @@ class PlotViewport {
       yMin: yMin ?? this.yMin,
       yMax: yMax ?? this.yMax,
       autoScaleY: autoScaleY ?? this.autoScaleY,
+      marginLeft: marginLeft ?? this.marginLeft,
     );
   }
 
@@ -276,6 +362,7 @@ class PlotViewport {
       yMin: yMin,
       yMax: yMax,
       autoScaleY: autoScaleY,
+      marginLeft: marginLeft,
     );
     vp.setOffsetAxisColumnWidths(_offsetAxisColumnWidths);
     return vp;

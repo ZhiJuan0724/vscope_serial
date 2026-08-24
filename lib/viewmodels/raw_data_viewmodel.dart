@@ -3,48 +3,40 @@ import 'dart:typed_data';
 
 import '../core/utils/app_logger.dart';
 import '../core/utils/crc.dart';
-import '../services/serial_service.dart';
-import '../services/ymodem_service.dart';
+import '../data/models/retention_usage.dart';
+import '../services/data_connection_service.dart';
 import 'base_viewmodel.dart';
+import 'settings_drafts.dart';
 
 /// 数据收发页面 ViewModel
 class RawDataViewModel extends BaseViewModel {
-  RawDataViewModel(super.serialService);
+  RawDataViewModel(super.connectionService);
 
-  List<String> get receivedLines => serialService.receivedLines;
-  int get displayTrimRevision => serialService.displayTrimRevision;
+  List<String> get receivedLines => connectionService.receivedLines;
+  int get displayRevision => connectionService.displayRevision;
+  int get displayTrimRevision => connectionService.displayTrimRevision;
   List<String> get lastTrimmedDisplayLines =>
-      serialService.lastTrimmedDisplayLines;
-  bool get isConnected => serialService.isConnected;
-  bool get receiveHex => serialService.receiveHex;
-  bool get showTimestamp => serialService.showTimestamp;
-  bool get autoScroll => serialService.autoScroll;
-  bool get shellMode => serialService.rawDataShellMode;
-  bool get shellEnabled => serialService.rawDataShellEnabled;
-  RawShellInputMode get shellInputMode => serialService.rawShellInputMode;
-  double get terminalFontSize => serialService.rawDataTerminalFontSize;
-  String get terminalFontFamily => serialService.rawDataTerminalFontFamily;
-  RawShellThemeMode get shellThemeMode => serialService.rawShellThemeMode;
-  RawShellCursorMode get shellCursorMode => serialService.rawShellCursorMode;
-  bool get sendHex => serialService.sendHex;
-  bool get keepSendText => serialService.keepSendText;
-  bool get appendLineEnding => serialService.appendLineEnding;
-  String get lineEnding => serialService.lineEnding;
-  bool get enableCrc => serialService.enableCrc;
-  CrcByteOrder get crcByteOrder => serialService.crcByteOrder;
-  CrcType get crcType => serialService.crcType;
-  String get crcPolyName => serialService.crcPolyName;
-  bool get useRandomSource => serialService.useRandomSource;
-  bool get isRawReceiving => serialService.isRawReceiving;
-  bool get hasRawData => serialService.hasRawData;
-  int get timeWindowUs => serialService.timeWindowUs;
-  int get displayLineLimit => serialService.displayLineLimit;
-  Stream<Uint8List> get shellDataStream => serialService.shellDataStream;
-  Stream<YmodemTransferStatus> get ymodemStatusStream =>
-      serialService.ymodemService.statusStream;
-  YmodemTransferStatus get ymodemStatus => serialService.ymodemService.status;
-  bool get isYmodemActive => ymodemStatus.isActive;
-  String get textEncoding => serialService.textEncoding;
+      connectionService.lastTrimmedDisplayLines;
+  bool get isConnected => connectionService.isConnected;
+  bool get receiveHex => connectionService.receiveHex;
+  bool get showTimestamp => connectionService.showTimestamp;
+  bool get autoLineBreak => connectionService.autoLineBreak;
+  bool get autoScroll => connectionService.autoScroll;
+  bool get sendHex => connectionService.sendHex;
+  bool get keepSendText => connectionService.keepSendText;
+  bool get appendLineEnding => connectionService.appendLineEnding;
+  String get lineEnding => connectionService.lineEnding;
+  bool get enableCrc => connectionService.enableCrc;
+  CrcByteOrder get crcByteOrder => connectionService.crcByteOrder;
+  CrcType get crcType => connectionService.crcType;
+  String get crcPolyName => connectionService.crcPolyName;
+  bool get useRandomSource => connectionService.useRandomSource;
+  bool get isRawReceiving => connectionService.isRawReceiving;
+  bool get hasRawData => connectionService.hasRawData;
+  RetentionUsage get rawRetentionUsage => connectionService.rawRetentionUsage;
+  int get autoLineBreakIntervalMs => connectionService.autoLineBreakIntervalMs;
+  int get displayLineLimit => connectionService.displayLineLimit;
+  String get textEncoding => connectionService.textEncoding;
 
   /// 非 HEX 模式可选的文本收发编码。
   static const List<Map<String, String>> availableEncodings = [
@@ -60,206 +52,141 @@ class RawDataViewModel extends BaseViewModel {
   /// 设置随机数据源开关
   /// 当启用随机数据源且未开始绘图时，随机数据会显示在数据收发页面
   void setUseRandomSource(bool value) {
-    if (serialService.useRandomSource == value) return;
-    serialService.useRandomSource = value;
+    if (connectionService.useRandomSource == value) return;
+    connectionService.setUseRandomSource(value);
     AppLogger().info('数据收发页随机源${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   /// 开始接收原始数据
-  void startReceiving() => serialService.startRawReceiving();
+  void startReceiving() => connectionService.startRawReceiving();
 
   /// 停止接收原始数据
-  void stopReceiving() => serialService.stopRawReceiving();
+  void stopReceiving() => connectionService.stopRawReceiving();
 
   void setReceiveHex(bool value) {
-    serialService.setReceiveHex(value);
+    connectionService.setReceiveHex(value);
   }
 
   void setTextEncoding(String encoding) {
-    serialService.setTextEncoding(encoding);
+    connectionService.setTextEncoding(encoding);
   }
 
   void setShowTimestamp(bool value) {
-    serialService.setShowTimestamp(value);
+    connectionService.setShowTimestamp(value);
+  }
+
+  void setAutoLineBreak(bool value) {
+    connectionService.setAutoLineBreak(value);
   }
 
   void setAutoScroll(bool value) {
-    if (serialService.autoScroll == value) return;
-    serialService.autoScroll = value;
+    if (connectionService.autoScroll == value) return;
+    connectionService.setAutoScroll(value);
     AppLogger().info('接收区自动滚动${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
-  }
-
-  void setShellMode(bool value) {
-    serialService.setRawDataShellMode(value);
-  }
-
-  void setShellEnabled(bool value) {
-    serialService.setRawDataShellEnabled(value);
-  }
-
-  void setShellInputMode(RawShellInputMode value) {
-    serialService.setRawShellInputMode(value);
-  }
-
-  void setTerminalFontSize(double value) {
-    serialService.setRawDataTerminalFontSize(value);
-  }
-
-  void setTerminalFontFamily(String value) {
-    serialService.setRawDataTerminalFontFamily(value);
-  }
-
-  void setShellThemeMode(RawShellThemeMode value) {
-    serialService.setRawShellThemeMode(value);
-  }
-
-  void setShellCursorMode(RawShellCursorMode value) {
-    serialService.setRawShellCursorMode(value);
   }
 
   void setSendHex(bool value) {
-    if (serialService.sendHex == value) return;
-    serialService.sendHex = value;
-    if (!value) serialService.enableCrc = false;
+    if (connectionService.sendHex == value) return;
+    connectionService.setSendHex(value);
     AppLogger().info(
       '发送格式切换为${value ? 'HEX' : '文本'}${value ? '' : '，CRC已关闭'}',
       category: 'DATA',
     );
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setKeepSendText(bool value) {
-    if (serialService.keepSendText == value) return;
-    serialService.keepSendText = value;
+    if (connectionService.keepSendText == value) return;
+    connectionService.setKeepSendText(value);
     AppLogger().info('发送后${value ? '保留' : '清空'}输入内容', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setAppendLineEnding(bool value) {
-    if (serialService.appendLineEnding == value) return;
-    serialService.appendLineEnding = value;
+    if (connectionService.appendLineEnding == value) return;
+    connectionService.setAppendLineEnding(value);
     AppLogger().info('发送行尾追加${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setLineEnding(String value) {
-    if (serialService.lineEnding == value) return;
-    serialService.lineEnding = value;
+    if (connectionService.lineEnding == value) return;
+    connectionService.setLineEnding(value);
     AppLogger().info(
       '发送行尾设置为 ${value.replaceAll('\r', r'\r').replaceAll('\n', r'\n')}',
       category: 'DATA',
     );
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setEnableCrc(bool value) {
-    if (serialService.enableCrc == value) return;
-    serialService.enableCrc = value;
+    if (connectionService.enableCrc == value) return;
+    connectionService.setEnableCrc(value);
     AppLogger().info('发送CRC${value ? '启用' : '关闭'}', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setCrcByteOrder(CrcByteOrder value) {
-    if (serialService.crcByteOrder == value) return;
-    serialService.crcByteOrder = value;
+    if (connectionService.crcByteOrder == value) return;
+    connectionService.setCrcByteOrder(value);
     AppLogger().info('CRC字节序设置为 ${value.label}', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setCrcType(CrcType type) {
-    if (serialService.crcType == type) return;
-    serialService.crcType = type;
-    final polys = getPolysByType(type);
-    if (polys.isNotEmpty) {
-      serialService.crcPolyName = polys.keys.first;
-    }
+    if (connectionService.crcType == type) return;
+    connectionService.setCrcType(type);
     AppLogger().info(
-      'CRC类型设置为 ${type.name}，多项式=${serialService.crcPolyName}',
+      'CRC类型设置为 ${type.name}，多项式=${connectionService.crcPolyName}',
       category: 'DATA',
     );
-    Future.microtask(() => serialService.notifyListeners());
   }
 
   void setCrcPolyName(String name) {
-    if (serialService.crcPolyName == name) return;
-    serialService.crcPolyName = name;
+    if (connectionService.crcPolyName == name) return;
+    connectionService.setCrcPolyName(name);
     AppLogger().info('CRC多项式设置为 $name', category: 'DATA');
-    Future.microtask(() => serialService.notifyListeners());
   }
 
-  void setTimeWindowUs(int us) {
-    serialService.setTimeWindowUs(us);
+  void setAutoLineBreakIntervalMs(int milliseconds) {
+    connectionService.setAutoLineBreakIntervalMs(milliseconds);
   }
 
   void setDisplayLineLimit(int value) {
-    serialService.setDisplayLineLimit(value);
+    connectionService.setDisplayLineLimit(value);
   }
+
+  Future<void> applyDisplaySettings(RawDisplaySettingsDraft draft) =>
+      connectionService.applyRawDisplaySettings(
+        encoding: draft.encoding,
+        autoLineBreakIntervalMs: draft.autoLineBreakIntervalMs,
+        displayLineLimit: draft.displayLineLimit,
+      );
 
   void clearData() {
     AppLogger().info('用户清空数据收发接收区', category: 'DATA');
-    serialService.clearReceivedData();
+    connectionService.clearReceivedData();
   }
 
   Uint8List? prepareSendData(String text) =>
-      serialService.prepareSendData(text);
-  void send(Uint8List data) {
+      connectionService.prepareSendData(text);
+  Uint8List? prepareMultiSendData(String text, {required bool isHex}) =>
+      connectionService.prepareMultiSendData(text, isHex: isHex);
+  Future<void> send(Uint8List data) {
+    if (!isRawReceiving) {
+      throw StateError('请先开始数据接收');
+    }
     AppLogger().info('用户手动发送数据 ${data.length} bytes', category: 'DATA');
-    serialService.send(data);
-  }
-
-  Future<void> sendShellText(String text) async {
-    if (text.isEmpty || isYmodemActive) return;
-    AppLogger().info('Shell命令行发送 ${text.length} 字符', category: 'DATA');
-    serialService.sendRawBytes(serialService.prepareShellTextData(text));
-  }
-
-  Future<void> sendShellBytes(Uint8List data) async {
-    if (data.isEmpty || isYmodemActive) return;
-    AppLogger().info('Shell逐键发送 ${data.length} bytes', category: 'DATA');
-    await serialService.sendRawBytes(data);
-  }
-
-  Uint8List encodeText(String text) => serialService.encodeText(text);
-
-  Future<void> sendYmodemFile(
-    File file, {
-    YmodemPacketSizeMode packetSizeMode = YmodemPacketSizeMode.auto,
-  }) {
-    AppLogger().info(
-      '开始YMODEM发送：${file.path}，分包=${packetSizeMode.name}',
-      category: 'DATA',
-    );
-    return serialService.ymodemService.sendFile(
-      file,
-      packetSizeMode: packetSizeMode,
-    );
-  }
-
-  Future<File?> receiveYmodemFile() {
-    AppLogger().info('开始YMODEM接收', category: 'DATA');
-    return serialService.receiveYmodemFile();
-  }
-
-  Future<void> cancelYmodem() {
-    AppLogger().info('用户取消YMODEM传输', category: 'DATA');
-    return serialService.ymodemService.cancel();
+    return connectionService.send(data);
   }
 
   Future<String?> exportAsText({
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
-  }) => serialService.exportAsText(
+  }) => connectionService.exportAsText(
     outputDirectory: outputDirectory,
     onProgress: onProgress,
   );
   Future<String?> exportAsRawBytes({
     Directory? outputDirectory,
     ExportProgressCallback? onProgress,
-  }) => serialService.exportAsRawBytes(
+  }) => connectionService.exportAsRawBytes(
     outputDirectory: outputDirectory,
     onProgress: onProgress,
   );
-  Map<String, String> get dataStats => serialService.dataStats;
+  Map<String, String> get dataStats => connectionService.dataStats;
 }

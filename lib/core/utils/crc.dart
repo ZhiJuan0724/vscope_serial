@@ -336,67 +336,74 @@ Map<String, CrcPoly> getPolysByType(CrcType type) {
 
 /// 计算 CRC 校验值
 int calculateCrc(Uint8List data, CrcPoly poly) {
-  if (poly.width == 8) return _calculateCrc8(data, poly);
-  if (poly.width == 16) return _calculateCrc16(data, poly);
-  if (poly.width == 32) return _calculateCrc32(data, poly);
-  return 0;
+  final calculator = CrcCalculator(poly)..add(data);
+  return calculator.digest;
 }
 
-int _calculateCrc8(Uint8List data, CrcPoly poly) {
-  int crc = poly.init;
-  const topBit = 0x80;
-  for (final byte in data) {
-    int b = byte;
-    if (poly.refIn) b = _reverse8(b);
-    crc ^= b;
-    for (int i = 0; i < 8; i++) {
-      if ((crc & topBit) != 0) {
-        crc = ((crc << 1) & 0xFF) ^ poly.poly;
-      } else {
-        crc = (crc << 1) & 0xFF;
+/// 可分块追加数据的 CRC 计算器，适合大文件流式读写。
+class CrcCalculator {
+  final CrcPoly poly;
+  late final int _mask;
+  late final int _topBit;
+  late int _crc;
+  late final bool _useReflectedCrc32Table;
+
+  static final List<int> _crc32Table = List<int>.generate(256, (index) {
+    var crc = index;
+    for (var i = 0; i < 8; i++) {
+      crc = (crc & 1) != 0 ? 0xEDB88320 ^ (crc >> 1) : crc >> 1;
+    }
+    return crc & 0xFFFFFFFF;
+  }, growable: false);
+
+  CrcCalculator(this.poly) {
+    if (poly.width != 8 && poly.width != 16 && poly.width != 32) {
+      throw ArgumentError.value(poly.width, 'poly.width', '仅支持 8/16/32');
+    }
+    _mask = (1 << poly.width) - 1;
+    _topBit = 1 << (poly.width - 1);
+    _crc = poly.init & _mask;
+    _useReflectedCrc32Table =
+        poly.width == 32 &&
+        poly.poly == 0x04C11DB7 &&
+        poly.refIn &&
+        poly.refOut;
+  }
+
+  void add(List<int> data) {
+    if (_useReflectedCrc32Table) {
+      for (final byte in data) {
+        _crc = _crc32Table[(_crc ^ byte) & 0xFF] ^ (_crc >>> 8);
+      }
+      _crc &= _mask;
+      return;
+    }
+
+    final shift = poly.width - 8;
+    for (final byte in data) {
+      final input = poly.refIn ? _reverse8(byte) : byte;
+      _crc ^= input << shift;
+      for (var i = 0; i < 8; i++) {
+        _crc =
+            (_crc & _topBit) != 0
+                ? ((_crc << 1) & _mask) ^ poly.poly
+                : (_crc << 1) & _mask;
       }
     }
   }
-  if (poly.refOut) crc = _reverse8(crc);
-  return (crc ^ poly.xorOut) & 0xFF;
-}
 
-int _calculateCrc16(Uint8List data, CrcPoly poly) {
-  int crc = poly.init;
-  const topBit = 0x8000;
-  for (final byte in data) {
-    int b = byte;
-    if (poly.refIn) b = _reverse8(b);
-    crc ^= (b << 8);
-    for (int i = 0; i < 8; i++) {
-      if ((crc & topBit) != 0) {
-        crc = ((crc << 1) & 0xFFFF) ^ poly.poly;
-      } else {
-        crc = (crc << 1) & 0xFFFF;
-      }
+  int get digest {
+    if (_useReflectedCrc32Table) {
+      return (_crc ^ poly.xorOut) & _mask;
     }
+    final reflected = switch (poly.width) {
+      8 => _reverse8(_crc),
+      16 => _reverse16(_crc),
+      32 => _reverse32(_crc),
+      _ => _crc,
+    };
+    return ((poly.refOut ? reflected : _crc) ^ poly.xorOut) & _mask;
   }
-  if (poly.refOut) crc = _reverse16(crc);
-  return (crc ^ poly.xorOut) & 0xFFFF;
-}
-
-int _calculateCrc32(Uint8List data, CrcPoly poly) {
-  int crc = poly.init;
-  const topBit = 0x80000000;
-  for (final byte in data) {
-    int b = byte;
-    if (poly.refIn) b = _reverse8(b);
-    crc ^= (b << 24);
-    for (int i = 0; i < 8; i++) {
-      if ((crc & topBit) != 0) {
-        crc = ((crc << 1) & 0xFFFFFFFF) ^ poly.poly;
-      } else {
-        crc = (crc << 1) & 0xFFFFFFFF;
-      }
-    }
-  }
-  if (poly.refOut) crc = _reverse32(crc);
-  return (crc ^ poly.xorOut) & 0xFFFFFFFF;
 }
 
 int _reverse8(int value) {

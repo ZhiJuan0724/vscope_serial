@@ -32,11 +32,9 @@ void main() {
       final source = RandomDataSource(channelCount: 4, intervalMs: 10);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
-      source.start();
+      await source.start();
 
       // 等待 Isolate 启动完成
       await Future.delayed(const Duration(milliseconds: 20));
@@ -45,7 +43,7 @@ void main() {
       // 等待生成至少3包数据
       await Future.delayed(const Duration(milliseconds: 50));
 
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       // 验证收到了数据
@@ -71,16 +69,14 @@ void main() {
       final source = RandomDataSource(channelCount: 4, frequencyHz: 1000);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
-      source.start();
+      await source.start();
 
       // 运行100ms，理论上应该生成约100包
       await Future.delayed(const Duration(milliseconds: 100));
 
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       // 允许一定误差，但至少应该生成50包以上
@@ -99,15 +95,38 @@ void main() {
       );
     });
 
+    test('运行中更新频率沿用当前数据流并立即生效', () async {
+      final source = RandomDataSource(channelCount: 4, frequencyHz: 10);
+      var packetCount = 0;
+      final subscription = source.byteStream.listen((data) {
+        packetCount += '\n'.allMatches(String.fromCharCodes(data)).length;
+      });
+
+      await source.start();
+      await Future.delayed(const Duration(milliseconds: 120));
+      final lowRateCount = packetCount;
+
+      await source.updateFrequency(1000);
+      await Future.delayed(const Duration(milliseconds: 120));
+      final highRateCount = packetCount - lowRateCount;
+
+      await source.stop();
+      await subscription.cancel();
+
+      expect(lowRateCount, lessThanOrEqualTo(3));
+      expect(highRateCount, greaterThanOrEqualTo(60));
+      expect(source.frequencyHz, 1000);
+    });
+
     test('100KHz 高频模式按批量数据生成', () async {
       final source = RandomDataSource(channelCount: 4, frequencyHz: 100000);
 
       final receivedData = <Uint8List>[];
       final subscription = source.byteStream.listen(receivedData.add);
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: 30));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final packetCount = receivedData
@@ -131,9 +150,9 @@ void main() {
           }
         });
 
-        source.start();
+        await source.start();
         final data = await completer.future.timeout(const Duration(seconds: 1));
-        source.stop();
+        await source.stop();
         await subscription.cancel();
 
         final text = String.fromCharCodes(data);
@@ -150,13 +169,11 @@ void main() {
       final source = RandomDataSource(intervalMs: 10);
 
       final receivedData = <Uint8List>[];
-      final subscription = source.byteStream.listen((data) {
-        receivedData.add(data);
-      });
+      final subscription = source.byteStream.listen(receivedData.add);
 
-      source.start();
+      await source.start();
       await Future.delayed(const Duration(milliseconds: 30));
-      source.stop();
+      await source.stop();
 
       final countAfterStop = receivedData.length;
 
@@ -183,9 +200,9 @@ void main() {
         }
       });
 
-      source.start();
+      await source.start();
       final data = await completer.future.timeout(const Duration(seconds: 1));
-      source.stop();
+      await source.stop();
       await subscription.cancel();
 
       final text = String.fromCharCodes(data);

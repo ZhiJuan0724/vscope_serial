@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""ZobowDevice 虚拟串口模拟器：接收初始化帧并持续发送 4/8 通道测试数据。"""
 """
 众邦电控协议下位机模拟器
 
@@ -137,8 +138,8 @@ class DataGenerator:
     def next(self) -> List[int]:
         """生成下一组4通道数据"""
         self._tick += 1
-        # Slower sine sweep: 0.01 rad/sample gives a ~628-sample period.
-        # At the default 1kHz send rate this is about 0.63s per cycle.
+        # 较慢的正弦扫频：每采样 0.01 弧度，周期约为 628 个采样点。
+        # 默认 1 kHz 发送速率下，每个周期约为 0.63 秒。
         t = self._tick * 0.01
         
         if self.mode == 'sine':
@@ -200,7 +201,7 @@ class ConsoleCommandReader:
 
             key = msvcrt.getwch()
             if key in ("\x00", "\xe0"):
-                # Consume extended-key suffix.
+                # 消费扩展键的后缀字节。
                 if msvcrt.kbhit():
                     msvcrt.getwch()
                 continue
@@ -218,7 +219,7 @@ class ConsoleCommandReader:
                 return commands
 
 
-class JackFourChannelDevice:
+class ZobowDevice:
     """众邦电控协议下位机模拟器"""
     
     def __init__(
@@ -523,7 +524,7 @@ def main():
     print(f"批量窗口: {args.batch_ms}ms")
     print("=" * 50)
     
-    device = JackFourChannelDevice(
+    device = ZobowDevice(
         port=args.port,
         baudrate=args.baud,
         data_mode=args.mode,

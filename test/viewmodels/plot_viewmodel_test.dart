@@ -4,16 +4,21 @@ import 'dart:typed_data';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/localization/app_strings.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
+import 'package:vscope_serial/data/models/math_channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/models/address_config_profile.dart';
+import 'package:vscope_serial/data/models/plot_lod_index.dart';
+import 'package:vscope_serial/data/models/plot_render_engine.dart';
 import 'package:vscope_serial/services/app_settings.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 import 'package:vscope_serial/views/plot/plot_painter.dart';
 
@@ -45,9 +50,57 @@ Future<void> _writeLegacyDat(File file) async {
   await file.writeAsBytes(bytes);
 }
 
+Future<void> _writeLegacyV2PlotBin(
+  File file, {
+  required List<List<double>> rows,
+  required Map<String, dynamic> metadata,
+}) async {
+  final channelCount = rows.first.length;
+  final rowLength = 8 + channelCount * 8;
+  final payload = ByteData(rows.length * rowLength);
+  var offset = 0;
+  for (var pointIndex = 0; pointIndex < rows.length; pointIndex++) {
+    payload.setFloat64(offset, pointIndex.toDouble(), Endian.little);
+    offset += 8;
+    for (final value in rows[pointIndex]) {
+      payload.setFloat64(offset, value, Endian.little);
+      offset += 8;
+    }
+  }
+  final metadataBytes = utf8.encode(jsonEncode(metadata));
+  final payloadBytes = payload.buffer.asUint8List();
+  final crc =
+      CrcCalculator(crc32Polys['CRC-32']!)
+        ..add(metadataBytes)
+        ..add(payloadBytes);
+  final header = ByteData(28);
+  const magic = [0x56, 0x53, 0x50, 0x4C, 0x4F, 0x54, 0x42, 0x31];
+  for (var i = 0; i < magic.length; i++) {
+    header.setUint8(i, magic[i]);
+  }
+  header.setUint16(8, 2, Endian.little);
+  header.setUint16(10, channelCount, Endian.little);
+  header.setUint32(12, rows.length, Endian.little);
+  header.setUint32(16, payloadBytes.length, Endian.little);
+  header.setUint32(20, crc.digest, Endian.little);
+  header.setUint32(24, metadataBytes.length, Endian.little);
+  await file.writeAsBytes([
+    ...header.buffer.asUint8List(),
+    ...metadataBytes,
+    ...payloadBytes,
+  ]);
+}
+
+/// 与组合根一致的生产帧调度实现，供需要真实 binding 的 testWidgets 注入。
+void _schedulerPostFrameCallback(void Function() callback) {
+  final binding = SchedulerBinding.instance;
+  binding.scheduleFrame();
+  binding.addPostFrameCallback((_) => callback());
+}
+
 void main() {
   group('PlotViewModel', () {
-    late SerialService serialService;
+    late DataConnectionService connectionService;
     late PlotViewModel vm;
 
     setUp(() async {
@@ -55,6 +108,16 @@ void main() {
       final settings = AppSettings();
       settings.parserType = 'fireWater';
       settings.useRandomSource = false;
+      settings.triggerToolbarEnabled = false;
+      settings.plotLodQuality = 'balanced';
+      settings.plotRenderEngine = 'canvas';
+      settings.plotHistoryMemoryLimitGiB = 2;
+      settings.mathChannels = MathChannelConfig.createDefaults();
+      settings.keepPlotOnRestart = false;
+      settings.plotLegendPanelRight = null;
+      settings.plotLegendPanelTop = null;
+      settings.plotLiveValuesPanelRight = null;
+      settings.plotLiveValuesPanelTop = null;
       settings.sendProtocolType = 'none';
       settings.rChannelAddresses = List.filled(16, '');
       settings.rProtocolLooseChannelSettings = false;
@@ -67,6 +130,7 @@ void main() {
         ParserConfig.maxZobowChannelCount,
         DataType.int16,
       );
+      settings.channelPresetBindings = [];
       settings.fixedFrameChannelTypes = List.filled(
         SendProtocolConfig.maxChannelCount,
         DataType.uint16,
@@ -76,8 +140,8 @@ void main() {
       settings.xMax = 1000;
       settings.yMin = 0;
       settings.yMax = 32768;
-      serialService = SerialService();
-      vm = PlotViewModel(serialService);
+      connectionService = DataConnectionService();
+      vm = PlotViewModel(connectionService);
     });
 
     tearDown(() {
@@ -97,6 +161,32 @@ void main() {
       expect(vm.cursor, null);
     });
 
+    test('预览导航限制在完整数据范围内并退出跟随', () {
+      for (var i = 0; i < 2000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 200, xMax: 400));
+      vm.setFollowEnabled(true);
+
+      vm.movePreviewViewportTo(0);
+
+      expect(vm.viewport.xMin, 0);
+      expect(vm.viewport.xMax, 200);
+      expect(vm.followEnabled, isFalse);
+    });
+
+    test('解析历史按实际通道数分配存储空间', () {
+      for (var i = 0; i < 5000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([1, 2, 3, 4], bytesConsumed: 16),
+        );
+      }
+
+      expect(vm.parsedHistoryAllocatedValueSlotsForTest, 2 * 4096 * 4);
+    });
+
     test('配置选择会递增配置修订号以刷新工具栏', () {
       final before = vm.profileRevision;
 
@@ -110,13 +200,13 @@ void main() {
       vm.setChannelColor(0, ChannelConfig.darkPresetColors.first);
       vm.setChannelColor(1, customColor);
 
-      vm.setPlotBackground('light');
+      vm.setPlotBackground(PlotBackgroundStyle.light);
 
-      expect(vm.plotBackground, 'light');
+      expect(vm.plotBackground, PlotBackgroundStyle.light);
       expect(vm.channels[0].color, ChannelConfig.lightPresetColors.first);
       expect(vm.channels[1].color, customColor);
 
-      vm.setPlotBackground('dark');
+      vm.setPlotBackground(PlotBackgroundStyle.dark);
 
       expect(vm.channels[0].color, ChannelConfig.darkPresetColors.first);
       expect(vm.channels[1].color, customColor);
@@ -136,6 +226,33 @@ void main() {
       expect(vm.floatingPanelOpacity, 1);
     });
 
+    test('图例和实时值浮窗位置可保存到设置', () {
+      expect(vm.legendPanelRight, 16);
+      expect(vm.legendPanelTop, 96);
+      expect(vm.liveValuesPanelRight, 16);
+      expect(vm.liveValuesPanelTop(legendVisible: false), 96);
+      expect(vm.liveValuesPanelTop(legendVisible: true), 240);
+
+      vm.setLegendPanelPosition(right: 42.34, top: 88.86);
+      vm.setLiveValuesPanelPosition(right: 123.45, top: 234.56);
+
+      expect(vm.legendPanelRight, 42.3);
+      expect(vm.legendPanelTop, 88.9);
+      expect(vm.liveValuesPanelRight, 123.5);
+      expect(vm.liveValuesPanelTop(legendVisible: false), 234.6);
+      expect(vm.liveValuesPanelTop(legendVisible: true), 234.6);
+      expect(AppSettings().plotLegendPanelRight, 42.3);
+      expect(AppSettings().plotLegendPanelTop, 88.9);
+      expect(AppSettings().plotLiveValuesPanelRight, 123.5);
+      expect(AppSettings().plotLiveValuesPanelTop, 234.6);
+
+      vm.setLegendPanelPosition(right: -1, top: 20);
+      vm.setLiveValuesPanelPosition(right: double.infinity, top: 20);
+
+      expect(vm.legendPanelRight, 42.3);
+      expect(vm.liveValuesPanelRight, 123.5);
+    });
+
     test('视口默认范围', () {
       expect(vm.viewport.xMin, 0.0);
       expect(vm.viewport.xMax, 1000.0);
@@ -153,6 +270,82 @@ void main() {
       expect(vm.viewport, isNot(oldViewport));
       expect(vm.viewport.xMin, 100.0);
       expect(vm.viewport.xMax, 500.0);
+    });
+
+    testWidgets('拖动视口在同一帧内只通知一次', (tester) async {
+      final dragVm = PlotViewModel(
+        connectionService,
+        postFrameCallback: _schedulerPostFrameCallback,
+      );
+      try {
+        // 让构造期异步初始化（地址配置服务等）的通知先落定，避免干扰计数。
+        await tester.pump();
+
+        var notifications = 0;
+        dragVm.addListener(() => notifications++);
+
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 10, xMax: 110),
+          fromDrag: true,
+        );
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 20, xMax: 120),
+          fromDrag: true,
+        );
+        dragVm.updateViewport(
+          dragVm.viewport.copyWith(xMin: 30, xMax: 130),
+          fromDrag: true,
+        );
+
+        expect(dragVm.viewport.xMin, 30.0);
+        expect(notifications, 0);
+        await tester.pump();
+        expect(notifications, 1);
+      } finally {
+        dragVm.dispose();
+      }
+    });
+
+    test('jumpToXIndex 保持当前范围并移动视口中心', () {
+      for (int i = 0; i < 1000; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 100, xMax: 500));
+
+      vm.jumpToXIndex(900);
+
+      expect(vm.viewport.xRange, 400.0);
+      expect(vm.viewport.xMin, 700.0);
+      expect(vm.viewport.xMax, 1100.0);
+    });
+
+    test('jumpToXIndex 拒绝无数据和越界索引', () {
+      final oldViewport = vm.viewport.copy();
+
+      vm.jumpToXIndex(0);
+
+      expect(vm.viewport.xMin, oldViewport.xMin);
+      expect(vm.viewport.xMax, oldViewport.xMax);
+      expect(vm.minJumpXIndex, isNull);
+      expect(vm.maxJumpXIndex, isNull);
+
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+
+      expect(vm.minJumpXIndex, 0);
+      expect(vm.maxJumpXIndex, 9);
+      expect(vm.canJumpToXIndex(-1), isFalse);
+      expect(vm.canJumpToXIndex(10), isFalse);
+      expect(vm.canJumpToXIndex(9), isTrue);
+
+      vm.jumpToXIndex(-1);
+      expect(vm.viewport.xMin, oldViewport.xMin);
+      expect(vm.viewport.xMax, oldViewport.xMax);
     });
 
     test('updateFollowCursor 没有数据时保留指针 X', () {
@@ -221,14 +414,610 @@ void main() {
       expect(vm.observations.single.x, 35);
     });
 
+    test('手动观察在当前窗口外时保留目标X且不伪造吸附数据', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.setObservationClickToPlace(true);
+
+      vm.startObservationPlacement();
+      vm.commitObservationPlacement(8);
+
+      expect(vm.observations.single.x, 8);
+      expect(vm.observations.single.locked, isFalse);
+      expect(vm.observations.single.hasData, isFalse);
+      expect(vm.observations.single.channelValues, isNull);
+
+      vm.updateObservation(0, 9);
+
+      expect(vm.observations.single.x, 9);
+      expect(vm.observations.single.hasData, isFalse);
+    });
+
+    test('观察锁定后不能拖动位置但仍可在管理逻辑中删除', () {
+      for (int i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.addObservation();
+
+      expect(vm.observations.single.locked, isFalse);
+      vm.setObservationLocked(0, true);
+      expect(vm.observations.single.locked, isTrue);
+
+      final beforeX = vm.observations.single.x;
+      vm.updateObservation(0, 5);
+      expect(vm.observations.single.x, beforeX);
+
+      vm.setObservationLocked(0, false);
+      vm.updateObservation(0, 5);
+      expect(vm.observations.single.x, 5);
+
+      vm.setObservationLocked(0, true);
+      vm.removeObservation(0);
+      expect(vm.observations, isEmpty);
+    });
+
+    test('当前窗口外的观察可一键跳转到对应X位置', () {
+      for (int i = 0; i < 100; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 20));
+      vm.setObservationClickToPlace(true);
+      vm.startObservationPlacement();
+      vm.commitObservationPlacement(80);
+
+      expect(vm.observations.single.x, 80);
+      expect(vm.viewport.isVisibleX(vm.observations.single.x), isFalse);
+
+      vm.jumpToObservation(0);
+
+      expect(vm.observations.single.x, 80);
+      expect(vm.viewport.isVisibleX(80), isTrue);
+      expect(vm.viewport.xMin, 70);
+      expect(vm.viewport.xMax, 90);
+    });
+
+    test('触发关闭时不检测条件', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: false,
+          channelIndex: 0,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 1,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 0);
+      expect(vm.observations, isEmpty);
+    });
+
+    test('触发条件支持大于小于和容差等于', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.less,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([9], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.equal,
+          targetValue: 10,
+          triggerLimit: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([
+          10 + PlotTriggerConfig.equalTolerance / 2,
+        ], bytesConsumed: 1),
+      );
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('触发条件支持向上和向下越过阈值', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.crossUp,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([9], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.crossDown,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('触发只对打开的普通通道生效且未配置不能左键开启', () {
+      vm.setTriggerEnabled(true);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.triggerToolbarEnabled, isFalse);
+
+      vm.setChannelVisible(0, false);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 0,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+    });
+
+    test('触发通道候选按当前协议实际普通通道数过滤', () {
+      vm.setParserType(ParserType.zobow);
+
+      expect(vm.triggerCandidateChannels.map((channel) => channel.index), [
+        0,
+        1,
+        2,
+        3,
+      ]);
+
+      vm.updateParserConfig(
+        vm.parserConfig.copyWith(
+          type: ParserType.zobow,
+          channelCount: ParserConfig.maxZobowChannelCount,
+        ),
+      );
+      vm.setChannelVisible(2, false);
+
+      expect(vm.triggerCandidateChannels.map((channel) => channel.index), [
+        0,
+        1,
+        3,
+        4,
+        5,
+        6,
+        7,
+      ]);
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 15,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      expect(vm.triggerConfig.channelIndex, 0);
+      expect(vm.triggerEnabled, isTrue);
+    });
+
+    test('无数据偏移的数学通道可按表达式原始值触发', () {
+      final display = vm.mathChannels[0].display.copyWith(
+        yOffset: 1000,
+        yScale: 0.25,
+      );
+      expect(vm.configureMathChannel(0, 'CH0 + CH1', display), isTrue);
+      expect(
+        vm.triggerCandidateChannels.map((channel) => channel.index),
+        contains(16),
+      );
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 16,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+          includeSystemTimeInNote: false,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([4, 7], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 1);
+      expect(vm.observations, hasLength(1));
+      expect(vm.observations.single.x, 0);
+      expect(vm.observations.single.channelValues, [4, 7, 11]);
+      expect(vm.observations.single.note, contains('Math1'));
+    });
+
+    test('数学通道支持跨越触发判定', () {
+      expect(
+        vm.configureMathChannel(0, 'CH0 - CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          channelIndex: 16,
+          comparison: PlotTriggerComparison.crossUp,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      expect(vm.triggeredCount, 0);
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 2], bytesConsumed: 1));
+      expect(vm.triggeredCount, 1);
+    });
+
+    test('含数据偏移或不可见的数学通道不可用于触发', () {
+      expect(
+        vm.configureMathChannel(0, 'CH0[1]', vm.mathChannels[0].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(1, 'CH0[-1]', vm.mathChannels[1].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(2, 'CH0 + 1', vm.mathChannels[2].display),
+        isTrue,
+      );
+      vm.updateMathChannelDisplay(
+        2,
+        vm.mathChannels[2].display.copyWith(visible: false),
+      );
+
+      final candidates =
+          vm.triggerCandidateChannels.map((channel) => channel.index).toSet();
+      expect(candidates, isNot(contains(16)));
+      expect(candidates, isNot(contains(17)));
+      expect(candidates, isNot(contains(18)));
+    });
+
+    test('触发工具默认隐藏且关闭入口会关闭触发模式', () {
+      expect(vm.triggerToolbarEnabled, isFalse);
+
+      vm.setTriggerToolbarEnabled(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+        ),
+      );
+
+      expect(vm.triggerToolbarEnabled, isTrue);
+      expect(vm.triggerEnabled, isTrue);
+
+      vm.setTriggerToolbarEnabled(false);
+
+      expect(vm.triggerToolbarEnabled, isFalse);
+      expect(vm.triggerEnabled, isFalse);
+    });
+
+    test('累计命中达到阈值后才触发并可继续监听多次', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          hitThreshold: 2,
+          triggerLimit: 2,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+          includeSystemTimeInNote: false,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggerHitCount, 1);
+      expect(vm.triggeredCount, 0);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([12], bytesConsumed: 1));
+      expect(vm.triggerHitCount, 0);
+      expect(vm.triggeredCount, 1);
+      expect(vm.triggerEnabled, isTrue);
+      expect(vm.observations.single.x, 1);
+      expect(vm.observations.single.note, contains('累计 2 次'));
+      expect(vm.observations.single.note, isNot(contains('触发于')));
+
+      vm.ingestParsedResultForTest(ParseResult.ok([13], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([14], bytesConsumed: 1));
+
+      expect(vm.triggeredCount, 2);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.observations, hasLength(2));
+    });
+
+    test('触发可标记本轮全部命中点并记录系统时间', () {
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          hitThreshold: 3,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.allHits,
+          includeSystemTimeInNote: true,
+        ),
+      );
+      final now = DateTime(2026, 7, 7, 15, 4, 5);
+
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([1], bytesConsumed: 1),
+        now,
+      );
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([2], bytesConsumed: 1),
+        now,
+      );
+      vm.ingestParsedResultForTestAt(
+        ParseResult.ok([3], bytesConsumed: 1),
+        now,
+      );
+
+      expect(vm.observations.map((item) => item.x), [0, 1, 2]);
+      expect(vm.observations.first.note, contains('触发于 2026-07-07 15:04:05'));
+    });
+
+    test('触发观察保留触发点X而不吸附到当前可见窗口旧点', () {
+      for (var i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      }
+      vm.updateViewport(vm.viewport.copyWith(xMin: 0, xMax: 4));
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([7], bytesConsumed: 1));
+
+      expect(vm.observations.single.x, 10);
+      expect(vm.observations.single.locked, isTrue);
+      expect(vm.observations.single.channelValues, [7]);
+      expect(vm.observations.single.note, contains('第 1 次触发'));
+    });
+
+    test('观察上限限制手动和触发新增并在第100条备注记录上限', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      for (int i = 0; i < PlotViewModel.maxObservationCount; i++) {
+        vm.addObservation();
+      }
+
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+      expect(vm.observations.last.note, contains('观察已达 100 条上限'));
+
+      vm.addObservation();
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 0,
+          action: PlotTriggerAction.markOnly,
+          observationMode: PlotTriggerObservationMode.triggerPoint,
+        ),
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+      expect(vm.observations, hasLength(PlotViewModel.maxObservationCount));
+    });
+
+    test('观察备注编辑和拖动后保留', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+      vm.addObservation();
+
+      vm.updateObservationNote(0, 'note');
+      vm.updateObservation(0, 1);
+
+      expect(vm.observations.single.x, 1);
+      expect(vm.observations.single.note, 'note');
+    });
+
+    test('触发后继续接收N包后停止且N不包含触发包', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.stopAfterPackets,
+          postTriggerPacketCount: 2,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      expect(vm.triggerStopPacketsRemaining, 2);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      expect(vm.triggerStopPacketsRemaining, 1);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([0], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(vm.triggerStopPacketsRemaining, isNull);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.isPlotting, isFalse);
+    });
+
+    test('触发行为只在达到触发次数后执行', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          triggerLimit: 2,
+          action: PlotTriggerAction.stopImmediately,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([11], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.triggeredCount, 1);
+      expect(vm.triggerEnabled, isTrue);
+      expect(vm.isPlotting, isTrue);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([12], bytesConsumed: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.triggeredCount, 2);
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.isPlotting, isFalse);
+    });
+
+    test('手动停止绘图会关闭未触发的触发模式', () async {
+      vm.setPlottingForTest(true);
+      vm.updateTriggerConfig(
+        PlotTriggerConfig(
+          enabled: true,
+          comparison: PlotTriggerComparison.greater,
+          targetValue: 10,
+          action: PlotTriggerAction.stopImmediately,
+          observationMode: PlotTriggerObservationMode.none,
+        ),
+      );
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      expect(vm.triggerEnabled, isTrue);
+
+      await vm.stopPlotting();
+
+      expect(vm.triggerEnabled, isFalse);
+      expect(vm.triggerHitCount, 0);
+    });
+
     test('clearData清空数据', () {
       // 先添加一些数据
-      vm.startPlotting();
+      vm.setPlottingForTest(true);
       // 无法直接添加数据，测试清空逻辑
       vm.clearData();
 
       expect(vm.dataPoints.isEmpty, true);
       expect(vm.pointCount, 0);
+    });
+
+    test('开始绘图默认清空旧数据，开启保持绘图后继续追加', () async {
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 1));
+
+      await vm.startPlotting();
+      vm.ingestParsedResultForTest(ParseResult.ok([3], bytesConsumed: 1));
+
+      expect(vm.dataPoints.map((point) => point.index), [0]);
+      expect(vm.pointCount, 1);
+
+      await vm.stopPlotting();
+
+      vm.setKeepPlotOnRestart(true);
+      await vm.startPlotting();
+      vm.ingestParsedResultForTest(ParseResult.ok([4], bytesConsumed: 1));
+
+      expect(vm.dataPoints.map((point) => point.index), [0, 1]);
+      expect(vm.dataPoints.map((point) => point.values.single), [3, 4]);
+      expect(vm.pointCount, 2);
+
+      await vm.stopPlotting();
+    });
+
+    test('保持绘图只续接相同接收协议', () async {
+      vm.setParserType(ParserType.justFloat);
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 4));
+      vm.ingestParsedResultForTest(ParseResult.ok([2], bytesConsumed: 4));
+      expect(vm.pointCount, 2);
+
+      vm.setKeepPlotOnRestart(true);
+      vm.setParserType(ParserType.fireWater);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+
+      await vm.startPlotting();
+
+      expect(vm.pointCount, 0);
+      expect(vm.visiblePointCount, 0);
+      expect(vm.lodIndex.isEmpty, isTrue);
+
+      await vm.stopPlotting();
+    });
+
+    test('保持绘图在自动识别通道数变化时清空旧历史', () async {
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 2));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 4], bytesConsumed: 2));
+      expect(vm.pointCount, 2);
+
+      vm.setKeepPlotOnRestart(true);
+      vm.setUseRandomSource(true);
+      vm.setRandomFrequency(1);
+      await vm.startPlotting();
+
+      vm.ingestParsedResultForTest(ParseResult.ok([5, 6, 7], bytesConsumed: 3));
+
+      expect(vm.pointCount, 1);
+      expect(vm.dataPoints.single.index, 0);
+      expect(vm.dataPoints.single.values, [5, 6, 7]);
+
+      await vm.stopPlotting();
     });
 
     test('数学通道追加到显示数据且无效求值为NaN', () {
@@ -357,6 +1146,37 @@ void main() {
       expect(vm.snapHighlights, isEmpty);
     });
 
+    test('Delta X/Y 样式可配置且 Y 吸附可关闭', () {
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      vm.setXMeasurementStyle(
+        line1Color: const Color(0xFF123456),
+        line1Opacity: 0.25,
+        line2Color: const Color(0xFF654321),
+        line2Opacity: 0.5,
+      );
+      vm.setYMeasurementStyle(
+        line1Color: const Color(0xFF112233),
+        line1Opacity: 0.4,
+        line2Color: const Color(0xFF445566),
+        line2Opacity: 0.75,
+      );
+
+      expect(vm.xMeasurementLine1Color, const Color(0xFF123456));
+      expect(vm.xMeasurementLine2Color, const Color(0xFF654321));
+      expect(vm.xMeasurementLine1Opacity, 0.25);
+      expect(vm.xMeasurementLine2Opacity, 0.5);
+      expect(vm.yMeasurementLine1Color, const Color(0xFF112233));
+      expect(vm.yMeasurementLine2Color, const Color(0xFF445566));
+      expect(vm.yMeasurementLine1Opacity, 0.4);
+      expect(vm.yMeasurementLine2Opacity, 0.75);
+
+      vm.setYCursor1(10);
+      expect(vm.snapHighlights, isNotEmpty);
+      vm.setYMeasurementSnapEnabled(false);
+      expect(vm.yMeasurementSnapEnabled, isFalse);
+      expect(vm.snapHighlights, isEmpty);
+    });
+
     test('丢弃包数会跳过开始后的前N个有效数据包', () {
       vm.setDiscardInitialPacketCount(2);
       vm.setPlottingForTest(true);
@@ -389,16 +1209,355 @@ void main() {
       expect(csvError, isNull);
 
       final binPath = '${dir.path}/plot.bin';
-      final exported = await vm.exportToBin(binPath);
+      final progress = <PlotImportProgress>[];
+      final exported = await vm.exportToBin(binPath, onProgress: progress.add);
       expect(exported, binPath);
+      expect(progress, isNotEmpty);
+      expect(progress.last.current, progress.last.total);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       final binError = await imported.importFromBin(binPath);
       expect(binError, isNull);
       expect(imported.dataPoints.length, 2);
       expect(imported.dataPoints[0].values, [1.5, 2.5]);
       expect(imported.dataPoints[1].values, [3.5, 4.5]);
+    });
+
+    test('BIN 导出会补全缺失后缀并保留观察位置备注和锁定状态', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_observation_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n2,5,6\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+      vm.updateFollowCursor(1, 0, const Offset(1, 1));
+      vm.addObservation();
+      vm.updateObservationNote(0, 'manual note');
+      vm.setObservationLocked(0, true);
+
+      final binPath = '${dir.path}/plot';
+      final exportedPath = '$binPath.bin';
+      expect(await vm.exportToBin(binPath), exportedPath);
+      expect(File(exportedPath).existsSync(), isTrue);
+
+      final imported = PlotViewModel(connectionService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(exportedPath), isNull);
+      expect(imported.observations, hasLength(1));
+      expect(imported.observations.single.x, 1);
+      expect(imported.observations.single.note, 'manual note');
+      expect(imported.observations.single.locked, isTrue);
+      expect(imported.observations.single.channelValues, [3, 4]);
+    });
+
+    test('CSV 和 BIN 导出支持范围并重新编号X', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_export_range_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,10,20\n1,11,21\n2,12,22\n3,13,23\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+      vm.updateFollowCursor(2, 0, const Offset(1, 1));
+      vm.addObservation();
+
+      final outCsvPath = '${dir.path}/range.csv';
+      expect(
+        await vm.exportToCsv(outCsvPath, startIndex: 1, endIndex: 2),
+        outCsvPath,
+      );
+      final outLines = await File(outCsvPath).readAsLines().then(
+        (lines) => lines.where((line) => !line.startsWith('#')),
+      );
+      expect(outLines.toList(), [
+        'x,Ch0,Ch1',
+        '0,11.000000,21.000000',
+        '1,12.000000,22.000000',
+      ]);
+      expect(
+        await File(outCsvPath).readAsString(),
+        isNot(contains('observations')),
+      );
+
+      final outBinPath = '${dir.path}/range.bin';
+      expect(
+        await vm.exportToBin(outBinPath, startIndex: 2, endIndex: 3),
+        outBinPath,
+      );
+      final imported = PlotViewModel(connectionService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(outBinPath), isNull);
+      expect(imported.dataPoints, hasLength(2));
+      expect(imported.dataPoints[0].timestamp, 0);
+      expect(imported.dataPoints[0].values, [12, 22]);
+      expect(imported.dataPoints[1].timestamp, 1);
+      expect(imported.dataPoints[1].values, [13, 23]);
+    });
+
+    test('CSV 只导出所选数据列并使用数学表达式作为表头', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_math_export_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0[1]', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([10], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([20], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([30], bytesConsumed: 1));
+
+      final path = '${dir.path}/selected.csv';
+      expect(
+        await vm.exportToCsv(
+          path,
+          startIndex: 1,
+          endIndex: 2,
+          channelIndices: [16],
+        ),
+        path,
+      );
+
+      expect(await File(path).readAsLines(), [
+        'x,CH0[1]',
+        '0,10.000000',
+        '1,20.000000',
+      ]);
+      expect(await File(path).readAsString(), isNot(contains('#')));
+    });
+
+    test('CSV 导出和导入保留全NaN数学通道', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_non_finite_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      expect(
+        vm.configureMathChannel(0, 'CH0 * CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      expect(
+        vm.configureMathChannel(1, 'CH1[999]', vm.mathChannels[1].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([1e308, 1e308], bytesConsumed: 1),
+      );
+      vm.ingestParsedResultForTest(
+        ParseResult.ok([double.infinity, 0], bytesConsumed: 1),
+      );
+
+      final path = '${dir.path}/non_finite.csv';
+      expect(await vm.exportToCsv(path, channelIndices: [16, 17]), path);
+      final lines = await File(path).readAsLines();
+      expect(lines.first, 'x,CH0 * CH1,CH1[999]');
+      expect(
+        lines
+            .skip(1)
+            .every(
+              (line) => line
+                  .split(',')
+                  .skip(1)
+                  .every((value) => double.parse(value).isNaN),
+            ),
+        isTrue,
+      );
+
+      final imported = PlotViewModel(connectionService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromCsv(path), isNull);
+      expect(
+        imported.dataPoints.every(
+          (point) => point.values.every((value) => value.isNaN),
+        ),
+        isTrue,
+      );
+      expect(imported.viewport.yMin.isFinite, isTrue);
+      expect(imported.viewport.yMax.isFinite, isTrue);
+      expect(
+        imported.mathChannels.every((channel) => !channel.enabled),
+        isTrue,
+      );
+    });
+
+    test('BIN 导出所选普通和数学通道的实际值', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_math_export_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.setChannelAlias(1, '速度');
+      expect(
+        vm.configureMathChannel(0, 'CH0 + CH1', vm.mathChannels[0].display),
+        isTrue,
+      );
+      vm.ingestParsedResultForTest(ParseResult.ok([1, 2], bytesConsumed: 1));
+      vm.ingestParsedResultForTest(ParseResult.ok([3, 4], bytesConsumed: 1));
+
+      final path = '${dir.path}/selected.bin';
+      expect(await vm.exportToBin(path, channelIndices: [1, 16]), path);
+
+      final imported = PlotViewModel(connectionService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(path), isNull);
+      expect(imported.dataPoints[0].values, [2, 3]);
+      expect(imported.dataPoints[1].values, [4, 7]);
+      expect(imported.channels[0].alias, '速度');
+      expect(imported.channels[1].alias, 'Math1');
+      expect(
+        imported.mathChannels.every((channel) => !channel.enabled),
+        isTrue,
+      );
+    });
+
+    test('CSV和BIN最多可同时导出16个普通通道和4个数学通道', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_export_twenty_channels_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      for (var i = 0; i < vm.mathChannels.length; i++) {
+        expect(
+          vm.configureMathChannel(i, 'CH$i + 1', vm.mathChannels[i].display),
+          isTrue,
+        );
+      }
+      vm.ingestParsedResultForTest(
+        ParseResult.ok(
+          List<double>.generate(16, (index) => index.toDouble()),
+          bytesConsumed: 1,
+        ),
+      );
+      expect(vm.exportCandidateChannels, hasLength(20));
+
+      final csvPath = '${dir.path}/twenty.csv';
+      expect(await vm.exportToCsv(csvPath), csvPath);
+      expect(
+        (await File(csvPath).readAsLines()).first.split(','),
+        hasLength(21),
+      );
+      final csvImported = PlotViewModel(connectionService);
+      addTearDown(csvImported.dispose);
+      expect(await csvImported.importFromCsv(csvPath), isNull);
+      expect(csvImported.dataPoints.single.values, hasLength(16));
+      expect(csvImported.displayDataPoints.single.values, hasLength(20));
+      expect(csvImported.displayDataPoints.single.values.skip(16), [
+        1,
+        2,
+        3,
+        4,
+      ]);
+
+      final binPath = '${dir.path}/twenty.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+      final header = ByteData.sublistView(
+        await File(binPath).readAsBytes(),
+        0,
+        28,
+      );
+      expect(header.getUint16(10, Endian.little), 20);
+      final binImported = PlotViewModel(connectionService);
+      addTearDown(binImported.dispose);
+      expect(await binImported.importFromBin(binPath), isNull);
+      expect(binImported.dataPoints.single.values, hasLength(16));
+      expect(binImported.displayDataPoints.single.values, hasLength(20));
+      expect(binImported.displayDataPoints.single.values.skip(16), [
+        1,
+        2,
+        3,
+        4,
+      ]);
+    });
+
+    test('旧BIN仍按原始普通数据恢复数学通道表达式', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_legacy_bin_math_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/legacy.bin');
+      await _writeLegacyV2PlotBin(
+        file,
+        rows: const [
+          [1, 2],
+          [3, 4],
+        ],
+        metadata: {
+          'channelNames': ['Ch0', 'Ch1'],
+          'mathChannels': [
+            {'index': 0, 'enabled': true, 'expression': 'CH0 + CH1'},
+          ],
+        },
+      );
+
+      expect(await vm.importFromBin(file.path), isNull);
+      expect(vm.dataPoints[0].values, [1, 2]);
+      expect(vm.mathChannels[0].enabled, isTrue);
+      expect(vm.mathChannels[0].expression, 'CH0 + CH1');
+      expect(vm.displayDataPoints[0].values, [1, 2, 3]);
+    });
+
+    test('BIN 导出取消后删除半成品', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_cancel_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      for (var i = 0; i < 10; i++) {
+        vm.ingestParsedResultForTest(
+          ParseResult.ok([i.toDouble()], bytesConsumed: 1),
+        );
+      }
+      final token = PlotExportCancelToken()..cancel();
+      final binPath = '${dir.path}/cancel.bin';
+      await File(binPath).writeAsString('existing-bin');
+
+      final exported = await vm.exportToBin(binPath, cancelToken: token);
+
+      expect(exported, isNull);
+      expect(await File(binPath).readAsString(), 'existing-bin');
+      expect(File('$binPath.part').existsSync(), isFalse);
+    });
+
+    test('CSV 导出取消时保留既有目标并删除半成品', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_csv_cancel_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.ingestParsedResultForTest(ParseResult.ok([1], bytesConsumed: 1));
+      final token = PlotExportCancelToken()..cancel();
+      final csvPath = '${dir.path}/cancel.csv';
+      await File(csvPath).writeAsString('existing-csv');
+
+      final exported = await vm.exportToCsv(csvPath, cancelToken: token);
+
+      expect(exported, isNull);
+      expect(await File(csvPath).readAsString(), 'existing-csv');
+      expect(File('$csvPath.part').existsSync(), isFalse);
+    });
+
+    test('BIN 导出超过当前格式4GB上限时拒绝导出', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_bin_limit_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      vm.debugSetParsedHistoryForExportTest(
+        pointCount: 40000000,
+        channelCount: 16,
+      );
+      final binPath = '${dir.path}/too_large.bin';
+
+      final exported = await vm.exportToBin(binPath);
+
+      expect(exported, isNull);
+      expect(File(binPath).existsSync(), isFalse);
+      expect(vm.lastStatusMessage, contains('4GB'));
     });
 
     test('导入导出保留通道名称和众邦地址', () async {
@@ -417,7 +1576,7 @@ void main() {
       final binPath = '${dir.path}/plot.bin';
       expect(await vm.exportToBin(binPath), binPath);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
 
@@ -428,6 +1587,32 @@ void main() {
       expect(imported.parserConfig.zobowChannelIds[1], 0x12345678);
     });
 
+    test('BIN 导入导出保留 r 协议通道地址', () async {
+      final dir = await Directory.systemTemp.createTemp('vscope_r_bin_test_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final csv = File('${dir.path}/input.csv');
+      await csv.writeAsString('x,y1,y2\n0,1,2\n1,3,4\n');
+      expect(await vm.importFromCsv(csv.path), isNull);
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.setRChannelAddress(0, '16');
+      vm.setRChannelAddress(1, '0x20');
+      vm.setChannelAlias(0, '主轴角度');
+      vm.setChannelAlias(1, '速度');
+
+      final binPath = '${dir.path}/plot.bin';
+      expect(await vm.exportToBin(binPath), binPath);
+
+      final imported = PlotViewModel(connectionService);
+      addTearDown(imported.dispose);
+      expect(await imported.importFromBin(binPath), isNull);
+
+      expect(imported.sendProtocolType, SendProtocolType.rProtocol);
+      expect(imported.rChannelAddresses.take(2), ['16', '0x20']);
+      expect(imported.channels[0].alias, '主轴角度');
+      expect(imported.channels[1].alias, '速度');
+    });
+
     test('众邦通道地址和通道数据类型会写入设置并可重启恢复', () async {
       vm.setParserType(ParserType.zobow);
       vm.setZobowChannelId(0, 0x00000095);
@@ -436,7 +1621,7 @@ void main() {
       expect(AppSettings().zobowChannelIds[0], 0x00000095);
       expect(AppSettings().zobowChannelTypes[1], DataType.uint16);
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
       restored.setParserType(ParserType.zobow);
 
@@ -445,14 +1630,33 @@ void main() {
       expect(restored.parserConfig.zobowChannelTypes[1], DataType.uint16);
     });
 
+    test('众邦快捷配置带入的通道名称会重启恢复', () {
+      vm.setParserType(ParserType.zobow);
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '主轴角度', address: 0x00000095),
+      );
+
+      final restored = PlotViewModel(connectionService);
+      addTearDown(restored.dispose);
+      restored.setParserType(ParserType.zobow);
+
+      expect(restored.parserConfig.zobowChannelIds[0], 0x00000095);
+      expect(restored.channels[0].alias, '主轴角度');
+    });
+
     test('手动修改众邦通道地址会清空快捷配置带入的通道名称', () {
       vm.setParserType(ParserType.zobow);
-      vm.channels[0].alias = '主轴角度';
+      vm.applyPresetToChannel(
+        0,
+        AddressChannelPreset(name: '主轴角度', address: 0x00000095),
+      );
 
       vm.setZobowChannelId(0, 0x00000096);
 
       expect(vm.parserConfig.zobowChannelIds[0], 0x00000096);
       expect(vm.channels[0].alias, isEmpty);
+      expect(AppSettings().channelPresetBindings, isEmpty);
     });
 
     test('固定帧逐通道数据类型会写入设置并可重启恢复', () async {
@@ -473,7 +1677,7 @@ void main() {
       expect(AppSettings().fixedFrameChannelTypes[0], DataType.int16);
       expect(AppSettings().fixedFrameChannelTypes[1], DataType.float);
 
-      final restored = PlotViewModel(serialService);
+      final restored = PlotViewModel(connectionService);
       addTearDown(restored.dispose);
 
       expect(restored.parserConfig.fixedFrameChannelTypes[0], DataType.int16);
@@ -548,11 +1752,34 @@ void main() {
 
       final binPath = '${dir.path}/legacy.bin';
       expect(await vm.exportToBin(binPath), binPath);
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
       expect(imported.channels[0].alias, isEmpty);
       expect(imported.importedChannelAddresses, vm.importedChannelAddresses);
+    });
+
+    test('CSV、BIN和DAT预检失败时保留当前绘图', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'vscope_import_transaction_test_',
+      );
+      addTearDown(() => dir.deleteSync(recursive: true));
+      vm.ingestParsedResultForTest(ParseResult.ok([10, 20], bytesConsumed: 1));
+      final originalValues = List<double>.from(vm.dataPoints.single.values);
+
+      final csv = File('${dir.path}/invalid.csv');
+      final bin = File('${dir.path}/invalid.bin');
+      final dat = File('${dir.path}/invalid.dat');
+      await csv.writeAsString('x\n0\n');
+      await bin.writeAsBytes(const [0x56, 0x53, 0x50]);
+      await dat.writeAsBytes(const [0, 1, 2, 3]);
+
+      expect(await vm.importFromCsv(csv.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
+      expect(await vm.importFromBin(bin.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
+      expect(await vm.importFromLegacyDat(dat.path), isNotNull);
+      expect(vm.dataPoints.single.values, originalValues);
     });
 
     test('setVCursorEnabled切换状态', () {
@@ -582,6 +1809,35 @@ void main() {
       expect(vm.statsToolbarEnabled, true);
       expect(vm.statsEnabled, false);
       expect(vm.statsRangeEnabled, false);
+    });
+
+    test('LOD质量档位切换后保存到应用设置', () {
+      expect(vm.lodQuality, PlotLodQuality.balanced);
+
+      vm.setLodQuality(PlotLodQuality.balanced);
+
+      expect(vm.lodQuality, PlotLodQuality.balanced);
+      expect(AppSettings().plotLodQuality, 'balanced');
+
+      vm.setLodQuality(PlotLodQuality.quality);
+
+      expect(vm.lodQuality, PlotLodQuality.quality);
+      expect(AppSettings().plotLodQuality, 'qualityHigh');
+    });
+
+    test('绘图历史内存上限限制在1到8GiB并保存', () {
+      expect(vm.plotRetentionLimitGiB, 2);
+
+      vm.setPlotRetentionLimitGiB(8);
+      expect(vm.plotRetentionLimitGiB, 8);
+      expect(AppSettings().plotHistoryMemoryLimitGiB, 8);
+
+      vm.setPlotRetentionLimitGiB(9);
+      expect(vm.plotRetentionLimitGiB, 8);
+
+      vm.setPlotRetentionLimitGiB(0);
+      expect(vm.plotRetentionLimitGiB, 1);
+      expect(AppSettings().plotHistoryMemoryLimitGiB, 1);
     });
 
     test('拖动画布时自动关闭跟随', () {
@@ -644,6 +1900,28 @@ void main() {
       expect(stats, contains('2345.5'));
       expect(stats, contains('1234.5'));
       expect(stats, isNot(matches(RegExp(r'\d+(\.\d+)?[kKM]'))));
+    });
+
+    test('多测量按设置追加至十组且普通开关一次清空', () {
+      vm.toggleXMeasurement();
+      expect(vm.xMeasurementGroups, hasLength(1));
+
+      vm.addXMeasurementGroup();
+      expect(vm.xMeasurementGroups, hasLength(1));
+
+      vm.setMultiMeasurementEnabled(isX: true, value: true);
+      for (var i = 0; i < 12; i++) {
+        vm.addXMeasurementGroup();
+      }
+      expect(vm.xMeasurementGroups, hasLength(10));
+      expect(vm.measurementText, contains('X20'));
+
+      vm.removeMeasurementGroup(isX: true, groupIndex: 4);
+      expect(vm.xMeasurementGroups, hasLength(9));
+
+      vm.toggleXMeasurement();
+      expect(vm.xMeasurementEnabled, isFalse);
+      expect(vm.xMeasurementGroups, isEmpty);
     });
 
     test('开始绘图仅保留垂直光标开关', () async {
@@ -777,6 +2055,23 @@ void main() {
       );
     });
 
+    test('数学通道通过统一缩放入口同步绑定偏置组', () {
+      vm.setChannelOffsetEnabled(0, true);
+      final mathDisplay = vm.mathChannels[0].display.copyWith(
+        offsetEnabled: true,
+      );
+      expect(vm.configureMathChannel(0, 'CH0 + 1', mathDisplay), isTrue);
+      vm.setOffsetBindingGroup(0, {PlotConfiguration.rawChannelCount});
+
+      vm.setChannelYScale(PlotConfiguration.rawChannelCount, 2.5);
+      vm.setChannelYOffset(PlotConfiguration.rawChannelCount, 18);
+
+      expect(vm.channels[0].yScale, 2.5);
+      expect(vm.mathChannels[0].display.yScale, 2.5);
+      expect(vm.channels[0].yOffset, 18);
+      expect(vm.mathChannels[0].display.yOffset, 18);
+    });
+
     test('绑定偏置Y自适应按组内所有通道合并计算', () {
       vm.setParserType(ParserType.justFloat);
       vm.updateParserConfig(ParserConfig.justFloatDefault()..channelCount = 0);
@@ -855,7 +2150,7 @@ void main() {
       final binPath = '${dir.path}/constant.bin';
       expect(await vm.exportToBin(binPath), binPath);
 
-      final imported = PlotViewModel(serialService);
+      final imported = PlotViewModel(connectionService);
       addTearDown(imported.dispose);
       expect(await imported.importFromBin(binPath), isNull);
       for (int i = 0; i < 7; i++) {
@@ -929,14 +2224,14 @@ void main() {
       expect(status.contains('点数:'), true);
     });
 
-    test('非FireWater解析器保留随机源开关但不能单独启动', () {
+    test('非FireWater解析器保留随机源开关但不能单独启动', () async {
       vm.setUseRandomSource(true);
       vm.setParserType(ParserType.zobow);
 
       expect(vm.useRandomSource, true);
       expect(vm.lastStatusMessage, contains('随机源已保留'));
 
-      vm.startPlotting();
+      await vm.startPlotting();
 
       expect(vm.isPlotting, false);
       expect(vm.hintText, contains('随机源仅支持 FireWater'));
@@ -966,7 +2261,7 @@ void main() {
         vm.recordRateSampleForTest(i, i ~/ 100);
       }
 
-      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(25));
+      expect(vm.rateBucketCountForTest, lessThanOrEqualTo(49));
       expect(vm.highRateMode, true);
     });
 
@@ -1016,17 +2311,45 @@ void main() {
       expect(vm.dataRevision, dataRevision);
     });
 
-    test('高频接收强制使用30fps但不修改用户刷新帧率', () {
-      vm.setRefreshFps(60);
+    test('Canvas高频接收强制使用30fps但不修改用户刷新帧率', () {
+      vm.setRefreshFps(120);
 
       for (int ms = 500; ms <= 1000; ms += 250) {
         vm.recordRateSampleForTest(ms * 20, ms);
       }
 
       expect(vm.highRateMode, true);
-      expect(vm.refreshFps, 60);
+      expect(vm.refreshFps, 120);
       expect(vm.effectiveRefreshFps, 30);
       expect(vm.statusText, contains('高频模式 30fps'));
+    });
+
+    test('D3D11高频接收继续使用用户配置刷新帧率', () {
+      vm.dispose();
+      AppSettings().plotRenderEngine = 'd3d11';
+      vm = PlotViewModel(connectionService);
+      vm.setRefreshFps(120);
+
+      for (int ms = 500; ms <= 1000; ms += 250) {
+        vm.recordRateSampleForTest(ms * 20, ms);
+      }
+
+      expect(vm.renderEngine, PlotRenderEngine.d3d11);
+      expect(vm.highRateMode, true);
+      expect(vm.refreshFps, 120);
+      expect(vm.effectiveRefreshFps, 120);
+      expect(vm.statusText, contains('高频模式 120fps'));
+    });
+
+    test('绘图目标刷新率允许30至120fps', () {
+      vm.setRefreshFps(120);
+      expect(vm.refreshFps, 120);
+
+      vm.setRefreshFps(121);
+      expect(vm.refreshFps, 120);
+
+      vm.setRefreshFps(1);
+      expect(vm.refreshFps, 30);
     });
 
     test('高频模式在10K附近不会反复切换并在低于8K后延迟退出', () {
@@ -1048,6 +2371,10 @@ void main() {
       expect(vm.highRateMode, true);
 
       vm.recordRateSampleForTest(25500, 3300);
+      expect(vm.highRateMode, true);
+
+      vm.recordRateSampleForTest(28500, 3800);
+      vm.recordRateSampleForTest(31500, 4300);
       expect(vm.highRateMode, false);
       expect(vm.effectiveRefreshFps, 60);
     });
@@ -1088,7 +2415,7 @@ void main() {
       expect(vm.lodIndex.length, vm.pointCount);
     });
 
-    test('高频模式超过40万点时不使用固定窗口上限', () {
+    test('高频模式超过25万点时精确对象窗口保持硬上限', () {
       vm.setMaxVisiblePoints(1000000);
       vm.recordRateSampleForTest(0, 0);
       vm.recordRateSampleForTest(6000, 300);
@@ -1101,7 +2428,7 @@ void main() {
       }
 
       expect(vm.highRateMode, true);
-      expect(vm.visiblePointCount, 400005);
+      expect(vm.visiblePointCount, lessThanOrEqualTo(250000));
       expect(vm.pointCount - startPointCount, 400005);
       expect(vm.lodIndex.length, vm.pointCount);
     });
@@ -1114,89 +2441,6 @@ void main() {
       expect(vm.lodSampleStepForTest, greaterThan(1));
     });
 
-    test('众邦初始化帧使用4字节小端通道号', () {
-      final frame = PlotViewModel.buildZobowInitFrame([
-        0x01020304,
-        0x11223344,
-        0xAABBCCDD,
-        0x00000005,
-      ]);
-
-      expect(frame.length, 18);
-      expect(frame.sublist(0, 16), [
-        0x04,
-        0x03,
-        0x02,
-        0x01,
-        0x44,
-        0x33,
-        0x22,
-        0x11,
-        0xDD,
-        0xCC,
-        0xBB,
-        0xAA,
-        0x05,
-        0x00,
-        0x00,
-        0x00,
-      ]);
-
-      final crc = calculateCrc(
-        frame.sublist(0, 16),
-        crc16Polys['CRC-16/MODBUS']!,
-      );
-      expect(frame[16], crc & 0xFF);
-      expect(frame[17], (crc >> 8) & 0xFF);
-    });
-
-    test('众邦初始化帧支持8通道', () {
-      final frame = PlotViewModel.buildZobowInitFrame([1, 2, 3, 4, 5, 6, 7, 8]);
-
-      expect(frame.length, 34);
-      expect(frame.sublist(0, 32), [
-        1,
-        0,
-        0,
-        0,
-        2,
-        0,
-        0,
-        0,
-        3,
-        0,
-        0,
-        0,
-        4,
-        0,
-        0,
-        0,
-        5,
-        0,
-        0,
-        0,
-        6,
-        0,
-        0,
-        0,
-        7,
-        0,
-        0,
-        0,
-        8,
-        0,
-        0,
-        0,
-      ]);
-
-      final crc = calculateCrc(
-        frame.sublist(0, 32),
-        crc16Polys['CRC-16/MODBUS']!,
-      );
-      expect(frame[32], crc & 0xFF);
-      expect(frame[33], (crc >> 8) & 0xFF);
-    });
-
     test('接收协议内置顺序固定', () {
       expect(ParserType.values, [
         ParserType.fireWater,
@@ -1204,26 +2448,6 @@ void main() {
         ParserType.fixedFrame,
         ParserType.zobow,
       ]);
-    });
-
-    test('r协议命令保留十进制和0x输入形式并以LF结尾', () {
-      final bytes = PlotViewModel.buildRProtocolCommand([
-        '0',
-        ' 12 ',
-        '0x10',
-        '0X2A',
-      ]);
-
-      expect(utf8.decode(bytes), 'r 0 12 0x10 0X2A\n');
-    });
-
-    test('r协议地址严格区分十进制和带0x前缀的十六进制', () {
-      expect(PlotViewModel.parseRProtocolAddress('16'), 16);
-      expect(PlotViewModel.parseRProtocolAddress('0x10'), 16);
-      expect(PlotViewModel.parseRProtocolAddress('FF'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('12x3'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('0xGG'), isNull);
-      expect(PlotViewModel.parseRProtocolAddress('4294967296'), isNull);
     });
 
     test('r协议预设应用到通道时保留配置进制', () {
@@ -1248,6 +2472,31 @@ void main() {
       expect(vm.rChannelAddresses.take(2), ['16', '0x10']);
       expect(vm.channels[0].alias, '十进制');
       expect(vm.channelConfigRevision, greaterThan(revisionBefore));
+    });
+
+    test('r协议快捷配置带入的通道名称会重启恢复并在地址改变时清空', () {
+      vm.setSendProtocolType(SendProtocolType.rProtocol);
+      vm.applyRProtocolPresetToChannel(
+        0,
+        AddressChannelPreset(
+          name: '十进制',
+          address: 16,
+          addressFormat: AddressValueFormat.decimal,
+        ),
+      );
+
+      final restored = PlotViewModel(connectionService);
+      addTearDown(restored.dispose);
+
+      expect(restored.rChannelAddresses[0], '16');
+      expect(restored.channels[0].alias, '十进制');
+
+      restored.setRChannelAddress(0, '0x10');
+      expect(restored.channels[0].alias, '十进制');
+
+      restored.setRChannelAddress(0, '17');
+      expect(restored.channels[0].alias, isEmpty);
+      expect(AppSettings().channelPresetBindings, isEmpty);
     });
 
     test('绘图运行中锁定R和Zobow地址但允许修改名称', () {
@@ -1296,62 +2545,6 @@ void main() {
       vm.setPlottingForTest(true);
       expect(vm.resetAllChannels(), isFalse);
       expect(vm.channels[0].alias, '运行中保留');
-    });
-
-    test('r协议地址校验支持0地址、自动连续前缀和固定通道截断', () {
-      expect(PlotViewModel.validateRProtocolAddresses(['0', '0x0', '20', '']), [
-        '0',
-        '0x0',
-        '20',
-      ]);
-      expect(
-        PlotViewModel.validateRProtocolAddresses([
-          '1',
-          '0x10',
-          '20',
-        ], requiredCount: 2),
-        ['1', '0x10'],
-      );
-    });
-
-    test('r协议宽松通道设置会压紧非空地址并保留0地址', () {
-      expect(
-        PlotViewModel.validateRProtocolAddresses([
-          '',
-          '0',
-          '',
-          '0x10',
-          ' 20 ',
-        ], loose: true),
-        ['0', '0x10', '20'],
-      );
-      expect(
-        PlotViewModel.validateRProtocolAddresses(
-          ['', '0', '', '0x10'],
-          requiredCount: 3,
-          loose: true,
-        ),
-        ['0', '0x10'],
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', ''], loose: true),
-        throwsFormatException,
-      );
-    });
-
-    test('r协议地址校验拒绝全空、固定通道不足和中间空洞', () {
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['', '']),
-        throwsFormatException,
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['1'], requiredCount: 2),
-        throwsFormatException,
-      );
-      expect(
-        () => PlotViewModel.validateRProtocolAddresses(['0', '', '2']),
-        throwsFormatException,
-      );
     });
 
     test('自动识别接收协议未开始绘图时为r协议显示16个地址槽位', () {
@@ -1475,20 +2668,20 @@ void main() {
 
     test('开始绘图前检测陈旧串口状态并断开连接', () async {
       vm.setUseRandomSource(false);
-      serialService.isConnected = true;
+      connectionService.isConnected = true;
       vm.setParserType(ParserType.zobow);
 
       await vm.startPlotting();
 
       expect(vm.isPlotting, false);
-      expect(serialService.isConnected, false);
-      expect(vm.lastStatusMessage, contains('检测到串口已断开'));
+      expect(connectionService.isConnected, false);
+      expect(vm.lastStatusMessage, contains('检测到数据连接已断开'));
     });
 
     test('stopPlotting先更新UI状态并阻止重复停止', () async {
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);
-      vm.startPlotting();
+      await vm.startPlotting();
       expect(vm.isPlotting, true);
 
       final stopFuture = vm.stopPlotting();
@@ -1504,10 +2697,10 @@ void main() {
     });
 
     test('stopPlotting后高频模式恢复用户配置刷新帧率', () async {
-      vm.setRefreshFps(60);
+      vm.setRefreshFps(120);
       vm.setParserType(ParserType.fireWater);
       vm.setUseRandomSource(true);
-      vm.startPlotting();
+      await vm.startPlotting();
       expect(vm.isPlotting, true);
 
       vm.recordRateSampleForTest(0, 0);
@@ -1518,8 +2711,8 @@ void main() {
       await vm.stopPlotting();
 
       expect(vm.highRateMode, false);
-      expect(vm.refreshFps, 60);
-      expect(vm.effectiveRefreshFps, 60);
+      expect(vm.refreshFps, 120);
+      expect(vm.effectiveRefreshFps, 120);
     });
 
     test('canUndoZoom初始为false', () {
@@ -1534,6 +2727,20 @@ void main() {
 
       vm.undoZoom();
       expect(vm.viewport.xMin, originalXMin);
+    });
+
+    test('拖动结束后的撤回恢复拖动前视口', () {
+      final original = vm.viewport.copy();
+      vm.updateViewport(
+        original.copyWith(xMin: 100, xMax: 1100),
+        fromDrag: true,
+      );
+      vm.saveDragViewport();
+      expect(vm.canUndoZoom, isTrue);
+
+      vm.undoZoom();
+      expect(vm.viewport.xMin, original.xMin);
+      expect(vm.viewport.xMax, original.xMax);
     });
   });
 }

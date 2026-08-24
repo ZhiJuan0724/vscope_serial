@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+/// 读取编译期版本与构建时间，避免依赖可被复制/更新改变的 exe 时间戳。
 class AppInfo {
   AppInfo._();
 
@@ -45,7 +46,7 @@ class AppInfo {
     }
 
     try {
-      return File(Platform.resolvedExecutable).lastModified();
+      return await File(Platform.resolvedExecutable).lastModified();
     } catch (_) {
       return null;
     }

@@ -1,3 +1,4 @@
+import '../../core/constants/plot_configuration.dart';
 import 'channel_config.dart';
 
 /// 解析器类型
@@ -28,7 +29,7 @@ enum ProtocolSource { builtIn, lua }
 
 /// 发送协议配置。
 class SendProtocolConfig {
-  static const int maxChannelCount = 16;
+  static const int maxChannelCount = PlotConfiguration.rawChannelCount;
 
   SendProtocolType type;
   ProtocolSource source;
@@ -116,7 +117,7 @@ class ParserConfig {
   /// 固定帧逐通道数据类型
   List<DataType> fixedFrameChannelTypes;
 
-  /// 通道数。JustFloat 使用 0 表示自动识别，其它固定长度协议使用 1-16。
+  /// 通道数。JustFloat 使用 0 表示自动识别，其它固定长度协议受绘图普通通道上限约束。
   int channelCount;
 
   /// 是否有校验
@@ -213,11 +214,12 @@ class ParserConfig {
   }
 
   String? get fixedFrameValidationError {
-    if (channelCount < 1 || channelCount > 16) {
-      return '固定帧协议通道数必须为 1~16';
+    if (channelCount < 1 || channelCount > PlotConfiguration.rawChannelCount) {
+      return '固定帧协议通道数必须为 1~${PlotConfiguration.rawChannelCount}';
     }
-    if (hasFrameHeader && frameHeader.take(frameHeaderLength).isEmpty) {
-      return '启用帧头后至少需要填写一个字节';
+    if (hasFrameHeader &&
+        (frameHeaderLength <= 0 || frameHeader.length < frameHeaderLength)) {
+      return '帧头字节数少于配置的帧头长度';
     }
     final tail = hasFrameTail ? (frameTail ?? const <int>[]) : const <int>[];
     if (hasFrameTail && tail.isEmpty) {

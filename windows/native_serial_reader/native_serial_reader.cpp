@@ -1,4 +1,5 @@
 #include "native_serial_reader.h"
+#include "native_time_utils.h"
 #include "dart_api_dl.h"
 
 #include <windows.h>
@@ -20,13 +21,102 @@
 #include <string>
 #include <vector>
 
-// Global state
+// 连接周期共享状态；访问读取线程相关资源时必须遵循 stop/close 的同步顺序。
 static HANDLE g_hSerial = INVALID_HANDLE_VALUE;
 static std::thread g_readThread;
 static std::atomic<bool> g_running(false);
 static std::mutex g_stateMutex;
+static std::atomic<int> g_lastOpenStage{0};
+static std::atomic<DWORD> g_lastOpenError{ERROR_SUCCESS};
+static std::mutex g_diagnosticLogMutex;
+static std::wstring g_diagnosticLogPath;
+static std::atomic<bool> g_diagnosticLogEnabled{false};
+
+#ifdef VSCOPE_ENABLE_TEST_CRASH
+void nsr_trigger_test_crash() {
+    // 使用运行时地址而不是 RaiseException，确保转储记录的异常位置落在本 DLL。
+    volatile uintptr_t invalidAddress = 0;
+    volatile uint32_t* crashTarget =
+        reinterpret_cast<volatile uint32_t*>(invalidAddress);
+    *crashTarget = 0x56534350;
+}
+#endif
+
+static std::wstring utf8_to_wide(const char* value) {
+    if (value == NULL || value[0] == '\0') return std::wstring();
+    const int required = MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value, -1, NULL, 0);
+    if (required <= 1) return std::wstring();
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    MultiByteToWideChar(
+        CP_UTF8, MB_ERR_INVALID_CHARS, value, -1, result.data(), required);
+    result.resize(static_cast<size_t>(required - 1));
+    return result;
+}
+
+static void append_open_diagnostic(
+    int stage,
+    const char* action,
+    DWORD error = ERROR_SUCCESS) {
+    g_lastOpenStage = stage;
+    g_lastOpenError = error;
+    if (!g_diagnosticLogEnabled.load()) return;
+
+    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    if (g_diagnosticLogPath.empty()) return;
+    HANDLE file = CreateFileW(
+        g_diagnosticLogPath.c_str(),
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (file == INVALID_HANDLE_VALUE) return;
+
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+    char line[512] = {};
+    const int length = snprintf(
+        line,
+        sizeof(line),
+        "[DEBUG]   TIME: %04u-%02u-%02uT%02u:%02u:%02u.%03u "
+        "[SERIAL_NATIVE] open stage=%d action=%s win32Error=%lu\r\n",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        now.wMilliseconds,
+        stage,
+        action,
+        static_cast<unsigned long>(error));
+    if (length > 0) {
+        DWORD written = 0;
+        const int boundedLength =
+            length < static_cast<int>(sizeof(line))
+                ? length
+                : static_cast<int>(sizeof(line) - 1);
+        WriteFile(
+            file,
+            line,
+            static_cast<DWORD>(boundedLength),
+            &written,
+            NULL);
+        FlushFileBuffers(file);
+    }
+    CloseHandle(file);
+}
 static int64_t g_dartPort = 0;
 static int g_timeoutMs = 0;
+static LARGE_INTEGER g_qpcFrequency = {};
+static std::atomic<uint64_t> g_readBytes(0);
+static std::atomic<uint64_t> g_maxReadBlockBytes(0);
+static std::atomic<uint64_t> g_readCallbackCount(0);
+static std::atomic<uint64_t> g_postFailureCount(0);
+// 仅由绘图活动所有者开启；其它页面始终逐块交付，避免影响终端交互延迟。
+static std::atomic<bool> g_plotReceiveAggregationEnabled(false);
 static HCMNOTIFICATION g_portNotification = NULL;
 static std::atomic<int64_t> g_portMonitorDartPort(0);
 static const GUID kComPortInterfaceGuid = {
@@ -282,18 +372,158 @@ static DWORD CALLBACK port_notification_callback(
     return ERROR_SUCCESS;
 }
 
-// Get current time in microseconds
-static int64_t get_time_us() {
-    LARGE_INTEGER freq, count;
-    QueryPerformanceFrequency(&freq);
+// QPC 计数换算时不直接对完整计数乘一百万。
+// 商余数拆分可避免进程长期运行后的整数乘法溢出。
+static int64_t get_monotonic_time_us() {
+    LARGE_INTEGER count;
     QueryPerformanceCounter(&count);
-    return (count.QuadPart * 1000000LL) / freq.QuadPart;
+    return vscope::native_time::qpc_ticks_to_microseconds(
+        count.QuadPart, g_qpcFrequency.QuadPart);
 }
 
-// Read thread
+static int64_t get_wall_clock_time_us() {
+    FILETIME fileTime = {};
+    GetSystemTimePreciseAsFileTime(&fileTime);
+    ULARGE_INTEGER ticks = {};
+    ticks.LowPart = fileTime.dwLowDateTime;
+    ticks.HighPart = fileTime.dwHighDateTime;
+    return vscope::native_time::filetime_to_unix_microseconds(ticks.QuadPart);
+}
+
+static void update_max_read_block(uint64_t bytesRead) {
+    uint64_t current = g_maxReadBlockBytes.load();
+    while (bytesRead > current &&
+           !g_maxReadBlockBytes.compare_exchange_weak(current, bytesRead)) {
+    }
+}
+
+// 原生读取合并只用于高频绘图。三个阈值共同限制延迟与单次解析负担：
+// - 连续数据空闲 8ms 后交付残留；
+// - 累计 8KiB 立即交付；
+// - 连续流最多保留 24ms，避免一直有数据时永不交付。
+constexpr size_t kPlotAggregationMaxBytes = 8 * 1024;
+constexpr int64_t kPlotAggregationIdleUs = 8 * 1000;
+constexpr int64_t kPlotAggregationMaxWaitUs = 24 * 1000;
+constexpr size_t kPacketHeaderBytes = 32;
+
+struct PendingReadAggregate {
+    std::vector<uint8_t> bytes;
+    int64_t firstMonotonicUs = 0;
+    int64_t lastMonotonicUs = 0;
+    int64_t firstWallClockUs = 0;
+    int64_t lastWallClockUs = 0;
+
+    PendingReadAggregate() {
+        bytes.reserve(kPlotAggregationMaxBytes);
+    }
+
+    bool empty() const { return bytes.empty(); }
+
+    void begin_if_needed(int64_t monotonicUs, int64_t wallClockUs) {
+        if (!bytes.empty()) return;
+        firstMonotonicUs = monotonicUs;
+        firstWallClockUs = wallClockUs;
+    }
+
+    void record_last(int64_t monotonicUs, int64_t wallClockUs) {
+        lastMonotonicUs = monotonicUs;
+        lastWallClockUs = wallClockUs;
+    }
+
+    void clear() {
+        bytes.clear();
+        firstMonotonicUs = 0;
+        lastMonotonicUs = 0;
+        firstWallClockUs = 0;
+        lastWallClockUs = 0;
+    }
+};
+
+static bool post_read_block(
+    int64_t dartPort,
+    std::vector<uint8_t>& message,
+    const uint8_t* data,
+    size_t length,
+    int64_t firstMonotonicUs,
+    int64_t lastMonotonicUs,
+    int64_t firstWallClockUs,
+    int64_t lastWallClockUs) {
+    if (length == 0 || dartPort == 0 || Dart_PostCObject_DL == NULL) {
+        return false;
+    }
+
+    message.resize(kPacketHeaderBytes + length);
+    memcpy(message.data(), &firstMonotonicUs, sizeof(firstMonotonicUs));
+    memcpy(
+        message.data() + sizeof(firstMonotonicUs),
+        &lastMonotonicUs,
+        sizeof(lastMonotonicUs));
+    memcpy(
+        message.data() + sizeof(firstMonotonicUs) + sizeof(lastMonotonicUs),
+        &firstWallClockUs,
+        sizeof(firstWallClockUs));
+    memcpy(
+        message.data() + sizeof(firstMonotonicUs) + sizeof(lastMonotonicUs) +
+            sizeof(firstWallClockUs),
+        &lastWallClockUs,
+        sizeof(lastWallClockUs));
+    memcpy(message.data() + kPacketHeaderBytes, data, length);
+
+    Dart_CObject msg;
+    msg.type = Dart_CObject_kTypedData;
+    msg.value.as_typed_data.type = Dart_TypedData_kUint8;
+    msg.value.as_typed_data.length =
+        static_cast<intptr_t>(kPacketHeaderBytes + length);
+    msg.value.as_typed_data.values = message.data();
+
+    if (Dart_PostCObject_DL(dartPort, &msg)) {
+        g_readCallbackCount.fetch_add(1);
+        return true;
+    }
+    g_postFailureCount.fetch_add(1);
+    return false;
+}
+
+// 读取线程：复用 OVERLAPPED/event，停止时由 CancelIoEx 唤醒未完成 ReadFile。
 static void read_thread_func() {
-    uint8_t buffer[4096];
-    
+    constexpr DWORD kReadBufferBytes = 64 * 1024;
+    std::vector<uint8_t> buffer(kReadBufferBytes);
+    std::vector<uint8_t> message(kPacketHeaderBytes + kReadBufferBytes);
+    PendingReadAggregate aggregate;
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (overlapped.hEvent == NULL) return;
+
+    auto flush_aggregate = [&](int64_t dartPort) {
+        if (aggregate.empty()) return;
+        post_read_block(
+            dartPort,
+            message,
+            aggregate.bytes.data(),
+            aggregate.bytes.size(),
+            aggregate.firstMonotonicUs,
+            aggregate.lastMonotonicUs,
+            aggregate.firstWallClockUs,
+            aggregate.lastWallClockUs);
+        aggregate.clear();
+    };
+
+    auto aggregate_deadline_wait_ms = [&](int timeoutMs) {
+        if (aggregate.empty()) {
+            return timeoutMs > 0 ? static_cast<DWORD>(timeoutMs) : INFINITE;
+        }
+        const int64_t nowUs = get_monotonic_time_us();
+        const int64_t untilIdleUs =
+            kPlotAggregationIdleUs - (nowUs - aggregate.lastMonotonicUs);
+        const int64_t untilMaxWaitUs =
+            kPlotAggregationMaxWaitUs - (nowUs - aggregate.firstMonotonicUs);
+        const int64_t remainingUs = (std::min)(untilIdleUs, untilMaxWaitUs);
+        if (remainingUs <= 0) return static_cast<DWORD>(1);
+        const DWORD deadlineMs = static_cast<DWORD>((remainingUs + 999) / 1000);
+        if (timeoutMs <= 0) return deadlineMs;
+        return (std::min)(static_cast<DWORD>(timeoutMs), deadlineMs);
+    };
+
     while (g_running.load()) {
         HANDLE hSerial = INVALID_HANDLE_VALUE;
         int64_t dartPort = 0;
@@ -307,73 +537,134 @@ static void read_thread_func() {
 
         if (hSerial == INVALID_HANDLE_VALUE) break;
         
+        // 关闭聚合时先交付原有残留，保证后续直接交付不会越过旧数据。
+        if (!g_plotReceiveAggregationEnabled.load()) {
+            flush_aggregate(dartPort);
+        }
+
+        ResetEvent(overlapped.hEvent);
         DWORD bytesRead = 0;
-        BOOL result = FALSE;
-        
-        if (timeoutMs > 0) {
-            OVERLAPPED ov = {0};
-            ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-            if (ov.hEvent == NULL) break;
-            
-            result = ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, &ov);
-            
-            if (!result && GetLastError() == ERROR_IO_PENDING) {
-                DWORD waitResult = WaitForSingleObject(ov.hEvent, timeoutMs);
+        BOOL result = ReadFile(
+            hSerial, buffer.data(), kReadBufferBytes, &bytesRead, &overlapped);
+        if (!result && GetLastError() == ERROR_IO_PENDING) {
+            while (g_running.load()) {
+                const DWORD waitResult =
+                    WaitForSingleObject(
+                        overlapped.hEvent,
+                        aggregate_deadline_wait_ms(timeoutMs));
                 if (waitResult == WAIT_OBJECT_0) {
-                    result = GetOverlappedResult(hSerial, &ov, &bytesRead, FALSE);
-                } else if (waitResult == WAIT_TIMEOUT) {
-                    CancelIoEx(hSerial, &ov);
-                    GetOverlappedResult(hSerial, &ov, &bytesRead, TRUE);
+                    result = GetOverlappedResult(
+                        hSerial, &overlapped, &bytesRead, FALSE);
+                    break;
+                }
+                const int64_t nowUs = get_monotonic_time_us();
+                if (!g_plotReceiveAggregationEnabled.load() ||
+                    (!aggregate.empty() &&
+                     (nowUs - aggregate.lastMonotonicUs >=
+                          kPlotAggregationIdleUs ||
+                      nowUs - aggregate.firstMonotonicUs >=
+                          kPlotAggregationMaxWaitUs))) {
+                    flush_aggregate(dartPort);
+                }
+                if (waitResult != WAIT_TIMEOUT) {
                     result = FALSE;
+                    break;
                 }
             }
-            
-            CloseHandle(ov.hEvent);
-        } else {
-            result = ReadFile(hSerial, buffer, sizeof(buffer), &bytesRead, NULL);
+            if (!g_running.load()) {
+                CancelIoEx(hSerial, &overlapped);
+                GetOverlappedResult(
+                    hSerial, &overlapped, &bytesRead, TRUE);
+                break;
+            }
+        } else if (!result) {
+            // Device removed or handle became invalid: record the error and
+            // exit instead of busy-spinning; the Dart health check drives the
+            // disconnect and reconnect flow.
+            g_lastOpenError = GetLastError();
+            break;
         }
         
         if (result && bytesRead > 0) {
-            int64_t timestampUs = get_time_us();
+            const int64_t monotonicUs = get_monotonic_time_us();
+            const int64_t wallClockUs = get_wall_clock_time_us();
+            g_readBytes.fetch_add(bytesRead);
+            update_max_read_block(bytesRead);
             
-            // Send data to Dart using Dart_PostCObject_DL
-            // Only post if Dart API is initialized (Dart_PostCObject_DL != NULL)
-            if (dartPort != 0 && Dart_PostCObject_DL != NULL) {
-                // Debug: log that we're about to post data
-                // char debugMsg[256];
-                // snprintf(debugMsg, sizeof(debugMsg), "[NSR] Posting %lu bytes to port %lld\n", bytesRead, g_dartPort);
-                // OutputDebugStringA(debugMsg);
-                uint8_t* combined = (uint8_t*)malloc(8 + bytesRead);
-                if (combined != NULL) {
-                    memcpy(combined, &timestampUs, 8);
-                    memcpy(combined + 8, buffer, bytesRead);
-                    
-                    Dart_CObject msg;
-                    msg.type = Dart_CObject_kTypedData;
-                    msg.value.as_typed_data.type = Dart_TypedData_kUint8;
-                    msg.value.as_typed_data.length = 8 + bytesRead;
-                    msg.value.as_typed_data.values = combined;
-                    
-                    Dart_PostCObject_DL(dartPort, &msg);
-                    
-                    free(combined);
+            if (!g_plotReceiveAggregationEnabled.load()) {
+                flush_aggregate(dartPort);
+                post_read_block(
+                    dartPort,
+                    message,
+                    buffer.data(),
+                    bytesRead,
+                    monotonicUs,
+                    monotonicUs,
+                    wallClockUs,
+                    wallClockUs);
+            } else {
+                size_t offset = 0;
+                while (offset < bytesRead) {
+                    aggregate.begin_if_needed(monotonicUs, wallClockUs);
+                    const size_t capacity =
+                        kPlotAggregationMaxBytes - aggregate.bytes.size();
+                    const size_t copyLength = (std::min)(
+                        capacity, static_cast<size_t>(bytesRead) - offset);
+                    aggregate.bytes.insert(
+                        aggregate.bytes.end(),
+                        buffer.begin() + offset,
+                        buffer.begin() + offset + copyLength);
+                    offset += copyLength;
+                    aggregate.record_last(monotonicUs, wallClockUs);
+                    if (aggregate.bytes.size() >= kPlotAggregationMaxBytes) {
+                        flush_aggregate(dartPort);
+                    }
+                }
+
+                if (!aggregate.empty() &&
+                    monotonicUs - aggregate.firstMonotonicUs >=
+                        kPlotAggregationMaxWaitUs) {
+                    flush_aggregate(dartPort);
                 }
             }
         }
     }
+
+    // stopReading 在关闭 Dart ReceivePort 前等待本线程退出，此处可安全冲刷残留。
+    flush_aggregate(g_dartPort);
+    CloseHandle(overlapped.hEvent);
 }
 
 int nsr_init_dart_api(void* data) {
     if (data == NULL) return -1;
+    if (g_qpcFrequency.QuadPart == 0 &&
+        !QueryPerformanceFrequency(&g_qpcFrequency)) {
+        return -1;
+    }
     return Dart_InitializeApiDL(data) == 0 ? 0 : -1;
 }
 
 int nsr_open_port(const char* portName, int baudRate) {
+    append_open_diagnostic(1, "validate_input");
+    if (portName == NULL || portName[0] == '\0' || baudRate <= 0) {
+        append_open_diagnostic(1, "invalid_input", ERROR_INVALID_PARAMETER);
+        return -1;
+    }
+
+    append_open_diagnostic(2, "close_previous_begin");
     nsr_close_port();
+    append_open_diagnostic(2, "close_previous_complete");
     
     char fullName[256];
-    snprintf(fullName, sizeof(fullName), "\\\\.\\%s", portName);
+    const int nameLength =
+        snprintf(fullName, sizeof(fullName), "\\\\.\\%s", portName);
+    if (nameLength < 0 || nameLength >= static_cast<int>(sizeof(fullName))) {
+        append_open_diagnostic(
+            1, "port_name_too_long", ERROR_BUFFER_OVERFLOW);
+        return -1;
+    }
     
+    append_open_diagnostic(3, "CreateFile_begin");
     HANDLE hSerial = CreateFileA(
         fullName,
         GENERIC_READ | GENERIC_WRITE,
@@ -385,16 +676,21 @@ int nsr_open_port(const char* portName, int baudRate) {
     );
     
     if (hSerial == INVALID_HANDLE_VALUE) {
+        append_open_diagnostic(3, "CreateFile_failed", GetLastError());
         return -1;
     }
+    append_open_diagnostic(3, "CreateFile_complete");
     
+    append_open_diagnostic(4, "GetCommState_begin");
     DCB dcb = {0};
     dcb.DCBlength = sizeof(DCB);
     
     if (!GetCommState(hSerial, &dcb)) {
+        append_open_diagnostic(4, "GetCommState_failed", GetLastError());
         CloseHandle(hSerial);
         return -1;
     }
+    append_open_diagnostic(4, "GetCommState_complete");
     
     dcb.BaudRate = baudRate;
     dcb.ByteSize = 8;
@@ -404,33 +700,73 @@ int nsr_open_port(const char* portName, int baudRate) {
     dcb.fDtrControl = DTR_CONTROL_DISABLE;
     dcb.fRtsControl = RTS_CONTROL_DISABLE;
     
+    append_open_diagnostic(5, "SetCommState_begin");
     if (!SetCommState(hSerial, &dcb)) {
+        append_open_diagnostic(5, "SetCommState_failed", GetLastError());
         CloseHandle(hSerial);
         return -1;
     }
+    append_open_diagnostic(5, "SetCommState_complete");
     
-    SetupComm(hSerial, 1, 1);
+    append_open_diagnostic(6, "SetupComm_begin");
+    constexpr DWORD kDriverBufferBytes = 64 * 1024;
+    if (!SetupComm(hSerial, kDriverBufferBytes, kDriverBufferBytes)) {
+        append_open_diagnostic(6, "SetupComm_failed", GetLastError());
+        CloseHandle(hSerial);
+        return -1;
+    }
+    append_open_diagnostic(6, "SetupComm_complete");
     
+    append_open_diagnostic(7, "SetCommTimeouts_begin");
     COMMTIMEOUTS timeouts = {0};
     timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = 0;
-    SetCommTimeouts(hSerial, &timeouts);
+    if (!SetCommTimeouts(hSerial, &timeouts)) {
+        append_open_diagnostic(7, "SetCommTimeouts_failed", GetLastError());
+        CloseHandle(hSerial);
+        return -1;
+    }
+    append_open_diagnostic(7, "SetCommTimeouts_complete");
     
-    PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    append_open_diagnostic(8, "PurgeComm_begin");
+    if (!PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR)) {
+        append_open_diagnostic(8, "PurgeComm_failed", GetLastError());
+        CloseHandle(hSerial);
+        return -1;
+    }
+    append_open_diagnostic(8, "PurgeComm_complete");
 
+    append_open_diagnostic(9, "publish_handle_begin");
     {
         std::lock_guard<std::mutex> lock(g_stateMutex);
         g_hSerial = hSerial;
     }
+    append_open_diagnostic(9, "publish_handle_complete");
     
+    append_open_diagnostic(10, "open_complete");
     return 0;
 }
 
+int nsr_get_last_open_stage() {
+    return g_lastOpenStage.load();
+}
+
+uint32_t nsr_get_last_open_error() {
+    return static_cast<uint32_t>(g_lastOpenError.load());
+}
+
+void nsr_configure_diagnostic_log(const char* logPath, int enabled) {
+    std::lock_guard<std::mutex> lock(g_diagnosticLogMutex);
+    g_diagnosticLogPath = utf8_to_wide(logPath);
+    g_diagnosticLogEnabled =
+        enabled != 0 && !g_diagnosticLogPath.empty();
+}
+
 void nsr_close_port() {
-    // nsr_stop_reading() already closes g_hSerial and waits for thread
+    // nsr_stop_reading() 已关闭 g_hSerial 并等待读取线程退出。
     nsr_stop_reading();
 }
 
@@ -480,11 +816,36 @@ int nsr_start_reading(int64_t dartPort, int timeoutMs) {
     
     g_dartPort = dartPort;
     g_timeoutMs = timeoutMs;
+    g_readBytes = 0;
+    g_maxReadBlockBytes = 0;
+    g_readCallbackCount = 0;
+    g_postFailureCount = 0;
     g_running = true;
     
     g_readThread = std::thread(read_thread_func);
     
     return 0;
+}
+
+void nsr_set_plot_receive_aggregation(int enabled) {
+    g_plotReceiveAggregationEnabled = enabled != 0;
+}
+
+void nsr_get_read_metrics(
+    uint64_t* bytesRead,
+    uint64_t* maxBlockBytes,
+    uint64_t* callbackCount,
+    uint64_t* postFailureCount) {
+    if (bytesRead != NULL) *bytesRead = g_readBytes.load();
+    if (maxBlockBytes != NULL) {
+        *maxBlockBytes = g_maxReadBlockBytes.load();
+    }
+    if (callbackCount != NULL) {
+        *callbackCount = g_readCallbackCount.load();
+    }
+    if (postFailureCount != NULL) {
+        *postFailureCount = g_postFailureCount.load();
+    }
 }
 
 void nsr_stop_reading() {

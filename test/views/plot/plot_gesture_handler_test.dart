@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
+import 'package:vscope_serial/data/models/plot_data.dart';
+import 'package:vscope_serial/data/models/plot_gesture_modifier.dart';
 import 'package:vscope_serial/views/plot/plot_gesture_handler.dart';
+import 'package:vscope_serial/views/plot/plot_painter.dart';
 import 'package:vscope_serial/views/plot/plot_viewport.dart';
 
 void main() {
@@ -19,6 +22,7 @@ void main() {
     required double deltaX,
     double deltaY = 0,
     Offset? localStart,
+    PlotGestureModifier modifier = PlotGestureModifier.shift,
   }) async {
     var viewport = initialViewport;
 
@@ -30,6 +34,7 @@ void main() {
             height: 600,
             child: PlotGestureHandler(
               viewport: initialViewport,
+              gestureModifier: modifier,
               onViewportChanged: (value, {fromDrag = false}) {
                 viewport = value;
               },
@@ -47,13 +52,17 @@ void main() {
         localStart == null
             ? tester.getCenter(find.byType(PlotGestureHandler))
             : topLeft + localStart;
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final modifierKey =
+        modifier == PlotGestureModifier.control
+            ? LogicalKeyboardKey.controlLeft
+            : LogicalKeyboardKey.shiftLeft;
+    await tester.sendKeyDownEvent(modifierKey);
     final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: plotCenter);
     await gesture.down(plotCenter);
     await gesture.moveTo(plotCenter + Offset(deltaX, deltaY));
     await gesture.up();
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(modifierKey);
     await tester.pump();
 
     return viewport;
@@ -65,6 +74,236 @@ void main() {
     expect(viewport.xRange, lessThan(initialViewport.xRange));
     expect(viewport.yMin, initialViewport.yMin);
     expect(viewport.yMax, initialViewport.yMax);
+  });
+
+  testWidgets('可切换为 Ctrl + 拖动执行轴向缩放', (tester) async {
+    final viewport = await shiftDrag(
+      tester,
+      deltaX: 120,
+      modifier: PlotGestureModifier.control,
+    );
+
+    expect(viewport.xRange, lessThan(initialViewport.xRange));
+    expect(viewport.yMin, initialViewport.yMin);
+    expect(viewport.yMax, initialViewport.yMax);
+  });
+
+  testWidgets('框选模式忽略单击和过薄选区', (tester) async {
+    var viewport = initialViewport;
+    var updateCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                updateCount++;
+              },
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final click = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await click.addPointer(location: center);
+    await click.down(center);
+    await click.up();
+    await click.removePointer();
+
+    final thin = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await thin.addPointer(location: center);
+    await thin.down(center);
+    await thin.moveTo(center + const Offset(120, 2));
+    await thin.up();
+    await thin.removePointer();
+    await tester.pump();
+
+    expect(updateCount, 0);
+    expect(viewport.xMin, initialViewport.xMin);
+    expect(viewport.xMax, initialViewport.xMax);
+    expect(viewport.yMin, initialViewport.yMin);
+    expect(viewport.yMax, initialViewport.yMax);
+  });
+
+  testWidgets('有效框选完成后通知调用方关闭单次模式', (tester) async {
+    var updateCount = 0;
+    var completionCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (_, {fromDrag = false}) => updateCount++,
+              onBoxZoomCompleted: () => completionCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(120, 80));
+    await gesture.up();
+    await tester.pump();
+
+    expect(updateCount, 1);
+    expect(completionCount, 1);
+  });
+
+  testWidgets('框选模式下右键拖动仍平移视口', (tester) async {
+    var viewport = initialViewport;
+    var completionCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              boxZoomEnabled: true,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+              },
+              onBoxZoomCompleted: () => completionCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(100, 60));
+    await gesture.up();
+    await tester.pump();
+
+    expect(viewport.xMin, lessThan(initialViewport.xMin));
+    expect(viewport.yMin, greaterThan(initialViewport.yMin));
+    expect(completionCount, 0);
+  });
+
+  testWidgets('Y 测量关闭吸附后按指针数据位置拖动', (tester) async {
+    double? draggedY;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              channels: const [],
+              data: [
+                PlotDataPoint(index: 0, timestamp: 0, values: [80]),
+              ],
+              yCursor1: 0,
+              yMeasurementSnapEnabled: false,
+              onYCursor1Drag: (value) => draggedY = value,
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final handler = find.byType(PlotGestureHandler);
+    final topLeft = tester.getTopLeft(handler);
+    final start =
+        topLeft +
+        Offset(
+          initialViewport.marginLeft - 18,
+          initialViewport.dataToScreenY(0, 600),
+        );
+    final target =
+        topLeft +
+        Offset(
+          initialViewport.marginLeft - 18,
+          initialViewport.dataToScreenY(30, 600),
+        );
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: start);
+    await gesture.down(start);
+    await gesture.moveTo(target);
+    await gesture.up();
+    await tester.pump();
+
+    expect(draggedY, closeTo(30, 0.001));
+  });
+
+  testWidgets('右键多测量标签只删除命中的一组', (tester) async {
+    int? deletedGroup;
+    const groups = [
+      PlotMeasurementGroup(cursor1: 10, cursor2: 20),
+      PlotMeasurementGroup(cursor1: 40, cursor2: 50),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              channels: const [],
+              xMeasurementGroups: groups,
+              onXMeasurementDelete: (index) => deletedGroup = index,
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final handler = find.byType(PlotGestureHandler);
+    final position =
+        tester.getTopLeft(handler) +
+        Offset(
+          initialViewport.dataToScreenX(groups[1].cursor1, 800),
+          PlotViewport().marginTop + 12,
+        );
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await gesture.addPointer(location: position);
+    await gesture.down(position);
+    await gesture.up();
+    await tester.pump();
+
+    expect(deletedGroup, 1);
   });
 
   testWidgets('Shift + left drag zooms out on the X axis', (tester) async {
@@ -255,6 +494,44 @@ void main() {
     expect(viewport.yRange, lessThan(initialViewport.yRange));
   });
 
+  testWidgets('可切换为 Ctrl + 滚轮执行轴向缩放', (tester) async {
+    var viewport = initialViewport;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              gestureModifier: PlotGestureModifier.control,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+              },
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final plotCenter = tester.getCenter(find.byType(PlotGestureHandler));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: plotCenter,
+        scrollDelta: const Offset(0, -20),
+      ),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(viewport.xRange, lessThan(initialViewport.xRange));
+    expect(viewport.yRange, lessThan(initialViewport.yRange));
+  });
+
   testWidgets('观察定位模式悬停预览并由左键提交', (tester) async {
     double? hoverX;
     double? commitX;
@@ -303,5 +580,263 @@ void main() {
     expect(commitX, greaterThan(initialHoverX));
     expect(commitX, hoverX);
     expect(viewportChanged, isFalse);
+  });
+
+  testWidgets('连续光标 hover 每帧只回调最后一个位置', (tester) async {
+    final cursors = <CursorState>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (cursor) {
+                if (cursor != null) cursors.add(cursor);
+              },
+              vCursorEnabled: true,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: topLeft + const Offset(100, 200));
+    for (var x = 101.0; x <= 700; x++) {
+      await gesture.moveTo(topLeft + Offset(x, 200));
+    }
+
+    expect(cursors, isEmpty);
+    await tester.pump();
+    expect(cursors, hasLength(1));
+    expect(cursors.single.screenPosition!.dx, closeTo(700, 0.001));
+  });
+
+  Future<void> pumpObservationGestureHarness(
+    WidgetTester tester, {
+    required bool locked,
+    required void Function(int index, double x) onDrag,
+    required void Function(int index) onDelete,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onCursorChanged: (_) {},
+              observations: [
+                PlotObservation(cursor: CursorState(x: 500), locked: locked),
+              ],
+              onObservationDrag: onDrag,
+              onObservationDelete: onDelete,
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('锁定观察在绘图区不能右键删除也不能拖动', (tester) async {
+    var dragCount = 0;
+    var deleteCount = 0;
+    await pumpObservationGestureHarness(
+      tester,
+      locked: true,
+      onDrag: (_, _) => dragCount++,
+      onDelete: (_) => deleteCount++,
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final observationHandle = topLeft + const Offset(400, 20);
+
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: observationHandle);
+    await secondary.down(observationHandle);
+    await secondary.up();
+    await secondary.removePointer();
+
+    final primary = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await primary.addPointer(location: observationHandle);
+    await primary.down(observationHandle);
+    await primary.moveTo(observationHandle + const Offset(80, 0));
+    await primary.up();
+    await primary.removePointer();
+    await tester.pump();
+
+    expect(deleteCount, 0);
+    expect(dragCount, 0);
+  });
+
+  testWidgets('未锁定观察在绘图区仍可右键删除和拖动', (tester) async {
+    var dragCount = 0;
+    var deleteCount = 0;
+    await pumpObservationGestureHarness(
+      tester,
+      locked: false,
+      onDrag: (_, _) => dragCount++,
+      onDelete: (_) => deleteCount++,
+    );
+
+    final topLeft = tester.getTopLeft(find.byType(PlotGestureHandler));
+    final observationHandle = topLeft + const Offset(400, 20);
+
+    final secondary = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await secondary.addPointer(location: observationHandle);
+    await secondary.down(observationHandle);
+    await secondary.up();
+    await secondary.removePointer();
+
+    final primary = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await primary.addPointer(location: observationHandle);
+    await primary.down(observationHandle);
+    await primary.moveTo(observationHandle + const Offset(80, 0));
+    await primary.up();
+    await primary.removePointer();
+    await tester.pump();
+
+    expect(deleteCount, 1);
+    expect(dragCount, greaterThan(0));
+  });
+
+  testWidgets('触控板双指移动平移视口并在结束后保存', (tester) async {
+    var viewport = initialViewport;
+    final fromDragValues = <bool>[];
+    var dragEndCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                fromDragValues.add(fromDrag);
+              },
+              onDragEnd: () => dragEndCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await gesture.panZoomStart(center);
+    await gesture.panZoomUpdate(center, pan: const Offset(80, -40), scale: 1);
+    await gesture.panZoomEnd();
+    await tester.pump();
+
+    expect(viewport.xRange, initialViewport.xRange);
+    expect(viewport.yRange, initialViewport.yRange);
+    expect(viewport.xMin, isNot(initialViewport.xMin));
+    expect(viewport.yMin, isNot(initialViewport.yMin));
+    expect(fromDragValues, isNotEmpty);
+    expect(fromDragValues.every((value) => value), isTrue);
+    expect(dragEndCount, 1);
+  });
+
+  testWidgets('鼠标平移只在开始和结束切换交互预览', (tester) async {
+    final states = <bool>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (_, {fromDrag = false}) {},
+              onInteractionChanged: states.add,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: center);
+    await gesture.down(center);
+    await gesture.moveTo(center + const Offset(20, 0));
+    await gesture.moveTo(center + const Offset(40, 0));
+    await gesture.up();
+    await tester.pump();
+
+    expect(states, <bool>[true, false]);
+  });
+
+  testWidgets('触控板累计捏合比例按增量缩放且不标记为拖动', (tester) async {
+    var viewport = initialViewport;
+    final fromDragValues = <bool>[];
+    var dragEndCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PlotGestureHandler(
+              viewport: initialViewport,
+              onViewportChanged: (value, {fromDrag = false}) {
+                viewport = value;
+                fromDragValues.add(fromDrag);
+              },
+              onContinuousZoomChanged: (value) {
+                viewport = value;
+              },
+              onDragEnd: () => dragEndCount++,
+              onCursorChanged: (_) {},
+              channels: const [],
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(PlotGestureHandler));
+    final gesture = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await gesture.panZoomStart(center);
+    await gesture.panZoomUpdate(center, scale: 1.2);
+    await gesture.panZoomUpdate(center, scale: 2);
+    await gesture.panZoomEnd();
+    await tester.pump();
+
+    expect(viewport.xRange, closeTo(initialViewport.xRange / 2, 0.001));
+    expect(viewport.yRange, closeTo(initialViewport.yRange / 2, 0.001));
+    expect(fromDragValues, isEmpty);
+    expect(dragEndCount, 1);
   });
 }

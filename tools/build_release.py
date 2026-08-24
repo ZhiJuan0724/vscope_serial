@@ -3,10 +3,12 @@
 VScope Serial Windows Release 打包工具
 
 自动执行以下流程：
-1. flutter analyze - 静态分析
-2. flutter test - 运行单元测试
-3. flutter build windows --release - Release 构建
-4. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
+1. 清理旧发布目录
+2. flutter analyze - 静态分析
+3. flutter test - 运行单元测试
+4. 清理旧 Windows 构建目录并执行全新 Release 构建
+5. 内置固定版本的轻量 OpenOCD 运行时
+6. 打包便携版：exe + 依赖 DLL + VC++ 运行时 DLL（开箱即用）
 
 C++ DLL 说明：
 - native_serial_reader.dll 由 CMake 自动编译，输出到 build/windows/x64/runner/Release/
@@ -20,6 +22,7 @@ C++ DLL 说明：
     build/releases/
     └── vscope_serial-x.x.x-portable/     # 便携版目录
     └── vscope_serial-x.x.x-portable.zip  # 便携版压缩包
+    └── vscope_serial-x.x.x-symbols.zip   # 独立调试符号，不进入便携版
 
 依赖：
     - Flutter SDK
@@ -28,7 +31,6 @@ C++ DLL 说明：
 """
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -36,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from generate_update_assets import generate as generate_update_assets
+from prepare_windows_release_bundle import prepare_windows_release_bundle
 
 # ========== 配置 ==========
 
@@ -43,23 +46,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 BUILD_DIR = PROJECT_ROOT / "build"
 RELEASE_DIR = BUILD_DIR / "releases"
 FLUTTER_BUILD_DIR = BUILD_DIR / "windows" / "x64" / "runner" / "Release"
-
-# VC++ 运行时 DLL（x64）
-# native_serial_reader.dll 是 MSVC 编译的 C++ DLL，需要这些运行时
-VC_RUNTIME_DLLS = [
-    "MSVCP140.dll",
-    "VCRUNTIME140.dll",
-    "VCRUNTIME140_1.dll",
-]
-
-# 需要排除的文件（不打包）
-EXCLUDE_FILES = {
-    "logs",           # 日志目录
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    "native_assets.json",
-}
-
+WINDOWS_BUILD_DIR = BUILD_DIR / "windows"
 
 # ========== 颜色输出 ==========
 
@@ -148,49 +135,37 @@ def clean_release_dir():
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def find_vc_runtime_dlls() -> list[Path]:
-    """查找系统中的 VC++ 运行时 DLL"""
-    found = []
-    system32 = Path("C:/Windows/System32")
-    
-    for dll_name in VC_RUNTIME_DLLS:
-        dll_path = system32 / dll_name
-        if dll_path.exists():
-            found.append(dll_path)
-        else:
-            warn(f"未找到 VC++ 运行时 DLL: {dll_name}")
-    
-    return found
+def clean_windows_build_dir():
+    """清理 Windows 构建目录，防止其他分支的旧产物混入发布包"""
+    if WINDOWS_BUILD_DIR.exists():
+        shutil.rmtree(WINDOWS_BUILD_DIR)
+        info("已清理旧的 Windows 构建目录")
 
 
-def copy_build_output(dst_dir: Path):
-    """复制构建输出到目标目录（便携版：包含 VC++ 运行时）"""
-    if not FLUTTER_BUILD_DIR.exists():
-        raise FileNotFoundError(f"构建目录不存在: {FLUTTER_BUILD_DIR}")
-    
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 复制所有文件和目录
-    for item in FLUTTER_BUILD_DIR.iterdir():
-        if item.name in EXCLUDE_FILES:
-            continue
-        
-        dst_path = dst_dir / item.name
-        if item.is_dir():
-            if dst_path.exists():
-                shutil.rmtree(dst_path)
-            shutil.copytree(item, dst_path)
-        else:
-            shutil.copy2(item, dst_path)
-    
-    # 复制 VC++ 运行时 DLL（C++ DLL 依赖）
-    vc_dlls = find_vc_runtime_dlls()
-    for dll_path in vc_dlls:
-        shutil.copy2(dll_path, dst_dir / dll_path.name)
-        info(f"复制 VC++ DLL: {dll_path.name}")
-    
-    if not vc_dlls:
-        warn("未找到任何 VC++ 运行时 DLL，便携版可能无法在缺少 VC++ 的系统上运行")
+def package_debug_symbols(version: str) -> Path:
+    """单独归档 PDB，供分析对应版本的 Windows minidump。"""
+    pdb_files = sorted(FLUTTER_BUILD_DIR.rglob("*.pdb"))
+    if not pdb_files:
+        raise FileNotFoundError("Release 构建未生成 PDB，无法归档崩溃分析符号")
+
+    staging_dir = BUILD_DIR / "windows-symbols"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    for source in pdb_files:
+        relative = source.relative_to(FLUTTER_BUILD_DIR)
+        destination = staging_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    archive_path = RELEASE_DIR / f"vscope_serial-{version}-symbols.zip"
+    shutil.make_archive(
+        str(archive_path.with_suffix("")),
+        "zip",
+        root_dir=staging_dir,
+    )
+    shutil.rmtree(staging_dir)
+    return archive_path
 
 
 def create_zip(source_dir: Path, zip_path: Path):
@@ -223,7 +198,6 @@ def main():
     )
     parser.add_argument("--skip-analyze", action="store_true", help="跳过 flutter analyze")
     parser.add_argument("--skip-test", action="store_true", help="跳过 flutter test")
-    parser.add_argument("--skip-build", action="store_true", help="跳过 flutter build")
     parser.add_argument("--no-zip", action="store_true", help="不生成 zip 压缩包")
     parser.add_argument("--version", "-v", help="指定版本号（默认从 pubspec.yaml 读取）")
     
@@ -234,6 +208,10 @@ def main():
     info(f"项目版本: {version}")
     info(f"构建时间: {build_time}")
     info(f"项目目录: {PROJECT_ROOT}")
+
+    # 一旦开始新的打包流程，就先移除上一次发布输出，避免构建或测试失败后
+    # 仍误把旧压缩包当作本次产物。
+    clean_release_dir()
     
     # 检查 Flutter
     flutter_cmd = shutil.which("flutter")
@@ -241,7 +219,6 @@ def main():
         error("未找到 Flutter SDK，请确保 flutter 命令在 PATH 中")
         sys.exit(1)
     info(f"Flutter 路径: {flutter_cmd}")
-    
     # ========== 步骤 1: 静态分析 ==========
     if not args.skip_analyze:
         step("步骤 1/3: 静态分析 (flutter analyze)")
@@ -266,37 +243,41 @@ def main():
     else:
         warn("跳过单元测试")
     
-    # ========== 步骤 3: Release 构建 ==========
-    if not args.skip_build:
-        step("步骤 3/3: Release 构建 (flutter build windows --release)")
-        try:
-            run_cmd([
-                flutter_cmd,
-                "build",
-                "windows",
-                "--release",
-                f"--dart-define=BUILD_TIME={build_time}",
-            ])
-            success("Release 构建完成")
-        except subprocess.CalledProcessError:
-            error("Release 构建失败")
-            sys.exit(1)
-    else:
-        warn("跳过构建，使用已有的构建产物")
-        if not FLUTTER_BUILD_DIR.exists():
-            error(f"构建目录不存在: {FLUTTER_BUILD_DIR}")
-            sys.exit(1)
+    # ========== 步骤 3: Flutter Release 构建 ==========
+    step("步骤 3/3: 全新 Release 构建 (flutter build windows --release)")
+    try:
+        # Flutter/CMake 默认执行增量构建。必须先删除整个 Windows 构建树，
+        # 否则切换分支后遗留的 exe、DLL 或辅助工具可能继续留在 Release
+        # bundle 中，并被后续步骤原样打包。
+        clean_windows_build_dir()
+        run_cmd([
+            flutter_cmd,
+            "build",
+            "windows",
+            "--release",
+            f"--dart-define=BUILD_TIME={build_time}",
+        ])
+        success("Release 构建完成")
+    except subprocess.CalledProcessError:
+        error("Release 构建失败")
+        sys.exit(1)
+
+    symbols_zip = package_debug_symbols(version)
+    success(f"调试符号归档完成: {symbols_zip}")
     
     # ========== 步骤 4: 打包 ==========
     step("打包便携版")
-    
-    clean_release_dir()
-    
-    # 便携版（含 VC++ 运行时）
+
+    # 本地与 CI 共用同一个发布目录组装器，避免附加运行时和校验规则漂移。
     portable_name = f"vscope_serial-{version}-portable"
     portable_dir = RELEASE_DIR / portable_name
     info(f"打包便携版: {portable_name}")
-    copy_build_output(portable_dir)
+    copied_runtime = prepare_windows_release_bundle(
+        FLUTTER_BUILD_DIR,
+        portable_dir,
+    )
+    for runtime_dll in copied_runtime:
+        info(f"复制 VC++ DLL: {runtime_dll.name}")
     success(f"便携版打包完成: {portable_dir}")
     
     # 生成自动更新兼容的 ZIP 和更新清单
@@ -322,12 +303,15 @@ def main():
     print(f"  目录: {portable_dir}")
     if portable_zip:
         print(f"  Zip:  {portable_zip}")
+    print(f"  符号: {symbols_zip}")
     
     # 显示文件大小
     print(f"\n文件大小:")
     if portable_zip and portable_zip.exists():
         portable_size = portable_zip.stat().st_size / (1024 * 1024)
         print(f"  便携版 zip: {portable_size:.1f} MB")
+    symbols_size = symbols_zip.stat().st_size / (1024 * 1024)
+    print(f"  调试符号 zip: {symbols_size:.1f} MB")
     
     # 列出包含的 DLL
     print(f"\n包含的 DLL:")

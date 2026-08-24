@@ -1,12 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vscope_serial/core/constants/plot_configuration.dart';
 import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/parser/zobow_parser.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 Uint8List _zobowFrame(int value) {
@@ -44,7 +45,7 @@ void main() {
     late PlotViewModel vm;
 
     setUp(() {
-      vm = PlotViewModel(SerialService());
+      vm = PlotViewModel(DataConnectionService());
       vm.setParserType(ParserType.zobow);
     });
 
@@ -122,6 +123,142 @@ void main() {
       expect(vm.visibleStartIndex, tailStart);
       expect(vm.dataPoints.length, total);
     });
+
+    test('prefetches a full exact block and debounces drag reloads', () async {
+      final smallVm = PlotViewModel(
+        DataConnectionService(),
+        materializedPointLimit: 100,
+      );
+      smallVm.setParserType(ParserType.zobow);
+      addTearDown(smallVm.dispose);
+      for (var i = 0; i < 300; i++) {
+        final frame = _zobowFrame(i);
+        smallVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(frame, smallVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: frame,
+          ),
+        );
+      }
+
+      smallVm.updateViewport(smallVm.viewport.copyWith(xMin: 10, xMax: 20));
+      expect(smallVm.visibleStartIndex, 0);
+      expect(smallVm.dataPoints, hasLength(100));
+
+      final prefetchedRevision = smallVm.dataRevision;
+      smallVm.updateViewport(
+        smallVm.viewport.copyWith(xMin: 30, xMax: 40),
+        fromDrag: true,
+      );
+      await Future<void>.delayed(
+        PlotConfiguration.locatorDragWindowLoadDebounce +
+            const Duration(milliseconds: 30),
+      );
+      expect(smallVm.dataRevision, prefetchedRevision);
+
+      smallVm.updateViewport(
+        smallVm.viewport.copyWith(xMin: 85, xMax: 95),
+        fromDrag: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(smallVm.visibleStartIndex, 0);
+      await Future<void>.delayed(
+        PlotConfiguration.locatorDragWindowLoadDebounce,
+      );
+      expect(smallVm.visibleStartIndex, 40);
+      expect(smallVm.dataPoints, hasLength(100));
+    });
+
+    test('latest display point keeps updating while viewing history', () {
+      final smallVm = PlotViewModel(
+        DataConnectionService(),
+        materializedPointLimit: 100,
+      );
+      smallVm.setParserType(ParserType.zobow);
+      addTearDown(smallVm.dispose);
+      for (var i = 0; i < 300; i++) {
+        final frame = _zobowFrame(i);
+        smallVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(frame, smallVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: frame,
+          ),
+        );
+      }
+
+      smallVm.updateViewport(smallVm.viewport.copyWith(xMin: 10, xMax: 20));
+      expect(smallVm.followEnabled, isFalse);
+      expect(smallVm.dataPoints.last.index, 99);
+
+      final newestFrame = _zobowFrame(900);
+      smallVm.ingestParsedResultForTest(
+        ParseResult.ok(
+          ZobowParser.decodeFrameValues(newestFrame, smallVm.parserConfig),
+          bytesConsumed: 10,
+          rawBytes: newestFrame,
+        ),
+      );
+
+      expect(smallVm.dataPoints.last.index, 99);
+      expect(smallVm.latestDisplayDataPoint?.index, 300);
+      expect(smallVm.latestDisplayDataPoint?.values, [900, 901, 902, 903]);
+    });
+
+    test(
+      'fixed live viewport keeps points received during async tail load',
+      () async {
+        final liveVm = PlotViewModel(
+          DataConnectionService(),
+          materializedPointLimit: 5000,
+        );
+        liveVm.setParserType(ParserType.zobow);
+        addTearDown(liveVm.dispose);
+        for (var i = 0; i < 6000; i++) {
+          final frame = _zobowFrame(i);
+          liveVm.ingestParsedResultForTest(
+            ParseResult.ok(
+              ZobowParser.decodeFrameValues(frame, liveVm.parserConfig),
+              bytesConsumed: 10,
+              rawBytes: frame,
+            ),
+          );
+        }
+
+        liveVm.updateViewport(liveVm.viewport.copyWith(xMin: 1000, xMax: 6500));
+        expect(liveVm.isWindowLoading, isTrue);
+        for (var i = 6000; i < 6020; i++) {
+          final frame = _zobowFrame(i);
+          liveVm.ingestParsedResultForTest(
+            ParseResult.ok(
+              ZobowParser.decodeFrameValues(frame, liveVm.parserConfig),
+              bytesConsumed: 10,
+              rawBytes: frame,
+            ),
+          );
+        }
+        while (liveVm.isWindowLoading) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        expect(liveVm.followEnabled, isFalse);
+        expect(liveVm.dataPoints.last.index, 6019);
+        final revisionAfterLoad = liveVm.dataRevision;
+
+        final nextFrame = _zobowFrame(6020);
+        liveVm.ingestParsedResultForTest(
+          ParseResult.ok(
+            ZobowParser.decodeFrameValues(nextFrame, liveVm.parserConfig),
+            bytesConsumed: 10,
+            rawBytes: nextFrame,
+          ),
+        );
+
+        expect(liveVm.dataPoints.last.index, 6020);
+        expect(liveVm.dataRevision, greaterThan(revisionAfterLoad));
+      },
+    );
 
     test('clearData clears LOD index', () {
       for (int i = 0; i < 512; i++) {

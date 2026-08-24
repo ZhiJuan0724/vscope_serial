@@ -25,6 +25,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: 3.47.0
           channel: stable
           cache: true
 
@@ -37,8 +38,25 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+      - name: Check UI consistency
+        shell: pwsh
+        run: ./tools/check_ui_consistency.ps1
+
       - name: Run tests
         run: flutter test
+
+      - name: Test restricted pyOCD worker
+        run: python -m unittest test_tools/test_pyocd_worker.py -v
+
+      - name: Test Windows release bundle assembly
+        run: python -m unittest test_tools/test_prepare_windows_release_bundle.py -v
+
+      - name: Run native serial time tests
+        shell: pwsh
+        run: |
+          cmake -S windows/native_serial_reader -B build/native_serial_tests -DBUILD_TESTING=ON
+          cmake --build build/native_serial_tests --config Release --target native_serial_time_test
+          ctest --test-dir build/native_serial_tests -C Release --output-on-failure
 
       - name: Verify plot rebuild isolation
         run: flutter test test/views/plot_page_rebuild_test.dart --dart-define=PLOT_PERF_METRICS=true
@@ -56,11 +74,15 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: 3.47.0
           channel: stable
           cache: true
 
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
+
+      - name: Clean previous build outputs
+        run: flutter clean
 
       - name: Install dependencies
         run: flutter pub get
@@ -85,16 +107,107 @@ jobs:
           $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           flutter build windows --release "--dart-define=BUILD_TIME=$buildTime"
 
-      - name: Verify native serial reader DLL
+      - name: Test Windows crash dump handler
         shell: pwsh
         run: |
-          $dll = "build/windows/x64/runner/Release/native_serial_reader.dll"
+          $cacheLine = Select-String `
+            -Path "build/windows/x64/CMakeCache.txt" `
+            -Pattern "^CMAKE_COMMAND:INTERNAL=(.+)$" |
+            Select-Object -First 1
+          if ($null -eq $cacheLine) {
+            throw "Unable to locate the CMake executable used by Flutter"
+          }
+          $cmake = $cacheLine.Matches.Groups[1].Value
+          & $cmake `
+            --build "build/windows/x64" `
+            --config Release `
+            --target crash_dump_handler_test
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build crash_dump_handler_test"
+          }
+          & "build/windows/x64/runner_tests/Release/crash_dump_handler_test.exe"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Crash dump handler did not produce valid DMP and JSON files"
+          }
+
+      - name: Package Windows debug symbols
+        shell: pwsh
+        run: |
+          $bundle = "build/windows/x64/runner/Release"
+          $symbolRoot = "build/windows-symbols"
+          if (Test-Path -LiteralPath $symbolRoot) {
+            Remove-Item -LiteralPath $symbolRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $symbolRoot | Out-Null
+          $pdbFiles = Get-ChildItem -LiteralPath $bundle -Recurse -File -Filter "*.pdb"
+          if ($pdbFiles.Count -eq 0) {
+            throw "Windows release build did not produce any PDB files"
+          }
+          foreach ($file in $pdbFiles) {
+            $relative = [System.IO.Path]::GetRelativePath(
+              (Resolve-Path -LiteralPath $bundle).Path,
+              $file.FullName
+            )
+            $destination = Join-Path $symbolRoot $relative
+            $destinationDirectory = Split-Path -Parent $destination
+            New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination
+          }
+          $version = "${{ github.ref_name }}"
+          if ("${{ github.ref_type }}" -ne "tag") {
+            $version = "v0.0.0-${{ github.sha }}"
+          }
+          Compress-Archive `
+            -Path "$symbolRoot/*" `
+            -DestinationPath "build/vscope_serial-symbols-$version.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload Windows debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscope_serial-windows-symbols
+          path: build/vscope_serial-symbols-*.zip
+          if-no-files-found: error
+
+      - name: Prepare Windows release bundle
+        shell: pwsh
+        run: |
+          python tools/prepare_windows_release_bundle.py `
+            --source "build/windows/x64/runner/Release" `
+            --output "build/windows-release-bundle"
+
+      - name: Verify Windows release bundle
+        shell: pwsh
+        run: |
+          $bundle = "build/windows-release-bundle"
+          $dll = "$bundle/native_serial_reader.dll"
           if (-not (Test-Path $dll)) {
             throw "Missing native_serial_reader.dll in release bundle"
           }
-          $updater = "build/windows/x64/runner/Release/vscope_updater.exe"
+          $updater = "$bundle/vscope_updater.exe"
           if (-not (Test-Path $updater)) {
             throw "Missing vscope_updater.exe in release bundle"
+          }
+          $runtimeDlls = @(
+            "MSVCP140.dll",
+            "VCRUNTIME140.dll",
+            "VCRUNTIME140_1.dll"
+          )
+          foreach ($name in $runtimeDlls) {
+            $path = Join-Path $bundle $name
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Missing VC++ runtime in release bundle: $name"
+            }
+            $version = (Get-Item -LiteralPath $path).VersionInfo.FileVersion
+            Write-Host "$name version=$version"
+          }
+          $openOcdArchive = "$bundle/runtime/openocd/openocd-runtime.zip"
+          if (-not (Test-Path $openOcdArchive)) {
+            throw "Missing bundled OpenOCD archive"
+          }
+          $openOcdManifest = "$bundle/runtime/openocd/openocd-runtime.json"
+          if (-not (Test-Path $openOcdManifest)) {
+            throw "Missing bundled OpenOCD manifest"
           }
 
       - name: Package Windows bundle
@@ -102,11 +215,14 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}"
           if ("${{ github.ref_type }}" -ne "tag") {
-            $version = "v0.0.0-${{ github.sha }}"
+            $version = "v0.0.0-beta.0"
           }
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (Test-Path -LiteralPath "dist") {
+            Remove-Item -LiteralPath "dist" -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path "dist" | Out-Null
           python tools/generate_update_assets.py `
-            --bundle "build/windows/x64/runner/Release" `
+            --bundle "build/windows-release-bundle" `
             --tag $version `
             --output dist
 
@@ -134,6 +250,12 @@ jobs:
         with:
           name: vscope_serial-windows
           path: dist
+
+      - name: Download Windows debug symbols
+        uses: actions/download-artifact@v4
+        with:
+          name: vscope_serial-windows-symbols
+          path: symbols
 
       - name: Extract changelog
         id: changelog
@@ -174,6 +296,7 @@ jobs:
           files: |
             dist/*.zip
             dist/update-manifest-*.json
+            symbols/*.zip
           body_path: release_notes.md
 
       - name: Publish Gitee release

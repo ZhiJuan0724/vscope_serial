@@ -12,7 +12,23 @@ add_library(native_serial_reader SHARED
 )
 
 target_compile_definitions(native_serial_reader PRIVATE NATIVE_SERIAL_READER_EXPORTS)
+target_compile_definitions(native_serial_reader PRIVATE
+  "$<$<CONFIG:Debug>:VSCOPE_ENABLE_TEST_CRASH>"
+)
 target_compile_options(native_serial_reader PRIVATE /utf-8)
+target_link_options(native_serial_reader PRIVATE
+  "$<$<OR:$<CONFIG:Release>,$<CONFIG:Profile>>:/DEBUG>"
+)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(native_serial_time_test EXCLUDE_FROM_ALL
+    tests/native_serial_time_test.cpp
+    native_time_utils.h
+  )
+  target_compile_options(native_serial_time_test PRIVATE /utf-8)
+  add_test(NAME native_serial_time_test COMMAND native_serial_time_test)
+endif()
 
 # 链接 Windows 库
 target_link_libraries(native_serial_reader PRIVATE
@@ -27,4 +43,5 @@ set_target_properties(native_serial_reader PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner/$<CONFIG>"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner/$<CONFIG>"
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner/$<CONFIG>"
+  PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/runner/$<CONFIG>"
 )

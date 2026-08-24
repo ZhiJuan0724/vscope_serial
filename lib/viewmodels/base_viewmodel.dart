@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 
-import '../services/serial_service.dart';
+import '../services/data_connection_service.dart';
 
 /// 基础 ViewModel
 abstract class BaseViewModel extends ChangeNotifier {
-  final SerialService serialService;
+  final DataConnectionService connectionService;
   bool _disposed = false;
+  bool _serviceNotifyScheduled = false;
 
-  BaseViewModel(this.serialService) {
-    serialService.addListener(_onServiceChanged);
+  BaseViewModel(this.connectionService) {
+    connectionService.addListener(_onServiceChanged);
   }
 
   void _onServiceChanged() {
-    if (_disposed) return;
+    if (_disposed || _serviceNotifyScheduled) return;
+    _serviceNotifyScheduled = true;
     Future.microtask(() {
+      _serviceNotifyScheduled = false;
       if (!_disposed) notifyListeners();
     });
   }
@@ -21,7 +24,7 @@ abstract class BaseViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    serialService.removeListener(_onServiceChanged);
+    connectionService.removeListener(_onServiceChanged);
     super.dispose();
   }
 }

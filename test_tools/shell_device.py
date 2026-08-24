@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""支持 ANSI、逐键输入和 YMODEM 的 Shell 虚拟设备。"""
 """
 Shell/YMODEM virtual serial device for VScope Serial.
 
@@ -269,12 +270,18 @@ def terminal_loop(ser, args) -> None:
     )
     ser.write(intro + prompt)
     buffer = bytearray()
+    ignore_lf_after_cr = False
     print("[terminal] started. Press Ctrl+C to stop.")
     while True:
         byte = ser.read(1)
         if not byte:
             continue
         value = byte[0]
+        # CRLF 表示一个行尾：在 CR 时处理命令，紧随其后的 LF 只消费而不产生空命令。
+        if value == 0x0A and ignore_lf_after_cr:
+            ignore_lf_after_cr = False
+            continue
+        ignore_lf_after_cr = value == 0x0D
         if value == 0x03:
             buffer.clear()
             ser.write(b"^C\r\n" + prompt)

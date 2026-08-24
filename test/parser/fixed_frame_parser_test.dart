@@ -5,10 +5,22 @@ import 'package:vscope_serial/core/utils/crc.dart';
 import 'package:vscope_serial/data/models/channel_config.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
 import 'package:vscope_serial/data/parser/fixed_frame_parser.dart';
-import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/data/protocol/r_protocol_codec.dart';
 
 void main() {
   group('FixedFrameParser', () {
+    test('零长度非法配置不会进入无限循环', () {
+      final config =
+          ParserConfig.fixedFrameDefault()
+            ..channelCount = 0
+            ..hasFrameHeader = false
+            ..hasFrameTail = false
+            ..hasChecksum = false;
+      final parser = FixedFrameParser(config);
+
+      expect(parser.feedBatch(Uint8List.fromList([1, 2, 3])), isEmpty);
+    });
+
     test('CRC16支持位于帧尾前', () async {
       final config = _crcConfig(ChecksumPosition.beforeFrameTail);
       final parser = FixedFrameParser(config);
@@ -20,6 +32,23 @@ void main() {
 
       expect(result.success, isTrue);
       expect(result.values, [1, 2]);
+    });
+
+    test('批量入口一次解析多帧并跳过帧头前噪声', () {
+      final config = _crcConfig(ChecksumPosition.beforeFrameTail);
+      final parser = FixedFrameParser(config);
+      addTearDown(parser.dispose);
+      final bytes =
+          BytesBuilder()
+            ..add([0x7E, 0x7D])
+            ..add(_buildFrame(config, [1, 0, 2, 0]))
+            ..add(_buildFrame(config, [3, 0, 4, 0]));
+
+      final results = parser.feedBatch(bytes.takeBytes());
+
+      expect(results, hasLength(2));
+      expect(results[0].values, [1, 2]);
+      expect(results[1].values, [3, 4]);
     });
 
     test('CRC16支持位于帧尾后', () async {
@@ -151,7 +180,7 @@ void main() {
             ..frameHeader = []
             ..frameHeaderLength = 0;
 
-      expect(config.fixedFrameValidationError, '启用帧头后至少需要填写一个字节');
+      expect(config.fixedFrameValidationError, '帧头字节数少于配置的帧头长度');
     });
 
     test('启用帧尾后不能为空', () {
@@ -170,7 +199,7 @@ void main() {
     });
 
     test('固定帧r协议按固定通道数发送并保留0地址', () {
-      final addresses = PlotViewModel.validateRProtocolAddresses([
+      final addresses = rSendProtocol.validateAddresses([
         '1',
         '0',
         '0x10',
@@ -178,7 +207,7 @@ void main() {
 
       expect(addresses, ['1', '0', '0x10']);
       expect(
-        String.fromCharCodes(PlotViewModel.buildRProtocolCommand(addresses)),
+        String.fromCharCodes(rSendProtocol.buildCommand(addresses)),
         'r 1 0 0x10\n',
       );
     });

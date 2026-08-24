@@ -6,9 +6,10 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import '../core/utils/app_logger.dart';
 
-// 加载 DLL
+// 仅本项目的原生串口 DLL。开发目录与发布目录的布局不同，统一在这里回退查找。
 final DynamicLibrary _dll = _loadDll();
 
 DynamicLibrary _loadDll() {
@@ -32,13 +33,24 @@ DynamicLibrary _loadDll() {
   return DynamicLibrary.open('native_serial_reader.dll');
 }
 
-// Dart API DL 初始化
+// Dart API DL 初始化：原生读取线程需要通过该初始化数据向 Dart port 投递字节。
 typedef NsrInitDartApiC = Int32 Function(Pointer<Void> data);
 typedef NsrInitDartApiDart = int Function(Pointer<Void> data);
 
-// FFI 函数签名
+// 原生导出函数签名。Dart 声明必须与 C ABI 保持完全一致。
 typedef NsrOpenPortC = Int32 Function(Pointer<Utf8> portName, Int32 baudRate);
 typedef NsrOpenPortDart = int Function(Pointer<Utf8> portName, int baudRate);
+
+typedef NsrGetLastOpenStageC = Int32 Function();
+typedef NsrGetLastOpenStageDart = int Function();
+
+typedef NsrGetLastOpenErrorC = Uint32 Function();
+typedef NsrGetLastOpenErrorDart = int Function();
+
+typedef NsrConfigureDiagnosticLogC =
+    Void Function(Pointer<Utf8> logPath, Int32 enabled);
+typedef NsrConfigureDiagnosticLogDart =
+    void Function(Pointer<Utf8> logPath, int enabled);
 
 typedef NsrClosePortC = Void Function();
 typedef NsrClosePortDart = void Function();
@@ -56,8 +68,26 @@ typedef NsrSetDtrDart = void Function(int on);
 typedef NsrStartReadingC = Int32 Function(Int64 dartPort, Int32 timeoutMs);
 typedef NsrStartReadingDart = int Function(int dartPort, int timeoutMs);
 
+typedef NsrSetPlotReceiveAggregationC = Void Function(Int32 enabled);
+typedef NsrSetPlotReceiveAggregationDart = void Function(int enabled);
+
 typedef NsrStopReadingC = Void Function();
 typedef NsrStopReadingDart = void Function();
+
+typedef NsrGetReadMetricsC =
+    Void Function(
+      Pointer<Uint64> bytesRead,
+      Pointer<Uint64> maxBlockBytes,
+      Pointer<Uint64> callbackCount,
+      Pointer<Uint64> postFailureCount,
+    );
+typedef NsrGetReadMetricsDart =
+    void Function(
+      Pointer<Uint64> bytesRead,
+      Pointer<Uint64> maxBlockBytes,
+      Pointer<Uint64> callbackCount,
+      Pointer<Uint64> postFailureCount,
+    );
 
 typedef NsrWriteC = Int32 Function(Pointer<Uint8> data, Int32 length);
 typedef NsrWriteDart = int Function(Pointer<Uint8> data, int length);
@@ -82,12 +112,27 @@ typedef NsrStartPortMonitorDart = int Function(int dartPort);
 typedef NsrStopPortMonitorC = Void Function();
 typedef NsrStopPortMonitorDart = void Function();
 
-// 获取函数指针
+typedef NsrTriggerTestCrashC = Void Function();
+typedef NsrTriggerTestCrashDart = void Function();
+
+// 进程启动时解析所有 FFI 符号，后续调用只使用已绑定函数指针。
 final _nsrInitDartApi = _dll
     .lookupFunction<NsrInitDartApiC, NsrInitDartApiDart>('nsr_init_dart_api');
 final _nsrOpenPort = _dll.lookupFunction<NsrOpenPortC, NsrOpenPortDart>(
   'nsr_open_port',
 );
+final _nsrGetLastOpenStage = _dll
+    .lookupFunction<NsrGetLastOpenStageC, NsrGetLastOpenStageDart>(
+      'nsr_get_last_open_stage',
+    );
+final _nsrGetLastOpenError = _dll
+    .lookupFunction<NsrGetLastOpenErrorC, NsrGetLastOpenErrorDart>(
+      'nsr_get_last_open_error',
+    );
+final _nsrConfigureDiagnosticLog = _dll
+    .lookupFunction<NsrConfigureDiagnosticLogC, NsrConfigureDiagnosticLogDart>(
+      'nsr_configure_diagnostic_log',
+    );
 final _nsrClosePort = _dll.lookupFunction<NsrClosePortC, NsrClosePortDart>(
   'nsr_close_port',
 );
@@ -102,8 +147,16 @@ final _nsrSetDtr = _dll.lookupFunction<NsrSetDtrC, NsrSetDtrDart>(
 );
 final _nsrStartReading = _dll
     .lookupFunction<NsrStartReadingC, NsrStartReadingDart>('nsr_start_reading');
+final _nsrSetPlotReceiveAggregation = _dll.lookupFunction<
+  NsrSetPlotReceiveAggregationC,
+  NsrSetPlotReceiveAggregationDart
+>('nsr_set_plot_receive_aggregation');
 final _nsrStopReading = _dll
     .lookupFunction<NsrStopReadingC, NsrStopReadingDart>('nsr_stop_reading');
+final _nsrGetReadMetrics = _dll
+    .lookupFunction<NsrGetReadMetricsC, NsrGetReadMetricsDart>(
+      'nsr_get_read_metrics',
+    );
 final _nsrWrite = _dll.lookupFunction<NsrWriteC, NsrWriteDart>('nsr_write');
 final _nsrIsOpen = _dll.lookupFunction<NsrIsOpenC, NsrIsOpenDart>(
   'nsr_is_open',
@@ -129,6 +182,7 @@ final _nsrStopPortMonitor = _dll
     );
 
 List<String> _listNativePorts() {
+  // 原生接口先返回所需缓冲区长度；设备插拔导致长度变化时重新完整读取一次。
   final required = _nsrListPorts(nullptr, 0);
   if (required < 0) {
     throw StateError('Windows 串口枚举失败: $required');
@@ -201,11 +255,288 @@ List<NativeSerialPortDetail> _listNativePortDetails() {
 
 bool _checkNativeConnectionHealth() => _nsrIsConnectionHealthy() == 1;
 
+int _writeNativeBytes(Uint8List data) {
+  final ptr = calloc<Uint8>(data.length);
+  try {
+    ptr.asTypedList(data.length).setAll(0, data);
+    return _nsrWrite(ptr, data.length);
+  } finally {
+    calloc.free(ptr);
+  }
+}
+
+/// 常驻 isolate 的串口写入循环。
+///
+/// ReceivePort 按消息到达顺序逐条处理，保证普通发送、Shell 和文件传输
+/// 共用同一条有序写入链路，同时避免同步 FFI 写入阻塞 Flutter UI isolate。
+Future<void> _nativeWriteIsolateMain(SendPort readyPort) async {
+  final commands = ReceivePort();
+  readyPort.send(commands.sendPort);
+  await for (final message in commands) {
+    if (message is! List || message.length < 2) continue;
+    final replyPort = message[0] as SendPort;
+    final requestId = message[1] as int;
+    if (message.length == 2) {
+      replyPort.send(<Object?>[requestId, null, null]);
+      commands.close();
+      break;
+    }
+
+    try {
+      final data =
+          (message[2] as TransferableTypedData).materialize().asUint8List();
+      final written = _writeNativeBytes(data);
+      replyPort.send(<Object?>[requestId, written, null]);
+    } catch (error, stackTrace) {
+      replyPort.send(<Object?>[requestId, null, '$error\n$stackTrace']);
+    }
+  }
+}
+
+/// 单连接使用的有序原生写队列。
+///
+/// 队列一旦超时或 isolate 异常退出便永久失效；重连必须创建新实例，
+/// 防止旧连接中失去响应的请求污染新连接。
+class NativeSerialWriteQueue {
+  static const Duration defaultStartupTimeout = Duration(seconds: 2);
+  static const Duration defaultRequestTimeout = Duration(seconds: 3);
+  static const Duration defaultShutdownTimeout = Duration(seconds: 2);
+
+  final ReceivePort _responses = ReceivePort();
+  final ReceivePort _errors = ReceivePort();
+  final ReceivePort _exits = ReceivePort();
+  final Map<int, Completer<int?>> _pending = <int, Completer<int?>>{};
+  final Map<int, Timer> _requestTimers = <int, Timer>{};
+  final void Function(SendPort) _entryPoint;
+  final Duration startupTimeout;
+  final Duration requestTimeout;
+  final Duration shutdownTimeout;
+  Isolate? _isolate;
+  SendPort? _commands;
+  Future<void>? _starting;
+  Completer<void>? _ready;
+  Completer<void>? _exited;
+  int _nextRequestId = 1;
+  bool _closing = false;
+  bool _closed = false;
+  Object? _failure;
+
+  NativeSerialWriteQueue({
+    void Function(SendPort) entryPoint = _nativeWriteIsolateMain,
+    this.startupTimeout = defaultStartupTimeout,
+    this.requestTimeout = defaultRequestTimeout,
+    this.shutdownTimeout = defaultShutdownTimeout,
+  }) : _entryPoint = entryPoint {
+    _responses.listen((message) {
+      if (message is SendPort) {
+        _commands = message;
+        final ready = _ready;
+        if (ready != null && !ready.isCompleted) ready.complete();
+        return;
+      }
+      if (message is! List || message.length < 3) return;
+      final requestId = message[0] as int;
+      final completer = _pending.remove(requestId);
+      _requestTimers.remove(requestId)?.cancel();
+      if (completer == null) return;
+      final error = message[2];
+      if (error != null) {
+        completer.completeError(StateError(error as String));
+      } else {
+        completer.complete(message[1] as int?);
+      }
+    });
+    _errors.listen((message) {
+      final description =
+          message is List && message.isNotEmpty
+              ? message.join('\n')
+              : message.toString();
+      _fail(StateError('串口写入 isolate 异常: $description'));
+    });
+    _exits.listen((_) {
+      final exited = _exited;
+      if (exited != null && !exited.isCompleted) exited.complete();
+      if (!_closing) {
+        _fail(StateError('串口写入 isolate 意外退出'));
+      }
+    });
+  }
+
+  Future<void> _ensureStarted({bool allowClosing = false}) {
+    final failure = _failure;
+    if (failure != null) return Future<void>.error(failure);
+    if (_closed || (_closing && !allowClosing)) {
+      return Future<void>.error(StateError('串口写入队列已关闭'));
+    }
+    final existing = _starting;
+    if (existing != null) return existing;
+    _ready = Completer<void>();
+    _exited = Completer<void>();
+    final start = () async {
+      try {
+        _isolate = await Isolate.spawn(
+          _entryPoint,
+          _responses.sendPort,
+          onError: _errors.sendPort,
+          onExit: _exits.sendPort,
+          errorsAreFatal: true,
+        );
+        await _ready!.future.timeout(startupTimeout);
+      } catch (error, stackTrace) {
+        final failure =
+            error is TimeoutException
+                ? TimeoutException('串口写入队列启动超时', startupTimeout)
+                : error;
+        _fail(failure, stackTrace);
+        Error.throwWithStackTrace(failure, stackTrace);
+      }
+    }();
+    _starting = start;
+    return start;
+  }
+
+  Future<int> write(Uint8List data) async {
+    if (_closing) throw StateError('串口写入队列正在关闭');
+    if (data.isEmpty) return 0;
+    await _ensureStarted();
+    final requestId = _nextRequestId++;
+    final completer = Completer<int?>();
+    _pending[requestId] = completer;
+    _requestTimers[requestId] = Timer(requestTimeout, () {
+      final timedOut = _pending.remove(requestId);
+      _requestTimers.remove(requestId);
+      if (timedOut == null) return;
+      final error = TimeoutException('串口写入请求超时', requestTimeout);
+      timedOut.completeError(error);
+      _fail(error);
+    });
+    _commands!.send(<Object>[
+      _responses.sendPort,
+      requestId,
+      TransferableTypedData.fromList(<Uint8List>[data]),
+    ]);
+    return (await completer.future)!;
+  }
+
+  Future<void> close() async {
+    if (_closed || _closing) return;
+    _closing = true;
+    if (_starting == null) {
+      _disposePorts();
+      return;
+    }
+    try {
+      await _ensureStarted(allowClosing: true);
+      if (_failure == null && _commands != null) {
+        final requestId = _nextRequestId++;
+        final completer = Completer<int?>();
+        _pending[requestId] = completer;
+        _commands!.send(<Object>[_responses.sendPort, requestId]);
+        await Future.any<void>([
+          completer.future.then<void>((_) {}),
+          _exited!.future,
+        ]).timeout(shutdownTimeout);
+      }
+    } on TimeoutException {
+      AppLogger().warning('串口写入队列关闭超时，已强制终止', category: 'SERIAL');
+    } catch (error) {
+      AppLogger().warning('串口写入队列关闭异常: $error', category: 'SERIAL');
+    } finally {
+      _isolate?.kill(priority: Isolate.immediate);
+      _isolate = null;
+      _completePendingWithError(StateError('串口写入队列已关闭'));
+      _disposePorts();
+    }
+  }
+
+  void _fail(Object error, [StackTrace? stackTrace]) {
+    if (_failure != null || _closed) return;
+    _failure = error;
+    _isolate?.kill(priority: Isolate.immediate);
+    _isolate = null;
+    final ready = _ready;
+    if (ready != null && !ready.isCompleted) {
+      ready.completeError(error, stackTrace);
+    }
+    _completePendingWithError(error, stackTrace);
+  }
+
+  void _completePendingWithError(Object error, [StackTrace? stackTrace]) {
+    for (final timer in _requestTimers.values) {
+      timer.cancel();
+    }
+    _requestTimers.clear();
+    final pending = _pending.values.toList(growable: false);
+    _pending.clear();
+    for (final completer in pending) {
+      if (!completer.isCompleted) completer.completeError(error, stackTrace);
+    }
+  }
+
+  void _disposePorts() {
+    if (_closed) return;
+    _closed = true;
+    _responses.close();
+    _errors.close();
+    _exits.close();
+  }
+}
+
 class NativeSerialPortDetail {
   final String port;
   final String name;
 
   const NativeSerialPortDetail({required this.port, required this.name});
+}
+
+class NativeSerialOpenResult {
+  final bool opened;
+  final int stage;
+  final int errorCode;
+
+  const NativeSerialOpenResult({
+    required this.opened,
+    required this.stage,
+    required this.errorCode,
+  });
+
+  String get stageName => switch (stage) {
+    1 => '参数检查',
+    2 => '关闭旧句柄',
+    3 => 'CreateFile',
+    4 => 'GetCommState',
+    5 => 'SetCommState',
+    6 => 'SetupComm',
+    7 => 'SetCommTimeouts',
+    8 => 'PurgeComm',
+    9 => '发布句柄',
+    10 => '完成',
+    _ => '未开始',
+  };
+
+  /// 把 Win32 错误码映射为可行动的中文提示，供连接失败时直接展示给用户。
+  String get failureDescription {
+    final reason = switch (errorCode) {
+      2 => '设备不存在，请确认设备已连接',
+      3 => '串口路径不存在',
+      5 => '端口被占用或无权限，请关闭占用该端口的程序',
+      21 => '设备未就绪',
+      32 => '端口被其他程序占用',
+      1167 => '设备已断开',
+      _ => '打开失败',
+    };
+    return '$reason（$stageName，错误码 $errorCode）';
+  }
+}
+
+/// 原生串口打开失败，携带可直接展示给用户的原因。
+class NativeSerialOpenException implements Exception {
+  const NativeSerialOpenException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 /// Windows 原生串口读取器
@@ -216,6 +547,41 @@ class NativeSerialReader {
   ReceivePort? _receivePort;
   bool _isOpen = false;
   bool _dartApiInitialized = false;
+  NativeSerialWriteQueue? _writeQueue;
+
+  /// 在应用启动阶段通过只读状态查询预热原生 DLL 与 FFI 绑定。
+  ///
+  /// 部分 Windows 环境在首次串口连接流程中才触发 FFI 延迟初始化时，
+  /// 可能在 Dart/原生边界直接退出。此调用不打开或枚举串口、不创建线程，
+  /// 也不修改任何串口状态；不能用连接阶段的诊断日志配置调用替代。
+  static void warmUpNativeBinding() {
+    _nsrIsOpen();
+  }
+
+  /// 仅 Debug 构建使用，制造真实原生访问冲突以验证 Runner 转储链路。
+  ///
+  /// Release DLL 不导出该符号；保持调用时才解析，避免 Release 启动阶段查找
+  /// 一个有意不存在的测试入口。
+  static void triggerTestCrash() {
+    if (!kDebugMode) {
+      throw UnsupportedError('原生崩溃测试仅在 Debug 构建中可用');
+    }
+    final trigger = _dll
+        .lookupFunction<NsrTriggerTestCrashC, NsrTriggerTestCrashDart>(
+          'nsr_trigger_test_crash',
+        );
+    trigger();
+    throw StateError('原生崩溃测试入口意外返回');
+  }
+
+  static void configureDiagnosticLogging(bool enabled, String? logPath) {
+    final pathPtr = (logPath ?? '').toNativeUtf8();
+    try {
+      _nsrConfigureDiagnosticLog(pathPtr, enabled ? 1 : 0);
+    } finally {
+      calloc.free(pathPtr);
+    }
+  }
 
   /// 初始化 Dart API（必须在其它操作前调用）。
   ///
@@ -232,7 +598,7 @@ class NativeSerialReader {
 
   /// 打开串口
   ///
-  /// [initData] should be [NativeApi.initializeApiDLData] from dart:ffi.
+  /// [initData] 必须来自 `dart:ffi` 的 [NativeApi.initializeApiDLData]。
   /// 如果没有提供，调用方必须在 [startReading] 前先调用 [initDartApi]。
   bool open(String portName, int baudRate, {Pointer<Void>? initData}) {
     // 如果提供了 initData，则确保 Dart API 已初始化。
@@ -244,6 +610,7 @@ class NativeSerialReader {
     try {
       final result = _nsrOpenPort(namePtr, baudRate);
       _isOpen = result == 0;
+      if (_isOpen) _writeQueue = NativeSerialWriteQueue();
       return _isOpen;
     } finally {
       calloc.free(namePtr);
@@ -255,19 +622,40 @@ class NativeSerialReader {
   /// Windows CreateFile 在端口不可用时可能阻塞。
   /// 原生 DLL 状态是进程级的，后台操作完成后 UI isolate 可以挂接该句柄。
   static Future<bool> openInBackground(String portName, int baudRate) {
-    return Isolate.run(() => _openNativePort(portName, baudRate));
+    return openInBackgroundDetailed(
+      portName,
+      baudRate,
+    ).then((result) => result.opened);
+  }
+
+  static Future<NativeSerialOpenResult> openInBackgroundDetailed(
+    String portName,
+    int baudRate,
+  ) async {
+    final values = await Isolate.run(
+      () => _openNativePortDetailed(portName, baudRate),
+    );
+    return NativeSerialOpenResult(
+      opened: values[0] == 1,
+      stage: values[1],
+      errorCode: values[2],
+    );
   }
 
   /// 将当前读取器实例挂接到 [openInBackground] 打开的句柄。
   bool attachToOpenPort() {
     _isOpen = _nsrIsOpen() == 1;
+    if (_isOpen) _writeQueue = NativeSerialWriteQueue();
     return _isOpen;
   }
 
   /// 关闭串口
-  void close() {
+  Future<void> close() async {
     stopReading();
-    _nsrClosePort();
+    final writeQueue = _writeQueue;
+    _writeQueue = null;
+    await writeQueue?.close();
+    await Isolate.run(_closeNativePort);
     _isOpen = false;
   }
 
@@ -306,23 +694,37 @@ class NativeSerialReader {
     return true;
   }
 
+  /// 控制原生读取线程是否仅为绘图会话合并连续小块数据。
+  ///
+  /// 设置在读取线程运行期间可即时切换；关闭时线程会先交付已缓存的残留字节。
+  void setPlotReceiveAggregation(bool enabled) {
+    _nsrSetPlotReceiveAggregation(enabled ? 1 : 0);
+  }
+
   /// 停止读取
   void stopReading() {
     _nsrStopReading();
     // 先停止原生线程，确保不会再投递消息。
     _receivePort?.close();
     _receivePort = null;
+    final metrics = _readNativeMetrics();
+    if (metrics.callbackCount > 0 || metrics.postFailureCount > 0) {
+      AppLogger().info(
+        '串口读取汇总: ${metrics.bytesRead} bytes, '
+        '${metrics.callbackCount} 次回调, 最大块 ${metrics.maxBlockBytes} bytes, '
+        '投递失败 ${metrics.postFailureCount} 次',
+        category: 'SERIAL',
+      );
+    }
   }
 
   /// 发送数据
-  int write(Uint8List data) {
-    final ptr = calloc<Uint8>(data.length);
-    try {
-      ptr.asTypedList(data.length).setAll(0, data);
-      return _nsrWrite(ptr, data.length);
-    } finally {
-      calloc.free(ptr);
+  Future<int> write(Uint8List data) {
+    final writeQueue = _writeQueue;
+    if (writeQueue == null) {
+      return Future<int>.error(StateError('串口写入队列未启动'));
     }
+    return writeQueue.write(data);
   }
 
   /// 是否打开
@@ -355,31 +757,28 @@ class NativeSerialReader {
       return;
     }
 
-    // C++ 发送的数据格式：[8 字节 timestamp_us][N 字节 data]。
-    if (message.length < 8) {
+    final nativeData = NativeSerialData.tryParse(message);
+    if (nativeData == null) {
       AppLogger().debug(
         '[NativeSerialReader] Message too short: ${message.length} bytes',
         category: 'SERIAL',
       );
       return;
     }
-
-    final timestampUs = ByteData.sublistView(
-      message,
-    ).getInt64(0, Endian.little);
-    final data = Uint8List.sublistView(message, 8);
-
-    _dataController.add(NativeSerialData(data: data, timestampUs: timestampUs));
+    _dataController.add(nativeData);
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     // 先停止原生线程，再关闭 ReceivePort 和 stream controller。
     _nsrStopReading();
     _receivePort?.close();
     _receivePort = null;
-    _nsrClosePort();
+    final writeQueue = _writeQueue;
+    _writeQueue = null;
+    await writeQueue?.close();
+    await Isolate.run(_closeNativePort);
     _isOpen = false;
-    _dataController.close();
+    await _dataController.close();
   }
 }
 
@@ -389,12 +788,16 @@ class NativeSerialReader {
 class NativeSerialPortMonitor {
   final _changesController = StreamController<void>.broadcast();
   ReceivePort? _receivePort;
+  bool _dartApiInitialized = false;
 
   Stream<void> get changes => _changesController.stream;
 
   bool start() {
     if (_receivePort != null) return true;
-    if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+    if (!_dartApiInitialized) {
+      if (_nsrInitDartApi(NativeApi.initializeApiDLData) != 0) return false;
+      _dartApiInitialized = true;
+    }
 
     final receivePort = ReceivePort();
     receivePort.listen((_) => _changesController.add(null));
@@ -414,21 +817,94 @@ class NativeSerialPortMonitor {
   }
 }
 
-bool _openNativePort(String portName, int baudRate) {
+List<int> _openNativePortDetailed(String portName, int baudRate) {
   final namePtr = portName.toNativeUtf8();
   try {
-    return _nsrOpenPort(namePtr, baudRate) == 0;
+    final opened = _nsrOpenPort(namePtr, baudRate) == 0;
+    return <int>[
+      opened ? 1 : 0,
+      _nsrGetLastOpenStage(),
+      _nsrGetLastOpenError(),
+    ];
   } finally {
     calloc.free(namePtr);
   }
 }
 
-/// 原生串口数据（带微秒级时间戳）
-class NativeSerialData {
-  final Uint8List data;
-  final int timestampUs;
+void _closeNativePort() => _nsrClosePort();
 
-  NativeSerialData({required this.data, required this.timestampUs});
+NativeSerialReadMetrics _readNativeMetrics() {
+  final values = calloc<Uint64>(4);
+  try {
+    _nsrGetReadMetrics(values, values + 1, values + 2, values + 3);
+    return NativeSerialReadMetrics(
+      bytesRead: values[0],
+      maxBlockBytes: values[1],
+      callbackCount: values[2],
+      postFailureCount: values[3],
+    );
+  } finally {
+    calloc.free(values);
+  }
+}
+
+class NativeSerialReadMetrics {
+  final int bytesRead;
+  final int maxBlockBytes;
+  final int callbackCount;
+  final int postFailureCount;
+
+  const NativeSerialReadMetrics({
+    required this.bytesRead,
+    required this.maxBlockBytes,
+    required this.callbackCount,
+    required this.postFailureCount,
+  });
+}
+
+/// 原生串口数据：单调时间用于间隔计算，墙钟时间用于界面显示。
+class NativeSerialData {
+  static const int headerBytes = 32;
+
+  final Uint8List data;
+  final int firstMonotonicUs;
+  final int lastMonotonicUs;
+  final int firstWallClockUs;
+  final int lastWallClockUs;
+
+  NativeSerialData({
+    required this.data,
+    required int monotonicUs,
+    required int wallClockUs,
+    int? firstMonotonicUs,
+    int? lastMonotonicUs,
+    int? firstWallClockUs,
+    int? lastWallClockUs,
+  }) : firstMonotonicUs = firstMonotonicUs ?? monotonicUs,
+       lastMonotonicUs = lastMonotonicUs ?? monotonicUs,
+       firstWallClockUs = firstWallClockUs ?? wallClockUs,
+       lastWallClockUs = lastWallClockUs ?? wallClockUs;
+
+  /// 与旧调用方兼容：显示时间取聚合块的第一个原生读取块。
+  int get wallClockUs => firstWallClockUs;
+
+  /// 与旧调用方兼容：间隔判断取聚合块的最后一个原生读取块。
+  int get monotonicUs => lastMonotonicUs;
+
+  /// 解析原生 DLL 投递的双时间戳包头。
+  static NativeSerialData? tryParse(Uint8List message) {
+    if (message.length < headerBytes) return null;
+    final header = ByteData.sublistView(message, 0, headerBytes);
+    return NativeSerialData(
+      monotonicUs: header.getInt64(8, Endian.little),
+      wallClockUs: header.getInt64(16, Endian.little),
+      firstMonotonicUs: header.getInt64(0, Endian.little),
+      lastMonotonicUs: header.getInt64(8, Endian.little),
+      firstWallClockUs: header.getInt64(16, Endian.little),
+      lastWallClockUs: header.getInt64(24, Endian.little),
+      data: Uint8List.sublistView(message, headerBytes),
+    );
+  }
 
   String get hex => data
       .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())

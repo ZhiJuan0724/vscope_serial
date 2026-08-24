@@ -1,6 +1,41 @@
 # 测试工具
 
-`test_tools/` 用于模拟下位机设备和生成绘图测试文件，配合 VScope Serial 验证协议解析、串口收发和大数据绘图性能。
+`test_tools/` 保存设备模拟、测试数据生成、后端/更新器验证、稳定性压测和绘图性能基准工具。
+
+## 目录
+
+- [环境要求](#sec-env)
+- [控制按键](#sec-keys)
+- [Zobow 协议模拟](#sec-zobow)
+- [JustFloat 协议模拟](#sec-justfloat)
+- [Modbus 从站模拟](#sec-modbus)
+- [Shell/YMODEM 模拟](#sec-shell)
+- [多编码文本发送](#sec-text)
+- [绘图 BIN 生成](#sec-bin)
+- [Zobow C 配置导入](#sec-zobow-c)
+- [Windows 更新器测试](#sec-updater)
+- [建议测试流程](#sec-flow)
+- [绘图性能基准](#sec-benchmark)
+- [P1 稳定性压测](#sec-p1)
+
+## 工具总览
+
+| 工具 | 类别 | 用途 | 介质/模式 | 章节 |
+| --- | --- | --- | --- | --- |
+| `zobow_device.py` | 协议模拟 | Zobow 4/8 通道数据帧模拟，CRC16/MODBUS | 串口 | [Zobow 协议模拟](#sec-zobow) |
+| `justfloat_device.py` | 协议模拟 | VOFA JustFloat `float32` 帧模拟，`r` 命令配置 | 串口 | [JustFloat 协议模拟](#sec-justfloat) |
+| `modbus_device.py` | 协议模拟 | Modbus 从站，按标准实现，支持 RTU/ASCII/TCP | 串口 / TCP | [Modbus 从站模拟](#sec-modbus) |
+| `shell_device.py` | 协议模拟 | Shell ANSI 终端回显 + YMODEM 收发对端 | 串口 | [Shell/YMODEM 模拟](#sec-shell) |
+| `text_sender.py` | 协议模拟 | 按指定编码/行尾持续发送文本，验证解码与换行 | 串口 | [多编码文本发送](#sec-text) |
+| `generate_plot_bin.py` | 数据生成 | 生成绘图页可导入的大数据 `.bin` 文件 | 文件 | [绘图 BIN 生成](#sec-bin) |
+| `zobow_c_profile_import.dart` | 数据生成 | 解析 C 文件中的 Zobow 通道地址预设为 JSON | 文件 | [Zobow C 配置导入](#sec-zobow-c) |
+| `test_updater.py` | 更新器验证 | `vscope_updater.exe` 端到端冒烟（回退/保留/拒绝替换） | 本地 exe | [Windows 更新器测试](#sec-updater) |
+| `run_plot_benchmark.ps1` | 性能基准 | Windows Profile 绘图性能基准（帧/内存/重绘） | 应用 | [绘图性能基准](#sec-benchmark) |
+| `run_p1_stability_soak.ps1` | 稳定性 | 1 GiB+ 噪声/BIN 导入门禁，24h 真实串口 soak | 应用/串口 | [P1 稳定性压测](#sec-p1) |
+
+**快速选择**：验证上位机串口协议 → [Zobow](#sec-zobow) / [JustFloat](#sec-justfloat) / [Modbus](#sec-modbus) / [Shell](#sec-shell) / [文本](#sec-text)；验证绘图大数据 → [BIN 生成](#sec-bin)；验证发布链路 → [更新器](#sec-updater)；开发期性能对比 → [绘图基准](#sec-benchmark) / [P1 压测](#sec-p1)。
+
+<a id="sec-env"></a>
 
 ## 环境要求
 
@@ -10,6 +45,8 @@ pip install pyserial
 
 Windows 下可以使用 com0com 或 Virtual Serial Port Driver 创建虚拟串口对。例如创建 `COM13 <-> COM14`，VScope Serial 连接 `COM13`，测试脚本连接 `COM14`。
 
+<a id="sec-keys"></a>
+
 ## 控制按键
 
 `zobow_device.py` 和 `justfloat_device.py` 运行时支持单键控制，Windows 下直接按键即可，无需回车：
@@ -17,6 +54,8 @@ Windows 下可以使用 com0com 或 Virtual Serial Port Driver 创建虚拟串�
 - `p`：暂停/恢复发送。
 - `r`：复位到等待接收配置/读取命令状态。
 - `c`：关闭脚本。
+
+<a id="sec-zobow"></a>
 
 ## Zobow 协议模拟
 
@@ -55,6 +94,8 @@ python zobow_device.py --help
 
 频率参数优先级为 `--preset`、`--rate`、`--interval`。三者同时提供时，只使用优先级最高的一项。
 
+<a id="sec-justfloat"></a>
+
 ## JustFloat 协议模拟
 
 `justfloat_device.py` 模拟 VOFA JustFloat 设备：
@@ -78,6 +119,68 @@ python justfloat_device.py --help
 - `--interval/-i`：每帧发送间隔，单位毫秒，默认 `1`，即约 1000 帧/s。
 - `--amplitude/-a`：生成数据的幅度，默认 `100`。
 - `--help/-h`：显示脚本参数帮助。
+
+<a id="sec-modbus"></a>
+
+## Modbus 从站模拟
+
+`modbus_device.py` 按 **Modbus 应用协议规范（V1.1b3）** 实现一个独立从站（服务器），用于验证上位机 Modbus 主站代码的协议正确性。它**不参照本项目任何编解码实现**，以便独立检验主站的帧格式、CRC/LRC、异常码与边界处理。
+
+支持三种传输：
+
+- `rtu`：RTU 模式。1 地址 + PDU + CRC16（低字节在前）；帧间 3.5 字符静默定界，帧内字符间隔 ≤1.5 字符。
+- `ascii`：ASCII 模式。`:` 起始、`\r\n` 结束，每字节 2 个十六进制字符 + LRC（二进制补码）。
+- `tcp`：TCP 模式。MBAP 头（事务ID + 协议ID=0 + 长度 + 单元ID）+ PDU，事务 ID 回显。**监听地址会打印在控制台。**
+
+支持功能码：读线圈(0x01)、读离散输入(0x02)、读保持寄存器(0x03)、读输入寄存器(0x04)、写单线圈(0x05)、写单寄存器(0x06)、写多线圈(0x0F)、写多寄存器(0x10)。严格实现标准异常码（0x01 非法功能 / 0x02 非法数据地址 / 0x03 非法数据值 / 0x04 从站设备故障），并具备以下可用于暴露主站缺陷的校验：
+
+- 读数量为 0 或超上限（线圈 2000 / 寄存器 125）→ 异常 0x03。
+- 读地址+数量超出数据区 → 异常 0x02。
+- 写单线圈值必须为 `0xFF00`/`0x0000`，否则异常 0x03。
+- 写多线圈/寄存器的字节计数字段与数量不符 → 异常 0x03。
+- 未知功能码 → 异常 0x01。
+- RTU CRC 校验失败 / ASCII LRC 校验失败 / TCP 协议 ID 非 0 → 丢弃帧不响应。
+- 广播地址（单元号 0）只写不响应。
+
+```bash
+# RTU：连接串口（默认波特率 115200，可用 --baud 覆盖）
+python modbus_device.py --mode rtu --port COM14
+python modbus_device.py --mode rtu --port COM14 --baud 9600 --unit 1 --verbose
+
+# ASCII
+python modbus_device.py --mode ascii --port COM14
+
+# TCP：吐出监听地址（默认 127.0.0.1:502，--host/--port 可改）
+python modbus_device.py --mode tcp --port 502
+python modbus_device.py --mode tcp --host 0.0.0.0 --port 502 --verbose
+
+# 对全部请求注入指定异常码（1/2/3/4），用于测试主站异常处理
+python modbus_device.py --mode rtu --port COM14 --inject-exception 3
+
+# 动态设备：前 64 个保持/输入寄存器每秒自增
+python modbus_device.py --mode tcp --port 502 --auto-increment
+```
+
+参数：
+
+- `--mode`：传输模式，必填，`rtu` / `ascii` / `tcp`。
+- `--port/-p`：RTU/ASCII 为串口号（必填，如 `COM14`）；TCP 为监听端口（默认 `502`）。
+- `--baud/-b`：RTU/ASCII 串口波特率，默认 `115200`。
+- `--host`：TCP 监听地址，默认 `127.0.0.1`；`0.0.0.0` 时打印所有网卡地址。
+- `--unit/-u`：从站单元号，默认 `1`。
+- `--verbose/-v`：打印收到的请求与发送的响应/异常帧。
+- `--inject-exception`：对全部请求注入异常码 `1`/`2`/`3`/`4`。
+- `--init-value`：数据区初始值，默认 `0`。
+- `--auto-increment`：前 64 个寄存器每秒自增，模拟动态设备。
+- `--coils`/`--discrete-inputs`/`--holding-registers`/`--input-registers`：各数据区数量，默认 `65536`。
+- `--help/-h`：显示参数帮助。
+
+上位机连接提示：
+
+- RTU/ASCII：上位机连接虚拟串口对的一侧（如 `COM13`），本脚本连接另一侧（`COM14`）。
+- TCP：上位机以 TCP 客户端连接本脚本打印的监听地址。
+
+<a id="sec-shell"></a>
 
 ## Shell/YMODEM 模拟
 
@@ -130,6 +233,8 @@ python shell_device.py --port COM14 --mode ymodem-receive --output E:\temp\ymode
 - `--output`：接收文件目录，默认是当前工作目录下的 `ymodem_rx`。用于 `ymodem-receive` 模式以及 `terminal` 模式中的 `yrecv` 命令。
 - `--help/-h`：显示脚本参数帮助。
 
+<a id="sec-text"></a>
+
 ## 多编码文本发送
 
 `text_sender.py` 按指定编码和行尾持续发送文本，用于验证数据收发页的解码、换行、混合文本和串口回显。
@@ -152,6 +257,8 @@ python text_sender.py --port COM14 --mode echo
 - `--line-ending`：自动添加的行尾类型，支持 `crlf`（默认）、`lf` 和 `cr`；启用 `--no-line-ending` 后此参数不生效。
 - `--help/-h`：显示脚本参数帮助。
 
+<a id="sec-bin"></a>
+
 ## 绘图 BIN 生成
 
 `generate_plot_bin.py` 生成可直接在绘图页面导入的 `.bin` 文件，用于测试大数据导入、LOD 绘图和测量交互。
@@ -159,6 +266,9 @@ python text_sender.py --port COM14 --mode echo
 ```bash
 python generate_plot_bin.py --output E:\temp\vscope_180w_8ch.bin --packets 1800000 --channels 8
 python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode step
+python generate_plot_bin.py -o E:\temp\impulse_100w.bin -n 1000000 -c 1 --mode impulse -a 10000
+python generate_plot_bin.py -o E:\temp\burst_100w.bin -n 1000000 -c 1 --mode burst -a 10000
+python generate_plot_bin.py -o E:\temp\burst_shoulders_100w.bin -n 1000000 -c 1 --mode burst-shoulders -a 10000
 ```
 
 参数：
@@ -166,10 +276,12 @@ python generate_plot_bin.py -o E:\temp\step_100w_4ch.bin -n 1000000 -c 4 --mode 
 - `--output/-o`：输出文件路径。
 - `--packets/-n`：生成包数。
 - `--channels/-c`：通道数，范围 1~16。
-- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`，默认 `sine`。
+- `--mode/-m`：数据模式，支持 `sine`、`step`、`ramp`、`constant`、`impulse`、`burst`、`burst-shoulders`，默认 `sine`。`impulse` 仅在数据中点生成一个指定幅度的突变点；`burst` 均匀生成 5 段、每段连续 8 个指定幅度的点；`burst-shoulders` 在每段突变两侧额外生成 `100`、`500` 的过渡点；其余点均为 `0`。
 - `--amplitude/-a`：生成数据的幅度，默认 `1000`。
 - `--progress`：每生成多少包打印一次进度，默认 `100000`；设置为 `0` 时不打印进度。
 - `--help/-h`：显示脚本参数帮助。
+
+<a id="sec-zobow-c"></a>
 
 ## Zobow C 配置导入
 
@@ -185,6 +297,28 @@ dart run test_tools/zobow_c_profile_import.dart --ignore-comments E:\temp\device
 - `--ignore-comments`：忽略注释中的通道名称，输出预设时不使用注释提供的名称。
 - `<file.c>`：待解析的 C 文件路径，必填且只能提供一个。
 
+<a id="sec-updater"></a>
+
+## Windows 更新器测试
+
+`test_updater.py` 对已构建的原生 `vscope_updater.exe` 执行端到端冒烟测试，覆盖：
+
+- 正常更新、旧文件清理和回退快照生成。
+- `settings/` 等用户文件保留。
+- payload 缺失或校验失败后的自动回滚。
+- 主程序仍在运行时拒绝替换文件。
+
+脚本使用 `build/windows/x64/runner/Debug/vscope_updater.exe`，运行前先完成 Windows Debug 构建：
+
+```bash
+flutter build windows --debug
+python test_tools/test_updater.py
+```
+
+测试只在临时目录中复制和操作更新器，不修改当前开发目录中的应用文件。
+
+<a id="sec-flow"></a>
+
 ## 建议测试流程
 
 1. 创建虚拟串口对，例如 `COM13 <-> COM14`。
@@ -198,6 +332,8 @@ dart run test_tools/zobow_c_profile_import.dart --ignore-comments E:\temp\device
 ```bash
 python generate_plot_bin.py -o E:\temp\big_8ch.bin -n 1800000 -c 8
 ```
+
+<a id="sec-benchmark"></a>
 
 ## 绘图性能基准
 
@@ -216,6 +352,36 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label optimized
 pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 ```
 
+运行静态历史 LOD 拖动基准：
+
+```bash
+# 8 万/50 万、五类固定波形、三档质量、完整/1/8 视口，分别测试
+# 常规 X、斜向、大幅度全范围扫动和快速左右往返；不包含单独 Y 拖动
+# 大幅扫动每连续两次后停留约 1 秒，模拟用户查看后续波形再继续拖动
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-quick -Label lod-quick
+
+# 只快速复测最差的 50 万噪声场景
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate-quick -Label lod-gate-quick
+
+# 对筛出的最差 50 万噪声场景执行三轮、每种拖动 8 秒的正式门禁
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate -Label lod-gate
+
+# 使用Windows D3D11数据层执行相同门禁
+pwsh -File test_tools/run_plot_benchmark.ps1 -Preset lod-gate -Engine d3d11 -Label lod-gate-d3d11
+```
+
+`lod` 会对上述全部组合执行三轮正式测量，耗时较长；`lod-gate-quick` 和 `lod-gate` 用于在
+全覆盖快速筛查后复验最差场景。LOD 报告额外记录查询、几何生成、Canvas
+提交、缓存命中和缓冲扩容，用于判断 Canvas 是否达标以及是否需要 GPU 原型。
+
+`soak` 包含以下容量场景：
+
+- `1M-16CH`：实际采集达到 1M 点后验收，精确对象不得超过 250k。
+- `10M-4CH`：实际采集达到 10M 点后执行拖动/缩放，精确对象不得超过 250k，p95 帧时间不得超过 33 ms。
+- `100K-16CH-SOAK`：16 通道和数学通道持续 5 分钟，验证 2 GiB 历史预算停止和 4 GiB RSS 紧急保护线。
+
+前两个场景若在限定时间内未达到目标点数会直接失败，不再用配置范围代替实际历史量。所有容量场景同时断言峰值 RSS 低于 4 GiB，报告记录历史预算占用和视口任务是否收敛。
+
 输出文件保存在 `build/performance/`，该目录不提交到仓库：
 
 - `<Label>.json`：原始指标，便于脚本或后续工具分析。
@@ -225,5 +391,23 @@ pwsh -File test_tools/run_plot_benchmark.ps1 -Preset soak -Label soak
 
 参数：
 
-- `-Preset`：测试场景集合，支持 `quick`（默认，快速覆盖典型负载）和 `soak`（长时间高负载测试）。
+- `-Preset`：测试场景集合，支持 `quick`（默认）、`soak`、`lod-quick`、`lod-gate-quick`、`lod-gate` 和 `lod`。
 - `-Label`：报告文件名标签，默认 `optimized`；只允许字母、数字、点、下划线和连字符。
+- `-Engine`：LOD基准的数据层引擎，支持 `canvas`（默认）和Windows `d3d11`。
+
+<a id="sec-p1"></a>
+
+## P1 稳定性压测
+
+`run_p1_stability_soak.ps1` 独立执行不进入 CI 的大输入门禁：默认分别向
+FireWater/JustFloat 投入 `1 GiB` 无分隔噪声，并生成、导入约 `1 GiB` 的
+16 通道 BIN。临时导入文件默认在完成后删除。
+
+```bash
+pwsh -File test_tools/run_p1_stability_soak.ps1
+pwsh -File test_tools/run_p1_stability_soak.ps1 -NoiseGiB 2 -ImportGiB 2 -KeepImportFile
+```
+
+24 小时真实串口 soak 仍需虚拟串口或实体设备：使用本目录的
+`zobow_device.py`/`justfloat_device.py` 持续发送，期间执行断开、重连和拔插，
+结束后核对应用接收字节、原生连接周期汇总日志及系统内存曲线。

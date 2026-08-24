@@ -2,12 +2,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 
 import 'app_info.dart';
 import 'update_checker.dart';
+import 'update_runtime_guard.dart';
 
+/// 发布包随附的完整性清单。
+///
+/// 清单绑定目标版本、压缩包名称、长度和 SHA-256，避免下载到同 tag 下但并非
+/// 当前 Windows 安装包的附件。
 class UpdateManifest {
   final int schemaVersion;
   final String version;
@@ -15,6 +20,7 @@ class UpdateManifest {
   final int packageSize;
   final String sha256;
   final String executable;
+  final String? signature;
 
   const UpdateManifest({
     required this.schemaVersion,
@@ -23,6 +29,7 @@ class UpdateManifest {
     required this.packageSize,
     required this.sha256,
     required this.executable,
+    this.signature,
   });
 
   factory UpdateManifest.fromJson(Map<String, dynamic> json) {
@@ -33,9 +40,15 @@ class UpdateManifest {
       packageSize: (json['packageSize'] as num?)?.toInt() ?? 0,
       sha256: (json['sha256'] ?? '').toString().toLowerCase(),
       executable: (json['executable'] ?? '').toString(),
+      signature: switch (json['signature']) {
+        final String value when value.trim().isNotEmpty =>
+          value.trim().toLowerCase(),
+        _ => null,
+      },
     );
   }
 
+  /// 校验清单能否用于指定 Release；回退槽没有 zip 附件时可跳过包校验。
   void validateFor(ReleaseInfo release, {bool requirePackage = true}) {
     final normalizedTag = release.tagName.replaceFirst(RegExp(r'^[vV]'), '');
     final packageValid =
@@ -49,9 +62,15 @@ class UpdateManifest {
         executable != 'vscope_serial.exe') {
       throw const FormatException('更新清单无效或与发布版本不匹配');
     }
+    if (signature != null) {
+      // 供应链加固预留：在发布侧签名与内置公钥落地前，禁止静默信任带签名
+      // 但无法校验的清单，保持失败关闭（fail-closed）。
+      throw const FormatException('更新清单包含签名，但当前版本未启用签名校验');
+    }
   }
 }
 
+/// 已完成下载、校验和安全解压，能够交给外置更新器安装的更新目录。
 class PreparedUpdate {
   final ReleaseInfo release;
   final UpdateManifest manifest;
@@ -66,6 +85,7 @@ class PreparedUpdate {
   });
 }
 
+/// 当前稳定/Beta 槽位中可恢复的上一版本快照。
 class RollbackUpdate {
   final UpdateChannel channel;
   final String version;
@@ -87,6 +107,7 @@ class RollbackUpdate {
       version.startsWith(RegExp(r'[vV]')) ? version : 'v$version';
 }
 
+/// 下载阶段向 UI 报告的累计进度；总长度未知时 [fraction] 为 null。
 class UpdateDownloadProgress {
   final int received;
   final int total;
@@ -109,6 +130,10 @@ class UpdateDownloadException implements Exception {
   String toString() => message;
 }
 
+class _UpdateDownloadCancelled extends UpdateDownloadException {
+  const _UpdateDownloadCancelled() : super('下载已取消');
+}
+
 typedef ReleaseFetcher =
     Future<ReleaseInfo> Function(
       String tagName,
@@ -124,6 +149,10 @@ typedef UpdateFileDownloader =
       void Function(UpdateDownloadProgress progress) onProgress,
     );
 
+/// 更新包下载、校验、解压、安装和回退槽管理服务。
+///
+/// 文件准备与安装计划被同一运行时锁串行化。下载通过 generation 取消，旧请求
+/// 即使网络稍后返回也不能覆盖新请求写出的临时文件或 UI 状态。
 class UpdateService {
   static const _githubReleaseByTag =
       'https://api.github.com/repos/ZhiJuan0724/vscope_serial/releases/tags/';
@@ -134,7 +163,9 @@ class UpdateService {
   final BytesFetcher _bytesFetcher;
   final UpdateFileDownloader? _fileDownloader;
   final Directory? _updatesRootOverride;
+  final UpdateRuntimeGuard _runtimeGuard;
   HttpClient? _downloadClient;
+  int _downloadGeneration = 0;
   static const _maxNetworkAttempts = 3;
 
   UpdateService({
@@ -142,10 +173,12 @@ class UpdateService {
     BytesFetcher? bytesFetcher,
     UpdateFileDownloader? fileDownloader,
     Directory? updatesRoot,
+    UpdateRuntimeGuard? runtimeGuard,
   }) : _releaseFetcher = releaseFetcher ?? _defaultFetchRelease,
        _bytesFetcher = bytesFetcher ?? _defaultFetchBytes,
        _fileDownloader = fileDownloader,
-       _updatesRootOverride = updatesRoot;
+       _updatesRootOverride = updatesRoot,
+       _runtimeGuard = runtimeGuard ?? WindowsUpdateRuntimeGuard();
 
   Future<PreparedUpdate> downloadAndPrepare(
     ReleaseInfo checkedRelease, {
@@ -153,6 +186,26 @@ class UpdateService {
     bool allowSourceFallback = true,
     required void Function(UpdateDownloadProgress progress) onProgress,
   }) async {
+    final generation = ++_downloadGeneration;
+    return _runtimeGuard.runWithUpdateLock(
+      () => _downloadAndPrepareLocked(
+        checkedRelease,
+        generation: generation,
+        channel: channel,
+        allowSourceFallback: allowSourceFallback,
+        onProgress: onProgress,
+      ),
+    );
+  }
+
+  Future<PreparedUpdate> _downloadAndPrepareLocked(
+    ReleaseInfo checkedRelease, {
+    required int generation,
+    required UpdateChannel channel,
+    bool allowSourceFallback = true,
+    required void Function(UpdateDownloadProgress progress) onProgress,
+  }) async {
+    _throwIfDownloadCancelled(generation);
     if (!Platform.isWindows) {
       throw const UpdateDownloadException('自动安装目前仅支持 Windows');
     }
@@ -172,8 +225,10 @@ class UpdateService {
                 if (source != checkedRelease.source) source,
             ]
             : [checkedRelease.source];
+    // 同一候选版本允许切换镜像源，但每个源都必须重新取得并校验自己的清单。
     for (final source in sources) {
       try {
+        _throwIfDownloadCancelled(generation);
         final release =
             checkedRelease.source == source
                 ? checkedRelease
@@ -182,6 +237,7 @@ class UpdateService {
                   source,
                   channel,
                 );
+        _throwIfDownloadCancelled(generation);
         final manifestName = 'update-manifest-${checkedRelease.tagName}.json';
         final packageName =
             'vscope_serial-windows-${checkedRelease.tagName}.zip';
@@ -194,33 +250,41 @@ class UpdateService {
         final manifestBytes = await _bytesFetcher(
           Uri.parse(manifestAsset.downloadUrl),
         );
+        _throwIfDownloadCancelled(generation);
         final manifest = UpdateManifest.fromJson(
           _decodeJsonObject(utf8.decode(manifestBytes), '更新清单'),
         )..validateFor(release);
         await File(
           '${updateDir.path}/update-manifest.json',
         ).writeAsBytes(manifestBytes, flush: true);
+        _throwIfDownloadCancelled(generation);
         if (packageAsset.size > 0 &&
             packageAsset.size != manifest.packageSize) {
           throw const UpdateDownloadException('发布附件大小与更新清单不一致');
         }
 
+        // 始终下载到 .part；只有长度和摘要均通过才提升为正式 zip。
         await _downloadWithRetry(
           Uri.parse(packageAsset.downloadUrl),
           packagePart,
           manifest.packageSize,
           onProgress,
+          generation,
         );
+        _throwIfDownloadCancelled(generation);
         if (await packagePart.length() != manifest.packageSize) {
           throw const UpdateDownloadException('更新包大小校验失败');
         }
         final digest = await _sha256File(packagePart);
+        _throwIfDownloadCancelled(generation);
         if (digest != manifest.sha256) {
           throw const UpdateDownloadException('更新包 SHA-256 校验失败');
         }
         if (await packageFile.exists()) await packageFile.delete();
         await packagePart.rename(packageFile.path);
+        // 解压后继续校验 payload，防止 zip-slip 或缺少运行所需文件。
         await extractPackageSafely(packageFile, payloadDir);
+        _throwIfDownloadCancelled(generation);
         _validatePayload(payloadDir, manifest);
         await File('${updateDir.path}/prepared.json').writeAsString(
           jsonEncode({
@@ -237,7 +301,11 @@ class UpdateService {
           updateDirectory: updateDir,
           payloadDirectory: payloadDir,
         );
+      } on _UpdateDownloadCancelled {
+        if (await packagePart.exists()) await packagePart.delete();
+        rethrow;
       } catch (error) {
+        _throwIfDownloadCancelled(generation);
         lastError = error;
         if (await packagePart.exists()) await packagePart.delete();
       }
@@ -248,8 +316,11 @@ class UpdateService {
   }
 
   void cancelDownload() {
-    _downloadClient?.close(force: true);
+    // 关闭 HttpClient 只负责打断当前网络 IO；generation 同时使后续检查失效。
+    _downloadGeneration++;
+    final client = _downloadClient;
     _downloadClient = null;
+    client?.close(force: true);
   }
 
   Future<PreparedUpdate?> findPreparedUpdate(ReleaseInfo release) async {
@@ -373,16 +444,15 @@ class UpdateService {
     }
   }
 
-  Future<void> launchInstaller(
-    PreparedUpdate update, {
-    required UpdateChannel channel,
-  }) async {
-    await _launchInstaller(
-      manifest: update.manifest,
-      updateDirectory: update.updateDirectory,
-      payloadDirectory: update.payloadDirectory,
-      channel: channel,
-    );
+  Future<void> launchInstaller(PreparedUpdate update) async {
+    await _runtimeGuard.runWithUpdateLock(() async {
+      await _ensureNoOtherRunningInstances();
+      await _launchInstaller(
+        manifest: update.manifest,
+        updateDirectory: update.updateDirectory,
+        payloadDirectory: update.payloadDirectory,
+      );
+    });
   }
 
   Future<List<RollbackUpdate>> findRollbackUpdates() async {
@@ -434,27 +504,45 @@ class UpdateService {
   }
 
   Future<void> launchRollbackInstaller(RollbackUpdate update) async {
-    final stagingDir = await _rollbackInstallDirectory(update.channel);
-    if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
-    await stagingDir.create(recursive: true);
-    final stagedPayload = Directory('${stagingDir.path}/payload');
-    await _copyDirectory(update.payloadDirectory, stagedPayload);
-    await File(
-      '${update.rollbackDirectory.path}/update-manifest.json',
-    ).copy('${stagingDir.path}/update-manifest.json');
-    await _launchInstaller(
-      manifest: update.manifest,
-      updateDirectory: stagingDir,
-      payloadDirectory: stagedPayload,
-      channel: update.channel,
-    );
+    await _runtimeGuard.runWithUpdateLock(() async {
+      await _ensureNoOtherRunningInstances();
+      // 回退槽不可直接交给更新器修改，先复制到一次性安装目录以保留原始快照。
+      final stagingDir = await _rollbackInstallDirectory(update.channel);
+      if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
+      await stagingDir.create(recursive: true);
+      final stagedPayload = Directory('${stagingDir.path}/payload');
+      await _copyDirectory(update.payloadDirectory, stagedPayload);
+      await File(
+        '${update.rollbackDirectory.path}/update-manifest.json',
+      ).copy('${stagingDir.path}/update-manifest.json');
+      await _launchInstaller(
+        manifest: update.manifest,
+        updateDirectory: stagingDir,
+        payloadDirectory: stagedPayload,
+      );
+    });
+  }
+
+  Future<List<int>> findOtherRunningInstanceProcessIds() =>
+      _runtimeGuard.findOtherInstanceProcessIds();
+
+  Future<void> requestCloseOtherRunningInstances(List<int> processIds) =>
+      _runtimeGuard.requestCloseProcesses(processIds);
+
+  Future<bool> waitForOtherRunningInstancesToExit(Duration timeout) =>
+      _runtimeGuard.waitForOtherInstancesToExit(timeout);
+
+  Future<void> _ensureNoOtherRunningInstances() async {
+    final otherInstances = await _runtimeGuard.findOtherInstanceProcessIds();
+    if (otherInstances.isNotEmpty) {
+      throw const UpdateDownloadException('请先关闭其他 Vscope Serial 窗口后再更新或回退');
+    }
   }
 
   Future<void> _launchInstaller({
     required UpdateManifest manifest,
     required Directory updateDirectory,
     required Directory payloadDirectory,
-    required UpdateChannel channel,
   }) async {
     if (!const bool.fromEnvironment('dart.vm.product')) {
       throw const UpdateDownloadException('Debug/Profile 构建不允许覆盖安装');
@@ -471,7 +559,10 @@ class UpdateService {
     final installDir = File(Platform.resolvedExecutable).parent;
     final plan = File('${updaterDir.path}/update-plan.json');
     final resultFile = File('${updateDirectory.path}/result.json');
-    final rollbackDir = await _rollbackDirectory(channel);
+    final currentVersion = await AppInfo.version();
+    // 回退槽归属由安装前版本决定，不能按目标版本通道覆盖另一类槽位。
+    final rollbackChannel = UpdateChannel.fromVersion(currentVersion);
+    final rollbackDir = await _rollbackDirectory(rollbackChannel);
     await plan.writeAsString(
       jsonEncode({
         'schemaVersion': 1,
@@ -482,8 +573,8 @@ class UpdateService {
         'resultFile': resultFile.path,
         'cleanupDir': updateDirectory.path,
         'rollbackDir': rollbackDir.path,
-        'rollbackChannel': channel.value,
-        'currentVersion': await AppInfo.version(),
+        'rollbackChannel': rollbackChannel.value,
+        'currentVersion': currentVersion,
       }),
     );
     await Process.start(
@@ -506,15 +597,19 @@ class UpdateService {
     File destination,
     int total,
     void Function(UpdateDownloadProgress progress) onProgress,
+    int generation,
   ) async {
+    _throwIfDownloadCancelled(generation);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
     _downloadClient = client;
     try {
       final request = await client.getUrl(uri);
+      _throwIfDownloadCancelled(generation);
       request.headers.set(HttpHeaders.userAgentHeader, 'SerialTools Updater');
       final response = await request.close().timeout(
         const Duration(seconds: 15),
       );
+      _throwIfDownloadCancelled(generation);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('HTTP ${response.statusCode}', uri: uri);
       }
@@ -524,6 +619,7 @@ class UpdateService {
       var lastTime = DateTime.now();
       try {
         await for (final chunk in response) {
+          _throwIfDownloadCancelled(generation);
           sink.add(chunk);
           received += chunk.length;
           final now = DateTime.now();
@@ -543,6 +639,7 @@ class UpdateService {
             lastTime = now;
           }
         }
+        _throwIfDownloadCancelled(generation);
       } finally {
         await sink.close();
       }
@@ -557,20 +654,29 @@ class UpdateService {
     File destination,
     int total,
     void Function(UpdateDownloadProgress progress) onProgress,
+    int generation,
   ) async {
+    _throwIfDownloadCancelled(generation);
     final fileDownloader = _fileDownloader;
     if (fileDownloader != null) {
       await fileDownloader(uri, destination, total, onProgress);
+      _throwIfDownloadCancelled(generation);
       return;
     }
 
     Object? lastError;
     for (var attempt = 1; attempt <= _maxNetworkAttempts; attempt++) {
       try {
+        _throwIfDownloadCancelled(generation);
         if (await destination.exists()) await destination.delete();
-        await _download(uri, destination, total, onProgress);
+        await _download(uri, destination, total, onProgress, generation);
+        _throwIfDownloadCancelled(generation);
         return;
+      } on _UpdateDownloadCancelled {
+        if (await destination.exists()) await destination.delete();
+        rethrow;
       } catch (error) {
+        _throwIfDownloadCancelled(generation);
         lastError = error;
         if (await destination.exists()) await destination.delete();
         if (attempt == _maxNetworkAttempts) break;
@@ -582,10 +688,22 @@ class UpdateService {
     );
   }
 
+  void _throwIfDownloadCancelled(int generation) {
+    if (generation != _downloadGeneration) {
+      throw const _UpdateDownloadCancelled();
+    }
+  }
+
   static Future<String> _sha256File(File file) async {
     final digest = await sha256.bind(file.openRead()).first;
     return digest.toString();
   }
+
+  /// 压缩包自身体积上限，先于任何解码检查，防止超大包或高压缩比炸弹。
+  static const int _maxPackageZipBytes = 512 * 1024 * 1024;
+
+  /// 解压后总文件体积上限，逐条目累计并在写盘前检查。
+  static const int _maxPackageExtractedBytes = 1024 * 1024 * 1024;
 
   static Future<void> extractPackageSafely(
     File zip,
@@ -593,45 +711,58 @@ class UpdateService {
   ) async {
     if (await destination.exists()) await destination.delete(recursive: true);
     await destination.create(recursive: true);
-    final bytes = await zip.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-    if (archive.length > 20000) {
-      throw const FormatException('更新包文件数量异常');
+
+    if (await zip.length() > _maxPackageZipBytes) {
+      throw const FormatException('更新包压缩体积超过限制');
     }
-    final totalSize = archive.fold<int>(
-      0,
-      (sum, entry) => sum + (entry.isFile ? entry.size : 0),
-    );
-    if (totalSize > 1024 * 1024 * 1024) {
-      throw const FormatException('更新包解压体积超过限制');
-    }
-    final root = destination.absolute.path.replaceAll('/', '\\');
-    final targets = <String>{};
-    for (final entry in archive) {
-      final normalized = entry.name.replaceAll('\\', '/');
-      final parts = normalized.split('/').where((part) => part.isNotEmpty);
-      if (normalized.startsWith('/') ||
-          parts.any(
-            (part) => part == '.' || part == '..' || part.contains(':'),
-          )) {
-        throw const FormatException('更新包包含不安全路径');
+
+    final input = InputFileStream(zip.path);
+    try {
+      final archive = ZipDecoder().decodeStream(input);
+      if (archive.length > 20000) {
+        throw const FormatException('更新包文件数量异常');
       }
-      final relative = parts.join('\\');
-      if (relative.isEmpty) continue;
-      final target = File('$root\\$relative').absolute;
-      final targetPath = target.path.replaceAll('/', '\\');
-      if (!targetPath.toLowerCase().startsWith('${root.toLowerCase()}\\')) {
-        throw const FormatException('更新包路径越界');
+
+      var totalSize = 0;
+      final root = destination.absolute.path.replaceAll('/', '\\');
+      final targets = <String>{};
+      for (final entry in archive) {
+        final normalized = entry.name.replaceAll('\\', '/');
+        final parts = normalized.split('/').where((part) => part.isNotEmpty);
+        if (normalized.startsWith('/') ||
+            parts.any(
+              (part) => part == '.' || part == '..' || part.contains(':'),
+            )) {
+          throw const FormatException('更新包包含不安全路径');
+        }
+        final relative = parts.join('\\');
+        if (relative.isEmpty) continue;
+        final target = File('$root\\$relative').absolute;
+        final targetPath = target.path.replaceAll('/', '\\');
+        if (!targetPath.toLowerCase().startsWith('${root.toLowerCase()}\\')) {
+          throw const FormatException('更新包路径越界');
+        }
+        if (!targets.add(targetPath.toLowerCase())) {
+          throw const FormatException('更新包包含重复路径');
+        }
+        if (entry.isFile) {
+          totalSize += entry.size;
+          if (totalSize > _maxPackageExtractedBytes) {
+            throw const FormatException('更新包解压体积超过限制');
+          }
+          await target.parent.create(recursive: true);
+          final output = OutputFileStream(target.path);
+          try {
+            entry.writeContent(output);
+          } finally {
+            await output.close();
+          }
+        } else {
+          await Directory(target.path).create(recursive: true);
+        }
       }
-      if (!targets.add(targetPath.toLowerCase())) {
-        throw const FormatException('更新包包含重复路径');
-      }
-      if (entry.isFile) {
-        await target.parent.create(recursive: true);
-        await target.writeAsBytes(entry.content as List<int>, flush: true);
-      } else {
-        await Directory(target.path).create(recursive: true);
-      }
+    } finally {
+      await input.close();
     }
   }
 
@@ -718,7 +849,7 @@ class UpdateService {
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw HttpException('HTTP ${response.statusCode}', uri: uri);
         }
-        return response.fold<List<int>>(
+        return await response.fold<List<int>>(
           <int>[],
           (all, chunk) => all..addAll(chunk),
         );

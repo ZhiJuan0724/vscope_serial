@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parse_result.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
 
 void _ingestSequentialPoints(PlotViewModel vm, int count) {
@@ -19,7 +19,7 @@ void main() {
 
     setUp(() async {
       await AppLogger().init();
-      vm = PlotViewModel(SerialService());
+      vm = PlotViewModel(DataConnectionService());
     });
 
     tearDown(() {

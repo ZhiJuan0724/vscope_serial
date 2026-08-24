@@ -66,6 +66,13 @@ extension PlotViewModelProfiles on PlotViewModel {
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;
     }
+    _setPresetBinding(
+      protocolType: AddressProfileProtocolType.zobow,
+      channelIndex: channelIndex,
+      address: preset.address,
+      name: preset.name,
+      profileId: _profileService.selectedProfileId,
+    );
     _markChannelConfigChanged();
     _saveSettings();
     _notifyLater();
@@ -142,6 +149,13 @@ extension PlotViewModelProfiles on PlotViewModel {
     if (preset.name.isNotEmpty && channelIndex < channels.length) {
       channels[channelIndex].alias = preset.name;
     }
+    _setPresetBinding(
+      protocolType: AddressProfileProtocolType.rProtocol,
+      channelIndex: channelIndex,
+      address: preset.address,
+      name: preset.name,
+      profileId: _rProfileService.selectedProfileId,
+    );
     _markChannelConfigChanged();
     _saveSettings();
     _notifyLater();

@@ -7,6 +7,15 @@
 
 # The following line activates a set of recommended lints for Flutter apps,
 # packages, and plugins designed to encourage good coding practices.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 include: package:flutter_lints/flutter.yaml
 
 linter:
@@ -21,8 +30,18 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+    # 所有明确的后台异步任务必须使用 unawaited()，避免 Future 被意外丢弃。
+    unawaited_futures: true
+    # 资源所有者必须显式关闭创建的 StreamController 和 IOSink。
+    close_sinks: true
+    # 资源所有者必须显式取消创建的 StreamSubscription。
+    cancel_subscriptions: true
+    # 去掉多余 lambda，直接引用函数/方法。
+    unnecessary_lambdas: true
+    # 能使用 const 构造的地方显式使用 const。
+    prefer_const_constructors: true
+    # 局部变量不再被重新赋值时声明为 final。
+    prefer_final_locals: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

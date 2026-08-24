@@ -1,116 +1,191 @@
-# VScope Serial 项目上下文
+# SerialTools 项目上下文
 
-> 本文件只记录长期有效的项目事实和开发约束，避免把每次小改动都堆进来。
-> 提交信息使用中文，说明本次修改的具体任务；涉及 force push 必须先让用户确认。
-> `CHANGELOG.md` 是 Release Notes 和应用内版本说明来源；涉及发布内容的提交，提交前必须让用户核对对应版本段落，且只记录用户可感知变化。
-> 仓库根目录的 `AGENTS.md` 记录 Codex 必须优先遵守的短规则；`.codex/hooks.json` 在会话开始、恢复和上下文压缩后注入短规则，并拦截未使用 `pwsh` 的代码/文档读写命令。上下文压缩后不要求重读本文件，新对话或涉及架构、发布、工作流等大范围决策时再读取。
+> 仅记录跨版本、跨对话仍有效的项目事实和约束。
+> 用户功能见 `README.md`，开发流程见 `DEVELOPMENT.md`，专项调查见 `docs/reports/`。
 
-## 项目定位
+## 1. 项目与治理
 
-VScope Serial 是一个 Flutter Windows 串口数据可视化工具，核心目标是稳定接收串口数据、按多种协议解析，并在百万级数据量下保持波形绘制和交互流畅。
+- SerialTools 是 Flutter Windows 串口收发与数据可视化工具；仓库和可执行文件名仍为 `vscope_serial`，当前只维护 Windows。
+- 主开发分支为 `dev`，发布分支为 `main`。
+- 提交信息使用中文并准确描述修改；不得擅自提交、push、回滚或 force push。
+- `CHANGELOG.md` 是 Release Notes 和应用内版本说明来源，只记录用户可感知的最终变化，不记录同一版本内的调试过程；涉及发布内容的提交，提交前须让用户核对对应版本段落。
 
-当前只维护 Windows 桌面目标。仓库主开发分支为 `dev`，发布分支为 `main`。
+## 2. 核心架构
 
-## 当前能力
+### 2.1 分层
 
-- 串口连接、配置、状态检测、原始收发显示和导出。
-- 原始数据接收区支持跨行选择复制、自动滚动和可配置显示行数，默认保留 100000 行；非 HEX 模式下可选择 UTF-8、GBK、BIG5、Shift_JIS 等文本编码，普通文本发送、Shell 文本输入和接收解码共用该设置。
-- 文本模式单行超过 4096 字符时自动强制换行，避免长时间等不到换行符导致界面卡死。
-- 数据收发页支持普通收发和 Shell 终端模式；Shell 入口默认隐藏，需要在普通收发高级设置中启用；Shell 模式使用 `xterm` 终端组件，支持命令行发送、逐键发送和 ANSI 终端显示；默认使用与普通收发一致的浅色面板、`Consolas` 等宽字体和竖线光标，可在 Shell 设置中切换深色终端主题、字体及光标样式。
-- Shell 模式支持 YMODEM 发送和接收文件，接收文件默认保存到 `<exe_dir>/exports/ymodem/`。
-- 实时绘图、历史窗口回看、CSV/BIN 导入导出，以及旧版虚拟示波器 DAT 导入。
-- 接收协议支持 FireWater、固定帧、Zobow、JustFloat。
-- 发送协议与接收协议分离；内置发送协议为“无”和 `r协议`，Zobow 接收协议固定使用内置二进制初始化帧。
-- 地址配置文件使用共同 JSON 结构和编辑界面，但协议地址规则独立：Zobow 固定按十六进制数值处理；r 协议保留十进制或带 `0x` 前缀的十六进制文本格式。CSV 两列为通道名称和通道地址。
-- 绘图运行时锁定 Zobow/r 协议地址和地址预设，停止后才允许修改；通道名称不受运行状态限制。
-- 多通道颜色、名称、显示、偏置、缩放、线宽和点半径配置；偏置通道右侧刻度列按文本宽度动态预留。
-- X-X、Y-Y、统计范围、观察线、跟随光标、吸附高亮和通道偏置交互。
-- 大数据绘图使用内存级 LOD 索引，当前精确窗口上限可配置为 `1M~40M`；接收速率超过 10000 包/s 时会进入高频模式，运行时刷新强制 30fps，并按实测速率降低 LOD 更新频率；当前精确窗口仍尊重用户配置上限，不丢弃全量历史和导出数据。
-- 应用信息页显示版本、构建时间、更新检查、版本说明和高级设置；高级设置当前提供全局关闭临时提示信息。
-- 测试工具可模拟 Zobow/JustFloat 设备，也可生成可直接导入绘图页的 BIN 数据文件。
+- `lib/core/`：日志、CRC 等底层工具；使用 `AppLogger`，不直接 `print()`。
+- `lib/data/`：模型、收发协议、解析器和 LOD。接收解析器实现 `IDataParser`；高频链路优先使用 `feedBatch()`。
+- `lib/services/`：数据连接、探针、设置、更新、通知和原生接口。连接生命周期、缓存和设置写入均由单一所有者管理。
+- `lib/viewmodels/`：页面状态和业务流程；业务计算保持无 UI 依赖。
+- `lib/views/`：页面、弹窗、Painter 和手势；高频状态使用 Selector 和分层 Painter 隔离重建。
+- `windows/`：Windows Runner、原生串口 DLL 和更新器。
+- `integration_test/`：本地 Windows Profile 性能场景，不作为 CI 耗时门禁。
+- `test_tools/`：模拟设备、测试数据和性能脚本。
 
-## 模块边界
+### 2.2 活动与连接所有权
 
-- `lib/core/`：日志、CRC 等底层工具。底层模块优先使用 `AppLogger`，不要直接 `print()`。
-- `lib/core/localization/app_strings.dart`：主要固定 UI 文本统一管理入口，包括按钮、工具提示、设置项名称/说明和弹窗文案；新增固定文本优先放入对应分组，避免散落在页面或弹窗实现中。
-- `lib/data/`：数据模型、协议解析器、数据源和 LOD 索引。解析器统一通过 `IDataParser.feed()` 和 `outputStream` 工作。
-- `lib/services/`：串口服务、设置持久化、应用信息、更新检查、通知和原生读取封装。
-- `lib/viewmodels/`：页面状态和业务流程。`PlotViewModel` 是全局 Provider，页面切换不丢绘图状态。
-- `lib/views/`：页面、弹窗、绘图 Painter 和手势处理。绘图页使用 Selector 隔离工具栏、通道面板、绘图区和状态栏的重建；绘图区按背景网格、数据、坐标轴、交互覆盖四层 Painter 绘制。
-- `test_tools/`：本地模拟设备和测试数据生成脚本。
-- `windows/`：Flutter Windows runner 与原生串口读取 DLL 构建。
+- 数据收发、Shell、绘图和Modbus通过 `DataActivityOwner` 互斥占用数据接收活动；绘图可复用串口、TCP客户端或UDP数据流。
+- 串口/TCP/UDP数据连接、探针监控和Flash编程由 `ConnectionOwnerService` 互斥管理；全局只允许一个实际连接或监听会话。
+- RTT Viewer 与探针绘图可共享空闲探针连接，但任一数据活动开始后必须锁定当前探针页面。
+- 数据连接发送共用单一有序写队列；Shell、粘贴和 YMODEM 仅在串口会话中使用该队列，禁止并发打乱字节。
 
-## 关键约束
+### 2.3 协议边界
 
-- 设置持久化到 `<exe_dir>/settings/settings.json`。新增字段必须有默认值兼容旧配置，不做单独迁移脚本。
-- 设置文件不加密，不要存放敏感数据。
-- 应用信息高级设置的“恢复默认设置”只重置 `<exe_dir>/settings/settings.json` 中的应用设置，不删除 Zobow/r 协议等绘图配置功能保存的 JSON 配置文件。
-- 关闭窗口前必须先断开串口，避免原生 DLL 读线程异常。
-- Windows 原生串口打开在后台 isolate 执行，避免 `CreateFile` 阻塞 UI。
-- Windows 串口打开、连接健康检查和端口枚举均由 `native_serial_reader.dll` 负责并在 UI isolate 外执行。默认端口枚举只读取 COM 号；仅当用户在连接窗口主动开启“显示详细信息”并手动刷新时，才允许通过 SetupAPI 在后台读取友好名称。自动刷新、设备插拔和自动连接不得读取名称，也不得为获取 USB 元数据而打开串口、遍历 USB Hub 或阻塞 Flutter UI。
-- 串口列表使用内存缓存并监听 Windows 设备到达/移除通知；健康连接和历史端口自动连接不依赖枚举，枚举失败或超时不得清除用户保存的端口及串口参数。
-- 原始数据显示行数默认 `100000`，可配置范围为 `100~100000`；降低上限会按 FIFO 移除最早显示内容，完整原始字节导出不受影响。原始数据为空时禁止导出；文本和 BIN 导出均由用户选择目标文件夹。
-- 接收区自动滚动开启时必须保持在最新行，关闭后不得改变用户滚动位置。
-- Shell 模式下原始接收字节直接写入终端缓冲，不经过普通收发文本行格式化；YMODEM 传输期间不把二进制传输内容写入终端显示。
-- Shell 终端字体独立于应用 UI 字体，默认 `Consolas`；用户只能从 Shell 设置提供的常见系统等宽字体列表中选择，设置项保存到 `rawDataTerminalFontFamily`。
-- Shell 逐键模式下 `Ctrl+C` 发送 ETX (`0x03`) 给串口设备；复制使用 `Ctrl+Shift+C` 或选中文本后右键复制，避免和终端控制字符冲突。
-- Shell 文件传输入口位于“更多功能”二级菜单；文件发送/接收弹窗内选择方向、协议和发送长度，并显示传输进度与取消按钮，便于后续扩展其它 Modem 协议。
-- YMODEM 传输走统一串口写入口，传输期间禁止普通手动发送和逐键发送；取消传输需要发送 CAN 并释放 UI 状态。
-- `PlotLodIndex` 只保存在内存中，不落盘，不改变原始数据和导出结果。
-- Zobow 当前只支持 4/8 通道固定帧，不支持任意变长。
-- FixedFrame 通道数固定为 `1~16`，不支持自动识别；帧头和帧尾不能同时全部为 `0`。
-- FireWater 只面向 ASCII 数字文本。
-- 随机源只输出 FireWater 格式。切换到其它解析器时保留开关状态，但不接入当前解析链，也不在底部状态栏显示随机源状态。
-- 绘图区动态布局不能在 Flutter build 阶段直接修改 ViewModel 状态；需要使用临时渲染状态或在事件阶段更新。
-- 绘图重绘依赖 `dataRevision`、`channelConfigRevision`、`viewportRevision` 和 `overlayRevision`；新增绘图状态时必须归入正确 revision，避免扩大重建范围或遗漏重绘。
-- 本地绘图性能基准使用 `pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label <名称>`，报告输出到未跟踪的 `build/performance/`；耗时数据只用于同机对比，不作为 CI 硬门禁。
-- 通道列表使用可回收列表，列表滚动时临时编辑状态可能丢失；编辑类状态要谨慎放在 item state 中。
-- Flutter Windows 的 `ListView + Tooltip` 组合存在已知 accessibility 日志噪声，不影响功能。
+- 接收协议与发送协议分离。接收侧统一由 `IDataParser` 负责；发送侧实现 `SendProtocol<TConfig>`，不得把具体协议耦合进 `DataConnectionService`。
+- Zobow 地址只接受十六进制；r 协议保留十进制或 `0x` 十六进制原文。Zobow 当前只支持 4/8 通道固定帧。
+- FixedFrame 通道数为 `1~16`，帧头和帧尾不能同时全为 `0`；FireWater 只处理 ASCII 数字；随机源只输出 FireWater。
 
-## 发布与更新
+## 3. 探针与 RTT 安全边界
 
-- 版本号来自 `pubspec.yaml`，应用内显示带 `v` 前缀。
-- 发布构建必须通过 GitHub Actions 或 `tools/build_release.py` 注入 `BUILD_TIME`；应用信息界面的构建时间优先读取该编译期值，不能依赖 exe 文件修改时间。
-- 更新检查与下载优先访问 GitHub Release，失败后按同一更新通道尝试 Gitee Release；自动检查只提示，用户确认后才下载和安装。
-- Windows 自动更新由 `vscope_updater.exe` 在主程序安全退出后执行，按 `app-files.json` 覆盖受管理文件，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败时自动回滚。
-- 自动更新下载缓存、解压 payload 和回退槽保存在 `<exe_dir>/updates/`，不写入用户目录；因此应用所在目录必须可写。
-- Release 必须同时提供 `vscope_serial-windows-vX.Y.Z.zip` 和 `update-manifest-vX.Y.Z.json`，客户端使用清单中的大小和 SHA-256 校验更新包。
-- 自动更新支持稳定版与 Beta 通道：稳定版 tag 使用 `vX.Y.Z`，Beta tag 使用 `vX.Y.Z-beta.N` 且 GitHub Release 必须标记为 prerelease；`pubspec.yaml` 中版本不带 `v` 且必须与 tag 去掉 `v` 后一致；Gitee Release 由 CI 同步创建，客户端按 tag 名识别稳定版或 Beta。
-- 自动更新安装前会按目标通道保存一个本地回退槽，稳定版和 Beta 各保留 1 个可手动回退版本。
-- `.github/workflows/windows-release.yml` 负责 PR 检查、手动构建和 tag 发布。
-- PR 到 `main` 会运行 `flutter analyze`、`flutter test` 和 Windows Release 构建。
-- `v*` tag 会测试、构建、压缩发布包并创建 GitHub Release，随后同步创建 Gitee Release 并上传同一批附件。
-- `main` 直接 push 不触发 release workflow，避免合并后和 tag 发布重复执行。
+### 3.1 最高安全约束
 
-## 开发检查
+- RTT Viewer、RTT 绘图和 HSS 必须严格非侵入：枚举、连接、读取、写入、停止和断开均不得 halt、reset、resume、step 或改变目标执行状态；“操作后恢复运行”也不允许。
+- 监控会话不得执行烧录、擦除、核心寄存器访问、断点、观察点或 Vector Catch。
+- 无法证明满足约束的路径必须在接触目标前拒绝。Flash编程使用独立`FlashProgrammingService`、独立后端进程和`ConnectionOwner.programming`，不得复用监控后端；其他调试功能同样必须另建会话、命令和安全提示。
 
-常规提交前检查：
+### 3.2 Flash高权限边界
 
-```bash
-dart format lib test
-flutter test
-flutter analyze
-```
+- Flash页面默认隐藏，连接前必须明确提示可能复位、停核、擦除和改写目标；配置不得从RTT连接配置隐式导入。
+- 后端仅包括外部J-Link、外置OpenOCD和内置OpenOCD。自动选择只在连接前按探针类型和工具可用性决定；连接成功后必须锁定后端。
+- 操作期间禁止普通断开、切页、关闭页面和退出。强制终止或后端异常后状态为未知，不得自动发送reset/resume补救命令。
+- 默认烧写执行擦除、写入、校验并复位运行；擦除成功后保持停止。读取先记录运行状态，必要时暂停，完成后恢复原状态。
+- 工具输出只保留有上限的页面缓存，不写高频普通日志。命令参数必须通过`Process.start`参数列表和各工具自身的路径引用传入，不得拼接Shell命令。
 
-涉及绘图性能、导入和协议解析时，优先补充或运行相关定向测试：
+### 3.3 后端选择
 
-```bash
-flutter test test/data/models/plot_lod_index_test.dart
-flutter test test/viewmodels/plot_viewmodel_test.dart
-flutter test test/viewmodels/plot_viewmodel_window_test.dart
-flutter test test/viewmodels/plot_viewmodel_stats_test.dart
-flutter test test/parser/just_float_parser_test.dart
-```
+- 后端包括自动、外部 J-Link、外置 OpenOCD、内置 OpenOCD、外置 pyOCD；下拉项不因探针类型隐藏。
+- 显式选择 J-Link 时切换为 J-Link 探针；选择 OpenOCD/pyOCD 时切换为 CMSIS-DAP；自动模式才允许自由选择探针类型。
+- CMSIS-DAP 自动顺序：外置 OpenOCD → 内置 OpenOCD → 外置 pyOCD。只在工具不可用或 OpenOCD 配置不完整时尝试下一项；目标连接失败、探针占用或目标错误不得静默切换。
+- J-Link 停止 RTT 时终止后端并自动重建空闲连接，期间显示“停止中”和“探针重连中”；OpenOCD 停止活动后保留空闲连接。
+- 内置 OpenOCD 以单一 ZIP 和带 SHA-256 的清单随包发布；首次使用时显示不可取消的准备窗口，在程序目录下按 OpenOCD 版本和归档哈希原子解压。配置文件选择必须从实际解压后的可执行文件定位 `interface/target`。
 
-## Windows Shell 与编码
+### 3.4 pyOCD 受限 Worker
 
-- 本机已安装 PowerShell 7 (`pwsh`)，默认 UTF-8 读取中文正常。涉及代码或文档读写时使用 `pwsh -NoLogo -NoProfile -Command "..."`。
-- Windows PowerShell 5.1 直接读写代码或文档可能因控制台编码导致中文输出乱码或写入风险，不要仅凭其输出判断源码或文档内容。
-- 如果必须使用 Windows PowerShell 5.1，先显式设置 UTF-8 编码；否则优先切换到 `pwsh`。
+- 外置 pyOCD 使用用户指定、可 `import pyocd` 的 Python，当前仅接受 pyOCD `0.45.x`；应用不内置 Python/pyOCD。
+- Worker 位于 `assets/runtime/pyocd_worker.py`，使用版本化帧协议和固定 `nonIntrusiveMonitor` 配置。
+- Worker 只允许打开 CMSIS-DAP、连接 DP、建立 AP0 MEM-AP，并访问 RTT 控制块、Up、Down 0 和用户配置的 HSS 地址。
+- 禁止调用完整 `Session.open/close`、`Board.init`、`Target.init/disconnect` 或 Cortex-M Core 初始化。协议可预留高权限配置名，但当前不得实现或复用。
+- CMSIS-DAP 支持自动、仅 v1、仅 v2；显式模式必须直接调用对应 USB 后端。用户刷新设备时可轻量读取 USB 名称和 VID/PID，再定向连接。
 
-## Git 规则
+### 3.5 RTT/HSS 数据活动
 
-- 不要回滚用户已有改动，除非用户明确要求。
-- 提交前确认 `git status`，只暂存本次任务相关文件。
-- 涉及发布内容时，提交前让用户核对 `CHANGELOG.md` 对应版本段落。
-- 涉及 force push 时，必须先让用户确认具体目标分支或 tag。
+- 探针连接与数据活动分离。RTT 控制块定位在 RTT Viewer 或探针绘图各自的数据配置中设置，未连接时也可编辑。
+- 定位支持 Auto、指定地址和指定范围；OpenOCD 不提供 Auto。扫描失败必须明确提示，不得忽略参数。
+- RTT Viewer 与探针绘图分别保存 `1~1000 ms` 轮询间隔，默认 `10 ms`；从哪一侧启动就只使用该侧配置。
+- 外部工具进程状态与活动数据 Socket 独立；主动关闭 Socket 不得被判定为探针断开。
+- 实时 RTT 数据不写普通日志。待处理队列上限 `64 MiB`，每帧最多消费 `64 KiB`；过载丢弃最旧完整块并重置流式解码状态。
+- HSS 通过 OpenOCD Tcl RPC 或受限 pyOCD MEM-AP 运行态读取，不是 SEGGER HSS SDK。
+- RTT 从控制块枚举 Up 通道；`JScope_<FORMAT>` 自动解析格式，普通名称允许手动设置。ELF/AXF/OUT 由主应用解析，不依赖后端。
+- 探针绘图通道分 RTT 与 HSS 两类，共享「普通通道」模型（上限 16，不含数学通道与触发模式——二者为串口绘图特有，不在统一范围内）。HSS 通道为手动添加变量，其别名/颜色与串口绘图普通通道一致但**不跨会话持久化**；RTT 通道由控制块（`JScope_<FORMAT>` 字段）自动检测，检测到的通道数超过 16 时必须明确拒绝并提示，不得静默截断。串口与探针绘图页的工具栏、通道面板共用同一套控件，后端不支持的功能通过**隐藏对应按钮**表达（不使用禁用或另写一套）。
+
+### 3.6 绘图页前端统一（串口绘图与探针绘图）
+
+> 复用原则：两页共用一套前端控件与工具栏、展示样式一致；仅「触发」与「统计」功能不做（探针页隐藏），其余工具都要；两页**不共用配置**（各自用 `AppSettings` 的 `plot*` / `probePlot*` 字段持久化）。确实不同、无法一致的部分在此记录。
+
+- **共享组件**（`lib/views/plot/`、`lib/views/widgets/`）：渲染层（`PlotRenderSnapshot`/`PlotLayerStack`/`PlotLayerPainter`/`PlotGestureHandler`/`PlotLocatorBar`）、图例框、实时值框、测量文本、通道行（`plot_channel_row.dart`，含最小 `PlotChannelPanelController` 接口）、交互工具工具栏（`plot_tools_toolbar.dart`，两页统一图标+文字）、颜色选择器、设置草稿（`PlotUiSettingsDraft`，已强类型化）。
+- **工具一致**：两页工具栏均含 光标/观察/X·Y 测量/跟随/图例/实时值/预览(定位条)/撤回缩放/框选/X·Y 缩放/Y·X·全自适应；仅「统计」「统计范围」「触发」不在探针页出现（不做）。
+- **高级设置一致**：两页高级设置同为 7 节（外观/性能/文字/视口/工具栏/交互/数据）；探针「工具栏」节仅含「显示定位条(预览)」开关。语义相同的项（背景/网格/网格密度/悬浮窗不透明度/字号/粗体/跟随位置/LOD 质量/历史内存上限等）已对齐控件、顺序、文案。
+- **保持各自现状（不强行统一）**：触发/统计（不做）；刷新帧率、接收聚合、Y 轴适配占比、重启保留绘图、丢弃初始包、轴缩放修饰键、吸附高亮、发送原样显示（串口专属）；HSS 频率、RTT 轮询间隔（探针数据配置弹窗）。协议/连接选择器（串口）、RTT/HSS 模式选择器（探针）、通道行编辑交互（串口双击内联重命名 + 地址/预设/偏移；探针长按弹窗重命名）、数学通道（串口特有，不进共享模型）。
+- **通道来源差异**：串口绘图通道来自协议/配置；探针绘图 RTT 由控制块自动检测、HSS 由用户手动添加。两者最终都映射到共享的「普通通道」列表（上限 16，不含数学通道）。
+
+## 4. 数据连接生命周期与原生串口安全
+- 串口/TCP/UDP 打开、检查、重连、断开和退出共用 `DataConnectionCoordinator` 异步操作队列；每次连接有独立 generation，失效会话不得更新当前状态或投递数据。
+- `SerialTransport` 和 `NetworkTransport` 打开成功后统一提供 `DataTransportSession`；`DataConnectionService` 只持有一个活动会话、一组数据/错误订阅和一条清理路径。
+- `DataConnectionService.shutdown()` 是唯一数据连接退出入口，必须等待连接生命周期收敛。任何两个原生串口 open/close 生命周期不得交叉。
+- Windows 串口打开在后台 isolate 中执行；串口打开、健康检查和枚举由 `native_serial_reader.dll` 完成。
+- 默认枚举只读取 COM 号。只有用户显式开启详细信息并手动刷新时，才在后台读取设备名称；自动刷新、插拔和自动连接不得扫描 USB 元数据或阻塞 UI。
+- 串口列表使用缓存和设备到达/移除通知；枚举失败不得清除已保存端口和参数。
+- 部分电脑曾在串口连接原生边界直接退出。应用须在 `WidgetsFlutterBinding.ensureInitialized()` 后、日志和串口发现前调用只读 `nsr_is_open` 预热；该调用不得枚举、打开或修改串口。根因仍是时序竞态假设，不得在缺少同机二分或转储时归因到单一提交。证据见 `docs/reports/SERIAL_CONNECTION_CRASH_INVESTIGATION.md`。
+
+### 4.1 网络连接边界
+
+- TCP客户端可供数据收发、绘图、普通Shell和Modbus使用；UDP供数据收发和绘图；TCP服务端只供数据收发，默认监听`0.0.0.0`且只接收一个客户端。
+- SSH使用独立 `SshConnectionService` 和PTY通道，但占用同一个全局数据连接所有权；首次连接必须确认主机指纹，密码和私钥口令不得持久化。YMODEM仅支持普通串口Shell。
+- TCP客户端不自动重连；TCP服务端客户端离开后继续监听。UDP固定远端地址和端口，可选本地端口，并过滤其他来源。
+- 网络功能默认关闭；各支持页面分别保存网络参数。串口参数默认全局共用，可由高级设置切换为按页面分别保存。
+- 主页面可动态添加、拖动和关闭，顺序只记录当前开启页面，重新打开时追加到末尾；至少保留一个，任何连接、监听或过渡状态下不得关闭页面或进入不兼容页面。
+
+## 5. 数据、绘图与资源约束
+
+### 5.1 原始数据与 Shell
+
+- `DataConnectionService` 是页面共享的 Provider 门面；原始数据由 `RawReceiveSession` 管理，Shell 终端配置、编解码和 YMODEM 由 `ShellSession` 管理，普通发送负载由 `OutboundDataCodec` 构造。
+- 原始显示缓存与完整字节记录分离。完整记录上限 `512 MiB`，80% 预警，满后停止原始接收并保留数据；清空后可继续。
+- 显示行数范围 `100~100000`，默认 `100000`；减少上限只按 FIFO 清理显示，不影响容量内导出。
+- 文本导出按当前编码重新解析完整记录；多字节编码必须使用有状态流式解码。
+- Shell 使用独立终端缓冲和流式解码，不经过普通收发行格式化；YMODEM 数据不得写入终端显示。
+- Shell 每帧最多消费 `64 KiB`；YMODEM 期间禁止普通发送，取消时发送 CAN 并释放状态。
+
+### 5.2 Modbus 主站
+
+- Modbus RTU、ASCII和TCP复用统一数据连接会话；同一连接只允许一个在途请求，轮询任务严格顺序执行。
+- 支持功能码01/02/03/04/05/06/0F/10；协议层自行处理CRC16、LRC、MBAP、拆包、粘包、异常响应和事务号校验。
+- 地址统一保存为0基PDU地址。写请求不自动重试，读请求最多重试3次；停止、断开或切换协议必须取消等待请求。
+- 原始帧只保留有上限的页面记录，不写普通日志；轮询任务使用带`schemaVersion`的JSON逐项校验导入。
+
+### 5.3 绘图会话与历史
+
+- 绘图启动使用共享 Future 的 single-flight 和 generation 隔离；停止、重启或销毁必须取消启动意图并释放 parser、数据源、订阅和活动所有权。
+- “保持绘图”只允许相同协议且通道数一致的实时数据续接；协议变化、自动识别通道数变化或文件导入历史必须先清空。
+- 绘图历史按实际通道数分块；CSV/BIN 导入导出必须流式处理并显示进度，禁止构造完整文件副本。
+- 串口绘图历史预算为 `1~8 GiB`，默认 `2 GiB`；80% 预警，预计下一完整点超限时拒绝并停止采集，保留历史和导出能力。
+- 探针绘图使用独立 ViewModel、数据链路和预算设置；预计下一点超限时停止采集并保留图像。
+
+### 5.3 LOD 与渲染
+
+- `PlotLodSource` 是普通/数学通道 LOD 的 Painter 查询边界；LOD 只存内存，不改变原始数据和导出结果。
+- 串口绘图最大可见范围 `1M~10M`、默认 `1M`；精确窗口最多 `250k` 点，进入缓存边缘 20% 时预取。
+- 精确窗口重建使用 generation 可取消的分块任务，每 4096 点内让出 UI；完成前继续显示 LOD。
+- 大范围质量分为性能、均衡和质量优先；直接绘制原始点的阈值依次为每物理像素 1/2/4 点，高密度 M4 的列跨度依次为 2/1/1 个物理像素。固定 LOD 桶只加速候选查询，不直接决定最终几何；均衡与质量在高密度时可能输出相同几何，质量档主要在放大后更早恢复原始折线。
+- 串口绘图可在 Canvas 与 Windows D3D11 间手动切换，默认D3D11；两者必须消费同一份视口 M4 几何。D3D11将当前预取范围的数据坐标图元常驻GPU，视口交互主要更新矩阵并通过DXGI共享纹理合成；初始化、上传或呈现失败时保留历史并自动回退Canvas。
+- 性能档最多合并相邻两个物理像素列，均衡和质量逐列聚合；所有档位必须保持采样顺序、峰谷、阶跃、脉冲和孤立尖峰，不得以破坏拓扑换取帧率。
+- D3D11静态历史使用当前视口及两侧20%预取范围的数据坐标几何；Y方向交互、X预取范围内平移和有效密度区间内缩放只更新矩阵。数据、DPR、画布宽度、质量档或X预取越界时重建几何，失败时保留历史并回退Canvas。
+- D3D11原生呈现完成后以`frameId`发布已呈现快照；坐标轴、网格、观察、光标、测量、吸附和命中测试必须与数据纹理使用同一快照，不能直接使用领先一帧的目标视口。TypedData缓冲只扩容不缩容，GPU常驻几何上限64 MiB。
+- 数据刷新不得重建工具栏、发送区或通道面板；光标只更新交互层。新增绘图状态必须归入正确 revision。
+- offset 和 scale 是运行时视图状态，不写入设置或通道配置。
+
+## 6. 设置、界面与诊断
+
+### 6.1 设置持久化
+
+- 主设置位于 `<exe_dir>/settings/settings.json`，使用带 `schemaVersion` 的嵌套 JSON：根节点按全局和功能分组，功能内按连接、性能、外观、交互等分组。
+- 运行时字段通过集中路径表映射；新增字段必须有默认值和路径。旧单层格式读取成功后自动重写，不单独维护迁移脚本。
+- 页面可见性与顺序只由 `visibleMainPages/mainTabOrder` 保存；已发布旧配置中的 Shell/RTT 页面开关仅用于读取迁移，保存时不得再次输出。
+- 设置文件不加密，不得保存敏感数据。“恢复默认设置”只重置主设置，不删除协议配置文件。
+
+### 6.2 UI 规则
+
+- 固定 UI 文本应放入 `lib/core/localization/app_strings.dart`；数据/协议枚举沿用项目既有的 `label` 字段惯例，日志消息与协议名可贴近各自逻辑。现有页面中尚未迁移的硬编码文本按页面分批迁入，不再新增。
+- 应用窗口最小宽度 `800px`；不得用布局溢出代替尺寸约束。
+- 工具栏、设置导航和底部按钮使用统一组件。紧凑按钮必须显式约束尺寸、点击区和悬停效果，禁止使用产生大范围圆形阴影的默认样式。
+- Flutter build 阶段不得直接修改 ViewModel；使用临时渲染状态或在事件阶段更新。
+- Windows 当前以根级 `ExcludeSemantics` 规避 Flutter semantics 日志洪泛；升级 Flutter 后重新验证。
+
+### 6.3 日志与崩溃转储
+
+- 调试模式默认关闭；开启后记录 TRACE/DEBUG 并同步刷盘。高频数据只允许限频统计，不逐条写日志。
+- Windows Runner 在 Flutter 初始化前安装异常回调，默认将原生崩溃的小型 minidump 和 JSON 元数据写入 `<exe_dir>/crash_dumps/`，最多保留 10 份。
+- Debug 构建可提供二次确认的真实崩溃测试；Release 必须隐藏入口且 DLL 不导出测试函数。
+- 发布包排除 PDB，但每个版本必须单独归档匹配符号。`tools/analyze_crash_dump.ps1` 兼容 Windows PowerShell 5.1 和 PowerShell 7。
+
+## 7. 发布与更新
+
+- 版本来自 `pubspec.yaml`；稳定 tag 为 `vX.Y.Z`，Beta 为 `vX.Y.Z-beta.N`，必须与版本号一致。
+- GitHub Actions 或 `tools/build_release.py` 必须注入 `BUILD_TIME`。
+- Release 同时提供 Windows ZIP 和更新清单；客户端校验大小与 SHA-256。
+- 更新包解压采用流式逐条目写入，并限制压缩包（512 MiB）与解压总体积（1 GiB）；`vscope_updater.exe` 校验 `update-plan.json` 的安装、清理、结果与回退路径必须位于 `<exe_dir>\updates\` 内。更新清单预留 `signature` 字段，在发布签名与内置公钥落地前，带签名但无法校验的清单按失败关闭（fail-closed）处理。
+- 更新优先 GitHub，失败后按同一通道尝试 Gitee；自动检查只提示，用户确认后才安装。
+- `vscope_updater.exe` 在主程序安全退出后更新，保留 `settings/`、`config/`、`logs/`、`exports/` 和未知用户文件，失败自动回滚。
+- 稳定版和 Beta 各保留一个本地回退槽；按当前运行版本的通道写入，不按目标版本通道写入。
+- 本地和 CI 打包前必须清空旧发布目录与 Windows 构建树；禁止复用增量产物。发布包排除 `.lib`、`.exp`、`.pdb` 等中间文件，并包含所需许可证。
+- 本地 `build_release.py` 与 GitHub Actions 共用 `prepare_windows_release_bundle.py` 组装发布目录；只从当前 Visual Studio 工具链的 x64 Redistributable 目录部署构建产物明确依赖的 VC++ Runtime，新增依赖时同步扩展清单，缺少必要 DLL 时必须中止打包，不得回退复制 `System32` 版本。
+- `.github/workflows/windows-release.yml` 负责 PR 检查、手动构建和 tag 发布。PR 到 `main` 运行 analyze、test 和 Windows Release 构建；直接 push `main` 不发布。
+
+## 8. 开发规则
+
+- 代码和文档读写使用 PowerShell 7：`pwsh -NoLogo -NoProfile`；不要依据 Windows PowerShell 5.1 的中文输出判断文件内容。
+- 常规提交前至少执行格式化、`flutter analyze` 和 `flutter test`；发布前验证 Windows Release 构建。
+- 明确的后台 Future 使用 `unawaited()`；资源所有者在 stop/dispose 中关闭订阅和 sink。
+- 提交前检查 `git status`，只暂存任务相关文件，不覆盖用户已有改动。
+- 性能基准使用 `pwsh -File test_tools/run_plot_benchmark.ps1 -Preset quick -Label <名称>`；结果只用于同机对比。

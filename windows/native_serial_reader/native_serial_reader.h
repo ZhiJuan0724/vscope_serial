@@ -13,48 +13,65 @@ extern "C" {
 
 #include <stdint.h>
 
-// Initialize the Dart API (must be called before any other function)
-// data: NativeApi.initializeApiDLData from Dart
-// Returns: 0 on success, -1 on failure
+// 初始化 Dart API；必须在调用其它导出函数前完成。
+// data：来自 Dart 的 NativeApi.initializeApiDLData。
+// 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_init_dart_api(void* data);
 
-// Open serial port
-// portName: e.g. "COM3"// baudRate: e.g. 115200
-// Returns: 0 on success, -1 on failure
+// 打开串口。
+// portName 示例为 "COM3"，baudRate 示例为 115200。
+// 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_open_port(const char* portName, int baudRate);
 
-// Close serial port
+// 返回最近一次打开串口的原生诊断信息。
+// stage：0=未开始，1=参数检查，2=关闭旧句柄，3=CreateFile，
+// 4=GetCommState，5=SetCommState，6=SetupComm，7=SetCommTimeouts，
+// 8=PurgeComm，9=发布句柄，10=完成。
+NSR_API int nsr_get_last_open_stage();
+NSR_API uint32_t nsr_get_last_open_error();
+
+// 配置原生打开流程的同步诊断日志。启用时每个 Win32 调用前后都会直接
+// 追加到当前应用日志文件，以保留进程崩溃前的最后检查点。
+NSR_API void nsr_configure_diagnostic_log(const char* logPath, int enabled);
+
+// 关闭串口并释放当前读取周期的原生资源。
 NSR_API void nsr_close_port();
 
-// Set serial config
-// dataBits: 5-8
-// stopBits: 1 or 2
-// parity: 0=none, 1=odd, 2=even
-// Returns: 0 on success, -1 on failure
+// 设置串口参数。
+// dataBits 范围为 5-8，stopBits 为 1 或 2，parity：0=无、1=奇、2=偶。
+// 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_set_config(int dataBits, int stopBits, int parity);
 
-// Set RTS/DTR
+// 设置 RTS/DTR 线路状态。
 NSR_API void nsr_set_rts(int on);
 NSR_API void nsr_set_dtr(int on);
 
-// Start reading thread
-// dartPort: Dart SendPort native port id
-// timeoutMs: ReadFile timeout in ms, 0 = blocking
-// Returns: 0 on success, -1 on failure
+// 启动读取线程。
+// dartPort 为 Dart SendPort 原生端口 ID；timeoutMs 是 ReadFile 超时毫秒数，0 表示阻塞。
+// 返回 0 表示成功，-1 表示失败。
 NSR_API int nsr_start_reading(int64_t dartPort, int timeoutMs);
 
-// Stop reading thread
+// 设置绘图高频接收合并模式。启用后读取线程按短时空闲、块大小和最大等待时间
+// 合并连续数据再投递；调用方只应在绘图接收活动期间启用。
+NSR_API void nsr_set_plot_receive_aggregation(int enabled);
+
+// 取消未完成读取并等待读取线程退出。
 NSR_API void nsr_stop_reading();
 
-// Write data to serial port
-// Returns: bytes written, -1 on failure
+// 返回当前或最近一次完成的读取周期指标。
+NSR_API void nsr_get_read_metrics(
+    uint64_t* bytesRead,
+    uint64_t* maxBlockBytes,
+    uint64_t* callbackCount,
+    uint64_t* postFailureCount);
+
+// 向串口写入数据；返回实际写入字节数，-1 表示失败。
 NSR_API int nsr_write(const uint8_t* data, int length);
 
-// Check if port is open
+// 检查原生串口句柄是否已打开。
 NSR_API int nsr_is_open();
 
-// Check whether the current serial handle still responds to Windows serial
-// APIs. A handle may remain open after a USB serial device is unplugged.
+// 检查当前句柄是否仍响应 Windows 串口 API。USB 串口被拔出后句柄可能仍显示为打开。
 NSR_API int nsr_is_connection_healthy();
 
 // 枚举当前可用串口。
@@ -70,6 +87,11 @@ NSR_API int nsr_list_port_details(char* buffer, int capacity);
 // 每次变化向 dartPort 投递整数 1，返回 0 表示成功。
 NSR_API int nsr_start_port_monitor(int64_t dartPort);
 NSR_API void nsr_stop_port_monitor();
+
+#ifdef VSCOPE_ENABLE_TEST_CRASH
+// 仅 Debug DLL 导出：制造真实的原生访问冲突，用于验证 Runner 转储链路。
+NSR_API void nsr_trigger_test_crash();
+#endif
 
 #ifdef __cplusplus
 }

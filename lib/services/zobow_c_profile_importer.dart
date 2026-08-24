@@ -6,6 +6,7 @@ import 'package:charset/charset.dart';
 
 import '../data/models/address_config_profile.dart';
 
+/// 从 C 源码识别出的 Zobow 地址配置和诊断信息。
 class ZobowCProfileImportResult {
   final List<AddressChannelPreset> presets;
   final int commentNameCount;
@@ -18,6 +19,9 @@ class ZobowCProfileImportResult {
   bool get isEmpty => presets.isEmpty;
 }
 
+/// 受限的 C 源码地址配置识别器。
+///
+/// 只解析可静态确定的常量和赋值表达式，不执行 C 代码，也不会加载或编译用户文件。
 class ZobowCProfileImporter {
   static Future<ZobowCProfileImportResult> parseFile(
     String path, {

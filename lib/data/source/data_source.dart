@@ -10,10 +10,10 @@ abstract class IDataSource {
   bool get isActive;
 
   /// 启动数据源
-  void start();
+  Future<void> start();
 
   /// 停止数据源
-  void stop();
+  Future<void> stop();
 
   /// 数据源名称
   String get name;

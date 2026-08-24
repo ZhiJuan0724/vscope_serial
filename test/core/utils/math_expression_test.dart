@@ -38,6 +38,8 @@ void main() {
       );
 
       expect(value, 31);
+      expect(expression.hasChannelOffset, isTrue);
+      expect(MathExpression.parse('CH0 + CH1').hasChannelOffset, isFalse);
     });
 
     test('无效运行结果返回 NaN', () {

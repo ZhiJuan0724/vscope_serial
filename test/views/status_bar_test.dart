@@ -1,14 +1,82 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:vscope_serial/core/localization/app_strings.dart';
+import 'package:vscope_serial/core/utils/app_logger.dart';
 import 'package:vscope_serial/data/models/parser_config.dart';
-import 'package:vscope_serial/services/serial_service.dart';
+import 'package:vscope_serial/data/models/probe_connection_config.dart';
+import 'package:vscope_serial/services/app_settings.dart';
+import 'package:vscope_serial/services/probe_backend.dart';
+import 'package:vscope_serial/services/probe_connection_service.dart';
+import 'package:vscope_serial/services/data_connection_service.dart';
 import 'package:vscope_serial/viewmodels/plot_viewmodel.dart';
+import 'package:vscope_serial/views/widgets/common_widgets.dart';
 import 'package:vscope_serial/views/widgets/status_bar.dart';
 
 void main() {
+  testWidgets('状态栏按页面标识串口或探针连接状态', (tester) async {
+    final connectionService = DataConnectionService();
+    final plotViewModel = PlotViewModel(connectionService);
+    final probeConnectionService = ProbeConnectionService();
+    final previousNetworkEnabled = AppSettings().networkConnectionsEnabled;
+    addTearDown(() {
+      AppSettings().networkConnectionsEnabled = previousNetworkEnabled;
+    });
+
+    Widget app(String pageId) => MultiProvider(
+      providers: [
+        ChangeNotifierProvider<DataConnectionService>.value(
+          value: connectionService,
+        ),
+        ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
+        ChangeNotifierProvider<ProbeConnectionService>.value(
+          value: probeConnectionService,
+        ),
+      ],
+      child: MaterialApp(
+        home: Scaffold(body: StatusBar(currentPageId: pageId)),
+      ),
+    );
+
+    await tester.pumpWidget(app('rawData'));
+    expect(find.text('串口未连接'), findsOneWidget);
+
+    connectionService.setNetworkConnectionsEnabled(true);
+    await tester.pump();
+    expect(find.text('串口/网络未连接'), findsOneWidget);
+
+    await tester.pumpWidget(app('rtt'));
+    expect(find.text('探针未连接'), findsOneWidget);
+    expect(
+      connectionStatusLabel(isProbe: false, connected: true, connecting: false),
+      '串口已连接',
+    );
+    expect(
+      connectionStatusLabel(isProbe: true, connected: false, connecting: true),
+      '探针连接中...',
+    );
+    expect(
+      connectionStatusLabel(isProbe: true, connected: true, connecting: false),
+      '探针已连接',
+    );
+    expect(
+      connectionStatusLabel(
+        isProbe: true,
+        connected: false,
+        connecting: true,
+        reconnecting: true,
+      ),
+      '探针重连中...',
+    );
+
+    // 定时刷新器必须在 Widget 测试结束前释放，避免残留 FakeTimer。
+    await tester.pumpWidget(const SizedBox.shrink());
+    probeConnectionService.dispose();
+    plotViewModel.dispose();
+  });
+
   testWidgets('随机源状态仅在 FireWater 协议下显示', (tester) async {
-    final service = SerialService();
+    final service = DataConnectionService();
     final plotViewModel = PlotViewModel(service);
     plotViewModel.setParserType(ParserType.fireWater);
     plotViewModel.setUseRandomSource(true);
@@ -16,7 +84,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<SerialService>.value(value: service),
+          ChangeNotifierProvider<DataConnectionService>.value(value: service),
           ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
         ],
         child: const MaterialApp(home: Scaffold(body: StatusBar())),
@@ -35,4 +103,219 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     plotViewModel.dispose();
   });
+
+  testWidgets('应用信息和高级设置使用独立入口', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final service = DataConnectionService();
+    final plotViewModel = PlotViewModel(service);
+    final probeConnectionService = ProbeConnectionService(
+      backends: [
+        const _VersionBackend('external-jlink', 'v8.24a'),
+        const _VersionBackend('external-openocd', 'v0.12.0-external'),
+        const _VersionBackend('bundled-openocd', 'v0.12.0-bundled'),
+      ],
+    );
+    final previousDiagnostic = AppSettings().diagnosticLoggingEnabled;
+    final previousShortcuts = AppSettings().connectionShortcutsEnabled;
+    final previousCrashDump = AppSettings().crashDumpEnabled;
+    AppSettings().diagnosticLoggingEnabled = false;
+    AppSettings().connectionShortcutsEnabled = true;
+    AppSettings().crashDumpEnabled = true;
+    AppLogger().setDiagnosticEnabled(false);
+    addTearDown(() {
+      AppSettings().diagnosticLoggingEnabled = previousDiagnostic;
+      AppSettings().connectionShortcutsEnabled = previousShortcuts;
+      AppSettings().crashDumpEnabled = previousCrashDump;
+      AppLogger().setDiagnosticEnabled(previousDiagnostic);
+      probeConnectionService.dispose();
+    });
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<DataConnectionService>.value(value: service),
+          ChangeNotifierProvider<PlotViewModel>.value(value: plotViewModel),
+          ChangeNotifierProvider<ProbeConnectionService>.value(
+            value: probeConnectionService,
+          ),
+        ],
+        child: const MaterialApp(home: Scaffold(body: StatusBar())),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('app-advanced-settings-button')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('app-info-button')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('app-info-button')));
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.appInfo.title), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-info-name')), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-info-version')), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-info-build-time')), findsOneWidget);
+    expect(
+      find.text(AppStrings.appInfo.updateChannelAndSourceTitle),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('update-channel-and-source')),
+      findsOneWidget,
+    );
+    final checkButton = find.byKey(const ValueKey('check-for-update-button'));
+    final downloadButton = find.byKey(
+      const ValueKey('download-and-install-button'),
+    );
+    expect(checkButton, findsOneWidget);
+    expect(downloadButton, findsOneWidget);
+    expect(
+      find.ancestor(of: checkButton, matching: find.byType(Scrollable)),
+      findsNothing,
+    );
+    expect(
+      find.ancestor(of: downloadButton, matching: find.byType(Scrollable)),
+      findsNothing,
+    );
+    expect(find.text(AppStrings.common.advancedSettings), findsNothing);
+
+    await tester.tap(find.text(AppStrings.common.close));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('app-advanced-settings-button')),
+    );
+    await tester.pump();
+    expect(find.text(AppStrings.common.advancedSettings), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-navigation-view')),
+      findsOneWidget,
+    );
+    expect(find.text('通知'), findsOneWidget);
+    expect(find.text('诊断'), findsOneWidget);
+    expect(find.text('快捷键'), findsOneWidget);
+    expect(find.text('页面'), findsOneWidget);
+    expect(find.text('探针后端'), findsOneWidget);
+    expect(find.text(AppStrings.appInfo.memoryLimits), findsOneWidget);
+    expect(find.text('版本回退'), findsWidgets);
+    final settingsNavigation = find.byKey(
+      const ValueKey('settings-navigation-view'),
+    );
+    final navigationScroll =
+        find
+            .descendant(
+              of: settingsNavigation,
+              matching: find.byType(Scrollable),
+            )
+            .first;
+    await tester.scrollUntilVisible(
+      find.text('重置设置'),
+      40,
+      scrollable: navigationScroll,
+    );
+    expect(find.text('重置设置'), findsWidgets);
+    expect(find.text(AppStrings.appInfo.disableNotifications), findsOneWidget);
+    expect(find.text(AppStrings.appInfo.crashDump), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('debug-trigger-native-crash-button')),
+      findsOneWidget,
+    );
+    final shortcutToggle = find.ancestor(
+      of: find.text('启用连接快捷键'),
+      matching: find.byType(AppSwitchRow),
+    );
+    expect(shortcutToggle, findsOneWidget);
+    await tester.tap(
+      find.descendant(of: shortcutToggle, matching: find.byType(Switch)),
+    );
+    await tester.pump();
+    expect(AppSettings().connectionShortcutsEnabled, isTrue);
+    final diagnosticToggle = find.ancestor(
+      of: find.text(AppStrings.appInfo.diagnosticLogging),
+      matching: find.byType(AppSwitchRow),
+    );
+    expect(diagnosticToggle, findsOneWidget);
+    expect(AppSettings().diagnosticLoggingEnabled, isFalse);
+    await tester.tap(
+      find.descendant(of: diagnosticToggle, matching: find.byType(Switch)),
+    );
+    await tester.pump();
+    expect(AppSettings().diagnosticLoggingEnabled, isFalse);
+    expect(AppLogger().diagnosticEnabled, isFalse);
+    final plotMemoryField = find.byKey(
+      const ValueKey('app-plot-history-memory-limit'),
+    );
+    expect(plotMemoryField, findsOneWidget);
+    expect(tester.widget<TextField>(plotMemoryField), isA<TextField>());
+    expect(
+      find.text(AppStrings.appInfo.rawRetentionMemoryLimit),
+      findsOneWidget,
+    );
+    expect(find.text(AppStrings.appInfo.shellQueueMemoryLimit), findsOneWidget);
+    expect(
+      find.text(AppStrings.appInfo.ymodemQueueMemoryLimit),
+      findsOneWidget,
+    );
+    expect(find.textContaining('当前占用: 0 B / 512 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 128 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 256 MiB'), findsOneWidget);
+    expect(find.textContaining('当前占用: 0 B / 4 MiB'), findsOneWidget);
+
+    await tester.tap(find.text('探针后端'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('内置 OpenOCD: v0.12.0-bundled'), findsOneWidget);
+    expect(find.textContaining('外置 OpenOCD: v0.12.0-external'), findsOneWidget);
+
+    await tester.tap(find.text('保存').last);
+    await tester.pumpAndSettle();
+    expect(AppSettings().connectionShortcutsEnabled, isFalse);
+    expect(AppSettings().diagnosticLoggingEnabled, isTrue);
+    expect(AppLogger().diagnosticEnabled, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    plotViewModel.dispose();
+  });
+}
+
+class _VersionBackend
+    implements
+        ProbeBackend,
+        ProbeBackendVersionProvider,
+        PassiveProbeBackendAvailabilityProvider {
+  const _VersionBackend(this.id, this.version);
+
+  @override
+  final String id;
+  final String version;
+
+  @override
+  String get displayName => id;
+  @override
+  bool get guaranteesNonIntrusiveTargetAccess => true;
+  @override
+  String? get nonIntrusiveSafetyBlockReason => null;
+  @override
+  bool get isConnected => false;
+  @override
+  Stream<RttDataChunk> get dataStream => const Stream.empty();
+  @override
+  Stream<String> get diagnosticStream => const Stream.empty();
+  @override
+  Future<bool> isAvailable(ProbeKind kind) async => true;
+  @override
+  Future<String?> detectVersion(ProbeKind kind) async => version;
+  @override
+  Future<ProbeBackendAvailability> checkAvailabilityWithoutPreparation(
+    ProbeKind kind,
+  ) async => ProbeBackendAvailability(available: true, version: version);
+  @override
+  Future<List<ProbeInfo>> listProbes(ProbeKind kind) async => const [];
+  @override
+  Future<List<ProbeTargetInfo>> listTargets(ProbeKind kind) async => const [];
+  @override
+  Future<void> connect(ProbeConnectionConfig config) async {}
+  @override
+  Future<void> disconnect() async {}
+  @override
+  Future<void> dispose() async {}
 }

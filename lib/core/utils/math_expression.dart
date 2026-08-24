@@ -1,13 +1,34 @@
+import 'dart:math' as math;
+
+/// 绘图数学通道表达式的已编译语法树。
+///
+/// 除计算结果外还暴露前后依赖范围，使历史/LOD 构建可判断何时补齐带偏移表达式
+/// 的尾部点；非有限结果统一归一为 NaN，避免 Infinity 进入绘制和导出路径。
 class MathExpression {
   final _ExprNode _root;
   final int futureLookahead;
+  final int pastLookback;
+  final bool hasChannelOffset;
+  final Set<int> referencedChannels;
 
-  const MathExpression._(this._root, {required this.futureLookahead});
+  const MathExpression._(
+    this._root, {
+    required this.futureLookahead,
+    required this.pastLookback,
+    required this.hasChannelOffset,
+    required this.referencedChannels,
+  });
 
   static MathExpression parse(String source) {
     final parser = _MathExpressionParser(source);
     final root = parser.parse();
-    return MathExpression._(root, futureLookahead: root.futureLookahead);
+    return MathExpression._(
+      root,
+      futureLookahead: root.futureLookahead,
+      pastLookback: root.pastLookback,
+      hasChannelOffset: root.hasChannelOffset,
+      referencedChannels: Set.unmodifiable(root.referencedChannels),
+    );
   }
 
   double evaluate(List<double> channels) {
@@ -15,12 +36,14 @@ class MathExpression {
     return value.isFinite ? value : double.nan;
   }
 
+  /// 使用完整历史上下文求值；越界引用和溢出均返回 NaN。
   double evaluateWithContext(MathEvalContext context) {
     final value = _root.evaluate(context);
     return value.isFinite ? value : double.nan;
   }
 }
 
+/// 数学表达式一次求值所需的当前点与历史取值接口。
 class MathEvalContext {
   final int currentIndex;
   final int pointCount;
@@ -48,10 +71,17 @@ class MathEvalContext {
   }
 }
 
+/// 内部节点同时传播值依赖范围，不能只传播数值结果。
 abstract class _ExprNode {
   const _ExprNode();
 
   int get futureLookahead => 0;
+
+  int get pastLookback => 0;
+
+  bool get hasChannelOffset => false;
+
+  Set<int> get referencedChannels => const {};
 
   double evaluate(MathEvalContext context);
 }
@@ -75,6 +105,15 @@ class _ChannelNode extends _ExprNode {
   int get futureLookahead => xOffset < 0 ? -xOffset : 0;
 
   @override
+  bool get hasChannelOffset => xOffset != 0;
+
+  @override
+  int get pastLookback => xOffset > 0 ? xOffset : 0;
+
+  @override
+  Set<int> get referencedChannels => {index};
+
+  @override
   double evaluate(MathEvalContext context) {
     final sourceIndex = context.currentIndex - xOffset;
     if (sourceIndex < 0 || sourceIndex >= context.pointCount) {
@@ -92,6 +131,15 @@ class _UnaryNode extends _ExprNode {
 
   @override
   int get futureLookahead => child.futureLookahead;
+
+  @override
+  bool get hasChannelOffset => child.hasChannelOffset;
+
+  @override
+  int get pastLookback => child.pastLookback;
+
+  @override
+  Set<int> get referencedChannels => child.referencedChannels;
 
   @override
   double evaluate(MathEvalContext context) {
@@ -118,6 +166,18 @@ class _BinaryNode extends _ExprNode {
           : right.futureLookahead;
 
   @override
+  bool get hasChannelOffset => left.hasChannelOffset || right.hasChannelOffset;
+
+  @override
+  int get pastLookback => math.max(left.pastLookback, right.pastLookback);
+
+  @override
+  Set<int> get referencedChannels => {
+    ...left.referencedChannels,
+    ...right.referencedChannels,
+  };
+
+  @override
   double evaluate(MathEvalContext context) {
     final a = left.evaluate(context);
     final b = right.evaluate(context);
@@ -132,6 +192,7 @@ class _BinaryNode extends _ExprNode {
   }
 }
 
+/// 递归下降解析器，按运算优先级构造不可变表达式节点。
 class _MathExpressionParser {
   final String source;
   int _offset = 0;

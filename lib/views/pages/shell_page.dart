@@ -1,0 +1,1769 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:file_picker/file_picker.dart' as file_picker;
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:xterm/xterm.dart';
+
+import '../../core/constants/terminal_fonts.dart';
+import '../../core/localization/app_strings.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/byte_size_formatter.dart';
+import '../../data/models/ssh_connection_config.dart';
+import '../../services/app_notifications.dart';
+import '../../services/app_settings.dart';
+import '../../services/shell_session.dart';
+import '../../services/shell_receive_queue.dart';
+import '../../services/shell_stream_decoder.dart';
+import '../../services/ymodem_service.dart';
+import '../../viewmodels/shell_viewmodel.dart';
+import '../../viewmodels/settings_drafts.dart';
+import '../widgets/common_widgets.dart';
+
+/// 独立串口 Shell 页面。
+///
+/// 高频串口回调只进入 [_receiveQueue]，终端更新限制为每帧一次且每帧最多
+/// 消费 64 KiB，避免小包风暴反复触发布局、绘制和滚动。
+/// 独立 Shell 终端页面。
+///
+/// 终端渲染、接收队列和命令输入焦点分离：高频串口输入不能直接在每个数据包中
+/// 改动 xterm 或滚动位置，必须按帧合并排空。
+class ShellPage extends StatefulWidget {
+  const ShellPage({
+    super.key,
+    this.receiveQueueLimitBytes = ShellReceiveQueue.defaultMaxBytes,
+    this.onConnectionShortcut,
+  });
+
+  /// Shell UI 尚未消费的接收数据上限；测试可注入较小值验证过载路径。
+  final int receiveQueueLimitBytes;
+
+  /// 终端焦点会消费功能键，因此由页面显式把连接快捷键交回主窗口。
+  final ValueChanged<LogicalKeyboardKey>? onConnectionShortcut;
+
+  @override
+  State<ShellPage> createState() => _ShellPageState();
+}
+
+class _ShellPageState extends State<ShellPage> {
+  static const int _maxReceiveBytesPerFrame = 64 * 1024;
+  static const Duration _cursorBlinkInterval = Duration(milliseconds: 500);
+
+  late Terminal _terminal;
+  late ShellStreamDecoder _decoder;
+  final TerminalController _terminalController = TerminalController();
+  final ScrollController _terminalScrollController = ScrollController();
+  final TextEditingController _lineController = TextEditingController();
+  final FocusNode _lineFocusNode = FocusNode(debugLabel: 'shellLineInput');
+  final FocusNode _terminalFocusNode = FocusNode(debugLabel: 'shellTerminal');
+  final ValueNotifier<bool> _cursorBlinkVisible = ValueNotifier<bool>(true);
+  Timer? _cursorBlinkTimer;
+  late final ShellReceiveQueue _receiveQueue;
+  final List<String> _commandHistory = <String>[];
+  StreamSubscription<Uint8List>? _receiveSubscription;
+  ShellViewModel? _viewModel;
+  bool _wasSshRunning = false;
+  int _receivedBytes = 0;
+  int _newOutputBytes = 0;
+  int _historyIndex = 0;
+  bool _receiveDrainScheduled = false;
+  bool _terminalSizeUpdateScheduled = false;
+  bool _terminalAtBottom = true;
+  String _ansiDetectionTail = '';
+  DateTime? _lastOverflowWarningAt;
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = context.read<ShellViewModel>();
+    _receiveQueue = ShellReceiveQueue(maxBytes: widget.receiveQueueLimitBytes);
+    _terminal = _createTerminal(settings.scrollbackLines);
+    _decoder = ShellStreamDecoder(settings.encoding);
+    _terminalScrollController.addListener(_handleScrollPosition);
+    _terminalFocusNode.addListener(_syncCursorBlink);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final vm = context.read<ShellViewModel>();
+    if (identical(_viewModel, vm)) return;
+    _viewModel?.removeListener(_handleViewModelStateChanged);
+    _receiveSubscription?.cancel();
+    _viewModel = vm;
+    _wasSshRunning = false;
+    vm.addListener(_handleViewModelStateChanged);
+    _receiveSubscription = vm.dataStream.listen(
+      _enqueueReceivedData,
+      onError: (Object error, StackTrace stackTrace) {
+        if (mounted) _showPageError('Shell 接收异常: $error');
+      },
+    );
+    _bindTerminalOutput(vm);
+    _handleViewModelStateChanged();
+  }
+
+  void _handleViewModelStateChanged() {
+    final vm = _viewModel;
+    if (vm == null) return;
+    final running = vm.isSshMode && vm.isRunning;
+    if (running && !_wasSshRunning) {
+      // SSH 在连接窗口中自动启动，连接窗口关闭后再补一次焦点，确保逐键输入可用。
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 120), () {
+          if (!mounted || !vm.isSshMode || !vm.isRunning) return;
+          _focusInputModeAfterLayout(vm.inputMode);
+        }),
+      );
+    }
+    _wasSshRunning = running;
+    _syncCursorBlink();
+  }
+
+  @override
+  void dispose() {
+    _viewModel?.removeListener(_handleViewModelStateChanged);
+    _viewModel?.updatePendingReceiveBytes(0);
+    unawaited(_receiveSubscription?.cancel());
+    _terminalScrollController.removeListener(_handleScrollPosition);
+    _terminalFocusNode.removeListener(_syncCursorBlink);
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkVisible.dispose();
+    _terminalScrollController.dispose();
+    _terminalController.dispose();
+    _lineController.dispose();
+    _terminalFocusNode.dispose();
+    _lineFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _bindTerminalOutput(ShellViewModel vm) {
+    _terminal.onOutput = (text) {
+      if (!vm.isRunning || vm.inputMode != RawShellInputMode.key) return;
+      unawaited(_sendBytesSafely(vm, vm.encodeText(text)));
+    };
+  }
+
+  Terminal _createTerminal(int maxLines) {
+    return Terminal(
+      maxLines: maxLines,
+      onResize: (columns, rows, _, _) {
+        _viewModel?.resizeSshTerminal(columns, rows);
+        if (_terminalSizeUpdateScheduled || !mounted) return;
+        _terminalSizeUpdateScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _terminalSizeUpdateScheduled = false;
+          if (mounted) setState(() {});
+        });
+      },
+    );
+  }
+
+  void _enqueueReceivedData(Uint8List data) {
+    // 接收队列负责上限和旧块丢弃；页面仅在下一帧消费受限字节数。
+    if (data.isEmpty) return;
+    final dropped = _receiveQueue.add(data);
+    _syncReceiveQueueUsage();
+    if (dropped > 0) _handleReceiveOverflow();
+    _scheduleReceiveDrain();
+  }
+
+  void _handleReceiveOverflow() {
+    _decoder.reset(encoding: _viewModel?.encoding);
+    _ansiDetectionTail = '';
+    _terminalController.clearSelection();
+    // RIS 终止可能被截断的 ANSI 序列，避免丢块后终端长期处于错误样式。
+    _terminal.write('\x1bc');
+    final now = DateTime.now();
+    final previous = _lastOverflowWarningAt;
+    if (previous != null &&
+        now.difference(previous) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastOverflowWarningAt = now;
+    _terminal.write(
+      '\r\n[警告] Shell 接收过载，已丢弃最旧数据 '
+      '${formatByteSize(_receiveQueue.droppedBytes)}。\r\n',
+    );
+  }
+
+  void _scheduleReceiveDrain() {
+    // 一个帧内最多安排一次排空，避免小包高频到达造成回调堆积。
+    if (_receiveDrainScheduled || !mounted) return;
+    _receiveDrainScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _receiveDrainScheduled = false;
+      if (!mounted) return;
+      _drainReceivedData();
+      if (_receiveQueue.isNotEmpty) _scheduleReceiveDrain();
+    });
+  }
+
+  void _drainReceivedData() {
+    // 每帧消费上限由 ViewModel/队列约束；剩余数据留给下一帧而不是丢弃。
+    var remaining = _maxReceiveBytesPerFrame;
+    var consumed = 0;
+    final output = StringBuffer();
+    final followBottom = _isAtBottom;
+    for (final chunk in _receiveQueue.removeUpTo(remaining)) {
+      output.write(_decoder.add(chunk));
+      remaining -= chunk.length;
+      consumed += chunk.length;
+    }
+    _syncReceiveQueueUsage();
+    if (output.isNotEmpty) {
+      final decoded = output.toString();
+      final detectionText = '$_ansiDetectionTail$decoded';
+      if (detectionText.contains('\x1b[2J') ||
+          detectionText.contains('\x1b[3J')) {
+        _terminalController.clearSelection();
+      }
+      _ansiDetectionTail =
+          detectionText.length <= 8
+              ? detectionText
+              : detectionText.substring(detectionText.length - 8);
+      _terminal.write(decoded);
+    }
+    if (consumed == 0) return;
+    _receivedBytes += consumed;
+    if (followBottom) {
+      _newOutputBytes = 0;
+      _scheduleScrollToBottom();
+    } else {
+      _newOutputBytes += consumed;
+    }
+    setState(() {});
+  }
+
+  void _syncReceiveQueueUsage() {
+    _viewModel?.updatePendingReceiveBytes(_receiveQueue.queuedBytes);
+  }
+
+  bool get _isAtBottom {
+    if (!_terminalScrollController.hasClients) return true;
+    final position = _terminalScrollController.position;
+    return position.maxScrollExtent - position.pixels <= 2;
+  }
+
+  void _handleScrollPosition() {
+    if (!mounted) return;
+    final atBottom = _isAtBottom;
+    final bottomChanged = atBottom != _terminalAtBottom;
+    _terminalAtBottom = atBottom;
+    if (_newOutputBytes != 0 && atBottom) {
+      setState(() => _newOutputBytes = 0);
+    } else if (bottomChanged) {
+      setState(() {});
+    }
+    if (bottomChanged) _syncCursorBlink();
+  }
+
+  bool get _shouldBlinkCursor {
+    final vm = _viewModel;
+    return vm != null &&
+        vm.isRunning &&
+        vm.inputMode == RawShellInputMode.key &&
+        !vm.isYmodemActive &&
+        _terminalAtBottom &&
+        _terminal.cursorVisibleMode &&
+        _terminalFocusNode.hasFocus;
+  }
+
+  /// 自绘光标不经过 xterm 的光标动画，因此只为光标本身维护闪烁节拍。
+  /// 失焦或停止时停在可见相位，重新获得焦点后再继续闪烁。
+  void _syncCursorBlink() {
+    if (_shouldBlinkCursor) {
+      _cursorBlinkTimer ??= Timer.periodic(_cursorBlinkInterval, (_) {
+        _cursorBlinkVisible.value = !_cursorBlinkVisible.value;
+      });
+      return;
+    }
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkTimer = null;
+    _cursorBlinkVisible.value = true;
+  }
+
+  void _restartCursorBlink() {
+    if (!_shouldBlinkCursor) return;
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkVisible.value = true;
+    _cursorBlinkTimer = Timer.periodic(_cursorBlinkInterval, (_) {
+      _cursorBlinkVisible.value = !_cursorBlinkVisible.value;
+    });
+  }
+
+  void _scheduleScrollToBottom() {
+    // 用户查看历史时不强制跳回底部，只在原本位于末尾时自动跟随新输出。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_terminalScrollController.hasClients) return;
+      _terminalScrollController.jumpTo(
+        _terminalScrollController.position.maxScrollExtent,
+      );
+    });
+  }
+
+  Future<void> _toggleRunning(ShellViewModel vm) async {
+    if (vm.isRunning) {
+      await vm.stop();
+      return;
+    }
+    if (!await vm.start()) return;
+    _receiveQueue.reset();
+    _syncReceiveQueueUsage();
+    _receivedBytes = 0;
+    _newOutputBytes = 0;
+    _terminalAtBottom = true;
+    _ansiDetectionTail = '';
+    _lastOverflowWarningAt = null;
+    _decoder.reset(encoding: vm.encoding);
+    _focusInputModeAfterLayout(vm.inputMode);
+  }
+
+  Future<void> _sendLine(ShellViewModel vm) async {
+    // 命令行发送完成后重新聚焦输入栏，连续敲命令不应被终端抢走焦点。
+    final text = _lineController.text;
+    if (text.isEmpty || !vm.isRunning || vm.isYmodemActive) {
+      _refocusLineInput(vm);
+      return;
+    }
+    try {
+      // 普通 Shell 与 SSH 统一服从设置中的本地回显开关。
+      if (vm.localEcho) _terminal.write('$text\r\n');
+      _commandHistory.remove(text);
+      _commandHistory.add(text);
+      _historyIndex = _commandHistory.length;
+      _lineController.clear();
+      // 串口写入在后台有序队列中完成，输入框无需等待写入结果即可继续接收命令。
+      _refocusLineInput(vm);
+      await vm.sendText(text);
+    } catch (error) {
+      _showPageError('发送失败: $error');
+    } finally {
+      _refocusLineInput(vm);
+    }
+  }
+
+  void _refocusLineInput(ShellViewModel vm) {
+    if (mounted &&
+        vm.isRunning &&
+        !vm.isYmodemActive &&
+        vm.inputMode == RawShellInputMode.line) {
+      // 先覆盖 TextField 提交动作的默认焦点变化，让用户可以立即继续输入；
+      // 下一帧再校正一次，避免发送状态刷新重建界面后焦点被其他控件接走。
+      _lineFocusNode.requestFocus();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !vm.isRunning ||
+          vm.isYmodemActive ||
+          vm.inputMode != RawShellInputMode.line) {
+        return;
+      }
+      _lineFocusNode.requestFocus();
+    });
+  }
+
+  Future<void> _sendBytesSafely(ShellViewModel vm, Uint8List data) async {
+    // 所有 Shell 输入统一走串口写队列，并在异常时转换为页面内提示。
+    try {
+      await vm.sendBytes(data);
+    } catch (error) {
+      _showPageError('发送失败: $error');
+    }
+  }
+
+  KeyEventResult _handleTerminalKey(
+    FocusNode node,
+    KeyEvent event,
+    ShellViewModel vm,
+  ) {
+    final key = event.logicalKey;
+    if (_terminalFunctionKeys.contains(key)) {
+      if (event is KeyDownEvent && _connectionShortcutKeys.contains(key)) {
+        widget.onConnectionShortcut?.call(key);
+      }
+      // 所有 F1-F12 均不得继续进入 xterm 并发送到远端。
+      return KeyEventResult.handled;
+    }
+    if (event is! KeyDownEvent || !vm.isRunning || vm.isYmodemActive) {
+      return KeyEventResult.ignored;
+    }
+    // 键盘活动后先显示光标，再重新开始一个完整的闪烁周期。
+    _restartCursorBlink();
+    final keyboard = HardwareKeyboard.instance;
+    final control = keyboard.isControlPressed;
+    final shift = keyboard.isShiftPressed;
+    if (control && shift && event.logicalKey == LogicalKeyboardKey.keyC) {
+      unawaited(_copySelection());
+      return KeyEventResult.handled;
+    }
+    if (control && shift && event.logicalKey == LogicalKeyboardKey.keyV) {
+      unawaited(_pasteClipboard(vm));
+      return KeyEventResult.handled;
+    }
+    if (control && !shift && event.logicalKey == LogicalKeyboardKey.keyC) {
+      unawaited(_sendBytesSafely(vm, Uint8List.fromList(const <int>[0x03])));
+      return KeyEventResult.handled;
+    }
+    // 方向键、Tab 和其余 Ctrl 组合继续交给 xterm 编码。
+    return KeyEventResult.ignored;
+  }
+
+  static final Set<LogicalKeyboardKey> _connectionShortcutKeys = {
+    LogicalKeyboardKey.f1,
+    LogicalKeyboardKey.f2,
+    LogicalKeyboardKey.f3,
+    LogicalKeyboardKey.f5,
+  };
+
+  static final Set<LogicalKeyboardKey> _terminalFunctionKeys = {
+    LogicalKeyboardKey.f1,
+    LogicalKeyboardKey.f2,
+    LogicalKeyboardKey.f3,
+    LogicalKeyboardKey.f4,
+    LogicalKeyboardKey.f5,
+    LogicalKeyboardKey.f6,
+    LogicalKeyboardKey.f7,
+    LogicalKeyboardKey.f8,
+    LogicalKeyboardKey.f9,
+    LogicalKeyboardKey.f10,
+    LogicalKeyboardKey.f11,
+    LogicalKeyboardKey.f12,
+  };
+
+  Future<void> _copySelection() async {
+    final selection = _terminalController.selection;
+    if (selection == null) return;
+    await Clipboard.setData(
+      ClipboardData(text: _terminal.buffer.getText(selection)),
+    );
+  }
+
+  Future<void> _pasteClipboard(ShellViewModel vm) async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text;
+    if (text == null || text.isEmpty || !vm.isRunning) return;
+    final multiline = text.contains('\n') || text.contains('\r');
+    if (multiline) {
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder:
+            (context) => AlertDialog(
+              title: Text(AppStrings.shell.sendMultilineTitle),
+              content: Text(AppStrings.shell.sendMultilineMessage),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(AppStrings.common.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: Text(AppStrings.raw.send),
+                ),
+              ],
+            ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await _sendBytesSafely(vm, vm.encodeText(text));
+  }
+
+  KeyEventResult _handleLineHistory(KeyEvent event) {
+    if (event is! KeyDownEvent || _commandHistory.isEmpty) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _historyIndex = (_historyIndex - 1).clamp(0, _commandHistory.length - 1);
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _historyIndex = (_historyIndex + 1).clamp(0, _commandHistory.length);
+    } else {
+      return KeyEventResult.ignored;
+    }
+    _lineController.text =
+        _historyIndex == _commandHistory.length
+            ? ''
+            : _commandHistory[_historyIndex];
+    _lineController.selection = TextSelection.collapsed(
+      offset: _lineController.text.length,
+    );
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ShellViewModel>(
+      builder: (context, vm, _) {
+        if (_decoder.encoding != vm.encoding) {
+          _decoder.reset(encoding: vm.encoding);
+        }
+        return Column(
+          children: [
+            _buildToolbar(vm),
+            Expanded(child: _buildTerminal(vm)),
+            if (vm.inputMode == RawShellInputMode.line) _buildLineInput(vm),
+            _buildStatus(vm),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildToolbar(ShellViewModel vm) {
+    final canTransfer = vm.canUseYmodem && (vm.isRunning || vm.isYmodemActive);
+    final canConfigure = !vm.isRunning;
+    return UnifiedToolbar(
+      leadingItems: [
+        ToolbarLayoutItem(
+          extent: 76,
+          child: ToolbarStartStopButton(
+            key: const ValueKey('shell-start-stop-button'),
+            tooltip:
+                vm.isSshMode && vm.isRunning
+                    ? AppStrings.shell.disconnectSsh
+                    : vm.isRunning
+                    ? AppStrings.shell.stopShell
+                    : AppStrings.shell.startShell,
+            running: vm.isRunning,
+            label:
+                vm.isRunning ? AppStrings.shell.stop : AppStrings.shell.start,
+            onPressed:
+                vm.isConnected || vm.isRunning
+                    ? () => _toggleRunning(vm)
+                    : null,
+          ),
+        ),
+        ToolbarLayoutItem(
+          extent: 104,
+          child: SizedBox(
+            height: 24,
+            child: SegmentedButton<ShellConnectionMode>(
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                minimumSize: WidgetStatePropertyAll(Size(44, 24)),
+                padding: WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8),
+                ),
+                textStyle: WidgetStatePropertyAll(
+                  TextStyle(
+                    fontSize: 12,
+                    height: 1,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                alignment: Alignment.center,
+                shape: WidgetStatePropertyAll(
+                  RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(4)),
+                  ),
+                ),
+              ),
+              segments: [
+                ButtonSegment(
+                  value: ShellConnectionMode.normal,
+                  label: SizedBox(
+                    width: 30,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(
+                        child: Text(AppStrings.shell.normal),
+                      ),
+                    ),
+                  ),
+                ),
+                ButtonSegment(
+                  value: ShellConnectionMode.ssh,
+                  enabled: AppSettings().networkConnectionsEnabled,
+                  label: SizedBox(
+                    width: 30,
+                    child: Center(
+                      child: AppSegmentedButtonLabel(
+                        child: Text(AppStrings.shell.ssh),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              selected: {vm.connectionMode},
+              showSelectedIcon: false,
+              onSelectionChanged:
+                  (selection) => unawaited(
+                    _confirmConnectionModeChange(vm, selection.first),
+                  ),
+            ),
+          ),
+        ),
+        _shellModeToolbarItem(vm, RawShellInputMode.line),
+        _shellModeToolbarItem(vm, RawShellInputMode.key),
+      ],
+      trailingItems: [
+        ToolbarLayoutItem(
+          extent: kToolbarControlExtent,
+          child: SizedBox(
+            width: kToolbarControlExtent,
+            height: kToolbarControlExtent,
+            child: PopupMenuButton<String>(
+              tooltip: AppStrings.raw.clearScreen,
+              padding: EdgeInsets.zero,
+              iconSize: kToolbarIconSize,
+              icon: const Icon(Icons.clear),
+              onSelected: (value) => unawaited(_clearTerminal(value)),
+              itemBuilder:
+                  (context) => [
+                    PopupMenuItem(
+                      value: 'screen',
+                      child: Text(AppStrings.shell.clearCurrentScreen),
+                    ),
+                    PopupMenuItem(
+                      value: 'history',
+                      child: Text(AppStrings.shell.clearHistory),
+                    ),
+                    PopupMenuItem(
+                      value: 'all',
+                      child: Text(AppStrings.shell.clearScreenAndHistory),
+                    ),
+                  ],
+            ),
+          ),
+          overflowActions: [
+            ToolbarOverflowAction(
+              icon: const Icon(Icons.clear),
+              label: AppStrings.shell.clearCurrentScreen,
+              onPressed: () => unawaited(_clearTerminal('screen')),
+            ),
+            ToolbarOverflowAction(
+              icon: const Icon(Icons.history),
+              label: AppStrings.shell.clearHistory,
+              onPressed: () => unawaited(_clearTerminal('history')),
+            ),
+            ToolbarOverflowAction(
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: AppStrings.shell.clearScreenAndHistory,
+              onPressed: () => unawaited(_clearTerminal('all')),
+            ),
+          ],
+        ),
+        _shellActionToolbarItem(
+          icon: Icons.drive_folder_upload_outlined,
+          label: AppStrings.shell.fileTransfer,
+          onPressed: canTransfer ? () => _showFileTransferDialog(vm) : null,
+        ),
+        _shellActionToolbarItem(
+          icon: Icons.save,
+          label: AppStrings.shell.exportTerminalText,
+          onPressed: _exportTerminalText,
+        ),
+        ToolbarLayoutItem(
+          extent: kToolbarControlExtent,
+          child: ToolbarAdvancedSettingsButton(
+            tooltip: AppStrings.common.shellSettings,
+            onPressed: canConfigure ? () => _showSettingsDialog(vm) : null,
+          ),
+          overflowActions: [
+            ToolbarOverflowAction(
+              icon: const Icon(Icons.tune),
+              label: AppStrings.common.shellSettings,
+              onPressed: canConfigure ? () => _showSettingsDialog(vm) : null,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmConnectionModeChange(
+    ShellViewModel vm,
+    ShellConnectionMode mode,
+  ) async {
+    if (mode == vm.connectionMode) return;
+    final requiresDisconnect = vm.isConnected || vm.isRunning;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text(AppStrings.shell.switchConnectionModeTitle),
+            content: Text(
+              requiresDisconnect
+                  ? AppStrings.shell.switchConnectionModeDisconnectMessage
+                  : AppStrings.shell.switchConnectionModeMessage,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(AppStrings.common.cancel),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(
+                  requiresDisconnect
+                      ? AppStrings.shell.disconnectAndSwitch
+                      : AppStrings.shell.clearAndSwitch,
+                ),
+              ),
+            ],
+          ),
+    );
+    if (confirmed != true) return;
+    // 切换前先清除当前普通 Shell 尚未被界面消费的统计；SSH 模式下该调用为空操作。
+    vm.updatePendingReceiveBytes(0);
+    await vm.setConnectionMode(mode);
+    if (!mounted) return;
+    _clearConnectionModeHistory(vm);
+  }
+
+  void _clearConnectionModeHistory(ShellViewModel vm) {
+    _receiveQueue.reset();
+    vm.updatePendingReceiveBytes(0);
+    _terminalController.clearSelection();
+    _terminal.write('\x1b[3J\x1b[2J\x1b[H');
+    _commandHistory.clear();
+    _historyIndex = 0;
+    _lineController.clear();
+    _decoder.reset(encoding: vm.encoding);
+    setState(() {
+      _receivedBytes = 0;
+      _newOutputBytes = 0;
+      _terminalAtBottom = true;
+      _ansiDetectionTail = '';
+      _lastOverflowWarningAt = null;
+    });
+  }
+
+  ToolbarLayoutItem _shellActionToolbarItem({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    return ToolbarLayoutItem(
+      extent: kToolbarControlExtent,
+      child: ToolbarIconButton(
+        icon: Icon(icon),
+        tooltip: label,
+        onPressed: onPressed,
+      ),
+      overflowActions: [
+        ToolbarOverflowAction(
+          icon: Icon(icon),
+          label: label,
+          onPressed: onPressed,
+        ),
+      ],
+    );
+  }
+
+  ToolbarLayoutItem _shellModeToolbarItem(
+    ShellViewModel vm,
+    RawShellInputMode mode,
+  ) {
+    final lineMode = mode == RawShellInputMode.line;
+    final label =
+        lineMode ? AppStrings.shell.commandLineMode : AppStrings.shell.keyMode;
+    final icon = lineMode ? Icons.keyboard_return : Icons.keyboard;
+    return ToolbarLayoutItem(
+      extent: kToolbarControlExtent,
+      child: _modeButton(vm: vm, mode: mode, tooltip: label, icon: icon),
+      overflowActions: [
+        ToolbarOverflowAction(
+          icon: Icon(icon),
+          label: label,
+          selected: vm.inputMode == mode,
+          onPressed:
+              vm.isYmodemActive ? null : () => _selectInputMode(vm, mode),
+        ),
+      ],
+    );
+  }
+
+  Widget _modeButton({
+    required ShellViewModel vm,
+    required RawShellInputMode mode,
+    required String tooltip,
+    required IconData icon,
+  }) {
+    return ToolbarToggleIconButton(
+      tooltip: tooltip,
+      icon: Icon(icon),
+      selected: vm.inputMode == mode,
+      onPressed: vm.isYmodemActive ? null : () => _selectInputMode(vm, mode),
+    );
+  }
+
+  void _selectInputMode(ShellViewModel vm, RawShellInputMode mode) {
+    vm.setInputMode(mode);
+    if (vm.isRunning) _focusInputModeAfterLayout(mode);
+  }
+
+  Future<void> _clearTerminal(String value) async {
+    final label = switch (value) {
+      'screen' => AppStrings.shell.clearCurrentScreen,
+      'history' => AppStrings.shell.clearHistory,
+      _ => AppStrings.shell.clearScreenAndHistory,
+    };
+    final confirmed = await showConfirmDialog(
+      context,
+      title: label,
+      message: AppStrings.shell.clearConfirmMessage,
+    );
+    if (!confirmed) return;
+    switch (value) {
+      case 'screen':
+        _terminal.write('\x1b[2J\x1b[H');
+      case 'history':
+        _terminal.eraseScrollbackOnly();
+      case 'all':
+        _terminal.write('\x1b[3J\x1b[2J\x1b[H');
+    }
+  }
+
+  void _focusInputModeAfterLayout(RawShellInputMode mode) {
+    _terminalController.clearSelection();
+    if (mode == RawShellInputMode.key) {
+      _lineFocusNode.unfocus();
+    } else {
+      _terminalFocusNode.unfocus();
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (mode == RawShellInputMode.key) {
+        _terminalFocusNode.requestFocus();
+      } else {
+        _lineFocusNode.requestFocus();
+      }
+      // 模式切换会改变终端区域高度，必须在新布局完成后重新定位到底部，
+      // 否则 xterm 光标可能沿用旧视口偏移而绘制在第一行。
+      _scheduleScrollToBottom();
+    });
+  }
+
+  Widget _buildTerminal(ShellViewModel vm) {
+    final baseTheme = _terminalTheme(vm.themeMode);
+    // xterm 自带光标在视口高度变化后可能沿用错误的滚动偏移。统一隐藏后，
+    // 逐键模式按 Buffer.cursorY 在当前视口内绘制光标；命令行模式只显示输入框光标。
+    final theme = _terminalThemeWithCursor(baseTheme, Colors.transparent);
+    final terminalStyle = TerminalStyle(
+      fontFamily: vm.fontFamily,
+      fontSize: vm.fontSize,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const terminalPadding = 8.0;
+        final cellSize = _measureTerminalCellSize(terminalStyle);
+        final contentHeight = math.max(
+          0.0,
+          constraints.maxHeight - terminalPadding * 2,
+        );
+        final visibleRows = math.max(1, contentHeight ~/ cellSize.height);
+        // xterm 的滚动范围按像素计算；视口若包含不足一行的余数，滚动到底部时
+        // 会在顶部露出半行历史。将实际终端区域限制为整数行，余量留在底部。
+        final terminalHeight = math.min(
+          contentHeight,
+          visibleRows * cellSize.height,
+        );
+
+        return ColoredBox(
+          color: theme.background,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                left: terminalPadding,
+                right: terminalPadding,
+                top: terminalPadding,
+                height: terminalHeight,
+                child: TerminalView(
+                  _terminal,
+                  controller: _terminalController,
+                  scrollController: _terminalScrollController,
+                  theme: theme,
+                  focusNode: _terminalFocusNode,
+                  autofocus: false,
+                  readOnly:
+                      !vm.isRunning || vm.inputMode == RawShellInputMode.line,
+                  hardwareKeyboardOnly: true,
+                  onKeyEvent:
+                      (node, event) => _handleTerminalKey(node, event, vm),
+                  shortcuts: const <ShortcutActivator, Intent>{},
+                  cursorType: _cursorType(vm.cursorMode),
+                  alwaysShowCursor: false,
+                  textStyle: terminalStyle,
+                  onSecondaryTapDown: (details, offset) async {
+                    if (_terminalController.selection != null) {
+                      await _copySelection();
+                      _terminalController.clearSelection();
+                    } else {
+                      await _pasteClipboard(vm);
+                    }
+                  },
+                ),
+              ),
+              if (vm.isRunning &&
+                  vm.inputMode == RawShellInputMode.key &&
+                  _terminalAtBottom &&
+                  _terminal.cursorVisibleMode)
+                _buildKeyModeCursor(
+                  vm,
+                  baseTheme.cursor,
+                  cellSize,
+                  terminalPadding,
+                ),
+              if (_newOutputBytes > 0)
+                Positioned(
+                  right: 16,
+                  bottom: 14,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      setState(() => _newOutputBytes = 0);
+                      _scheduleScrollToBottom();
+                    },
+                    icon: const Icon(Icons.arrow_downward, size: 16),
+                    label: Text(
+                      AppStrings.shell.newOutput(
+                        formatByteSize(_newOutputBytes),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildKeyModeCursor(
+    ShellViewModel vm,
+    Color color,
+    Size cellSize,
+    double padding,
+  ) {
+    final left = padding + _terminal.buffer.cursorX * cellSize.width;
+    final rowTop = padding + _terminal.buffer.cursorY * cellSize.height;
+    final (top, width, height) = switch (vm.cursorMode) {
+      RawShellCursorMode.block => (rowTop, cellSize.width, cellSize.height),
+      RawShellCursorMode.underline => (
+        rowTop + cellSize.height - 1,
+        cellSize.width,
+        1.0,
+      ),
+      RawShellCursorMode.verticalBar => (rowTop, 1.0, cellSize.height),
+    };
+    return Positioned(
+      key: const ValueKey('shell-terminal-cursor'),
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: _cursorBlinkVisible,
+        child: IgnorePointer(child: ColoredBox(color: color)),
+        builder:
+            (context, visible, child) => Opacity(
+              // 使用阶跃明灭而非渐隐，保持与常见终端光标一致。
+              opacity: visible ? 1 : 0,
+              child: child,
+            ),
+      ),
+    );
+  }
+
+  Size _measureTerminalCellSize(TerminalStyle style) {
+    const sample = 'mmmmmmmmmm';
+    final textStyle = style.toTextStyle();
+    final builder =
+        ui.ParagraphBuilder(textStyle.getParagraphStyle())
+          ..pushStyle(
+            textStyle.getTextStyle(
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+          )
+          ..addText(sample);
+    final paragraph =
+        builder.build()
+          ..layout(const ui.ParagraphConstraints(width: double.infinity));
+    final result = Size(
+      paragraph.maxIntrinsicWidth / sample.length,
+      paragraph.height,
+    );
+    paragraph.dispose();
+    return result;
+  }
+
+  Widget _buildLineInput(ShellViewModel vm) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Focus(
+              onKeyEvent: (_, event) => _handleLineHistory(event),
+              child: TextField(
+                key: const ValueKey('shell-line-input'),
+                controller: _lineController,
+                focusNode: _lineFocusNode,
+                enabled: vm.isRunning && !vm.isYmodemActive,
+                textInputAction: TextInputAction.send,
+                decoration: InputDecoration(
+                  isDense: true,
+                  border: const OutlineInputBorder(),
+                  hintText: AppStrings.raw.commandInputHint,
+                ),
+                // 覆盖 TextField 的默认完成行为，避免 Enter 后自动释放焦点。
+                onEditingComplete: () {},
+                onSubmitted: (_) => _sendLine(vm),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed:
+                vm.isRunning && !vm.isYmodemActive ? () => _sendLine(vm) : null,
+            icon: const Icon(Icons.send, size: 18),
+            label: Text(AppStrings.raw.send),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatus(ShellViewModel vm) {
+    final lineEnding = switch (vm.lineEnding) {
+      '\r' => 'CR',
+      '\n' => 'LF',
+      _ => 'CRLF',
+    };
+    return Container(
+      height: kPageStatusBarHeight,
+      padding: kPageStatusBarPadding,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+      ),
+      child: DefaultTextStyle(
+        key: const ValueKey('shell-status-text-style'),
+        style: kPageStatusBarTextStyle,
+        child: Row(
+          children: [
+            Text(
+              vm.isRunning
+                  ? AppStrings.shell.running
+                  : AppStrings.shell.stopped,
+            ),
+            const SizedBox(width: 16),
+            Text('${vm.encoding}  $lineEnding'),
+            const SizedBox(width: 16),
+            Text('${_terminal.viewWidth} x ${_terminal.viewHeight}'),
+            const SizedBox(width: 16),
+            Text(
+              AppStrings.shell.receivedBytes(formatByteSize(_receivedBytes)),
+              key: const ValueKey('shell-received-bytes'),
+            ),
+            if (_receiveQueue.droppedBytes > 0) ...[
+              const SizedBox(width: 16),
+              Text(
+                AppStrings.shell.droppedBytes(
+                  formatByteSize(_receiveQueue.droppedBytes),
+                ),
+                key: const ValueKey('shell-dropped-bytes'),
+              ),
+            ],
+            const Spacer(),
+            if (!_isAtBottom) Text(AppStrings.shell.scrollLock),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportTerminalText() async {
+    final directory = await file_picker.FilePicker.getDirectoryPath(
+      dialogTitle: AppStrings.shell.chooseTerminalExportDirectory,
+    );
+    if (directory == null) return;
+    final path =
+        '$directory${Platform.pathSeparator}shell_${DateTime.now().millisecondsSinceEpoch}.txt';
+    await File(path).writeAsString(_terminal.buffer.getText());
+    AppNotifications.show('终端文本已导出: $path');
+  }
+
+  Future<void> _showSettingsDialog(ShellViewModel vm) async {
+    var encoding = vm.encoding;
+    var lineEnding = vm.lineEnding;
+    var fontSize = vm.fontSize;
+    var fontFamily = vm.fontFamily;
+    var theme = vm.themeMode;
+    var cursor = vm.cursorMode;
+    var localEcho = vm.localEcho;
+    var scrollback = vm.scrollbackLines;
+    var sshKeepAliveEnabled = AppSettings().sshKeepAliveEnabled;
+    var fontSizeText = fontSize.round().toString();
+    String? fontSizeError;
+    final scrollController = ScrollController();
+    final inputSectionKey = GlobalKey();
+    final fontSectionKey = GlobalKey();
+    final appearanceSectionKey = GlobalKey();
+    final historySectionKey = GlobalKey();
+    final sshSectionKey = GlobalKey();
+    try {
+      await showDialog<void>(
+        context: context,
+        builder:
+            (dialogContext) => StatefulBuilder(
+              builder:
+                  (context, setDialogState) => AppSettingsDialog(
+                    title: Text(AppStrings.common.shellSettings),
+                    size: AppDialogSize.navigation,
+                    hasUnsavedChanges:
+                        () =>
+                            encoding != vm.encoding ||
+                            lineEnding != vm.lineEnding ||
+                            fontSizeText != vm.fontSize.round().toString() ||
+                            fontFamily != vm.fontFamily ||
+                            theme != vm.themeMode ||
+                            cursor != vm.cursorMode ||
+                            localEcho != vm.localEcho ||
+                            scrollback != vm.scrollbackLines ||
+                            sshKeepAliveEnabled !=
+                                AppSettings().sshKeepAliveEnabled,
+                    onSave: () async {
+                      final parsedFontSize = double.tryParse(fontSizeText);
+                      if (parsedFontSize == null ||
+                          parsedFontSize < 10 ||
+                          parsedFontSize > 24) {
+                        setDialogState(
+                          () =>
+                              fontSizeError =
+                                  AppStrings.raw.terminalFontSizeInvalid,
+                        );
+                        throw FormatException(
+                          AppStrings.probe.invalidSettingsError,
+                        );
+                      }
+                      final oldScrollback = vm.scrollbackLines;
+                      await vm.applyTerminalSettings(
+                        ShellTerminalSettingsDraft(
+                          encoding: encoding,
+                          lineEnding: lineEnding,
+                          fontSize: parsedFontSize,
+                          fontFamily: fontFamily,
+                          themeMode: theme,
+                          cursorMode: cursor,
+                          localEcho: localEcho,
+                          scrollbackLines: scrollback,
+                          sshKeepAliveEnabled: sshKeepAliveEnabled,
+                        ),
+                      );
+                      if (scrollback != oldScrollback) {
+                        _replaceTerminal(scrollback, vm);
+                      }
+                    },
+                    child: SettingsNavigationView(
+                      scrollController: scrollController,
+                      items: [
+                        SettingsNavigationItem(
+                          label: AppStrings.common.settingsInputAndEncoding,
+                          anchorKey: inputSectionKey,
+                        ),
+                        SettingsNavigationItem(
+                          label: AppStrings.common.settingsTerminalFont,
+                          anchorKey: fontSectionKey,
+                        ),
+                        SettingsNavigationItem(
+                          label: AppStrings.common.settingsAppearanceAndCursor,
+                          anchorKey: appearanceSectionKey,
+                        ),
+                        SettingsNavigationItem(
+                          label: AppStrings.common.settingsHistory,
+                          anchorKey: historySectionKey,
+                        ),
+                        SettingsNavigationItem(
+                          label: AppStrings.shell.ssh,
+                          anchorKey: sshSectionKey,
+                        ),
+                      ],
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            key: inputSectionKey,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.common.settingsTextEncoding,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    NoAnimDropdown<String>(
+                                      value: encoding,
+                                      hint:
+                                          AppStrings
+                                              .probe
+                                              .selectTextEncodingHint,
+                                      decoration:
+                                          secondaryDialogFieldDecoration(),
+                                      items:
+                                          ShellViewModel.availableEncodings
+                                              .map(
+                                                (value) => DropdownMenuItem(
+                                                  value: value,
+                                                  child: Text(value),
+                                                ),
+                                              )
+                                              .toList(),
+                                      onChanged:
+                                          (value) => setDialogState(
+                                            () => encoding = value ?? encoding,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      AppStrings.shell.commandLineEnding,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    NoAnimDropdown<String>(
+                                      key: const ValueKey(
+                                        'shell-line-ending-dropdown',
+                                      ),
+                                      value: lineEnding,
+                                      hint:
+                                          AppStrings
+                                              .shell
+                                              .selectCommandLineEnding,
+                                      decoration:
+                                          secondaryDialogFieldDecoration(),
+                                      items: const [
+                                        DropdownMenuItem(
+                                          value: '\r',
+                                          child: Text('CR'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: '\n',
+                                          child: Text('LF'),
+                                        ),
+                                        DropdownMenuItem(
+                                          value: '\r\n',
+                                          child: Text('CRLF'),
+                                        ),
+                                      ],
+                                      onChanged:
+                                          (value) => setDialogState(
+                                            () =>
+                                                lineEnding =
+                                                    value ?? lineEnding,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            AppStrings.shell.commandLineEndingHelp,
+                            style: Theme.of(
+                              context,
+                            ).textTheme.bodySmall?.copyWith(
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          AppSwitchRow(
+                            title: Text(AppStrings.shell.localEcho),
+                            value: localEcho,
+                            onChanged:
+                                (value) =>
+                                    setDialogState(() => localEcho = value),
+                          ),
+                          const Divider(height: 24),
+                          Text(
+                            key: fontSectionKey,
+                            AppStrings.common.settingsTerminalFont,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: kSecondaryDialogWideFieldWidth,
+                            child: AppDialogDropdown<String>(
+                              value: fontFamily,
+                              hint: AppStrings.probe.selectTerminalFontHint,
+                              items:
+                                  terminalFontFamilies
+                                      .map(
+                                        (font) => DropdownMenuItem(
+                                          value: font,
+                                          child: Text(font),
+                                        ),
+                                      )
+                                      .toList(),
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => fontFamily = value ?? fontFamily,
+                                  ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                AppStrings.probe.fontSizeLabel,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              const Spacer(),
+                              SizedBox(
+                                width: kSecondaryDialogFieldWidth,
+                                child: TextFormField(
+                                  key: const ValueKey('shell-font-size-field'),
+                                  initialValue: fontSizeText,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  decoration: secondaryDialogFieldDecoration(
+                                    suffixText: 'px',
+                                  ).copyWith(errorText: fontSizeError),
+                                  onChanged: (value) {
+                                    fontSizeText = value;
+                                    final parsed = double.tryParse(value);
+                                    setDialogState(() {
+                                      if (parsed == null ||
+                                          parsed < 10 ||
+                                          parsed > 24) {
+                                        fontSizeError =
+                                            AppStrings
+                                                .raw
+                                                .terminalFontSizeInvalid;
+                                      } else {
+                                        fontSize = parsed;
+                                        fontSizeError = null;
+                                      }
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            AppStrings.probe.fontPreviewLabel,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            key: const ValueKey('shell-font-preview'),
+                            width: double.infinity,
+                            constraints: const BoxConstraints(minHeight: 64),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color:
+                                  Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerLow,
+                              border: Border.all(
+                                color: Theme.of(context).dividerColor,
+                              ),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              AppStrings.shell.fontPreviewText,
+                              style: TextStyle(
+                                fontFamily: fontFamily,
+                                fontSize: fontSize,
+                                height: 1.25,
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          Text(
+                            key: appearanceSectionKey,
+                            AppStrings.shell.terminalTheme,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 6),
+                          AppSegmentedSelector<RawShellThemeMode>(
+                            value: theme,
+                            items: {
+                              RawShellThemeMode.light: Text(
+                                AppStrings.shell.light,
+                              ),
+                              RawShellThemeMode.dark: Text(
+                                AppStrings.shell.dark,
+                              ),
+                            },
+                            onChanged:
+                                (value) => setDialogState(() => theme = value),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            AppStrings.shell.cursorStyle,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: kSecondaryDialogWideFieldWidth,
+                            child: NoAnimDropdown<RawShellCursorMode>(
+                              value: cursor,
+                              hint: AppStrings.shell.selectCursorStyle,
+                              decoration: secondaryDialogFieldDecoration(),
+                              items:
+                                  RawShellCursorMode.values
+                                      .map(
+                                        (value) => DropdownMenuItem(
+                                          value: value,
+                                          child: Text(value.label),
+                                        ),
+                                      )
+                                      .toList(),
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => cursor = value ?? cursor,
+                                  ),
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          Text(
+                            key: historySectionKey,
+                            AppStrings.probe.historyLinesLabel,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            width: kSecondaryDialogWideFieldWidth,
+                            child: NoAnimDropdown<int>(
+                              value: scrollback,
+                              hint: AppStrings.shell.selectHistoryLines,
+                              decoration: secondaryDialogFieldDecoration(),
+                              items:
+                                  const <int>[1000, 5000, 10000, 50000, 100000]
+                                      .map(
+                                        (value) => DropdownMenuItem(
+                                          value: value,
+                                          child: Text(
+                                            AppStrings.shell.historyLinesOption(
+                                              value,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                              onChanged:
+                                  (value) => setDialogState(
+                                    () => scrollback = value ?? scrollback,
+                                  ),
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          AppSwitchRow(
+                            key: sshSectionKey,
+                            title: Text(AppStrings.shell.enableSshKeepalive),
+                            subtitle: Text(AppStrings.shell.sshKeepaliveHelp),
+                            value: sshKeepAliveEnabled,
+                            onChanged:
+                                vm.sshService.isConnected ||
+                                        vm.sshService.isConnecting ||
+                                        vm.sshService.isDisconnecting
+                                    ? null
+                                    : (value) => setDialogState(
+                                      () => sshKeepAliveEnabled = value,
+                                    ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+            ),
+      );
+    } finally {
+      disposeAfterDialogTransition(scrollController.dispose);
+    }
+  }
+
+  void _replaceTerminal(int maxLines, ShellViewModel vm) {
+    final history = _terminal.buffer.getText();
+    setState(() {
+      _terminal = _createTerminal(maxLines);
+      _bindTerminalOutput(vm);
+      if (history.isNotEmpty) _terminal.write(history);
+    });
+  }
+
+  Future<void> _showFileTransferDialog(ShellViewModel vm) async {
+    File? selectedFile;
+    var packetSize = YmodemPacketSizeMode.auto;
+    var transferActive = vm.isYmodemActive;
+    String? error;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder:
+                (context, setDialogState) => AlertDialog(
+                  title: Text(AppStrings.shell.ymodemFileTransfer),
+                  content: SizedBox(
+                    width: 460,
+                    child: StreamBuilder<YmodemTransferStatus>(
+                      stream: vm.ymodemStatusStream,
+                      initialData: vm.ymodemStatus,
+                      builder: (context, snapshot) {
+                        final status = snapshot.data!;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    selectedFile?.path ??
+                                        AppStrings.shell.noSendFileSelected,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed:
+                                      status.isActive
+                                          ? null
+                                          : () async {
+                                            final result =
+                                                await file_picker
+                                                    .FilePicker.pickFiles();
+                                            final path =
+                                                result?.files.single.path;
+                                            if (path != null) {
+                                              setDialogState(
+                                                () => selectedFile = File(path),
+                                              );
+                                            }
+                                          },
+                                  icon: const Icon(Icons.folder_open),
+                                  label: Text(AppStrings.raw.choose),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            AppDialogDropdown<YmodemPacketSizeMode>(
+                              value: packetSize,
+                              hint: AppStrings.shell.sendPacket,
+                              labelText: AppStrings.shell.sendPacket,
+                              items: [
+                                DropdownMenuItem(
+                                  value: YmodemPacketSizeMode.auto,
+                                  child: Text(AppStrings.shell.auto),
+                                ),
+                                DropdownMenuItem(
+                                  value: YmodemPacketSizeMode.bytes128,
+                                  child: Text(AppStrings.shell.packet128),
+                                ),
+                                DropdownMenuItem(
+                                  value: YmodemPacketSizeMode.bytes1024,
+                                  child: Text(AppStrings.shell.packet1024),
+                                ),
+                              ],
+                              onChanged:
+                                  status.isActive
+                                      ? null
+                                      : (value) => setDialogState(
+                                        () => packetSize = value ?? packetSize,
+                                      ),
+                            ),
+                            const SizedBox(height: 14),
+                            LinearProgressIndicator(
+                              value:
+                                  status.totalBytes > 0
+                                      ? status.progress
+                                      : status.isActive
+                                      ? null
+                                      : 0,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              status.message.isEmpty
+                                  ? AppStrings.raw.waitingForTransfer
+                                  : status.message,
+                            ),
+                            if (error != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                error!,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            ],
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                  actions: [
+                    if (transferActive)
+                      TextButton(
+                        onPressed: vm.cancelYmodem,
+                        child: Text(AppStrings.raw.cancelTransfer),
+                      ),
+                    TextButton(
+                      onPressed:
+                          transferActive
+                              ? null
+                              : () => Navigator.pop(dialogContext),
+                      child: Text(AppStrings.common.close),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed:
+                          transferActive
+                              ? null
+                              : () async {
+                                setDialogState(() {
+                                  transferActive = true;
+                                  error = null;
+                                });
+                                try {
+                                  final file = await vm.receiveYmodemFile();
+                                  if (file != null) {
+                                    setDialogState(
+                                      () =>
+                                          error = AppStrings.raw
+                                              .receiveCompleted(file.path),
+                                    );
+                                  }
+                                } catch (value) {
+                                  setDialogState(() => error = '$value');
+                                } finally {
+                                  if (dialogContext.mounted) {
+                                    setDialogState(
+                                      () => transferActive = false,
+                                    );
+                                  }
+                                }
+                              },
+                      icon: const Icon(Icons.download),
+                      label: Text(AppStrings.raw.receive),
+                    ),
+                    FilledButton.icon(
+                      onPressed:
+                          selectedFile == null || transferActive
+                              ? null
+                              : () async {
+                                setDialogState(() {
+                                  transferActive = true;
+                                  error = null;
+                                });
+                                try {
+                                  await vm.sendYmodemFile(
+                                    selectedFile!,
+                                    packetSizeMode: packetSize,
+                                  );
+                                } catch (value) {
+                                  setDialogState(() => error = '$value');
+                                } finally {
+                                  if (dialogContext.mounted) {
+                                    setDialogState(
+                                      () => transferActive = false,
+                                    );
+                                  }
+                                }
+                              },
+                      icon: const Icon(Icons.upload),
+                      label: Text(AppStrings.raw.send),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  TerminalTheme _terminalTheme(RawShellThemeMode mode) {
+    if (mode == RawShellThemeMode.dark) return TerminalThemes.defaultTheme;
+    return const TerminalTheme(
+      cursor: Color(0xFF2563EB),
+      selection: Color(0x663B82F6),
+      foreground: Color(0xFF202124),
+      background: AppTheme.pageBackgroundColor,
+      black: Color(0xFF202124),
+      red: Color(0xFFB3261E),
+      green: Color(0xFF0B6B3A),
+      yellow: Color(0xFF8A5A00),
+      blue: Color(0xFF1A5FB4),
+      magenta: Color(0xFF8E24AA),
+      cyan: Color(0xFF007C91),
+      white: Color(0xFFF1F3F4),
+      brightBlack: Color(0xFF5F6368),
+      brightRed: Color(0xFFD93025),
+      brightGreen: Color(0xFF188038),
+      brightYellow: Color(0xFFB06000),
+      brightBlue: Color(0xFF1967D2),
+      brightMagenta: Color(0xFF9C27B0),
+      brightCyan: Color(0xFF0097A7),
+      brightWhite: Color(0xFFFFFFFF),
+      searchHitBackground: Color(0xFFFFF59D),
+      searchHitBackgroundCurrent: Color(0xFFFFD54F),
+      searchHitForeground: Color(0xFF202124),
+    );
+  }
+
+  TerminalTheme _terminalThemeWithCursor(TerminalTheme theme, Color cursor) {
+    return TerminalTheme(
+      cursor: cursor,
+      selection: theme.selection,
+      foreground: theme.foreground,
+      background: theme.background,
+      black: theme.black,
+      red: theme.red,
+      green: theme.green,
+      yellow: theme.yellow,
+      blue: theme.blue,
+      magenta: theme.magenta,
+      cyan: theme.cyan,
+      white: theme.white,
+      brightBlack: theme.brightBlack,
+      brightRed: theme.brightRed,
+      brightGreen: theme.brightGreen,
+      brightYellow: theme.brightYellow,
+      brightBlue: theme.brightBlue,
+      brightMagenta: theme.brightMagenta,
+      brightCyan: theme.brightCyan,
+      brightWhite: theme.brightWhite,
+      searchHitBackground: theme.searchHitBackground,
+      searchHitBackgroundCurrent: theme.searchHitBackgroundCurrent,
+      searchHitForeground: theme.searchHitForeground,
+    );
+  }
+
+  TerminalCursorType _cursorType(RawShellCursorMode mode) {
+    return switch (mode) {
+      RawShellCursorMode.block => TerminalCursorType.block,
+      RawShellCursorMode.underline => TerminalCursorType.underline,
+      RawShellCursorMode.verticalBar => TerminalCursorType.verticalBar,
+    };
+  }
+
+  void _showPageError(String message) {
+    if (!mounted) return;
+    AppNotifications.show(message);
+  }
+}

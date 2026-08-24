@@ -1,62 +1,143 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../core/constants/plot_configuration.dart';
 import '../core/localization/app_strings.dart';
 import '../core/utils/app_logger.dart';
-import '../core/utils/crc.dart';
-import '../core/utils/math_expression.dart';
+import '../core/utils/plot_value_formatter.dart';
 import '../core/utils/plot_performance_metrics.dart';
 import '../data/models/channel_config.dart';
-import '../data/models/chunked_byte_buffer.dart';
 import '../data/models/data_source_config.dart';
+import '../data/models/data_connection_config.dart';
 import '../data/models/math_channel_config.dart';
 import '../data/models/parse_result.dart';
 import '../data/models/parser_config.dart';
 import '../data/models/plot_data.dart';
+import '../data/models/plot_gesture_modifier.dart';
 import '../data/models/plot_lod_index.dart';
+import '../data/models/plot_render_engine.dart';
+import '../data/models/retention_usage.dart';
 import '../data/parser/data_parser.dart';
 import '../data/parser/firewater_parser.dart';
 import '../data/parser/fixed_frame_parser.dart';
 import '../data/parser/just_float_parser.dart';
 import '../data/parser/zobow_parser.dart';
-import '../data/source/data_source_manager.dart';
 import '../data/models/address_config_profile.dart';
+import '../data/protocol/plot_protocol_codec.dart';
+import '../data/protocol/send_protocol.dart';
 import '../services/app_notifications.dart';
 import '../services/app_settings.dart';
-import '../services/serial_service.dart';
+import '../services/data_connection_service.dart';
 import '../services/address_profile_service.dart';
+import '../services/plot_protocol_initializer.dart';
 import '../views/plot/plot_painter.dart';
 import '../views/plot/plot_viewport.dart';
 import 'base_viewmodel.dart';
+import 'plot_history_store.dart';
+import 'plot_import_export_service.dart';
+import 'plot_math_engine.dart';
+import 'plot_observation_assembler.dart';
+import 'settings_drafts.dart';
+import 'plot_session_controller.dart';
+import 'plot_statistics_calculator.dart';
+import 'plot_trigger_runtime.dart';
+import 'plot_window_provider.dart';
 
-part 'plot_viewmodel/plot_import_export.dart';
+export 'plot_import_export_service.dart';
+
+part 'plot_viewmodel/plot_channel_controls.dart';
+part 'plot_viewmodel/plot_display_controls.dart';
+part 'plot_viewmodel/plot_interaction_controls.dart';
 part 'plot_viewmodel/plot_profiles.dart';
 part 'plot_viewmodel/plot_support_models.dart';
+part 'plot_viewmodel/plot_viewport_controls.dart';
 
-typedef PlotImportProgressCallback = void Function(PlotImportProgress progress);
+/// 帧调度能力：注册一个在下一帧结束后执行的回调。
+///
+/// ViewModel 层不直接依赖 `SchedulerBinding`，而是由组合根（main.dart）注入
+/// 生产实现（内部使用 `SchedulerBinding.instance` 请求新帧并注册 post-frame
+/// 回调）；纯逻辑/测试场景可注入 no-op 实现，避免依赖 Flutter binding。
+typedef PostFrameCallback = void Function(void Function() callback);
 
-class PlotImportProgress {
-  final String stage;
-  final int current;
-  final int total;
-  final String? detail;
+/// 不调度任何帧的兜底实现，供无 Flutter binding 的纯逻辑场景使用。
+void _noopPostFrameCallback(void Function() callback) {}
 
-  const PlotImportProgress({
-    required this.stage,
-    required this.current,
-    required this.total,
-    this.detail,
+enum PlotTriggerComparison {
+  greater('>'),
+  less('<'),
+  equal('='),
+  crossUp('上升沿经过'),
+  crossDown('下降沿经过');
+
+  final String label;
+
+  const PlotTriggerComparison(this.label);
+}
+
+enum PlotTriggerAction {
+  markOnly('不停止'),
+  stopImmediately('立即停止'),
+  stopAfterPackets('继续接收后停止');
+
+  final String label;
+
+  const PlotTriggerAction(this.label);
+}
+
+enum PlotTriggerObservationMode {
+  none('不打观察'),
+  triggerPoint('标记触发点'),
+  allHits('标记本轮全部命中');
+
+  final String label;
+
+  const PlotTriggerObservationMode(this.label);
+}
+
+class PlotTriggerConfig {
+  static const double equalTolerance = 1e-6;
+
+  bool enabled;
+  int channelIndex;
+  PlotTriggerComparison comparison;
+  double targetValue;
+  int hitThreshold;
+  int triggerLimit;
+  PlotTriggerAction action;
+  int postTriggerPacketCount;
+  PlotTriggerObservationMode observationMode;
+  bool includeSystemTimeInNote;
+
+  PlotTriggerConfig({
+    this.enabled = false,
+    this.channelIndex = 0,
+    this.comparison = PlotTriggerComparison.greater,
+    this.targetValue = 0,
+    this.hitThreshold = 1,
+    this.triggerLimit = 1,
+    this.action = PlotTriggerAction.stopImmediately,
+    this.postTriggerPacketCount = 0,
+    this.observationMode = PlotTriggerObservationMode.none,
+    this.includeSystemTimeInNote = true,
   });
 
-  double? get fraction {
-    if (total <= 0) return null;
-    return (current / total).clamp(0.0, 1.0);
+  PlotTriggerConfig copy() {
+    return PlotTriggerConfig(
+      enabled: enabled,
+      channelIndex: channelIndex,
+      comparison: comparison,
+      targetValue: targetValue,
+      hitThreshold: hitThreshold,
+      triggerLimit: triggerLimit,
+      action: action,
+      postTriggerPacketCount: postTriggerPacketCount,
+      observationMode: observationMode,
+      includeSystemTimeInNote: includeSystemTimeInNote,
+    );
   }
 }
 
@@ -69,7 +150,7 @@ class PlotImportProgress {
 /// - 管理绘图视口（viewport）的缩放、平移、自适应、历史记录
 /// - 提供光标系统（垂直跟随光标、X-X/Y-Y 测量光标、统计范围）
 /// - 管理通道配置（可见性、颜色、缩放、偏移）
-/// - 控制 UI 刷新频率（30~60 fps），实现数据接收与 UI 刷新解耦
+/// - 控制 UI 刷新频率（30~120 fps），实现数据接收与 UI 刷新解耦
 /// - 统计测量（Max/Min/Avg）与 CSV 导出
 /// - 配置持久化（通过 AppSettings）
 ///
@@ -77,42 +158,40 @@ class PlotImportProgress {
 ///
 /// 这里同时维护“全量历史”和“当前绘图窗口”两套数据结构：
 /// - 当前窗口 `_dataPoints` 只保存 UI 正在绘制的点，避免 Flutter 持有过多对象。
-/// - 文本/浮点协议的历史值进入 `_parsedHistory`，按视口重建窗口。
+/// - 文本/浮点协议的历史值进入 `_historyStore`，按视口重建窗口。
 /// - Zobow/FixedFrame 的历史以原始固定帧保存，导出和回看都能复用原始字节。
-/// - `_lodIndex` 始终跟随全量历史更新，用于大范围拖动/缩放时快速预览。
+/// - 历史存储中的 LOD 始终增量更新，用于大范围拖动/缩放时快速预览。
 ///
 /// UI 刷新：通过 notifyListeners() 驱动 Consumer[PlotViewModel] 重建。
-class PlotViewModel extends BaseViewModel {
+class PlotViewModel extends BaseViewModel implements PlotImportExportHost {
   // ========== 数据源 ==========
-  /// 数据源管理器，封装串口和随机数据源的统一接口
-  late final DataSourceManager _sourceManager;
+  /// 唯一拥有 parser、数据订阅和 start/stop single-flight 的会话控制器。
+  late final PlotSessionController _sessionController;
+  late final PlotProtocolInitializer _protocolInitializer;
 
-  // ========== 解析器 ==========
-  /// 当前使用的数据解析器（FireWater 或固定帧）
-  IDataParser? _parser;
-
-  /// 数据源字节流的订阅，dispose 时需要取消
-  StreamSubscription? _parseSubscription;
+  // ========== 数据导入导出 ==========
+  /// 委托 CSV/BIN/DAT 导入导出的独立服务，仅通过窄接口访问本类状态。
+  late final PlotImportExportService _importExportService;
 
   // ========== 数据缓冲区 ==========
-  /// 当前绘图窗口的数据点（按 index 递增排序）
-  final List<PlotDataPoint> _dataPoints = [];
+  /// 唯一拥有当前精确窗口和异步加载 generation 的窗口提供器。
+  late final PlotWindowProvider _windowProvider;
+  List<PlotDataPoint> get _dataPoints => _windowProvider.points;
 
-  /// FireWater 等无法按固定帧随机访问的协议使用紧凑历史值缓存。
-  ///
-  /// Zobow 和固定帧协议使用原始帧缓存作为历史源；文本协议保存解析后
-  /// 的数值块，并按视口重建当前绘图窗口。
-  final _ParsedValueHistory _parsedHistory = _ParsedValueHistory();
-
-  /// 全量历史的内存级 LOD 索引，用于大窗口拖动/缩放绘制。
-  final PlotLodIndex _lodIndex = PlotLodIndex();
+  /// 唯一拥有紧凑值、固定原始帧和 LOD 的历史存储。
+  final PlotHistoryStore _historyStore = PlotHistoryStore();
 
   /// 当前窗口最大点数，避免 UI 持有过多 PlotDataPoint 对象
-  static const int minVisiblePoints = 1000000;
-  static const int defaultVisiblePoints = 1000000;
-  static const int maxVisiblePointsLimit = 40000000;
-  static const int maxDiscardInitialPacketCount = 10000;
+  static const int maxObservationCount = PlotConfiguration.maxObservationCount;
+  static const int minVisiblePoints = PlotConfiguration.minVisiblePointCount;
+  static const int defaultVisiblePoints =
+      PlotConfiguration.defaultVisiblePointCount;
+  static const int maxVisiblePointsLimit =
+      PlotConfiguration.maxVisiblePointCount;
+  static const int maxDiscardInitialPacketCount =
+      PlotConfiguration.maxDiscardInitialPacketCount;
   int _maxVisiblePoints = defaultVisiblePoints;
+  final int _materializedPointLimit;
   int _discardInitialPacketCount = 0;
   int _activeDiscardInitialPacketLimit = 0;
   int _discardedInitialPacketCount = 0;
@@ -122,23 +201,23 @@ class PlotViewModel extends BaseViewModel {
   int _overlayRevision = 0;
 
   /// 各显示通道是否已经观察到有限小数值，避免 Painter 每帧扫描窗口。
-  final List<bool> _observedChannelValues = List<bool>.filled(20, false);
-  final List<bool> _observedFractionalValues = List<bool>.filled(20, false);
-
-  /// 众邦电控有效原始帧缓存（本次运行内全量保留）。
-  ///
-  /// 固定帧类协议需要支持基于原始帧导出，并且能在视口变化时按帧序号
-  /// 重新解析窗口数据，因此不只保存解析后的 double 值。
-  FixedPacketByteBuffer _zobowRawFrames = FixedPacketByteBuffer(
-    packetSize: ZobowParser.frameLengthForConfig(ParserConfig.zobowDefault()),
+  final List<bool> _observedChannelValues = List<bool>.filled(
+    PlotConfiguration.totalChannelCount,
+    false,
+  );
+  final List<bool> _observedFractionalValues = List<bool>.filled(
+    PlotConfiguration.totalChannelCount,
+    false,
   );
 
-  FixedPacketByteBuffer _fixedFrameRawFrames = FixedPacketByteBuffer(
-    packetSize: ParserConfig.fixedFrameDefault().totalFrameLength,
-  );
-
-  /// 当前窗口起始点序号
-  int _visibleStartIndex = 0;
+  static const int plotRetentionLimitBytes =
+      PlotConfiguration.defaultHistoryMemoryLimitBytes;
+  static const double _retentionWarningRatio = 0.8;
+  int _plotRetentionLimitBytes;
+  final bool _retentionLimitInjected;
+  bool _plotRetentionWarningShown = false;
+  bool _plotRetentionLimitReached = false;
+  String? _plotRetentionStopReason;
 
   /// 下一个数据点的索引序号（单调递增）
   int _nextIndex = 0;
@@ -151,10 +230,12 @@ class PlotViewModel extends BaseViewModel {
   final ListQueue<_RateBucket> _rateBuckets = ListQueue<_RateBucket>();
 
   /// 速率统计保留窗口，必须按时间裁剪，不能按固定样本数裁剪。
-  static const int _rateSampleWindowMs = 1200;
+  static const int _rateSampleWindowMs = 2400;
+  static const int _rateDisplayWindowMs = 2000;
   static const int _rateBucketDurationMs = 50;
 
   static const int _rateCalculationIntervalMs = 250;
+  static const double _rateDisplayEmaAlpha = 0.35;
   static const double _highRateEnterThreshold = 10000.0;
   static const double _highRateExitThreshold = 8000.0;
   static const int _highRateExitHoldMs = 2000;
@@ -162,6 +243,8 @@ class PlotViewModel extends BaseViewModel {
   static const double _highRateLodTargetUpdatesPerSecond = 5000.0;
 
   double? _cachedPointsPerSecond;
+  double? _cachedRawPointsPerSecond;
+  double? _smoothedPointsPerSecond;
   int? _lastRateCalculationMs;
   bool _highRateMode = false;
   int? _belowHighRateSinceMs;
@@ -173,52 +256,59 @@ class PlotViewModel extends BaseViewModel {
   /// 以最新有效帧为准，这样设备从 8 通道切到 4 通道后不会继续显示
   /// 已经没有数据的偏置轴和 r 协议地址槽位。
   int _activeChannelCount = 0;
+  int? _retainedAutoChannelCount;
 
   bool _hasStartedPlottingOnce = false;
 
   // ========== 视口 ==========
   /// 当前绘图视口，定义可见的 X/Y 数据范围
+  @override
   PlotViewport viewport = PlotViewport(
-    xMin: 0,
-    xMax: 1000,
-    yMin: 0,
-    yMax: 32768,
+    xMin: PlotConfiguration.viewportDefaultXMin,
+    xMax: PlotConfiguration.viewportDefaultXMax,
+    yMin: PlotConfiguration.viewportDefaultYMin,
+    yMax: PlotConfiguration.viewportDefaultYMax,
   );
 
   // ========== 视口历史记录（用于撤回） ==========
   /// 视口历史记录栈，每次缩放/平移前保存当前状态
   final List<PlotViewport> _viewportHistory = [];
+  PlotViewport? _dragStartViewport;
 
   /// 视口历史最大深度
   static const int _maxHistory = 50;
 
   // ========== 通道配置 ==========
   /// 通道配置列表（默认16通道），包含颜色、可见性、缩放、偏移等
+  @override
   final List<ChannelConfig> channels = ChannelConfig.createDefaults();
+  @override
   final List<MathChannelConfig> mathChannels =
       MathChannelConfig.createDefaults();
-  final Map<int, MathExpression> _compiledMathExpressions = {};
+  final PlotMathEngine _mathEngine = PlotMathEngine();
+  final PlotObservationAssembler _observationAssembler =
+      const PlotObservationAssembler();
+  final PlotStatisticsCalculator _statisticsCalculator =
+      const PlotStatisticsCalculator();
   int _nextOffsetBindingGroupId = 1;
   List<PlotDataPoint>? _cachedDisplayDataPoints;
   String? _cachedDisplayDataKey;
+  PlotDataPoint? _cachedLatestDisplayPoint;
+  String? _cachedLatestDisplayPointKey;
   List<ChannelConfig>? _cachedDisplayChannels;
   String? _cachedDisplayChannelKey;
   List<int>? _importedChannelAddresses;
+  List<ChannelPresetBinding> _channelPresetBindings = [];
+  @override
   List<int>? get importedChannelAddresses =>
       _importedChannelAddresses == null
           ? null
           : List.unmodifiable(_importedChannelAddresses!);
 
   // ========== 状态 ==========
-  /// 是否正在绘图（数据源运行中）
-  bool _isPlotting = false;
-
-  /// 是否正在停止绘图。
-  ///
-  /// 停止过程可能包含取消订阅、停止数据源、释放解析器等耗时操作。
-  /// UI 先切换到停止中状态，避免用户重复点击造成并发清理。
-  bool _isStopping = false;
-  Future<void>? _stopFuture;
+  bool get _isPlotting => _sessionController.isRunning;
+  bool get _isStarting => _sessionController.isStarting;
+  bool get _isStopping => _sessionController.isStopping;
 
   /// 是否显示网格
   bool _showGrid = true;
@@ -227,30 +317,56 @@ class PlotViewModel extends BaseViewModel {
   bool _useRandomSource = false;
 
   // ========== 高级设置 ==========
-  /// UI 刷新帧率 (fps)，范围 30~60，默认 60
-  int _refreshFps = 60;
+  /// UI 刷新帧率 (fps)，范围 30~120，默认60。
+  int _refreshFps = PlotConfiguration.defaultRefreshFps;
 
   /// 绘图界面字体大小偏移，基于默认字号调整，范围 -3~6
   int _plotFontSizeDelta = 0;
 
-  /// 网格密度: 'sparse'(稀疏), 'normal'(普通), 'dense'(密集)
-  String _gridDensity = 'normal';
+  /// 绘图界面文本是否使用粗体。
+  bool _plotFontBold = false;
 
-  /// 绘图背景: 'dark'(黑底), 'light'(白底)
-  String _plotBackground = 'dark';
+  /// 网格密度（渲染层统一使用 [GridDensity] 枚举）。
+  GridDensity _gridDensity = GridDensity.normal;
+
+  /// 绘图背景（渲染层统一使用 [PlotBackgroundStyle] 枚举）。
+  PlotBackgroundStyle _plotBackground = PlotBackgroundStyle.dark;
 
   /// 绘图区悬浮窗不透明度。
   double _floatingPanelOpacity = 0.85;
+  double? _legendPanelRight;
+  double? _legendPanelTop;
+  double? _liveValuesPanelRight;
+  double? _liveValuesPanelTop;
 
   /// 添加观察时是否先跟随鼠标，再由左键固定。
   bool _observationClickToPlace = false;
+  PlotGestureModifier _gestureModifier = PlotGestureModifier.shift;
+  bool _showPlotSendDataInRaw = true;
 
   /// 抗锯齿固定开启。
   static const bool _antiAliasEnabled = true;
   bool _snapHighlightEnabled = true;
   double _snapHighlightDiameter = 8.0;
   String _snapHighlightColorMode = 'cursor';
+  Color? _xMeasurementLine1Color;
+  Color? _xMeasurementLine2Color;
+  Color? _yMeasurementLine1Color;
+  Color? _yMeasurementLine2Color;
+  double _xMeasurementLine1Opacity = 1.0;
+  double _xMeasurementLine2Opacity = 1.0;
+  double _yMeasurementLine1Opacity = 1.0;
+  double _yMeasurementLine2Opacity = 1.0;
+  bool _yMeasurementSnapEnabled = true;
+  bool _xMultiMeasurementEnabled = false;
+  bool _yMultiMeasurementEnabled = false;
   bool _statsToolbarEnabled = false;
+  bool _triggerToolbarEnabled = false;
+  bool _previewToolbarEnabled = false;
+  PlotLodQuality _lodQuality = PlotLodQuality.balanced;
+  PlotRenderEngine _renderEngine = PlotRenderEngine.d3d11;
+  bool _plotInteractionActive = false;
+  bool _keepPlotOnRestart = false;
 
   /// 最新点跟随模式：最新数据点保持在视口指定宽度比例处。
   bool _followEnabled = false;
@@ -285,12 +401,17 @@ class PlotViewModel extends BaseViewModel {
   /// 当前光标状态（由各种光标模式共用）
   CursorState? _cursor;
 
-  final List<CursorState> _observations = [];
+  final List<PlotObservation> _observations = [];
   bool _observationPlacementActive = false;
   CursorState? _observationPreview;
+  final PlotTriggerConfig _triggerConfig = PlotTriggerConfig();
+  final PlotTriggerRuntime<PlotDataPoint> _triggerRuntime =
+      PlotTriggerRuntime<PlotDataPoint>();
+  bool _triggerStopDispatchScheduled = false;
+  bool _triggerConfigured = false;
 
   /// 当前解析器类型
-  ParserType _parserType = ParserType.fireWater;
+  ParserType _parserType = ParserType.zobow;
 
   /// 用户选择的发送协议。Zobow 接收协议会临时覆盖为内置发送协议。
   SendProtocolType _sendProtocolType = SendProtocolType.none;
@@ -304,6 +425,7 @@ class PlotViewModel extends BaseViewModel {
   // ========== 缩放按钮状态 ==========
   /// 框选放大模式开关
   bool _boxZoomEnabled = false;
+  bool _boxZoomContinuous = false;
 
   // ========== 数据源配置 ==========
   /// 数据源配置（串口/随机源切换、随机源频率等）
@@ -321,6 +443,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// Y-Y 测量第二条水平线位置（数据坐标）
   double? _yCursor2;
+  final List<PlotMeasurementGroup> _extraXMeasurementGroups = [];
+  final List<PlotMeasurementGroup> _extraYMeasurementGroups = [];
   List<SnapHighlightPoint> _xCursor1SnapHighlights = const [];
   List<SnapHighlightPoint> _xCursor2SnapHighlights = const [];
   List<SnapHighlightPoint> _yCursor1SnapHighlights = const [];
@@ -373,25 +497,34 @@ class PlotViewModel extends BaseViewModel {
     if (_useRandomSource) {
       targetRate = _sourceConfig.randomFrequencyHz;
     } else {
-      targetRate = _cachedPointsPerSecond ?? 1000.0;
+      targetRate =
+          _cachedRawPointsPerSecond ?? _cachedPointsPerSecond ?? 1000.0;
     }
     return (targetRate / fps).round().clamp(1, 5000);
   }
 
   int get _visibleTrimBatchSize {
-    final byRatio = (_maxVisiblePoints / 32).round();
-    return byRatio.clamp(4096, 65536).toInt();
+    final byRatio = (effectiveMaterializedPointLimit / 32).round();
+    return math.min(
+      effectiveMaterializedPointLimit,
+      byRatio.clamp(4096, 65536).toInt(),
+    );
   }
 
   int get _lodSampleStep {
     if (!_highRateMode) return 1;
-    final rate = _cachedPointsPerSecond;
+    final rate = _cachedRawPointsPerSecond ?? _cachedPointsPerSecond;
     if (rate == null || rate <= _highRateLodTargetUpdatesPerSecond) return 1;
     return (rate / _highRateLodTargetUpdatesPerSecond).ceil().clamp(1, 128);
   }
 
   /// 兜底定时器：确保数据流中断时 UI 仍能刷新。
   Timer? _notifyTimer;
+
+  /// 拖动视口高频通知的帧调度能力，由组合根注入；缺省为 no-op。
+  final PostFrameCallback _postFrameCallback;
+  bool _dragViewportNotifyScheduled = false;
+  int _dragViewportNotifyGeneration = 0;
 
   // ========== 接收速率调试统计 ==========
   /// 上次日志报告时间
@@ -407,8 +540,62 @@ class PlotViewModel extends BaseViewModel {
   int _lastRateLogBytes = 0;
 
   /// 创建 PlotViewModel 并初始化数据源管理器、加载设置、启动定时刷新
-  PlotViewModel(super.serialService) {
-    _sourceManager = DataSourceManager(serialService);
+  PlotViewModel(
+    super.connectionService, {
+    int? retentionLimitBytes,
+    int? materializedPointLimit,
+    PostFrameCallback? postFrameCallback,
+  }) : _materializedPointLimit =
+           materializedPointLimit ??
+           PlotConfiguration.maxMaterializedPointCount,
+       _retentionLimitInjected = retentionLimitBytes != null,
+       _plotRetentionLimitBytes =
+           retentionLimitBytes ??
+           AppSettings().plotHistoryMemoryLimitGiB *
+               PlotConfiguration.bytesPerGiB,
+       _postFrameCallback = postFrameCallback ?? _noopPostFrameCallback {
+    if (_plotRetentionLimitBytes <= 0) {
+      throw ArgumentError.value(
+        _plotRetentionLimitBytes,
+        'retentionLimitBytes',
+        'must be positive',
+      );
+    }
+    if (_materializedPointLimit <= 0 ||
+        _materializedPointLimit > PlotConfiguration.maxMaterializedPointCount) {
+      throw ArgumentError.value(
+        _materializedPointLimit,
+        'materializedPointLimit',
+        'must be between 1 and '
+            '${PlotConfiguration.maxMaterializedPointCount}',
+      );
+    }
+    _windowProvider = PlotWindowProvider(
+      isDisposed: () => _disposed,
+      onStateChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+      onCommitted: () {
+        _dataRevision++;
+        _invalidateDisplayCaches();
+      },
+    );
+    _sessionController = PlotSessionController(
+      connectionService,
+      onStateChanged: () {
+        Future.microtask(() {
+          if (!_disposed) notifyListeners();
+        });
+      },
+    );
+    _protocolInitializer = PlotProtocolInitializer(connectionService);
+    _importExportService = PlotImportExportService(
+      historyStore: _historyStore,
+      mathEngine: _mathEngine,
+      host: this,
+    );
     _loadSettings();
     _initAddressProfileServices();
     _startRefreshTimer();
@@ -437,9 +624,11 @@ class PlotViewModel extends BaseViewModel {
       _rProfileService.selectProfile(savedRProfileId);
     }
     _profileRevision++;
-    Future.microtask(() {
-      if (!_disposed) notifyListeners();
-    });
+    unawaited(
+      Future.microtask(() {
+        if (!_disposed) notifyListeners();
+      }),
+    );
   }
 
   /// 从 AppSettings 加载绘图配置
@@ -447,6 +636,7 @@ class PlotViewModel extends BaseViewModel {
     final settings = AppSettings();
     _refreshFps = settings.refreshFps;
     _plotFontSizeDelta = settings.plotFontSizeDelta.clamp(-3, 6);
+    _plotFontBold = settings.plotFontBold;
     _maxVisiblePoints = settings.maxVisiblePoints.clamp(
       minVisiblePoints,
       maxVisiblePointsLimit,
@@ -456,14 +646,60 @@ class PlotViewModel extends BaseViewModel {
       maxDiscardInitialPacketCount,
     );
     _showGrid = settings.showGrid;
-    _gridDensity = settings.gridDensity;
-    _plotBackground = settings.plotBackground == 'light' ? 'light' : 'dark';
+    _gridDensity = switch (settings.gridDensity) {
+      'sparse' => GridDensity.sparse,
+      'dense' => GridDensity.dense,
+      _ => GridDensity.normal,
+    };
+    _plotBackground =
+        settings.plotBackground == 'light'
+            ? PlotBackgroundStyle.light
+            : PlotBackgroundStyle.dark;
     _floatingPanelOpacity = settings.floatingPanelOpacity.clamp(0.0, 1.0);
+    _legendPanelRight = settings.plotLegendPanelRight;
+    _legendPanelTop = settings.plotLegendPanelTop;
+    _liveValuesPanelRight = settings.plotLiveValuesPanelRight;
+    _liveValuesPanelTop = settings.plotLiveValuesPanelTop;
     _observationClickToPlace = settings.observationClickToPlace;
+    _gestureModifier = PlotGestureModifier.fromString(
+      settings.plotGestureModifier,
+    );
+    _showPlotSendDataInRaw = settings.showPlotSendDataInRaw;
     _snapHighlightEnabled = settings.snapHighlightEnabled;
     _snapHighlightDiameter = settings.snapHighlightDiameter.clamp(6.0, 12.0);
     _snapHighlightColorMode = settings.snapHighlightColorMode;
+    _xMeasurementLine1Color = _colorFromSetting(
+      settings.xMeasurementLine1Color,
+    );
+    _xMeasurementLine2Color = _colorFromSetting(
+      settings.xMeasurementLine2Color,
+    );
+    _yMeasurementLine1Color = _colorFromSetting(
+      settings.yMeasurementLine1Color,
+    );
+    _yMeasurementLine2Color = _colorFromSetting(
+      settings.yMeasurementLine2Color,
+    );
+    _xMeasurementLine1Opacity = settings.xMeasurementLine1Opacity;
+    _xMeasurementLine2Opacity = settings.xMeasurementLine2Opacity;
+    _yMeasurementLine1Opacity = settings.yMeasurementLine1Opacity;
+    _yMeasurementLine2Opacity = settings.yMeasurementLine2Opacity;
+    _yMeasurementSnapEnabled = settings.yMeasurementSnapEnabled;
+    _xMultiMeasurementEnabled = settings.xMultiMeasurementEnabled;
+    _yMultiMeasurementEnabled = settings.yMultiMeasurementEnabled;
     _statsToolbarEnabled = settings.statsToolbarEnabled;
+    _triggerToolbarEnabled = settings.triggerToolbarEnabled;
+    _previewToolbarEnabled = settings.previewToolbarEnabled;
+    _lodQuality = switch (settings.plotLodQuality) {
+      'balanced' => PlotLodQuality.balanced,
+      'qualityHigh' => PlotLodQuality.quality,
+      _ => PlotLodQuality.performance,
+    };
+    _renderEngine =
+        settings.plotRenderEngine == 'd3d11'
+            ? PlotRenderEngine.d3d11
+            : PlotRenderEngine.canvas;
+    _keepPlotOnRestart = settings.keepPlotOnRestart;
     _useRandomSource = settings.useRandomSource;
     _followEnabled = settings.followEnabled;
     _followPositionRatio = settings.followPositionRatio.clamp(0.5, 0.95);
@@ -485,10 +721,10 @@ class PlotViewModel extends BaseViewModel {
         xMax: settings.xMax,
         yMin: settings.yMin,
         yMax: settings.yMax,
-      ),
+      ).normalizedY(),
     );
-    // 同步到 serialService
-    serialService.useRandomSource = _useRandomSource;
+    // 同步到 connectionService
+    connectionService.setUseRandomSource(_useRandomSource, notify: false);
     // 加载解析器类型
     _parserType = _parserTypeFromString(settings.parserType);
     _parserConfig
@@ -504,6 +740,18 @@ class PlotViewModel extends BaseViewModel {
       ..zobowChannelIds = List.from(settings.zobowChannelIds)
       ..zobowChannelTypes = List.from(settings.zobowChannelTypes)
       ..fixedFrameChannelTypes = List.from(settings.fixedFrameChannelTypes);
+    _channelPresetBindings =
+        settings.channelPresetBindings
+            .map(
+              (binding) => ChannelPresetBinding(
+                protocolType: binding.protocolType,
+                channelIndex: binding.channelIndex,
+                addressKey: binding.addressKey,
+                name: binding.name,
+                profileId: binding.profileId,
+              ),
+            )
+            .toList();
     _sendProtocolType = _sendProtocolTypeFromString(settings.sendProtocolType);
     _sendProtocolConfig
       ..type = _sendProtocolType
@@ -516,29 +764,64 @@ class PlotViewModel extends BaseViewModel {
               ? null
               : settings.sendCustomProtocolId
       ..rChannelAddresses = List.from(settings.rChannelAddresses);
+    _restorePresetAliasesFromBindings();
     _rProtocolLooseChannelSettings = settings.rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       _parserConfig.channelCount =
-          settings.justFloatChannelCount.clamp(0, 16).toInt();
+          settings.justFloatChannelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
   }
 
   /// 保存绘图配置到 AppSettings
-  void _saveSettings() {
+  void _saveSettings() => unawaited(_saveSettingsAsync());
+
+  Future<void> _saveSettingsAsync() async {
     final settings = AppSettings();
     settings.refreshFps = _refreshFps;
     settings.plotFontSizeDelta = _plotFontSizeDelta;
+    settings.plotFontBold = _plotFontBold;
     settings.maxVisiblePoints = _maxVisiblePoints;
+    if (!_retentionLimitInjected) {
+      settings.plotHistoryMemoryLimitGiB = plotRetentionLimitGiB;
+    }
     settings.discardInitialPacketCount = _discardInitialPacketCount;
     settings.snapHighlightEnabled = _snapHighlightEnabled;
     settings.snapHighlightDiameter = _snapHighlightDiameter;
     settings.snapHighlightColorMode = _snapHighlightColorMode;
+    settings.xMeasurementLine1Color = _xMeasurementLine1Color?.toARGB32();
+    settings.xMeasurementLine2Color = _xMeasurementLine2Color?.toARGB32();
+    settings.yMeasurementLine1Color = _yMeasurementLine1Color?.toARGB32();
+    settings.yMeasurementLine2Color = _yMeasurementLine2Color?.toARGB32();
+    settings.xMeasurementLine1Opacity = _xMeasurementLine1Opacity;
+    settings.xMeasurementLine2Opacity = _xMeasurementLine2Opacity;
+    settings.yMeasurementLine1Opacity = _yMeasurementLine1Opacity;
+    settings.yMeasurementLine2Opacity = _yMeasurementLine2Opacity;
+    settings.yMeasurementSnapEnabled = _yMeasurementSnapEnabled;
+    settings.xMultiMeasurementEnabled = _xMultiMeasurementEnabled;
+    settings.yMultiMeasurementEnabled = _yMultiMeasurementEnabled;
     settings.statsToolbarEnabled = _statsToolbarEnabled;
+    settings.triggerToolbarEnabled = _triggerToolbarEnabled;
+    settings.previewToolbarEnabled = _previewToolbarEnabled;
+    settings.plotLodQuality = switch (_lodQuality) {
+      PlotLodQuality.performance => 'performance',
+      PlotLodQuality.balanced => 'balanced',
+      PlotLodQuality.quality => 'qualityHigh',
+    };
+    settings.plotRenderEngine = _renderEngine.name;
+    settings.keepPlotOnRestart = _keepPlotOnRestart;
     settings.showGrid = _showGrid;
-    settings.gridDensity = _gridDensity;
-    settings.plotBackground = _plotBackground;
+    settings.gridDensity = _gridDensity.name;
+    settings.plotBackground = _plotBackground.name;
     settings.floatingPanelOpacity = _floatingPanelOpacity;
+    settings.plotLegendPanelRight = _legendPanelRight;
+    settings.plotLegendPanelTop = _legendPanelTop;
+    settings.plotLiveValuesPanelRight = _liveValuesPanelRight;
+    settings.plotLiveValuesPanelTop = _liveValuesPanelTop;
     settings.observationClickToPlace = _observationClickToPlace;
+    settings.plotGestureModifier = _gestureModifier.value;
+    settings.showPlotSendDataInRaw = _showPlotSendDataInRaw;
     settings.useRandomSource = _useRandomSource;
     settings.randomFrequency = randomFrequency;
     settings.followEnabled = _followEnabled;
@@ -558,10 +841,24 @@ class PlotViewModel extends BaseViewModel {
     settings.rProtocolLooseChannelSettings = _rProtocolLooseChannelSettings;
     if (_parserType == ParserType.justFloat) {
       settings.justFloatChannelCount =
-          _parserConfig.channelCount.clamp(0, 16).toInt();
+          _parserConfig.channelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
     settings.zobowChannelIds = List.from(_parserConfig.zobowChannelIds);
     settings.zobowChannelTypes = List.from(_parserConfig.zobowChannelTypes);
+    settings.channelPresetBindings =
+        _channelPresetBindings
+            .map(
+              (binding) => ChannelPresetBinding(
+                protocolType: binding.protocolType,
+                channelIndex: binding.channelIndex,
+                addressKey: binding.addressKey,
+                name: binding.name,
+                profileId: binding.profileId,
+              ),
+            )
+            .toList();
     settings.fixedFrameChannelTypes = List.from(
       _parserConfig.fixedFrameChannelTypes,
     );
@@ -572,28 +869,43 @@ class PlotViewModel extends BaseViewModel {
     settings.xMax = viewport.xMax;
     settings.yMin = viewport.yMin;
     settings.yMax = viewport.yMax;
-    settings.save();
+    await settings.save();
   }
 
-  // ========== Getters ==========
+  // ========== 状态读取接口 ==========
   /// 当前绘图窗口的数据点列表（供 UI 读取）。
   ///
   /// 这里直接返回稳定窗口引用，避免每次 build 复制大列表。
   List<PlotDataPoint> get dataPoints => _dataPoints;
-  bool get isPlotting => _isPlotting;
-  bool get isStopping => _isStopping;
+  bool get isPlotting => _sessionController.isRunning;
+  bool get isStarting => _sessionController.isStarting;
+  bool get isStopping => _sessionController.isStopping;
   bool get showGrid => _showGrid;
   bool get useRandomSource => _useRandomSource;
   int get refreshFps => _refreshFps;
+
+  /// 高频接收时只有Canvas需要降至30fps缓解主线程光栅压力；D3D11的数据层
+  /// 由GPU呈现，继续尊重用户设置的目标刷新率。
   int get effectiveRefreshFps =>
-      _highRateMode ? _highRateRefreshFps : _refreshFps;
+      _highRateMode && _renderEngine == PlotRenderEngine.canvas
+          ? _highRateRefreshFps
+          : _refreshFps;
   bool get highRateMode => _highRateMode;
   int get plotFontSizeDelta => _plotFontSizeDelta;
-  String get gridDensity => _gridDensity;
-  String get plotBackground => _plotBackground;
+  bool get plotFontBold => _plotFontBold;
+  GridDensity get gridDensity => _gridDensity;
+  PlotBackgroundStyle get plotBackground => _plotBackground;
   double get floatingPanelOpacity => _floatingPanelOpacity;
+  double get legendPanelRight => _legendPanelRight ?? 16;
+  double get legendPanelTop => _legendPanelTop ?? 96;
+  double get liveValuesPanelRight => _liveValuesPanelRight ?? 16;
+  double liveValuesPanelTop({required bool legendVisible}) =>
+      _liveValuesPanelTop ?? (legendVisible ? 240 : 96);
   bool get observationClickToPlace => _observationClickToPlace;
+  PlotGestureModifier get gestureModifier => _gestureModifier;
+  bool get showPlotSendDataInRaw => _showPlotSendDataInRaw;
   bool get boxZoomEnabled => _boxZoomEnabled;
+  bool get boxZoomContinuous => _boxZoomContinuous;
   bool get followEnabled => _followEnabled;
   double get followPositionRatio => _followPositionRatio;
   double get yFitDisplayRatio => _yFitDisplayRatio;
@@ -626,6 +938,23 @@ class PlotViewModel extends BaseViewModel {
         if (channel.enabled) channel.display,
     ];
     return _cachedDisplayChannels!;
+  }
+
+  List<ChannelConfig> get triggerCandidateChannels {
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    return [
+      ...channels.take(rawCount).where((channel) => channel.visible),
+      for (final channel in mathChannels)
+        if (_canUseMathChannelForTrigger(channel)) channel.display,
+    ];
+  }
+
+  bool _canUseMathChannelForTrigger(MathChannelConfig channel) {
+    final expression = _mathEngine.expressionFor(channel.index);
+    return channel.enabled &&
+        channel.display.visible &&
+        expression != null &&
+        !expression.hasChannelOffset;
   }
 
   List<PlotDataPoint> get displayDataPoints {
@@ -680,13 +1009,111 @@ class PlotViewModel extends BaseViewModel {
     return cache;
   }
 
+  /// 全量历史中的最新显示点，不受当前视口窗口和跟随模式影响。
+  ///
+  /// 实时值浮窗必须持续展示最新接收数据。用户回看历史时，[_dataPoints]
+  /// 会固定为当前加载窗口，因此不能从 [displayDataPoints] 的末尾取值。
+  PlotDataPoint? get latestDisplayDataPoint {
+    final historyCount = _historyPointCount;
+    if (historyCount <= 0) return null;
+
+    final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
+    final mathKey = mathChannels
+        .map((channel) => '${channel.enabled}:${channel.expression}')
+        .join('|');
+    final cacheKey = '$historyCount|$rawCount|$mathKey';
+    if (_cachedLatestDisplayPointKey == cacheKey) {
+      return _cachedLatestDisplayPoint;
+    }
+
+    final pointIndex = historyCount - 1;
+    final rawValues = _rawValuesAtHistoryIndex(pointIndex);
+    if (rawValues.isEmpty) return null;
+
+    final mathValues = <double>[];
+    for (final channel in mathChannels) {
+      if (!channel.enabled) continue;
+      final value = _mathEngine.evaluateAt(
+        channelIndex: channel.index,
+        currentIndex: pointIndex,
+        pointCount: historyCount,
+        valueAt: _rawHistoryValueAt,
+      );
+      mathValues.add(value);
+    }
+
+    final timestamp =
+        _dataPoints.isNotEmpty && _dataPoints.last.index == pointIndex
+            ? _dataPoints.last.timestamp
+            : pointIndex.toDouble();
+    final point = PlotDataPoint(
+      index: pointIndex,
+      timestamp: timestamp,
+      values:
+          mathValues.isEmpty
+              ? rawValues
+              : _CombinedChannelValues(
+                rawValues: rawValues,
+                rawChannelCount: rawCount,
+                mathValues: mathValues,
+              ),
+    );
+    _cachedLatestDisplayPointKey = cacheKey;
+    _cachedLatestDisplayPoint = point;
+    return point;
+  }
+
   int get displayActiveChannelCount => displayChannels.length;
   bool get vCursorEnabled => _vCursorEnabled;
   bool get xMeasurementEnabled => _xMeasurementEnabled;
   bool get yMeasurementEnabled => _yMeasurementEnabled;
+  Color? _colorFromSetting(int? value) {
+    if (value == null || value < 0 || value > 0xFFFFFFFF) return null;
+    return Color(value);
+  }
+
+  Color get _defaultMeasurementPrimary =>
+      _plotBackground == PlotBackgroundStyle.light
+          ? const Color(0xFF0369A1)
+          : Colors.cyan;
+  Color get _defaultMeasurementSecondary =>
+      _plotBackground == PlotBackgroundStyle.light
+          ? const Color(0xFFB45309)
+          : Colors.yellow;
+  Color get xMeasurementLine1Color =>
+      _xMeasurementLine1Color ?? _defaultMeasurementPrimary;
+  Color get xMeasurementLine2Color =>
+      _xMeasurementLine2Color ?? _defaultMeasurementSecondary;
+  Color get yMeasurementLine1Color =>
+      _yMeasurementLine1Color ?? _defaultMeasurementPrimary;
+  Color get yMeasurementLine2Color =>
+      _yMeasurementLine2Color ?? _defaultMeasurementSecondary;
+  double get xMeasurementLine1Opacity => _xMeasurementLine1Opacity;
+  double get xMeasurementLine2Opacity => _xMeasurementLine2Opacity;
+  double get yMeasurementLine1Opacity => _yMeasurementLine1Opacity;
+  double get yMeasurementLine2Opacity => _yMeasurementLine2Opacity;
+  bool get yMeasurementSnapEnabled => _yMeasurementSnapEnabled;
+  bool get xMultiMeasurementEnabled => _xMultiMeasurementEnabled;
+  bool get yMultiMeasurementEnabled => _yMultiMeasurementEnabled;
+
+  List<PlotMeasurementGroup> get xMeasurementGroups => [
+    if (_xCursor1 != null && _xCursor2 != null)
+      PlotMeasurementGroup(cursor1: _xCursor1!, cursor2: _xCursor2!),
+    ..._extraXMeasurementGroups,
+  ];
+
+  List<PlotMeasurementGroup> get yMeasurementGroups => [
+    if (_yCursor1 != null && _yCursor2 != null)
+      PlotMeasurementGroup(cursor1: _yCursor1!, cursor2: _yCursor2!),
+    ..._extraYMeasurementGroups,
+  ];
   bool get statsEnabled => _statsEnabled;
   bool get statsRangeEnabled => _statsRangeEnabled;
   bool get statsToolbarEnabled => _statsToolbarEnabled;
+  bool get triggerToolbarEnabled => _triggerToolbarEnabled;
+  bool get previewToolbarEnabled => _previewToolbarEnabled;
+  PlotLodQuality get lodQuality => _lodQuality;
+  PlotRenderEngine get renderEngine => _renderEngine;
   double? get statsX1 => _statsX1;
   double? get statsX2 => _statsX2;
   bool get antiAliasEnabled => _antiAliasEnabled;
@@ -700,11 +1127,14 @@ class PlotViewModel extends BaseViewModel {
     return null;
   }
 
+  @override
   String displayChannelName(int index) {
     final channel = displayChannelByIndex(index);
     if (channel == null) return 'Ch$index';
     if (channel.alias.isNotEmpty) return channel.alias;
-    return index >= 16 ? 'Math${index - 15}' : 'Ch$index';
+    return index >= PlotConfiguration.rawChannelCount
+        ? 'Math${index - PlotConfiguration.rawChannelCount + 1}'
+        : 'Ch$index';
   }
 
   bool canConfigureOffsetBinding(int index) {
@@ -740,9 +1170,16 @@ class PlotViewModel extends BaseViewModel {
 
   String get snapHighlightColorMode => _snapHighlightColorMode;
   CursorState? get cursor => _cursor;
-  List<CursorState> get observations => List.unmodifiable(_observations);
+  List<PlotObservation> get observations => List.unmodifiable(_observations);
   bool get observationPlacementActive => _observationPlacementActive;
   CursorState? get observationPreview => _observationPreview;
+  PlotTriggerConfig get triggerConfig => _triggerConfig.copy();
+  bool get triggerEnabled => _triggerConfig.enabled;
+  bool get triggerConfigured => _triggerConfigured;
+  bool get keepPlotOnRestart => _keepPlotOnRestart;
+  int get triggerHitCount => _triggerRuntime.hitCount;
+  int get triggeredCount => _triggerRuntime.triggeredCount;
+  int? get triggerStopPacketsRemaining => _triggerRuntime.stopItemsRemaining;
   List<SnapHighlightPoint> get snapHighlights {
     if (!_snapHighlightEnabled) return const [];
     return [
@@ -754,32 +1191,62 @@ class PlotViewModel extends BaseViewModel {
     ];
   }
 
+  @override
   ParserType get parserType => _parserType;
+  @override
   ParserConfig get parserConfig => _parserConfig;
+  @override
   SendProtocolType get sendProtocolType => _sendProtocolType;
   SendProtocolType get effectiveSendProtocolType =>
       _parserType == ParserType.zobow
           ? SendProtocolType.zobowBuiltIn
           : _sendProtocolType;
+  @override
   List<String> get rChannelAddresses =>
       List.unmodifiable(_sendProtocolConfig.rChannelAddresses);
   bool get rProtocolLooseChannelSettings => _rProtocolLooseChannelSettings;
-  PlotLodIndex get lodIndex => _lodIndex;
-  int get zobowRawFrameCount => _zobowRawFrames.packetCount;
+  PlotLodSource get lodIndex => _historyStore.lodSource;
+  int get zobowRawFrameCount => _historyStore.zobowFrameCount;
+  RetentionUsage get plotRetentionUsage {
+    final used = _estimatedPlotAllocatedBytes;
+    final ratio = used / _plotRetentionLimitBytes;
+    final state =
+        _plotRetentionLimitReached
+            ? RetentionState.limitReached
+            : ratio >= _retentionWarningRatio
+            ? RetentionState.warning
+            : RetentionState.normal;
+    return RetentionUsage(
+      usedBytes: used.clamp(0, _plotRetentionLimitBytes).toInt(),
+      limitBytes: _plotRetentionLimitBytes,
+      state: state,
+    );
+  }
+
+  int get plotRetentionLimitGiB =>
+      _plotRetentionLimitBytes ~/ PlotConfiguration.bytesPerGiB;
+
+  @override
+  int get retentionLimitBytes => _plotRetentionLimitBytes;
 
   /// 本次绘图接收到的数据点总数
   int get pointCount => _nextIndex;
+  int? get minJumpXIndex => _nextIndex > 0 ? 0 : null;
+  int? get maxJumpXIndex => _nextIndex > 0 ? _nextIndex - 1 : null;
 
   /// 当前窗口中的数据点数量
   int get visiblePointCount => _dataPoints.length;
 
   /// 当前窗口起始点序号
-  int get visibleStartIndex => _visibleStartIndex;
+  int get visibleStartIndex => _windowProvider.visibleStartIndex;
+  bool get isWindowLoading => _windowProvider.isLoading;
 
   /// 当前窗口点数上限
   int get maxVisiblePoints => _maxVisiblePoints;
 
   int get effectiveMaxVisiblePoints => _maxVisiblePoints;
+  int get effectiveMaterializedPointLimit =>
+      math.min(_maxVisiblePoints, _materializedPointLimit);
 
   /// 每次开始绘图时丢弃的前置有效数据包数量。
   int get discardInitialPacketCount => _discardInitialPacketCount;
@@ -789,6 +1256,17 @@ class PlotViewModel extends BaseViewModel {
   int get channelConfigRevision => _channelConfigRevision;
   int get viewportRevision => _viewportRevision;
   int get overlayRevision => _overlayRevision;
+  bool get plotInteractionActive => _plotInteractionActive;
+
+  /// 连续拖动期间停用精确窗口重建，并让 Painter 使用有界 LOD 预览。
+  void setPlotInteractionActive(bool value) {
+    if (_plotInteractionActive == value) return;
+    _plotInteractionActive = value;
+    if (value) _cancelDragWindowLoad();
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+  }
 
   bool get displayYValuesAreInteger {
     final currentChannels = displayChannels;
@@ -819,6 +1297,10 @@ class PlotViewModel extends BaseViewModel {
   @visibleForTesting
   int get rateBucketCountForTest => _rateBuckets.length;
 
+  @visibleForTesting
+  int get parsedHistoryAllocatedValueSlotsForTest =>
+      _historyStore.parsedAllocatedValueSlots;
+
   /// 当前数据中实际出现的最大通道数
   int get activeChannelCount => _activeChannelCount;
 
@@ -840,11 +1322,14 @@ class PlotViewModel extends BaseViewModel {
   /// 是否有可撤回的视口历史
   bool get canUndoZoom => _viewportHistory.isNotEmpty;
 
-  int get _visibleEndIndex => _visibleStartIndex + _dataPoints.length;
+  int get _visibleStartIndex => _windowProvider.visibleStartIndex;
+  int get _visibleEndIndex => _windowProvider.visibleEndIndex;
 
   void _invalidateDisplayCaches() {
     _cachedDisplayDataPoints = null;
     _cachedDisplayDataKey = null;
+    _cachedLatestDisplayPoint = null;
+    _cachedLatestDisplayPointKey = null;
     _invalidateDisplayChannelCaches();
   }
 
@@ -893,22 +1378,121 @@ class PlotViewModel extends BaseViewModel {
     _channelConfigRevision++;
   }
 
+  static String _presetAddressKey(
+    AddressProfileProtocolType protocolType,
+    int address,
+  ) {
+    return '${protocolType.id}:${address & 0xFFFFFFFF}';
+  }
+
+  static String? _rPresetAddressKeyFromText(String text) {
+    final value = rSendProtocol.parseAddress(text);
+    if (value == null || value < 0) return null;
+    return _presetAddressKey(AddressProfileProtocolType.rProtocol, value);
+  }
+
+  String? _currentPresetAddressKey(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    switch (protocolType) {
+      case AddressProfileProtocolType.zobow:
+        if (channelIndex < 0 ||
+            channelIndex >= _parserConfig.zobowChannelIds.length) {
+          return null;
+        }
+        return _presetAddressKey(
+          protocolType,
+          _parserConfig.zobowChannelIds[channelIndex],
+        );
+      case AddressProfileProtocolType.rProtocol:
+        if (channelIndex < 0 ||
+            channelIndex >= _sendProtocolConfig.rChannelAddresses.length) {
+          return null;
+        }
+        return _rPresetAddressKeyFromText(
+          _sendProtocolConfig.rChannelAddresses[channelIndex],
+        );
+    }
+  }
+
+  int _findPresetBindingIndex(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    return _channelPresetBindings.indexWhere(
+      (binding) =>
+          binding.protocolType == protocolType &&
+          binding.channelIndex == channelIndex,
+    );
+  }
+
+  void _setPresetBinding({
+    required AddressProfileProtocolType protocolType,
+    required int channelIndex,
+    required int address,
+    required String name,
+    required String profileId,
+  }) {
+    _clearPresetBinding(protocolType, channelIndex);
+    if (name.isEmpty) return;
+    _channelPresetBindings.add(
+      ChannelPresetBinding(
+        protocolType: protocolType,
+        channelIndex: channelIndex,
+        addressKey: _presetAddressKey(protocolType, address),
+        name: name,
+        profileId: profileId,
+      ),
+    );
+  }
+
+  void _clearPresetBinding(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+  ) {
+    _channelPresetBindings.removeWhere(
+      (binding) =>
+          binding.protocolType == protocolType &&
+          binding.channelIndex == channelIndex,
+    );
+  }
+
+  void _clearPresetAliasesForChangedAddress(
+    AddressProfileProtocolType protocolType,
+    int channelIndex,
+    String? nextAddressKey,
+  ) {
+    final bindingIndex = _findPresetBindingIndex(protocolType, channelIndex);
+    if (bindingIndex < 0) return;
+    final binding = _channelPresetBindings[bindingIndex];
+    if (binding.addressKey == nextAddressKey) return;
+    _channelPresetBindings.removeAt(bindingIndex);
+    if (channelIndex < channels.length) {
+      channels[channelIndex].alias = '';
+    }
+  }
+
+  void _restorePresetAliasesFromBindings() {
+    _channelPresetBindings.removeWhere((binding) {
+      final currentKey = _currentPresetAddressKey(
+        binding.protocolType,
+        binding.channelIndex,
+      );
+      if (currentKey != binding.addressKey) return true;
+      if (binding.channelIndex < channels.length) {
+        channels[binding.channelIndex].alias = binding.name;
+      }
+      return false;
+    });
+  }
+
   void _markOverlayChanged() {
     _overlayRevision++;
   }
 
-  int get _mathDisplayFutureLookahead {
-    var lookahead = 0;
-    for (final channel in mathChannels) {
-      if (!channel.enabled) continue;
-      final expression = _compiledMathExpressions[channel.index];
-      if (expression == null) continue;
-      if (expression.futureLookahead > lookahead) {
-        lookahead = expression.futureLookahead;
-      }
-    }
-    return lookahead;
-  }
+  int get _mathDisplayFutureLookahead =>
+      _mathEngine.futureLookahead(mathChannels);
 
   void _replaceMathChannels(
     List<MathChannelConfig> nextChannels, {
@@ -921,24 +1505,13 @@ class PlotViewModel extends BaseViewModel {
               : MathChannelConfig(index: i);
       mathChannels[i].display.alias = mathChannels[i].name;
     }
-    _compiledMathExpressions.clear();
-    for (final channel in mathChannels) {
-      _compileMathChannel(channel);
-    }
+    _mathEngine.rebuild(mathChannels);
     _invalidateDisplayCaches();
     if (save) _saveSettings();
   }
 
   void _compileMathChannel(MathChannelConfig channel) {
-    _compiledMathExpressions.remove(channel.index);
-    if (!channel.enabled || channel.expression.trim().isEmpty) return;
-    try {
-      _compiledMathExpressions[channel.index] = MathExpression.parse(
-        channel.expression,
-      );
-    } catch (_) {
-      // 表达式语法错误时保持通道启用，但运行时显示为无效点。
-    }
+    _mathEngine.compile(channel);
   }
 
   double _evaluateMathChannel(
@@ -946,23 +1519,12 @@ class PlotViewModel extends BaseViewModel {
     int pointPosition,
     List<PlotDataPoint> sourcePoints,
   ) {
-    final expression = _compiledMathExpressions[channel.index];
-    if (expression == null) return double.nan;
-    return expression.evaluateWithContext(
-      MathEvalContext(
-        currentIndex: pointPosition,
-        pointCount: sourcePoints.length,
-        valueAt: (pointIndex, channelIndex) {
-          if (pointIndex < 0 || pointIndex >= sourcePoints.length) {
-            return double.nan;
-          }
-          final values = sourcePoints[pointIndex].values;
-          if (channelIndex < 0 || channelIndex >= values.length) {
-            return double.nan;
-          }
-          return values[channelIndex];
-        },
-      ),
+    final historyIndex = sourcePoints[pointPosition].index;
+    return _mathEngine.evaluateAt(
+      channelIndex: channel.index,
+      currentIndex: historyIndex,
+      pointCount: _historyPointCount,
+      valueAt: _rawHistoryValueAt,
     );
   }
 
@@ -971,41 +1533,50 @@ class PlotViewModel extends BaseViewModel {
     int pointPosition,
     List<PlotDataPoint> sourcePoints,
   ) {
-    final values = List<double>.from(point.values);
     final rawCount = rawDisplayChannelCount.clamp(0, channels.length).toInt();
-    while (values.length < rawCount) {
-      values.add(double.nan);
-    }
     final mathValues = <double>[];
     for (final channel in mathChannels) {
       if (!channel.enabled) continue;
       final value = _evaluateMathChannel(channel, pointPosition, sourcePoints);
-      values.add(value);
       mathValues.add(value);
     }
     _recordObservedValues(mathValues, startChannel: rawCount);
     return PlotDataPoint(
       index: point.index,
       timestamp: point.timestamp,
-      values: values,
+      values: _CombinedChannelValues(
+        rawValues: point.values,
+        rawChannelCount: rawCount,
+        mathValues: mathValues,
+      ),
     );
   }
 
   /// 状态栏提示文本，根据当前状态给用户操作建议
   ///
   /// 提示场景：
-  /// - 未连接串口且未使用随机源 → 提示先连接串口或启用随机源
+  /// - 未建立数据连接且未使用随机源 → 提示先连接或启用随机源
   /// - 串口连接中 → 提示正在连接
-  /// - 串口已连接但未开始绘图 → 提示点击开始按钮
+  /// - 数据连接已建立但未开始绘图 → 提示点击开始按钮
   /// - 众邦电控模式下 → 提示地址在通道面板设置
   String get hintText {
-    if (serialService.isConnecting) {
-      return '正在连接串口...';
+    if (_plotRetentionLimitReached && !_isPlotting && !_isStopping) {
+      return _plotRetentionStopReason ?? '绘图历史已达到容量上限，请清空后继续';
+    }
+    if (connectionService.isConnecting) {
+      return '正在连接${connectionService.activeConnectionType.label}...';
+    }
+    if (_isStarting) {
+      return '正在启动绘图...';
     }
     if (_isPlotting) {
       final sources = <String>[];
-      if (serialService.isConnected) {
-        sources.add('串口 ${serialService.config.port ?? ''}'.trim());
+      if (connectionService.isConnected) {
+        sources.add(
+          '${connectionService.activeConnectionType.label} '
+                  '${connectionService.connectionDescription}'
+              .trim(),
+        );
       }
       if (_useRandomSource && _parserType == ParserType.fireWater) {
         sources.add('随机源 ${randomFrequency.toStringAsFixed(0)}Hz');
@@ -1016,19 +1587,19 @@ class PlotViewModel extends BaseViewModel {
       return '正在停止绘图...';
     }
     if (_useRandomSource && _parserType != ParserType.fireWater) {
-      if (!serialService.isConnected) {
-        return '随机源仅支持 FireWater；当前解析器需要连接串口后绘图';
+      if (!connectionService.isConnected) {
+        return '随机源仅支持 FireWater；当前解析器需要连接数据源后绘图';
       }
-      return '随机源已保留；当前解析器仅使用串口数据';
+      return '随机源已保留；当前解析器仅使用外部连接数据';
     }
-    if (!serialService.isConnected && !_useRandomSource) {
-      return '串口未连接，无法从串口绘图；可连接串口或启用随机源';
+    if (!connectionService.isConnected && !_useRandomSource) {
+      return '数据源未连接，无法绘图；可建立连接或启用随机源';
     }
-    if (!serialService.isConnected && _useRandomSource) {
+    if (!connectionService.isConnected && _useRandomSource) {
       return '随机源已启用，点击开始绘图';
     }
-    if (serialService.isConnected) {
-      return '串口已连接，点击开始按钮开始绘图';
+    if (connectionService.isConnected) {
+      return '${connectionService.activeConnectionType.label}已连接，点击开始按钮开始绘图';
     }
     return '';
   }
@@ -1053,14 +1624,27 @@ class PlotViewModel extends BaseViewModel {
     if (_isPlotting) {
       buffer.write(' [运行中]');
     }
+    final usage = plotRetentionUsage;
+    buffer.write(
+      ' 历史: ${_formatRetentionBytes(usage.usedBytes)} / '
+      '${_formatRetentionBytes(usage.limitBytes)} '
+      '(${(usage.ratio * 100).toStringAsFixed(1)}%)',
+    );
+    if (usage.state == RetentionState.limitReached) {
+      buffer.write(' [容量上限停止]');
+    } else if (usage.state == RetentionState.warning) {
+      buffer.write(' [容量预警]');
+    }
     return buffer.toString();
   }
 
-  /// 计算每秒点数，基于最近500ms的数据（响应更快）
-  /// 使用计数器方式，避免遍历整个数据列表
+  /// 计算每秒点数，基于最近2s窗口并使用 EMA 平滑显示值。
+  /// 使用计数器方式，避免遍历整个数据列表。
   double? _calculatePointsPerSecond({int? nowMs, bool force = false}) {
     if (_rateBuckets.isEmpty || _startTime == null) {
       _cachedPointsPerSecond = null;
+      _cachedRawPointsPerSecond = null;
+      _smoothedPointsPerSecond = null;
       return null;
     }
     final effectiveNowMs =
@@ -1071,7 +1655,24 @@ class PlotViewModel extends BaseViewModel {
       return _cachedPointsPerSecond;
     }
 
-    final cutoffMs = effectiveNowMs - 500; // 最近500ms
+    final rawRate = _calculateRawPointsPerSecond(effectiveNowMs);
+    _cachedRawPointsPerSecond = rawRate;
+    _lastRateCalculationMs = effectiveNowMs;
+    if (rawRate == null) {
+      _cachedPointsPerSecond = null;
+      return null;
+    }
+    _smoothedPointsPerSecond =
+        _smoothedPointsPerSecond == null
+            ? rawRate
+            : _smoothedPointsPerSecond! * (1 - _rateDisplayEmaAlpha) +
+                rawRate * _rateDisplayEmaAlpha;
+    _cachedPointsPerSecond = _smoothedPointsPerSecond;
+    return _cachedPointsPerSecond;
+  }
+
+  double? _calculateRawPointsPerSecond(int effectiveNowMs) {
+    final cutoffMs = effectiveNowMs - _rateDisplayWindowMs;
 
     _RateBucket? first;
     _RateBucket? last;
@@ -1081,19 +1682,14 @@ class PlotViewModel extends BaseViewModel {
       last = bucket;
     }
 
-    _lastRateCalculationMs = effectiveNowMs;
     if (first == null || last == null) {
-      _cachedPointsPerSecond = null;
       return null;
     }
     final elapsedMs = last.lastTimestampMs - first.firstTimestampMs;
     if (elapsedMs <= 0) {
-      _cachedPointsPerSecond = null;
       return null;
     }
-    _cachedPointsPerSecond =
-        (last.lastIndex - first.firstIndex) * 1000.0 / elapsedMs;
-    return _cachedPointsPerSecond;
+    return (last.lastIndex - first.firstIndex) * 1000.0 / elapsedMs;
   }
 
   void _recordRateSample(int pointIndex, int timestampMs) {
@@ -1116,13 +1712,17 @@ class PlotViewModel extends BaseViewModel {
         _rateBuckets.first.lastTimestampMs < cutoffMs) {
       _rateBuckets.removeFirst();
     }
-    final rate = _calculatePointsPerSecond(nowMs: timestampMs);
+    final rate = _calculateRawPointsPerSecond(timestampMs);
+    _cachedRawPointsPerSecond = rate;
+    _calculatePointsPerSecond(nowMs: timestampMs);
     _updateHighRateMode(rate, timestampMs);
   }
 
   void _resetRateState() {
     _rateBuckets.clear();
     _cachedPointsPerSecond = null;
+    _cachedRawPointsPerSecond = null;
+    _smoothedPointsPerSecond = null;
     _lastRateCalculationMs = null;
     _highRateMode = false;
     _belowHighRateSinceMs = null;
@@ -1150,6 +1750,7 @@ class PlotViewModel extends BaseViewModel {
   /// 显示浮动临时提示。
   String? get lastStatusMessage => _lastStatusMessage;
 
+  @override
   void showStatusMessage(
     String message, {
     Duration duration = const Duration(seconds: 4),
@@ -1172,7 +1773,7 @@ class PlotViewModel extends BaseViewModel {
       (_) {
         // 光标模式下定时刷新（让垂直光标跟随鼠标）
         if (_vCursorEnabled && _cursor != null) {
-          Future.microtask(() => notifyListeners());
+          Future.microtask(notifyListeners);
         }
       },
     );
@@ -1186,20 +1787,20 @@ class PlotViewModel extends BaseViewModel {
 
   // ========== 数据源控制 ==========
   /// 切换随机数据源开关
-  /// 同时同步更新 serialService 的随机源状态。
+  /// 同时同步更新 connectionService 的随机源状态。
   void setUseRandomSource(bool value) {
     if (_useRandomSource == value) return;
     if (!_canModifyInputConfiguration()) return;
     _useRandomSource = value;
     _sourceConfig.useRandom = value && _parserType == ParserType.fireWater;
-    _sourceConfig.useSerial = serialService.isConnected;
+    _sourceConfig.useConnection = connectionService.isConnected;
     // 根据 FireWater 配置的通道数设置随机数据源通道数
     // 如果 fireWaterChannelCount 为 0，则默认输出 4 通道
     _sourceConfig.randomChannelCount =
         _parserConfig.fireWaterChannelCount > 0
             ? _parserConfig.fireWaterChannelCount
             : 4;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sessionController.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '随机源${value ? '启用' : '关闭'}，解析器=${_parserType.label}，'
@@ -1213,7 +1814,7 @@ class PlotViewModel extends BaseViewModel {
       showStatusMessage(value ? '随机源已启用' : '随机源已关闭');
     }
 
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(notifyListeners));
   }
 
   /// 设置随机源频率（Hz），范围 1~100000
@@ -1223,18 +1824,14 @@ class PlotViewModel extends BaseViewModel {
     final intervalMs = (1000.0 / clampedHz).round().clamp(1, 1000).toInt();
     _sourceConfig.randomFrequencyHz = clampedHz;
     _sourceConfig.randomIntervalMs = intervalMs;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sessionController.updateRandomFrequency(clampedHz));
     _saveSettings();
     AppLogger().info(
       '随机源频率设置为 ${clampedHz.toInt()} Hz，生成间隔=${intervalMs}ms',
       category: 'PLOT',
     );
 
-    // 如果正在绘图，重启数据源以应用新频率
-    if (_isPlotting) {
-      _restartPlotting();
-    }
-    Future.microtask(() => notifyListeners());
+    unawaited(Future.microtask(notifyListeners));
   }
 
   // ========== 解析器控制 ==========
@@ -1258,7 +1855,9 @@ class PlotViewModel extends BaseViewModel {
       _parserConfig.channelCount = ParserConfig.minZobowChannelCount;
     } else if (type == ParserType.justFloat) {
       _parserConfig.channelCount =
-          AppSettings().justFloatChannelCount.clamp(0, 16).toInt();
+          AppSettings().justFloatChannelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
 
     if (type != ParserType.fireWater && _useRandomSource) {
@@ -1275,11 +1874,13 @@ class PlotViewModel extends BaseViewModel {
     settings.parserType = type.name;
     if (type == ParserType.justFloat) {
       settings.justFloatChannelCount =
-          _parserConfig.channelCount.clamp(0, 16).toInt();
+          _parserConfig.channelCount
+              .clamp(0, PlotConfiguration.rawChannelCount)
+              .toInt();
     }
     settings.save();
 
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setSendProtocolType(SendProtocolType type) {
@@ -1298,7 +1899,7 @@ class PlotViewModel extends BaseViewModel {
       '发送协议从 ${oldType.label} 切换为 ${type.label}',
       category: 'PLOT',
     );
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setRChannelAddress(int index, String address) {
@@ -1306,14 +1907,20 @@ class PlotViewModel extends BaseViewModel {
     if (index < 0 || index >= SendProtocolConfig.maxChannelCount) return;
     final next = address.trim();
     if (_sendProtocolConfig.rChannelAddresses[index] == next) return;
+    final nextKey = _rPresetAddressKeyFromText(next);
     _sendProtocolConfig.rChannelAddresses[index] = next;
+    _clearPresetAliasesForChangedAddress(
+      AddressProfileProtocolType.rProtocol,
+      index,
+      nextKey,
+    );
     _markChannelConfigChanged();
     _saveSettings();
     AppLogger().info(
       'r协议 Ch$index 地址设置为 ${next.isEmpty ? '<空>' : next}',
       category: 'PLOT',
     );
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void setRProtocolLooseChannelSettings(bool value) {
@@ -1322,7 +1929,7 @@ class PlotViewModel extends BaseViewModel {
     _rProtocolLooseChannelSettings = value;
     _saveSettings();
     AppLogger().info('r协议宽松通道设置${value ? '启用' : '关闭'}', category: 'PLOT');
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// r 协议地址槽位在通道面板中的显示数量。
@@ -1350,7 +1957,10 @@ class PlotViewModel extends BaseViewModel {
         _rProtocolLooseChannelSettings
             ? _rConfiguredAddressCount()
             : _rContinuousAddressCount(throwOnGap: false);
-    return math.max(1, math.min(16, configured + 1));
+    return math.max(
+      1,
+      math.min(PlotConfiguration.rawChannelCount, configured + 1),
+    );
   }
 
   bool get _usesAutoDetectedReceiveChannels {
@@ -1433,7 +2043,7 @@ class PlotViewModel extends BaseViewModel {
     // 更新随机数据源通道数以匹配 FireWater 配置
     _sourceConfig.randomChannelCount =
         config.fireWaterChannelCount > 0 ? config.fireWaterChannelCount : 4;
-    _sourceManager.updateConfig(_sourceConfig);
+    unawaited(_sessionController.updateConfig(_sourceConfig));
     _saveSettings();
     AppLogger().info(
       '解析器配置已更新：协议=${_parserConfig.type.label}，'
@@ -1442,11 +2052,11 @@ class PlotViewModel extends BaseViewModel {
       category: 'PLOT',
     );
 
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   bool _canModifyInputConfiguration() {
-    if (!_isPlotting && !_isStopping) return true;
+    if (!_isPlotting && !_isStarting && !_isStopping) return true;
     AppLogger().info('绘图运行中，已拦截输入与协议配置修改', category: 'PLOT');
     showStatusMessage(AppStrings.plot.inputConfigurationDisabledWhilePlotting);
     return false;
@@ -1461,7 +2071,7 @@ class PlotViewModel extends BaseViewModel {
   /// 开始绘图
   ///
   /// 流程：
-  /// 1. 检查数据源可用性（串口已连接或随机源已启用）
+  /// 1. 检查数据源可用性（数据连接已建立或随机源已启用）
   /// 2. 清空旧数据，重置视口和光标位置
   /// 3. 创建解析器并启动数据源
   /// 4. 连接数据流：DataSourceManager → Parser → _dataPoints
@@ -1472,219 +2082,197 @@ class PlotViewModel extends BaseViewModel {
   /// - `_isPlotting` 只在数据源配置完成后置 true，避免 UI 显示“运行中”
   ///   但解析链实际没有启动。
   /// - 启动前清空所有历史缓存，避免上一轮自动识别通道数影响本轮显示。
-  Future<void> startPlotting() async {
+  Future<void> startPlotting() {
     if (_isStopping) {
       showStatusMessage('正在停止绘图，请稍候', duration: const Duration(seconds: 1));
-      return;
+      return Future.value();
     }
-    if (_isPlotting) return;
+    if (_isPlotting) return Future.value();
+
+    return _sessionController.start(
+      config: _sourceConfig,
+      prepare: _preparePlotSessionStart,
+      createParser: _createParser,
+      initializeProtocol: () async {
+        _protocolInitFailureMessage = null;
+        return _sendProtocolInitData();
+      },
+      onData: (results, receivedAt) {
+        for (final result in results) {
+          _onParseResult(
+            result,
+            receivedAt: receivedAt,
+            updateFollowViewport: false,
+          );
+        }
+        if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+          final lastIndex = _dataPoints.last.index;
+          _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
+        }
+      },
+      onSourceError: (error) {
+        AppLogger().error('数据源错误: $error', category: 'PLOT');
+      },
+      releaseActivity: () {
+        connectionService.releaseActivity(DataActivityOwner.plot);
+      },
+      onStarted: () {
+        _startRefreshTimer();
+        AppLogger().info('开始绘图', category: 'PLOT');
+        showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
+        Future.microtask(notifyListeners);
+      },
+      onStartRejected: () {
+        _sourceConfig.useConnection = false;
+        _sourceConfig.useRandom = false;
+        final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
+        showStatusMessage(message);
+        AppLogger().warning(message, category: 'PLOT');
+        Future.microtask(notifyListeners);
+      },
+      onStartFailed: (error, stackTrace) {
+        _sourceConfig.useConnection = false;
+        _sourceConfig.useRandom = false;
+        AppLogger().error('绘图启动失败: $error\n$stackTrace', category: 'PLOT');
+        showStatusMessage('绘图启动失败，已恢复页面操作');
+        Future.microtask(notifyListeners);
+      },
+    );
+  }
+
+  bool _isPlotSessionCurrent(int generation) =>
+      !_disposed && _sessionController.isCurrent(generation);
+
+  Future<bool> _preparePlotSessionStart(int generation) async {
     AppLogger().info(
       '用户请求开始绘图：接收协议=${_parserType.label}，发送协议=${effectiveSendProtocolType.label}，'
-      '串口连接=${serialService.isConnected}，随机源=$_useRandomSource，'
+      '数据连接=${connectionService.isConnected}，类型=${connectionService.activeConnectionType.label}，'
+      '随机源=$_useRandomSource，'
       '随机频率=${_sourceConfig.randomFrequencyHz.toInt()}Hz，丢弃前置包=$_discardInitialPacketCount',
       category: 'PLOT',
     );
 
-    if (serialService.isConnected) {
-      final connected = await serialService.refreshConnectionStatus();
+    if (connectionService.isConnected) {
+      final connected = await connectionService.refreshConnectionStatus();
+      if (!_isPlotSessionCurrent(generation)) return false;
       if (!connected && !_useRandomSource) {
-        const message = '检测到串口已断开，无法绘图；请重新连接串口';
+        const message = '检测到数据连接已断开，无法绘图；请重新建立连接';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
-        return;
+        return false;
       }
     }
 
     final canUseRandom =
         _useRandomSource && _parserType == ParserType.fireWater;
 
-    if (!serialService.isConnected &&
+    if (!connectionService.isConnected &&
         canUseRandom &&
         _sendProtocolType == SendProtocolType.rProtocol) {
       _sendProtocolType = SendProtocolType.none;
       _sendProtocolConfig.type = SendProtocolType.none;
       _saveSettings();
-      showStatusMessage('随机源未连接串口，发送协议已自动切换为无');
+      showStatusMessage('随机源未建立数据连接，发送协议已自动切换为无');
     }
 
-    // 检查是否有数据源，尝试自动连接串口
-    if (!serialService.isConnected && !_useRandomSource) {
-      await _autoConnectSerial();
-      if (!serialService.isConnected) {
-        const message = '串口未连接，无法绘图；请连接串口或启用随机源';
+    // 检查是否有数据源，并按页面配置尝试建立数据连接。
+    if (!connectionService.isConnected && !_useRandomSource) {
+      await _autoConnectData();
+      if (!_isPlotSessionCurrent(generation)) return false;
+      if (!connectionService.isConnected) {
+        const message = '数据连接未建立，无法绘图；请建立连接或启用随机源';
         showStatusMessage(message);
         AppLogger().warning(message, category: 'PLOT');
-        return;
+        return false;
       }
     }
 
-    if (!serialService.isConnected && _useRandomSource && !canUseRandom) {
-      const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或连接串口';
+    if (!connectionService.isConnected && _useRandomSource && !canUseRandom) {
+      const message = '随机源仅支持 FireWater 解析器，请切回 FireWater 或建立数据连接';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      return;
+      return false;
+    }
+
+    if (_keepPlotOnRestart && _plotRetentionLimitReached) {
+      const message = '保留历史已达到容量上限，请先清空绘图数据再继续';
+      showStatusMessage(message);
+      AppLogger().warning(message, category: 'PLOT');
+      return false;
     }
 
     // 再次确认数据源配置与实际状态一致
-    _sourceConfig.useSerial = serialService.isConnected;
+    _sourceConfig.useConnection = connectionService.isConnected;
     _sourceConfig.useRandom = canUseRandom;
     AppLogger().info(
-      '绘图数据源确认：串口=${_sourceConfig.useSerial}，随机源=${_sourceConfig.useRandom}',
+      '绘图数据源确认：串口=${_sourceConfig.useConnection}，随机源=${_sourceConfig.useRandom}',
       category: 'PLOT',
     );
 
-    // 清空旧数据。这里必须同时清理窗口、全量历史、LOD 和原始帧缓存；
-    // 它们分别服务于绘制、回看、预览和导出，缺一项都会留下上一轮状态。
-    _dataPoints.clear();
-    _parsedHistory.clear();
-    _lodIndex.clear();
-    _zobowRawFrames.clear();
-    _fixedFrameRawFrames.clear();
-    _importedChannelAddresses = null;
-    _visibleStartIndex = 0;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-    _resetRateState();
-    _nextIndex = 0;
-    _activeChannelCount = 0;
-    _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
-    _discardedInitialPacketCount = 0;
-    _startTime = DateTime.now();
-
-    // 重置速率统计
-    _lastRateLogTime = null;
-    _lastRateLogIndex = 0;
-    _totalReceivedBytes = 0;
-    _lastRateLogBytes = 0;
-
-    // 保留上一轮缩放比例；首次启动仍使用默认视口。
-    if (_hasStartedPlottingOnce) {
-      final xRange = viewport.xRange;
-      _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
-    } else {
-      _setViewport(viewport.reset());
-      _hasStartedPlottingOnce = true;
-    }
-    _viewportHistory.clear();
-
-    _resetCursorPositions();
-
-    // 创建解析器
-    _parser = _createParser();
-
-    // 发送协议初始化数据（如果有）。初始化失败时不能继续启动绘图，
-    // 否则串口物理断开后会进入“看似绘图中但没有数据”的错误状态。
-    _protocolInitFailureMessage = null;
-    if (!_sendProtocolInitData()) {
-      _parser?.dispose();
-      _parser = null;
-      _sourceConfig.useSerial = false;
-      _sourceConfig.useRandom = false;
-      serialService.isPlotting = false;
-      final message = _protocolInitFailureMessage ?? '协议初始化失败，已停止绘图';
+    if (!connectionService.tryAcquireActivity(DataActivityOwner.plot)) {
+      const message = '其他页面正在接收数据，请先停止后再开始绘图';
       showStatusMessage(message);
       AppLogger().warning(message, category: 'PLOT');
-      Future.microtask(() => notifyListeners());
-      return;
+      return false;
     }
 
-    // 配置并启动数据源
-    // 注意：useSerial/useRandom 已在开头同步
-    // 根据 FireWater 配置设置随机数据源通道数
+    if (!_isPlotSessionCurrent(generation)) {
+      connectionService.releaseActivity(DataActivityOwner.plot);
+      return false;
+    }
+    _prepareHistoryForStart();
     _sourceConfig.randomChannelCount =
         _parserConfig.fireWaterChannelCount > 0
             ? _parserConfig.fireWaterChannelCount
             : 4;
-    _sourceManager.updateConfig(_sourceConfig);
-    _isPlotting = true;
-    serialService.isPlotting = true;
-    _sourceManager.start();
-
-    // 连接数据源 → 解析器
-    _parseSubscription = _sourceManager.byteStream.listen(
-      (data) => _parser?.feed(data),
-      onError: (error) {
-        AppLogger().error('数据源错误: $error', category: 'PLOT');
-      },
-    );
-
-    // 连接解析器 → 数据缓冲区
-    _parser?.outputStream.listen(
-      (result) => _onParseResult(result),
-      onError: (error) {
-        AppLogger().error('解析器错误: $error', category: 'PLOT');
-      },
-    );
-
-    // 开始绘图时自动停止原始数据接收
-    if (serialService.isRawReceiving) {
-      serialService.stopRawReceiving();
-    }
-    Future.microtask(() => serialService.notifyListeners());
-    _startRefreshTimer();
-    AppLogger().info('开始绘图', category: 'PLOT');
-    showStatusMessage('开始绘图', duration: const Duration(seconds: 1));
-    Future.microtask(() => notifyListeners());
+    return true;
   }
 
   /// 停止绘图
   ///
-  /// 取消数据流订阅、停止数据源、释放解析器，但保持定时刷新运行
-  /// 以确保交互响应及时。
+  /// 会话控制器按订阅、数据源、解析器的固定顺序释放资源；ViewModel 只负责
+  /// 业务状态、触发器和用户提示收尾。
   Future<void> stopPlotting() {
     if (_isStopping) {
-      return _stopFuture ?? Future.value();
+      return _sessionController.pendingStop ?? Future.value();
     }
-    if (!_isPlotting) {
+    if (!_isPlotting && _sessionController.pendingStart == null) {
       _resetRateState();
       return Future.value();
     }
 
-    _isStopping = true;
-    _isPlotting = false;
     _resetRateState();
-    serialService.isPlotting = false;
     AppLogger().info(
       '用户请求停止绘图：已接收点=$_nextIndex，当前显示点=${_dataPoints.length}',
       category: 'PLOT',
     );
-    // 停止绘图后保持定时刷新，确保交互响应及时
     _startRefreshTimer();
     showStatusMessage('正在停止绘图...', duration: const Duration(seconds: 1));
-    Future.microtask(() => serialService.notifyListeners());
-    Future.microtask(() => notifyListeners());
-
-    _stopFuture = Future<void>(() async {
-      try {
-        await _parseSubscription?.cancel();
-        _parseSubscription = null;
-        _sourceManager.stop();
-        _parser?.dispose();
-        _parser = null;
-      } catch (e) {
-        AppLogger().error('停止绘图清理失败: $e', category: 'PLOT');
-      } finally {
+    return _sessionController.stop(
+      releaseActivity: () {
+        connectionService.releaseActivity(DataActivityOwner.plot);
+      },
+      onStopped: () {
         _notifyTimer?.cancel();
         _notifyTimer = null;
         _pendingNotifyCount = 0;
-        _isStopping = false;
+        if (_triggerConfig.enabled) {
+          _triggerConfig.enabled = false;
+        }
+        _resetTriggerRuntimeState();
         if (!_disposed) {
           showStatusMessage('已停止绘图', duration: const Duration(seconds: 1));
           AppLogger().info(
-            '绘图已停止：总点数=$_nextIndex，Zobow原始帧=${_zobowRawFrames.packetCount}，'
-            '固定帧原始帧=${_fixedFrameRawFrames.packetCount}',
+            '绘图已停止：总点数=$_nextIndex，Zobow原始帧=${_historyStore.zobowFrameCount}，'
+            '固定帧原始帧=${_historyStore.fixedFrameCount}',
             category: 'PLOT',
           );
           Future.microtask(() {
             if (!_disposed) notifyListeners();
           });
         }
-      }
-    }).whenComplete(() {
-      _stopFuture = null;
-    });
-    return _stopFuture!;
+      },
+    );
   }
 
   /// 开始绘图时自动尝试连接串口。
@@ -1698,12 +2286,17 @@ class PlotViewModel extends BaseViewModel {
 
     // 历史端口直接尝试打开，不依赖枚举结果。部分 USB 串口驱动枚举可能很慢，
     // 但已保存端口的 CreateFile 可以在后台 isolate 中快速确认是否可用。
-    final lastPort = settings.lastPort;
+    final lastPort =
+        settings.separateSerialProfiles
+            ? connectionService.config.port
+            : settings.lastPort;
     if (lastPort != null && lastPort.isNotEmpty) {
       AppLogger().info('尝试连接历史串口: $lastPort', category: 'PLOT');
-      serialService.config = serialService.config.copyWith(port: lastPort);
-      await serialService.connect();
-      if (serialService.isConnected) {
+      connectionService.updateConfig(
+        connectionService.config.copyWith(port: lastPort),
+      );
+      await connectionService.connect();
+      if (connectionService.isConnected) {
         showStatusMessage(
           '已自动连接 $lastPort',
           duration: const Duration(seconds: 2),
@@ -1713,17 +2306,19 @@ class PlotViewModel extends BaseViewModel {
     }
 
     // 历史端口失败后只刷新一次；若当前只有另一个串口，则尝试该端口。
-    final refreshed = await serialService.refreshPorts(reason: '自动连接唯一端口');
-    if (refreshed && serialService.availablePorts.length == 1) {
-      final solePort = serialService.availablePorts.first;
+    final refreshed = await connectionService.refreshPorts(reason: '自动连接唯一端口');
+    if (refreshed && connectionService.availablePorts.length == 1) {
+      final solePort = connectionService.availablePorts.first;
       if (solePort == lastPort) {
         AppLogger().warning('历史串口连接失败，不重复尝试: $solePort', category: 'PLOT');
         return;
       }
       AppLogger().info('尝试连接唯一串口: $solePort', category: 'PLOT');
-      serialService.config = serialService.config.copyWith(port: solePort);
-      await serialService.connect();
-      if (serialService.isConnected) {
+      connectionService.updateConfig(
+        connectionService.config.copyWith(port: solePort),
+      );
+      await connectionService.connect();
+      if (connectionService.isConnected) {
         showStatusMessage(
           '已自动连接 $solePort',
           duration: const Duration(seconds: 2),
@@ -1735,16 +2330,26 @@ class PlotViewModel extends BaseViewModel {
     AppLogger().warning('自动连接串口失败', category: 'PLOT');
   }
 
+  Future<void> _autoConnectData() async {
+    final settings = AppSettings();
+    final type = settings.connectionTypeForPage('plot');
+    connectionService.selectSerialProfile('plot');
+    if (type == DataConnectionType.serial) {
+      await _autoConnectSerial();
+      return;
+    }
+    showStatusMessage(
+      '正在连接${type.label}...',
+      duration: const Duration(seconds: 2),
+    );
+    await connectionService.connectNetwork(
+      settings.networkConfigForPage('plot').copyWith(type: type),
+      pageId: 'plot',
+    );
+  }
+
   @visibleForTesting
   Future<void> autoConnectSerialForTest() => _autoConnectSerial();
-
-  /// 重启绘图（用于配置变更时）
-  void _restartPlotting() {
-    AppLogger().info('配置变更触发绘图重启', category: 'PLOT');
-    stopPlotting().then((_) {
-      if (!_disposed) unawaited(startPlotting());
-    });
-  }
 
   /// 清空所有数据、速率统计、视口和光标
   void clearData() {
@@ -1752,21 +2357,21 @@ class PlotViewModel extends BaseViewModel {
       '用户清空绘图数据：清空前总点数=$_nextIndex，显示点=${_dataPoints.length}',
       category: 'PLOT',
     );
-    _dataPoints.clear();
-    _parsedHistory.clear();
-    _lodIndex.clear();
-    _zobowRawFrames.clear();
-    _fixedFrameRawFrames.clear();
+    _cancelWindowLoad();
+    _windowProvider.clear();
+    _historyStore.clear();
+    _resetPlotRetentionState();
     _importedChannelAddresses = null;
-    _visibleStartIndex = 0;
     _dataRevision++;
     _invalidateDisplayCaches();
     _resetObservedValueMetadata();
     _resetRateState();
     _nextIndex = 0;
     _activeChannelCount = 0;
+    _retainedAutoChannelCount = null;
     _activeDiscardInitialPacketLimit = 0;
     _discardedInitialPacketCount = 0;
+    _resetTriggerRuntimeState();
     _startTime = null;
     _lastRateLogTime = null;
     _lastRateLogIndex = 0;
@@ -1774,14 +2379,266 @@ class PlotViewModel extends BaseViewModel {
     _lastRateLogBytes = 0;
     _setViewport(viewport.reset());
     _viewportHistory.clear();
+    _dragStartViewport = null;
     _resetCursorPositions();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
+  }
+
+  void _prepareHistoryForStart() {
+    final retainedHistoryIsCompatible = _isRetainedHistoryCompatible();
+    final clearIncompatibleHistory =
+        _keepPlotOnRestart && !retainedHistoryIsCompatible;
+    if (!_keepPlotOnRestart || clearIncompatibleHistory) {
+      if (clearIncompatibleHistory) {
+        const message = '接收协议已变化或历史来自导入，已清空不可续接的绘图数据';
+        AppLogger().warning(message, category: 'PLOT');
+        showStatusMessage(message);
+      }
+      _clearHistoryForRestart();
+    } else {
+      _importedChannelAddresses = null;
+      _hasStartedPlottingOnce = true;
+      _retainedAutoChannelCount =
+          _nextIndex > 0 &&
+                  _usesAutoDetectedReceiveChannels &&
+                  _activeChannelCount > 0
+              ? _activeChannelCount
+              : null;
+    }
+
+    _resetRateState();
+    _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
+    _discardedInitialPacketCount = 0;
+    _resetTriggerRuntimeState();
+    _startTime = DateTime.now();
+    _lastRateLogTime = null;
+    _lastRateLogIndex = _nextIndex;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
+  }
+
+  bool _isRetainedHistoryCompatible() {
+    if (_nextIndex == 0) return true;
+    return _historyStore.isCompatible(_parserType, _nextIndex);
+  }
+
+  void _clearHistoryForRestart() {
+    // 窗口、全量历史、LOD 和原始帧分别服务于绘制、回看、定位和导出，
+    // 重开数据流时必须作为同一份历史一起清理。
+    _cancelWindowLoad();
+    _windowProvider.clear();
+    _historyStore.clear();
+    _resetPlotRetentionState();
+    _importedChannelAddresses = null;
+    _dataRevision++;
+    _invalidateDisplayCaches();
+    _resetObservedValueMetadata();
+    _nextIndex = 0;
+    _activeChannelCount = 0;
+    _retainedAutoChannelCount = null;
+
+    // 保留上一轮缩放比例；首次启动仍使用默认视口。
+    if (_hasStartedPlottingOnce) {
+      final xRange = viewport.xRange;
+      _setViewport(viewport.copyWith(xMin: 0, xMax: xRange));
+    } else {
+      _setViewport(viewport.reset());
+      _hasStartedPlottingOnce = true;
+    }
+    _viewportHistory.clear();
+    _dragStartViewport = null;
+    _resetCursorPositions();
+  }
+
+  void _validateRetainedAutoChannelCount(int channelCount) {
+    final retainedChannelCount = _retainedAutoChannelCount;
+    _retainedAutoChannelCount = null;
+    if (retainedChannelCount == null || retainedChannelCount == channelCount) {
+      return;
+    }
+
+    final message = '自动识别通道数已从 $retainedChannelCount 变为 $channelCount，已清空旧历史';
+    AppLogger().warning(message, category: 'PLOT');
+    showStatusMessage(message);
+    _clearHistoryForRestart();
+    _resetRateState();
+    _lastRateLogTime = null;
+    _lastRateLogIndex = 0;
+    _totalReceivedBytes = 0;
+    _lastRateLogBytes = 0;
   }
 
   // ========== 数据接收 ==========
+  int get _estimatedPlotAllocatedBytes =>
+      _historyStore.estimatedAllocatedBytes +
+      _dataPoints.length * 192 +
+      _windowProvider.pendingPointCount * 192 +
+      (_cachedDisplayDataPoints?.length ?? 0) * 192;
+
+  int _projectedAllocationFor(ParseResult result) {
+    final values = result.values!;
+    var additional = _historyStore.projectedAdditionalBytes(
+      result: result,
+      parserType: _parserType,
+      pointIndex: _nextIndex,
+      lodChannelCount:
+          enabledMathChannels.isEmpty
+              ? math.min(values.length, PlotLodIndex.maxChannels)
+              : PlotLodIndex.maxChannels,
+    );
+    if ((_windowProvider.hasLiveEdgeTarget || _followEnabled) &&
+        _dataPoints.length < PlotConfiguration.maxMaterializedPointCount) {
+      additional += 192;
+    }
+    return _estimatedPlotAllocatedBytes + additional;
+  }
+
+  bool _canAcceptPlotPoint(ParseResult result) {
+    if (_plotRetentionLimitReached) return false;
+    final emergencyRssBytes = math.max(
+      PlotConfiguration.baseEmergencyRssLimitBytes,
+      _plotRetentionLimitBytes + PlotConfiguration.emergencyRssHeadroomBytes,
+    );
+    if (_nextIndex % 4096 == 0 && ProcessInfo.currentRss >= emergencyRssBytes) {
+      _reachPlotRetentionLimit(
+        '进程内存已达到 ${_formatRetentionBytes(emergencyRssBytes)} 紧急保护线，绘图已停止',
+      );
+      return false;
+    }
+    if (_projectedAllocationFor(result) > _plotRetentionLimitBytes) {
+      _reachPlotRetentionLimit(
+        '绘图历史已达到 ${_formatRetentionBytes(_plotRetentionLimitBytes)} 上限，绘图已停止',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  void _updatePlotRetentionWarning() {
+    if (_plotRetentionWarningShown || _plotRetentionLimitReached) return;
+    final usage = plotRetentionUsage;
+    if (usage.ratio < _retentionWarningRatio) return;
+    _plotRetentionWarningShown = true;
+    final message =
+        '绘图历史已使用 ${(usage.ratio * 100).toStringAsFixed(1)}%，接近 '
+        '${_formatRetentionBytes(usage.limitBytes)} 上限';
+    AppLogger().warning(message, category: 'PLOT');
+    AppNotifications.show(message, duration: const Duration(seconds: 8));
+  }
+
+  void _reachPlotRetentionLimit(String reason) {
+    if (_plotRetentionLimitReached) return;
+    _plotRetentionLimitReached = true;
+    _plotRetentionStopReason = reason;
+    _lastStatusMessage = reason;
+    AppLogger().warning(reason, category: 'PLOT');
+    AppNotifications.show(reason, duration: const Duration(seconds: 12));
+    if (_isPlotting || _isStarting) {
+      scheduleMicrotask(() {
+        if (!_disposed) unawaited(stopPlotting());
+      });
+    }
+    Future.microtask(() {
+      if (!_disposed) notifyListeners();
+    });
+  }
+
+  void _resetPlotRetentionState() {
+    _plotRetentionWarningShown = false;
+    _plotRetentionLimitReached = false;
+    _plotRetentionStopReason = null;
+  }
+
+  String _formatRetentionBytes(int bytes) {
+    const gib = 1024 * 1024 * 1024;
+    const mib = 1024 * 1024;
+    if (bytes >= gib) return '${(bytes / gib).toStringAsFixed(1)} GiB';
+    return '${(bytes / mib).toStringAsFixed(1)} MiB';
+  }
+
+  List<double> _rawValuesAtHistoryIndex(int pointIndex) {
+    return _historyStore.valuesAt(pointIndex, _parserType, _parserConfig);
+  }
+
+  double _rawHistoryValueAt(int pointIndex, int channelIndex) {
+    return _historyStore.valueAt(
+      pointIndex,
+      channelIndex,
+      _parserType,
+      _parserConfig,
+    );
+  }
+
+  void _appendReadyLodPoint(int currentPointIndex, List<double> currentValues) {
+    // 速率测试可只推进计数器而不构造历史；生产采集始终连续。保留该
+    // 测试入口的 LOD 长度语义，同时不让虚拟缺口触发历史随机读取。
+    if (currentPointIndex != _historyPointCount - 1) {
+      _historyStore.addSampledLod(
+        currentPointIndex,
+        currentValues,
+        _lodSampleStep,
+      );
+      return;
+    }
+    final enabled = enabledMathChannels;
+    if (enabled.isEmpty) {
+      _historyStore.addSampledLod(
+        currentPointIndex,
+        currentValues,
+        _lodSampleStep,
+      );
+      return;
+    }
+    final futureLookahead = _mathEngine.futureLookahead(enabled);
+    final readyIndex = currentPointIndex - futureLookahead;
+    if (readyIndex < 0 || readyIndex >= _historyPointCount) return;
+    final rawValues = _rawValuesAtHistoryIndex(readyIndex);
+
+    final lodValues = List<double>.filled(
+      PlotLodIndex.maxChannels,
+      double.nan,
+      growable: false,
+    );
+    for (
+      var i = 0;
+      i < rawValues.length && i < PlotConfiguration.rawChannelCount;
+      i++
+    ) {
+      lodValues[i] = rawValues[i];
+    }
+    for (final channel in enabled) {
+      lodValues[PlotConfiguration.rawChannelCount + channel.index] = _mathEngine
+          .evaluateAt(
+            channelIndex: channel.index,
+            currentIndex: readyIndex,
+            pointCount: _historyPointCount,
+            valueAt: _rawHistoryValueAt,
+          );
+    }
+    _historyStore.addSampledLod(readyIndex, lodValues, _lodSampleStep);
+  }
+
   @visibleForTesting
   void ingestParsedResultForTest(ParseResult result) {
     _onParseResult(result);
+  }
+
+  @visibleForTesting
+  void ingestParsedResultForTestAt(ParseResult result, DateTime receivedAt) {
+    _onParseResult(result, receivedAt: receivedAt);
+  }
+
+  @visibleForTesting
+  void debugSetParsedHistoryForExportTest({
+    required int pointCount,
+    required int channelCount,
+  }) {
+    _parserType = ParserType.fireWater;
+    _nextIndex = pointCount;
+    _historyStore.debugSetParsedLength(
+      pointCount,
+      maxChannelCount: channelCount,
+    );
   }
 
   @visibleForTesting
@@ -1789,8 +2646,9 @@ class PlotViewModel extends BaseViewModel {
     if (value && !_isPlotting) {
       _activeDiscardInitialPacketLimit = _discardInitialPacketCount;
       _discardedInitialPacketCount = 0;
+      _resetTriggerRuntimeState();
     }
-    _isPlotting = value;
+    _sessionController.debugSetRunning(value);
   }
 
   @visibleForTesting
@@ -1811,7 +2669,11 @@ class PlotViewModel extends BaseViewModel {
   /// - 更新实际通道数
   /// - 跟随模式下自动平移视口
   /// - 批量计数达到阈值或 fallback 定时器到期时触发 notifyListeners()
-  void _onParseResult(ParseResult result) {
+  void _onParseResult(
+    ParseResult result, {
+    DateTime? receivedAt,
+    bool updateFollowViewport = true,
+  }) {
     if (!result.success || result.values == null || result.values!.isEmpty) {
       return;
     }
@@ -1821,37 +2683,40 @@ class PlotViewModel extends BaseViewModel {
       return;
     }
 
-    final now = DateTime.now();
+    _validateRetainedAutoChannelCount(result.values!.length);
+    if (!_canAcceptPlotPoint(result)) return;
+
+    final now = receivedAt ?? DateTime.now();
     final timestamp =
         _startTime != null
             ? now.difference(_startTime!).inMilliseconds.toDouble()
             : 0.0;
 
+    final pointIndex = _nextIndex++;
     final point = PlotDataPoint(
-      index: _nextIndex++,
+      index: pointIndex,
       timestamp: timestamp,
-      values: List.from(result.values!),
+      values: result.values!,
     );
     _recordObservedValues(point.values);
 
-    // 历史缓存按协议分流：
-    // - Zobow/FixedFrame 保留原始帧，导出和视口重建都从原始帧重新解析。
-    // - 其他协议只保存解析后的紧凑 double 块，降低大数据量下的对象开销。
-    if (_parserType == ParserType.zobow && result.rawBytes != null) {
-      _zobowRawFrames.appendPacket(result.rawBytes!);
-    } else if (_parserType == ParserType.fixedFrame &&
-        result.rawBytes != null) {
-      _fixedFrameRawFrames.appendPacket(result.rawBytes!);
-    } else {
-      _parsedHistory.add(point.values);
-    }
-    _lodIndex.addSampled(point.index, point.values, _lodSampleStep);
+    final historyValues = _historyStore.appendResult(result, _parserType);
+    final visiblePoint = PlotDataPoint(
+      index: point.index,
+      timestamp: point.timestamp,
+      values: historyValues,
+    );
+    _appendReadyLodPoint(point.index, point.values);
+    _updatePlotRetentionWarning();
 
-    final appendToVisibleWindow = _isViewingTail || _followEnabled;
+    final appendToVisibleWindow =
+        _followEnabled || _windowProvider.hasLiveEdgeTarget;
     if (appendToVisibleWindow) {
-      _dataPoints.add(point);
-      _trimVisibleWindowToLimit();
-      _dataRevision++;
+      final visibleChanged = _windowProvider.appendLive(visiblePoint);
+      if (visibleChanged) {
+        _trimVisibleWindowToLimit();
+        _dataRevision++;
+      }
     }
 
     // 统计接收字节数
@@ -1876,8 +2741,13 @@ class PlotViewModel extends BaseViewModel {
       _markChannelConfigChanged();
     }
 
+    _handleTriggerForPoint(point, now);
+
     // 自动跟随最新数据（仅跟随模式开启时）
-    if (_isPlotting && _followEnabled && _dataPoints.length > 1) {
+    if (updateFollowViewport &&
+        _isPlotting &&
+        _followEnabled &&
+        _dataPoints.length > 1) {
       final lastIndex = _dataPoints.last.index;
       _setViewport(_followViewportForLatestIndex(lastIndex.toDouble()));
     }
@@ -1912,242 +2782,116 @@ class PlotViewModel extends BaseViewModel {
       _pendingNotifyCount = 0;
       _notifyTimer?.cancel();
       _notifyTimer = null;
-      Future.microtask(() => notifyListeners());
+      Future.microtask(notifyListeners);
     } else if (_notifyTimer == null) {
       // 兜底定时器：确保即使数据流中断也能刷新 UI。
       final delayMs = (1000 / effectiveRefreshFps).round();
       _notifyTimer = Timer(Duration(milliseconds: delayMs), () {
         _pendingNotifyCount = 0;
         _notifyTimer = null;
-        Future.microtask(() => notifyListeners());
+        Future.microtask(notifyListeners);
       });
     }
   }
 
-  bool get _isViewingTail {
-    if (_dataPoints.isEmpty) return true;
-    return _visibleEndIndex >= _historyPointCount - 1;
-  }
-
   int get _historyPointCount {
-    if (_parserType == ParserType.zobow) return _zobowRawFrames.packetCount;
-    if (_parserType == ParserType.fixedFrame &&
-        _fixedFrameRawFrames.isNotEmpty) {
-      return _fixedFrameRawFrames.packetCount;
-    }
-    return _parsedHistory.length;
+    return _historyStore.pointCount(_parserType);
   }
 
   void _trimVisibleWindowToLimit() {
-    final limit = effectiveMaxVisiblePoints;
-    final trimThreshold = limit + _visibleTrimBatchSize;
-    if (_dataPoints.length <= trimThreshold) {
-      _visibleStartIndex = _dataPoints.isEmpty ? 0 : _dataPoints.first.index;
-      return;
-    }
-
-    final removeCount = _dataPoints.length - limit;
-    _dataPoints.removeRange(0, removeCount);
-    _visibleStartIndex = _dataPoints.first.index;
+    _windowProvider.trimToLimit(
+      limit: effectiveMaterializedPointLimit,
+      trimBatchSize: _visibleTrimBatchSize,
+    );
   }
 
-  void _loadZobowWindowForViewport({bool force = false}) {
-    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
+  void _cancelWindowLoad() {
+    _windowProvider.cancelLoad();
+  }
 
-    var start =
-        viewport.xMin.floor().clamp(0, _zobowRawFrames.packetCount).toInt();
-    var end =
-        viewport.xMax.ceil().clamp(start, _zobowRawFrames.packetCount).toInt();
-    final limit = effectiveMaxVisiblePoints;
-    if (end - start > limit) {
-      end = start + limit;
-      _setViewport(
-        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
-      );
-    }
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
-
-    _rebuildZobowWindow(start, end - start);
+  void _commitMaterializedWindow(int start, List<PlotDataPoint> points) {
+    _windowProvider.replaceSynchronously(start, points);
   }
 
   void _loadWindowForViewport({bool force = false}) {
-    switch (_parserType) {
-      case ParserType.zobow:
-        _loadZobowWindowForViewport(force: force);
-        break;
-      case ParserType.fireWater:
-      case ParserType.justFloat:
-        _loadParsedWindowForViewport(force: force);
-        break;
-      case ParserType.fixedFrame:
-        if (_fixedFrameRawFrames.isNotEmpty) {
-          _loadFixedFrameWindowForViewport(force: force);
-        } else {
-          _loadParsedWindowForViewport(force: force);
-        }
-        break;
-    }
-  }
-
-  void _loadFixedFrameWindowForViewport({bool force = false}) {
-    if (_fixedFrameRawFrames.isEmpty) return;
-
-    var start =
-        viewport.xMin
-            .floor()
-            .clamp(0, _fixedFrameRawFrames.packetCount)
-            .toInt();
-    var end =
-        viewport.xMax
-            .ceil()
-            .clamp(start, _fixedFrameRawFrames.packetCount)
-            .toInt();
-    final limit = effectiveMaxVisiblePoints;
-    if (end - start > limit) {
-      end = start + limit;
-      _setViewport(
-        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
-      );
-    }
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
-
-    _rebuildFixedFrameWindow(start, end - start);
-  }
-
-  void _loadParsedWindowForViewport({bool force = false}) {
-    if (_parsedHistory.isEmpty) return;
-
-    var start = viewport.xMin.floor().clamp(0, _parsedHistory.length).toInt();
-    var end = viewport.xMax.ceil().clamp(start, _parsedHistory.length).toInt();
-    final limit = effectiveMaxVisiblePoints;
-    if (end - start > limit) {
-      end = start + limit;
-      _setViewport(
-        viewport.copyWith(xMin: start.toDouble(), xMax: end.toDouble()),
-      );
-    }
-
-    final currentStart = _visibleStartIndex;
-    final currentEnd = _visibleEndIndex;
-    if (!force && start >= currentStart && end <= currentEnd) return;
-
-    _rebuildParsedWindow(start, end - start);
+    final total = _historyPointCount;
+    if (total <= 0) return;
+    _windowProvider.loadViewport(
+      xMin: viewport.xMin,
+      xMax: viewport.xMax,
+      total: total,
+      materializedPointLimit: effectiveMaterializedPointLimit,
+      allocatedBytes: _estimatedPlotAllocatedBytes,
+      retentionLimitBytes: _plotRetentionLimitBytes,
+      valuesAt:
+          (pointIndex) =>
+              _historyStore.valuesAt(pointIndex, _parserType, _parserConfig),
+      force: force,
+    );
   }
 
   void _loadTailWindow() {
-    switch (_parserType) {
-      case ParserType.zobow:
-        _loadZobowTailWindow();
-        break;
-      case ParserType.fireWater:
-      case ParserType.justFloat:
-        final count =
-            _parsedHistory.length.clamp(0, effectiveMaxVisiblePoints).toInt();
-        final start = _parsedHistory.length - count;
-        _rebuildParsedWindow(start, count);
-        break;
-      case ParserType.fixedFrame:
-        if (_fixedFrameRawFrames.isNotEmpty) {
-          _loadFixedFrameTailWindow();
-        } else {
-          final count =
-              _parsedHistory.length.clamp(0, effectiveMaxVisiblePoints).toInt();
-          final start = _parsedHistory.length - count;
-          _rebuildParsedWindow(start, count);
-        }
-        break;
-    }
+    final total = _historyPointCount;
+    if (total <= 0) return;
+    _windowProvider.loadTail(
+      total: total,
+      materializedPointLimit: effectiveMaterializedPointLimit,
+      allocatedBytes: _estimatedPlotAllocatedBytes,
+      retentionLimitBytes: _plotRetentionLimitBytes,
+      valuesAt:
+          (pointIndex) =>
+              _historyStore.valuesAt(pointIndex, _parserType, _parserConfig),
+    );
   }
 
-  void _rebuildParsedWindow(int start, int count) {
-    _dataPoints.clear();
-    _visibleStartIndex = start;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-    if (count <= 0) return;
-
-    for (int i = 0; i < count; i++) {
-      final pointIndex = start + i;
-      final values = _parsedHistory.valuesAt(pointIndex);
-      _recordObservedValues(values);
-      _dataPoints.add(
-        PlotDataPoint(
-          index: pointIndex,
-          timestamp: pointIndex.toDouble(),
-          values: values,
-        ),
-      );
-    }
-  }
-
-  void _loadZobowTailWindow() {
-    if (_parserType != ParserType.zobow || _zobowRawFrames.isEmpty) return;
-    final count =
-        _zobowRawFrames.packetCount.clamp(0, effectiveMaxVisiblePoints).toInt();
-    final start = _zobowRawFrames.packetCount - count;
-    _rebuildZobowWindow(start, count);
-  }
-
-  void _rebuildZobowWindow(int start, int count) {
-    _dataPoints.clear();
-    _visibleStartIndex = start;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-
-    for (int i = 0; i < count; i++) {
-      final packetIndex = start + i;
-      final frame = _zobowRawFrames.readPacket(packetIndex);
-      final values = ZobowParser.decodeFrameValues(frame, _parserConfig);
-      _recordObservedValues(values);
-      _dataPoints.add(
-        PlotDataPoint(
-          index: packetIndex,
-          timestamp: packetIndex.toDouble(),
-          values: values,
-        ),
-      );
-    }
+  Future<void> _rebuildParsedWindow(int start, int count) {
+    return _rebuildHistoryWindowAsync(start, count);
   }
 
   Future<void> _rebuildZobowWindowAsync(
     int start,
     int count, {
     PlotImportProgressCallback? onProgress,
+  }) {
+    return _rebuildHistoryWindowAsync(start, count, onProgress: onProgress);
+  }
+
+  Future<void> _rebuildHistoryWindowAsync(
+    int start,
+    int count, {
+    PlotImportProgressCallback? onProgress,
   }) async {
-    _dataPoints.clear();
-    _visibleStartIndex = start;
-    _dataRevision++;
-    _invalidateDisplayCaches();
+    final points = <PlotDataPoint>[];
     _resetObservedValueMetadata();
 
     const batchSize = 4096;
-    for (int i = 0; i < count; i++) {
-      final packetIndex = start + i;
-      final frame = _zobowRawFrames.readPacket(packetIndex);
-      final values = ZobowParser.decodeFrameValues(frame, _parserConfig);
+    for (var offset = 0; offset < count; offset++) {
+      final pointIndex = start + offset;
+      final values = _historyStore.valuesAt(
+        pointIndex,
+        _parserType,
+        _parserConfig,
+      );
       _recordObservedValues(values);
-      _dataPoints.add(
+      points.add(
         PlotDataPoint(
-          index: packetIndex,
-          timestamp: packetIndex.toDouble(),
+          index: pointIndex,
+          timestamp: pointIndex.toDouble(),
           values: values,
         ),
       );
-      if ((i + 1) % batchSize == 0 || i + 1 == count) {
+      if ((offset + 1) % batchSize == 0 || offset + 1 == count) {
         onProgress?.call(
-          PlotImportProgress(stage: '刷新绘图窗口', current: i + 1, total: count),
+          PlotImportProgress(
+            stage: '刷新绘图窗口',
+            current: offset + 1,
+            total: count,
+          ),
         );
         await Future<void>.delayed(Duration.zero);
       }
     }
+    _commitMaterializedWindow(start, points);
   }
 
   /// 根据当前解析器类型创建对应的解析器实例
@@ -2164,75 +2908,53 @@ class PlotViewModel extends BaseViewModel {
     }
   }
 
-  // ========== 协议启动初始化数据发送（预留接口，供后续协议扩展） ==========
+  // ========== 发送协议启动初始化 ==========
 
-  /// 协议启动时发送初始化数据
+  /// 绘图启动时按当前发送协议发送初始化数据。
   ///
-  /// 某些协议（如众邦电控）需要在开始绘图前发送配置数据。
+  /// 接收协议由 `_createParser` 创建对应解析器；发送协议只负责在数据源
+  /// 启动前编码并发送设备初始化命令，两者保持独立。
   /// 返回是否发送成功，发送失败会阻止本次绘图启动。
-  bool _sendProtocolInitData() {
+  Future<bool> _sendProtocolInitData() async {
+    final PlotProtocolInitializationResult result;
     switch (effectiveSendProtocolType) {
-      case SendProtocolType.zobowBuiltIn:
-        return _sendJackFourChannelInitData();
-      case SendProtocolType.rProtocol:
-        return _sendRProtocolInitData();
       case SendProtocolType.none:
         return true;
+      case SendProtocolType.zobowBuiltIn:
+        result = await _protocolInitializer.initialize(
+          protocol: zobowDeviceSendProtocol,
+          showInRawData: _showPlotSendDataInRaw,
+          config: ZobowDeviceProtocolInitializationConfig(
+            _parserConfig.zobowChannelIds
+                .take(_parserConfig.zobowChannelCount)
+                .toList(),
+          ),
+        );
+        break;
+      case SendProtocolType.rProtocol:
+        result = await _protocolInitializer.initialize(
+          protocol: rSendProtocol,
+          showInRawData: _showPlotSendDataInRaw,
+          config: RProtocolInitializationConfig(
+            addresses: _normalizedRProtocolAddressesForStartup(),
+            requiredChannelCount:
+                _rProtocolLooseChannelSettings
+                    ? null
+                    : _fixedReceiveChannelCount,
+            loose: _rProtocolLooseChannelSettings,
+          ),
+        );
+        break;
     }
-  }
-
-  bool _sendRProtocolInitData() {
-    if (!serialService.isConnected) {
-      _protocolInitFailureMessage =
-          'r协议初始化失败：串口未连接，无法发送初始化命令。'
-          '已停止绘图，请重新连接串口后重试。';
-      AppLogger().debug(_protocolInitFailureMessage!, category: 'PLOT');
-      return false;
-    }
-    try {
-      final bytes = buildRProtocolCommand(
-        validateRProtocolAddresses(
-          _normalizedRProtocolAddressesForStartup(),
-          requiredCount: _fixedReceiveChannelCount,
-          loose: _rProtocolLooseChannelSettings,
-        ),
-      );
-      serialService.send(
-        bytes,
-        displaySource: SendDisplaySource.plot,
-        displayAsHex: false,
-      );
-      AppLogger().info(
-        'r协议初始化数据已发送: ${utf8.decode(bytes).trim()}',
-        category: 'PLOT',
-      );
-      return true;
-    } on FormatException catch (e) {
-      _protocolInitFailureMessage =
-          'r协议初始化失败：通道地址配置错误，${e.message}。'
-          '请检查地址是否从 Ch0 开始连续填写；空地址会中断发送，0 会按有效地址发送。';
-      AppLogger().error('r协议初始化数据配置错误: $e', category: 'PLOT');
-      return false;
-    } on StateError catch (e) {
-      _protocolInitFailureMessage =
-          'r协议初始化失败：串口发送失败，${e.message}。'
-          '已停止绘图并断开串口，请检查设备连接后重试。';
-      AppLogger().error('r协议初始化数据发送失败: $e', category: 'PLOT');
-      return false;
-    } catch (e) {
-      _protocolInitFailureMessage =
-          'r协议初始化失败：初始化命令发送异常，$e。'
-          '已停止绘图，请检查串口连接和通道地址配置。';
-      AppLogger().error('r协议初始化数据发送失败: $e', category: 'PLOT');
-      return false;
-    }
+    _protocolInitFailureMessage = result.failureMessage;
+    return result.succeeded;
   }
 
   List<String> _normalizedRProtocolAddressesForStartup() {
     if (!_rProtocolLooseChannelSettings) {
       return _sendProtocolConfig.rChannelAddresses;
     }
-    final compacted = compactRProtocolAddresses(
+    final compacted = rSendProtocol.compactAddresses(
       _sendProtocolConfig.rChannelAddresses,
     );
     var changed =
@@ -2254,1488 +2976,26 @@ class PlotViewModel extends BaseViewModel {
   }
 
   int _rContinuousAddressCount({bool throwOnGap = true}) {
-    int count = 0;
-    bool foundEmpty = false;
-    for (final text in _sendProtocolConfig.rChannelAddresses) {
-      final address = text.trim();
-      if (address.isEmpty) {
-        foundEmpty = true;
-        continue;
-      }
-      final value = parseRProtocolAddress(address);
-      if (value == null || value < 0) {
-        if (throwOnGap) {
-          throw FormatException('r协议地址无效: $text');
-        }
-        break;
-      }
-      if (foundEmpty) {
-        if (throwOnGap) {
-          throw const FormatException('r协议地址必须从 Ch0 开始连续填写，中间不能留空');
-        }
-        break;
-      }
-      count++;
-    }
-    return count;
-  }
-
-  static List<String> validateRProtocolAddresses(
-    List<String> addresses, {
-    int? requiredCount,
-    bool loose = false,
-  }) {
-    if (loose) {
-      return validateRProtocolAddresses(compactRProtocolAddresses(addresses));
-    }
-    if (requiredCount != null) {
-      final requiredAddresses =
-          addresses.take(requiredCount).map((address) {
-            final text = address.trim();
-            final value = parseRProtocolAddress(text);
-            if (value == null || value < 0) {
-              throw FormatException('r协议地址无效或未填写: $address');
-            }
-            return text;
-          }).toList();
-      if (requiredAddresses.length < requiredCount) {
-        throw FormatException(
-          'r协议地址数量不足：接收协议需要 $requiredCount 个通道，'
-          '当前仅填写 ${requiredAddresses.length} 个',
-        );
-      }
-      return requiredAddresses;
-    }
-    final continuousAddresses = <String>[];
-    bool foundEmpty = false;
-    for (final rawAddress in addresses) {
-      final address = rawAddress.trim();
-      final value = parseRProtocolAddress(address);
-      if (address.isEmpty) {
-        foundEmpty = true;
-        continue;
-      }
-      if (value == null || value < 0) {
-        throw FormatException('r协议地址无效: $rawAddress');
-      }
-      if (foundEmpty) {
-        throw const FormatException('r协议地址必须从 Ch0 开始连续填写，中间不能留空');
-      }
-      continuousAddresses.add(address);
-    }
-    if (continuousAddresses.isEmpty) {
-      throw const FormatException('r协议至少需要填写一个通道地址');
-    }
-    if (requiredCount != null && continuousAddresses.length < requiredCount) {
-      throw FormatException(
-        'r协议地址数量不足：接收协议需要 $requiredCount 个通道，'
-        '当前仅填写 ${continuousAddresses.length} 个',
-      );
-    }
-    return continuousAddresses
-        .take(requiredCount ?? continuousAddresses.length)
-        .toList();
+    return rSendProtocol.continuousAddressCount(
+      _sendProtocolConfig.rChannelAddresses,
+      throwOnGap: throwOnGap,
+    );
   }
 
   int _rConfiguredAddressCount() {
-    var count = 0;
-    for (final text in _sendProtocolConfig.rChannelAddresses) {
-      final address = text.trim();
-      if (address.isEmpty) continue;
-      final value = parseRProtocolAddress(address);
-      if (value == null || value < 0) continue;
-      count++;
-    }
-    return count;
-  }
-
-  static List<String> compactRProtocolAddresses(List<String> addresses) {
-    final compacted = <String>[];
-    for (final rawAddress in addresses) {
-      final address = rawAddress.trim();
-      if (address.isEmpty) continue;
-      final value = parseRProtocolAddress(address);
-      if (value == null || value < 0) {
-        throw FormatException('r协议地址无效: $rawAddress');
-      }
-      compacted.add(address);
-    }
-    if (compacted.isEmpty) {
-      throw const FormatException('r协议至少需要填写一个通道地址');
-    }
-    final limited = compacted.take(SendProtocolConfig.maxChannelCount).toList();
-    return [
-      ...limited,
-      ...List.filled(
-        math.max(0, SendProtocolConfig.maxChannelCount - limited.length),
-        '',
-      ),
-    ];
-  }
-
-  static int? parseRProtocolAddress(String text) {
-    return AddressChannelPreset.tryParseAddress(
-      name: '',
-      text: text,
-      protocolType: AddressProfileProtocolType.rProtocol,
-    )?.address;
-  }
-
-  static Uint8List buildRProtocolCommand(List<String> addresses) {
-    if (addresses.isEmpty) {
-      throw ArgumentError.value(addresses, 'addresses', 'must not be empty');
-    }
-    final normalized = <String>[];
-    for (final address in addresses) {
-      final text = address.trim();
-      final value = parseRProtocolAddress(text);
-      if (value == null || value < 0) {
-        throw FormatException('无效的 r 协议地址: $address');
-      }
-      normalized.add(text);
-    }
-    return Uint8List.fromList(utf8.encode('r ${normalized.join(' ')}\n'));
-  }
-
-  /// 发送 众邦电控初始化数据
-  ///
-  /// 格式：18字节
-  /// 前16字节为4个通道号（小端序uint32），后2字节为前16字节的CRC16/MODBUS（小端序）
-  bool _sendJackFourChannelInitData() {
-    // 串口未连接时不发送初始化数据
-    if (!serialService.isConnected) {
-      AppLogger().debug('串口未连接，跳过众邦电控初始化数据发送', category: 'PLOT');
-      return false;
-    }
-
-    try {
-      final bytes = buildZobowInitFrame(
-        _parserConfig.zobowChannelIds
-            .take(_parserConfig.zobowChannelCount)
-            .toList(),
-      );
-      serialService.send(
-        bytes,
-        displaySource: SendDisplaySource.plot,
-        displayAsHex: true,
-      );
-
-      AppLogger().info('众邦电控初始化数据已发送: ${_bytesToHex(bytes)}', category: 'PLOT');
-      return true;
-    } catch (e) {
-      AppLogger().error('众邦电控初始化数据发送失败: $e', category: 'PLOT');
-      return false;
-    }
-  }
-
-  /// 构造众邦电控初始化帧。
-  ///
-  /// 通道号使用 uint32 little-endian 编码，CRC 覆盖全部通道号字节。
-  static Uint8List buildZobowInitFrame(List<int> channelIds) {
-    if (channelIds.length != 4 && channelIds.length != 8) {
-      throw ArgumentError.value(
-        channelIds,
-        'channelIds',
-        'must contain 4 or 8 ids',
-      );
-    }
-
-    final dataLength = channelIds.length * 4;
-    final bytes = Uint8List(dataLength + 2);
-    final buffer = ByteData.sublistView(bytes);
-    for (int i = 0; i < channelIds.length; i++) {
-      buffer.setUint32(i * 4, channelIds[i] & 0xFFFFFFFF, Endian.little);
-    }
-
-    final dataBytes = Uint8List.sublistView(bytes, 0, dataLength);
-    final crc = calculateCrc(dataBytes, crc16Polys['CRC-16/MODBUS']!);
-    bytes[dataLength] = crc & 0xFF;
-    bytes[dataLength + 1] = (crc >> 8) & 0xFF;
-    return bytes;
+    return rSendProtocol.configuredAddressCount(
+      _sendProtocolConfig.rChannelAddresses,
+    );
   }
 
   void _resetZobowRawFrameBuffer() {
-    _zobowRawFrames = FixedPacketByteBuffer(
-      packetSize: ZobowParser.frameLengthForConfig(_parserConfig),
+    _historyStore.resetZobowFrames(
+      ZobowParser.frameLengthForConfig(_parserConfig),
     );
   }
 
-  /// 字节转16进制字符串（用于日志）
   void _resetFixedFrameRawFrameBuffer() {
-    _fixedFrameRawFrames = FixedPacketByteBuffer(
-      packetSize: _parserConfig.totalFrameLength,
-    );
-  }
-
-  String _bytesToHex(Uint8List bytes) {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
-  }
-
-  // ========== 视口控制（带历史记录） ==========
-  /// 保存当前视口到历史记录栈（用于撤回）
-  void _saveViewport() {
-    _viewportHistory.add(viewport.copy());
-    if (_viewportHistory.length > _maxHistory) {
-      _viewportHistory.removeAt(0);
-    }
-  }
-
-  /// 更新视口并保存到历史记录
-  ///
-  /// [fromDrag] 为 true 时表示来自用户拖动交互，跳过配置保存和
-  /// 历史记录，避免频繁文件写入导致的卡顿。拖动结束后再统一保存。
-  void updateViewport(PlotViewport newViewport, {bool fromDrag = false}) {
-    // 保存当前的偏移通道列宽，避免 copy() 丢失
-    final offsetAxisColumnWidths = viewport.offsetAxisColumnWidths;
-    if (fromDrag && _followEnabled) {
-      _followEnabled = false;
-    }
-    if (!fromDrag) {
-      _saveViewport();
-    }
-    _setViewport(_limitXRange(newViewport, previous: viewport).copy());
-    viewport.setOffsetAxisColumnWidths(offsetAxisColumnWidths);
-    if (!fromDrag) {
-      _loadWindowForViewport();
-    }
-    _refreshSnapHighlightColors();
-    if (!fromDrag) {
-      _saveSettings();
-      AppLogger().trace(
-        'updateViewport: xMin=${viewport.xMin.toStringAsFixed(1)} | fromDrag=$fromDrag',
-        category: 'PLOT',
-      );
-    }
-    if (fromDrag) {
-      // 拖动时同步通知，避免微任务堆积
-      notifyListeners();
-    } else {
-      Future.microtask(() => notifyListeners());
-    }
-  }
-
-  /// 拖动结束后保存视口配置
-  ///
-  /// 在 PlotGestureHandler._handlePointerUp 中调用，将拖动期间的
-  /// 最终视口保存到配置和历史记录。
-  void saveDragViewport() {
-    _saveViewport();
-    _loadWindowForViewport();
-    _refreshSnapHighlightColors();
-    _saveSettings();
-    AppLogger().trace(
-      'saveDragViewport: xMin=${viewport.xMin.toStringAsFixed(1)}',
-      category: 'PLOT',
-    );
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 重置视口到默认值并保存历史记录
-  void resetViewport() {
-    _saveViewport();
-    _setViewport(viewport.reset());
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 撤回上次缩放
-  void undoZoom() {
-    if (_viewportHistory.isEmpty) return;
-    final previous = _viewportHistory.removeLast();
-    _setViewport(_limitXRange(previous).copy());
-    _loadWindowForViewport();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  PlotViewport _limitXRange(PlotViewport candidate, {PlotViewport? previous}) {
-    final limit = effectiveMaxVisiblePoints;
-    if (candidate.xRange <= limit) return candidate;
-    if (previous != null && previous.xRange >= limit) {
-      return previous;
-    }
-    return candidate.copyWith(xMax: candidate.xMin + limit);
-  }
-
-  PlotViewport _followViewportForLatestIndex(double latestIndex) {
-    final range = viewport.xRange;
-    final ratio = _followPositionRatio.clamp(0.5, 0.95);
-    return viewport.copyWith(
-      xMin: latestIndex - range * ratio,
-      xMax: latestIndex + range * (1 - ratio),
-    );
-  }
-
-  double _latestFollowIndex() {
-    if (_dataPoints.isNotEmpty) return _dataPoints.last.index.toDouble();
-    if (_nextIndex > 0) return (_nextIndex - 1).toDouble();
-    return _nextIndex.toDouble();
-  }
-
-  (double, double) _fitYRange(double minY, double maxY) {
-    final dataRange = maxY - minY;
-    final displayRatio = _yFitDisplayRatio.clamp(0.5, 0.95);
-    final targetRange = dataRange / displayRatio;
-    final padding = (targetRange - dataRange) / 2;
-    return (minY - padding, maxY + padding);
-  }
-
-  /// X 轴放大
-  void zoomXIn() {
-    _saveViewport();
-    final centerX = viewport.xMin + viewport.xRange / 2;
-    _setViewport(
-      _limitXRange(viewport.zoomX(0.8, centerX), previous: viewport),
-    );
-    _loadWindowForViewport();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// X 轴缩小
-  void zoomXOut() {
-    _saveViewport();
-    final centerX = viewport.xMin + viewport.xRange / 2;
-    _setViewport(
-      _limitXRange(viewport.zoomX(1.25, centerX), previous: viewport),
-    );
-    _loadWindowForViewport();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// Y 轴放大
-  void zoomYIn() {
-    _saveViewport();
-    final centerY = viewport.yMin + viewport.yRange / 2;
-    _setViewport(viewport.zoomY(0.8, centerY));
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// Y 轴缩小
-  void zoomYOut() {
-    _saveViewport();
-    final centerY = viewport.yMin + viewport.yRange / 2;
-    _setViewport(viewport.zoomY(1.25, centerY));
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置框选放大开关
-  void setBoxZoomEnabled(bool value) {
-    _boxZoomEnabled = value;
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// Y轴自适应：保持X轴不变，调整Y轴使屏幕内所有数据可见
-  void fitYAxis() {
-    if (_historyPointCount > 0) {
-      _loadWindowForViewport(force: true);
-    }
-    if (_dataPoints.isEmpty) return;
-    final visiblePoints =
-        displayDataPoints.where((p) {
-          return p.index >= viewport.xMin && p.index <= viewport.xMax;
-        }).toList();
-    if (visiblePoints.isEmpty) return;
-
-    double minY = double.infinity;
-    double maxY = double.negativeInfinity;
-    final currentChannels = displayChannels;
-    for (final point in visiblePoints) {
-      for (
-        int i = 0;
-        i < point.values.length && i < currentChannels.length;
-        i++
-      ) {
-        if (!currentChannels[i].visible) continue;
-        if (currentChannels[i].offsetEnabled) continue;
-        if (!point.values[i].isFinite) continue;
-        final v =
-            point.values[i] * currentChannels[i].yScale +
-            currentChannels[i].yOffset;
-        if (v < minY) minY = v;
-        if (v > maxY) maxY = v;
-      }
-    }
-
-    _saveViewport();
-    var changed = false;
-    if (minY != double.infinity && maxY != double.negativeInfinity) {
-      if (minY == maxY) {
-        showStatusMessage('Y轴数据范围为0，跳过默认Y轴自适应');
-      } else {
-        final (yMin, yMax) = _fitYRange(minY, maxY);
-        _setViewport(viewport.copyWith(yMin: yMin, yMax: yMax));
-        changed = true;
-      }
-    }
-
-    changed = _fitOffsetChannelsY(visiblePoints) || changed;
-    if (!changed) return;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// X轴自适应：保持Y轴不变，调整X轴使所有数据可见
-  void fitXAxis() {
-    if (_nextIndex <= 3) {
-      showStatusMessage('X轴数据点过少，跳过自适应');
-      return;
-    }
-    final maxX = _nextIndex.toDouble();
-    final minX = (maxX - effectiveMaxVisiblePoints).clamp(0, maxX).toDouble();
-
-    _saveViewport();
-    _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
-    _loadTailWindow();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void _loadFixedFrameTailWindow() {
-    if (_fixedFrameRawFrames.isEmpty) return;
-    final count =
-        _fixedFrameRawFrames.packetCount
-            .clamp(0, effectiveMaxVisiblePoints)
-            .toInt();
-    final start = _fixedFrameRawFrames.packetCount - count;
-    _rebuildFixedFrameWindow(start, count);
-  }
-
-  void _rebuildFixedFrameWindow(int start, int count) {
-    _dataPoints.clear();
-    _visibleStartIndex = start;
-    _dataRevision++;
-    _invalidateDisplayCaches();
-    _resetObservedValueMetadata();
-
-    for (int i = 0; i < count; i++) {
-      final packetIndex = start + i;
-      final frame = _fixedFrameRawFrames.readPacket(packetIndex);
-      final values = FixedFrameParser.decodeFrameValues(frame, _parserConfig);
-      _recordObservedValues(values);
-      _dataPoints.add(
-        PlotDataPoint(
-          index: packetIndex,
-          timestamp: packetIndex.toDouble(),
-          values: values,
-        ),
-      );
-    }
-  }
-
-  /// 全自适应：调整X和Y使所有可见通道数据完全显示
-  void fitAll() {
-    if (_nextIndex <= 3) {
-      showStatusMessage('X轴数据点过少，跳过自适应');
-      return;
-    }
-
-    _loadTailWindow();
-
-    // X范围
-    final maxX = _nextIndex.toDouble();
-    final minX = (maxX - effectiveMaxVisiblePoints).clamp(0, maxX).toDouble();
-
-    // Y范围（只计算可见通道）
-    double minY = double.infinity;
-    double maxY = double.negativeInfinity;
-    final currentData = displayDataPoints;
-    final currentChannels = displayChannels;
-    for (final point in currentData) {
-      for (
-        int i = 0;
-        i < point.values.length && i < currentChannels.length;
-        i++
-      ) {
-        if (!currentChannels[i].visible) continue;
-        if (currentChannels[i].offsetEnabled) continue;
-        if (!point.values[i].isFinite) continue;
-        final v =
-            point.values[i] * currentChannels[i].yScale +
-            currentChannels[i].yOffset;
-        if (v < minY) minY = v;
-        if (v > maxY) maxY = v;
-      }
-    }
-
-    _saveViewport();
-    if (minY != double.infinity && maxY != double.negativeInfinity) {
-      if (minY == maxY) {
-        _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
-        showStatusMessage('默认Y轴数据范围为0，仅自适应X轴');
-      }
-      if (minY != maxY) {
-        final (yMin, yMax) = _fitYRange(minY, maxY);
-        _setViewport(
-          viewport.copyWith(xMin: minX, xMax: maxX, yMin: yMin, yMax: yMax),
-        );
-      }
-    } else {
-      _setViewport(viewport.copyWith(xMin: minX, xMax: maxX));
-    }
-    _fitOffsetChannelsY(currentData);
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  bool _fitOffsetChannelsY(Iterable<PlotDataPoint> points) {
-    final valuesByTarget = <int, (double, double)>{};
-    final representativeByTarget = <int, int>{};
-    final groupIdByTarget = <int, int?>{};
-    final currentChannels = displayChannels;
-    final activeLimit = displayActiveChannelCount;
-    for (final point in points) {
-      for (
-        int i = 0;
-        i < point.values.length &&
-            i < currentChannels.length &&
-            i < activeLimit;
-        i++
-      ) {
-        final channel = currentChannels[i];
-        if (!channel.visible || !channel.offsetEnabled) continue;
-        final value = point.values[i];
-        if (!value.isFinite) continue;
-        final groupId = channel.offsetBindingGroupId;
-        final targetKey = groupId ?? (-channel.index - 1);
-        representativeByTarget.putIfAbsent(targetKey, () => i);
-        groupIdByTarget.putIfAbsent(targetKey, () => groupId);
-        final current = valuesByTarget[targetKey];
-        if (current == null) {
-          valuesByTarget[targetKey] = (value, value);
-        } else {
-          valuesByTarget[targetKey] = (
-            value < current.$1 ? value : current.$1,
-            value > current.$2 ? value : current.$2,
-          );
-        }
-      }
-    }
-
-    var changed = false;
-    final marginRatio = (1 - _yFitDisplayRatio.clamp(0.5, 0.95)) / 2;
-    final targetMin = viewport.yMin + viewport.yRange * marginRatio;
-    final targetMax = viewport.yMax - viewport.yRange * marginRatio;
-    final targetRange = targetMax - targetMin;
-    if (targetRange <= 0) return false;
-
-    for (final entry in valuesByTarget.entries) {
-      final minY = entry.value.$1;
-      final maxY = entry.value.$2;
-      final channelIndex = representativeByTarget[entry.key];
-      if (channelIndex == null || channelIndex >= currentChannels.length) {
-        continue;
-      }
-      final groupId = groupIdByTarget[entry.key];
-      final channel = currentChannels[channelIndex];
-      late final double nextScale;
-      late final double nextOffset;
-      if (minY == maxY) {
-        nextScale = 1.0;
-        nextOffset = (targetMin + targetMax) / 2 - minY;
-      } else {
-        nextScale = targetRange / (maxY - minY);
-        nextOffset = targetMin - minY * nextScale;
-      }
-      if (groupId == null) {
-        channel.yScale = nextScale;
-        channel.yOffset = nextOffset;
-      } else {
-        _setOffsetBindingGroupTransform(
-          groupId,
-          scale: nextScale,
-          offset: nextOffset,
-        );
-      }
-      changed = true;
-    }
-
-    return changed;
-  }
-
-  /// 设置跟随开关
-  void setFollowEnabled(bool value) {
-    _followEnabled = value;
-    if (value && _historyPointCount > 0) {
-      _setViewport(_followViewportForLatestIndex(_latestFollowIndex()));
-      _loadTailWindow();
-    }
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置单垂直光标开关
-  ///
-  /// 光标开关为临时功能，不保存到配置。
-  void setVCursorEnabled(bool value) {
-    _vCursorEnabled = value;
-    _cursor = null;
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  // ========== 通道控制 ==========
-  void setOffsetBindingGroup(int index, Set<int> selectedIndices) {
-    final primary = displayChannelByIndex(index);
-    if (primary == null || !primary.visible || !primary.offsetEnabled) return;
-
-    final selected = <int>{index};
-    for (final candidate in offsetBindingCandidates(index)) {
-      if (selectedIndices.contains(candidate.index)) {
-        selected.add(candidate.index);
-      }
-    }
-
-    if (selected.length < 2) {
-      clearOffsetBinding(index);
-      return;
-    }
-
-    final oldPrimaryGroupId = primary.offsetBindingGroupId;
-    final newGroupId = oldPrimaryGroupId ?? _nextOffsetBindingGroupId++;
-    final primaryScale = primary.yScale;
-    final primaryOffset = primary.yOffset;
-
-    for (final channel in displayChannels) {
-      final wasInPrimaryGroup =
-          oldPrimaryGroupId != null &&
-          channel.offsetBindingGroupId == oldPrimaryGroupId;
-      if (selected.contains(channel.index)) {
-        channel.offsetBindingGroupId = newGroupId;
-        channel.yScale = primaryScale;
-        channel.yOffset = primaryOffset;
-      } else if (wasInPrimaryGroup) {
-        channel.offsetBindingGroupId = null;
-      }
-    }
-
-    _cleanupOffsetBindingGroups();
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void clearOffsetBinding(int index) {
-    final channel = displayChannelByIndex(index);
-    final groupId = channel?.offsetBindingGroupId;
-    if (groupId == null) return;
-    for (final member in displayChannels) {
-      if (member.offsetBindingGroupId == groupId) {
-        member.offsetBindingGroupId = null;
-      }
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void _cleanupOffsetBindingGroups() {
-    final counts = <int, int>{};
-    for (final channel in displayChannels) {
-      final groupId = channel.offsetBindingGroupId;
-      if (groupId == null) continue;
-      if (!channel.visible || !channel.offsetEnabled) {
-        channel.offsetBindingGroupId = null;
-        continue;
-      }
-      counts[groupId] = (counts[groupId] ?? 0) + 1;
-    }
-    for (final channel in displayChannels) {
-      final groupId = channel.offsetBindingGroupId;
-      if (groupId != null && (counts[groupId] ?? 0) < 2) {
-        channel.offsetBindingGroupId = null;
-      }
-    }
-  }
-
-  void _setOffsetBindingGroupOffset(int groupId, double offset) {
-    for (final channel in displayChannels) {
-      if (channel.offsetBindingGroupId == groupId) {
-        channel.yOffset = offset;
-      }
-    }
-  }
-
-  void _setOffsetBindingGroupScale(int groupId, double scale) {
-    for (final channel in displayChannels) {
-      if (channel.offsetBindingGroupId == groupId) {
-        channel.yScale = scale;
-      }
-    }
-  }
-
-  void _setOffsetBindingGroupTransform(
-    int groupId, {
-    required double scale,
-    required double offset,
-  }) {
-    for (final channel in displayChannels) {
-      if (channel.offsetBindingGroupId == groupId) {
-        channel.yScale = scale;
-        channel.yOffset = offset;
-      }
-    }
-  }
-
-  /// 设置通道可见性
-  void setChannelVisible(int index, bool visible) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].visible = visible;
-    if (!visible) {
-      channels[index].offsetBindingGroupId = null;
-      _cleanupOffsetBindingGroups();
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道颜色
-  void setChannelColor(int index, Color color) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].color = color;
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道是否显示连线
-  void setChannelShowLine(int index, bool show) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].showLine = show;
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道点半径
-  void setChannelPointSize(int index, double size) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].pointSize = size.clamp(0.5, 12.0);
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道线宽
-  void setChannelLineWidth(int index, double width) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].lineWidth = width.clamp(0.5, 8.0);
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 一键设置所有通道的显示状态
-  void setAllChannelsVisible(bool visible) {
-    for (final ch in channels) {
-      ch.visible = visible;
-      if (!visible) ch.offsetBindingGroupId = null;
-    }
-    for (final channel in mathChannels) {
-      if (channel.enabled) channel.display.visible = visible;
-      if (!visible) channel.display.offsetBindingGroupId = null;
-    }
-    if (!visible) _cleanupOffsetBindingGroups();
-    _markChannelConfigChanged();
-    _invalidateDisplayCaches();
-    Future.microtask(() => notifyListeners());
-  }
-
-  MathChannelConfig? firstAvailableMathChannel() {
-    for (final channel in mathChannels) {
-      if (!channel.enabled) return channel;
-    }
-    return null;
-  }
-
-  String? validateMathExpression(String expression) {
-    final trimmed = expression.trim();
-    if (trimmed.isEmpty) return '表达式不能为空';
-    try {
-      MathExpression.parse(trimmed);
-      return null;
-    } catch (e) {
-      return e is FormatException ? e.message : '表达式格式错误';
-    }
-  }
-
-  bool enableMathChannel(int index, String expression) {
-    if (index < 0 || index >= mathChannels.length) return false;
-    return configureMathChannel(index, expression, mathChannels[index].display);
-  }
-
-  bool configureMathChannel(
-    int index,
-    String expression,
-    ChannelConfig display,
-  ) {
-    if (index < 0 || index >= mathChannels.length) return false;
-    final error = validateMathExpression(expression);
-    if (error != null) {
-      showStatusMessage(error);
-      return false;
-    }
-    final channel = mathChannels[index];
-    channel.enabled = true;
-    channel.expression = expression.trim();
-    channel.display = display.copyWith(alias: channel.name);
-    channel.display.visible = true;
-    _compileMathChannel(channel);
-    _invalidateDisplayCaches();
-    _rebuildObservedRawValueMetadata();
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-    return true;
-  }
-
-  void updateMathChannelDisplay(int index, ChannelConfig display) {
-    if (index < 0 || index >= mathChannels.length) return;
-    mathChannels[index].display = display.copyWith(
-      alias: mathChannels[index].name,
-    );
-    if (!mathChannels[index].display.visible ||
-        !mathChannels[index].display.offsetEnabled) {
-      mathChannels[index].display.offsetBindingGroupId = null;
-      _cleanupOffsetBindingGroups();
-    }
-    _invalidateDisplayChannelCaches();
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void disableMathChannel(int index) {
-    if (index < 0 || index >= mathChannels.length) return;
-    final old = mathChannels[index];
-    old.display.offsetBindingGroupId = null;
-    mathChannels[index] = MathChannelConfig(index: old.index);
-    _cleanupOffsetBindingGroups();
-    _compiledMathExpressions.remove(index);
-    _invalidateDisplayCaches();
-    _rebuildObservedRawValueMetadata();
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void resetMathChannel(int index) {
-    disableMathChannel(index);
-  }
-
-  bool resetAllChannels() {
-    if (_isPlotting || _isStopping) {
-      showStatusMessage('请停止绘图后再重置全部通道');
-      return false;
-    }
-
-    for (int i = 0; i < channels.length; i++) {
-      channels[i] = ChannelConfig(
-        index: i,
-        color: ChannelConfig.colorForIndex(i, _plotBackground),
-      );
-    }
-    for (int i = 0; i < mathChannels.length; i++) {
-      mathChannels[i] = MathChannelConfig(index: i);
-    }
-    _invalidateDisplayCaches();
-    _cleanupOffsetBindingGroups();
-    _compiledMathExpressions.clear();
-    _sendProtocolConfig.rChannelAddresses = List.filled(
-      SendProtocolConfig.maxChannelCount,
-      '',
-    );
-    _parserConfig.zobowChannelIds = List.generate(
-      ParserConfig.maxZobowChannelCount,
-      (index) => index + 1,
-    );
-    _parserConfig.zobowChannelTypes = List.filled(
-      ParserConfig.maxZobowChannelCount,
-      DataType.int16,
-    );
-    _parserConfig.fixedFrameChannelTypes = List.filled(
-      SendProtocolConfig.maxChannelCount,
-      DataType.uint16,
-    );
-    _rebuildObservedRawValueMetadata();
-    _refreshSnapHighlightColors();
-    _markChannelConfigChanged();
-    _saveSettings();
-    AppLogger().info('已重置全部通道设置', category: 'PLOT');
-    Future.microtask(() => notifyListeners());
-    return true;
-  }
-
-  /// 设置通道别名
-  void setChannelAlias(int index, String alias) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].alias = alias;
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道 Y 轴偏移
-  void setChannelYOffset(int index, double offset) {
-    if (index >= 16 && index < 16 + mathChannels.length) {
-      final mathChannel = mathChannels[index - 16];
-      final groupId = mathChannel.display.offsetBindingGroupId;
-      if (groupId != null) {
-        _setOffsetBindingGroupOffset(groupId, offset);
-      } else {
-        mathChannel.display.yOffset = offset;
-      }
-      _invalidateDisplayChannelCaches();
-      _markChannelConfigChanged();
-      Future.microtask(() => notifyListeners());
-      return;
-    }
-    if (index < 0 || index >= channels.length) return;
-    final groupId = channels[index].offsetBindingGroupId;
-    if (groupId != null) {
-      _setOffsetBindingGroupOffset(groupId, offset);
-    } else {
-      channels[index].yOffset = offset;
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道偏移功能开关
-  void setChannelOffsetEnabled(int index, bool enabled) {
-    if (index < 0 || index >= channels.length) return;
-    channels[index].offsetEnabled = enabled;
-    if (!enabled) {
-      // 关闭偏置时，偏移和缩放都归位
-      channels[index].yOffset = 0;
-      channels[index].yScale = 1.0;
-      channels[index].offsetBindingGroupId = null;
-      _cleanupOffsetBindingGroups();
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置通道 Y 轴缩放
-  void setChannelYScale(int index, double scale) {
-    if (index < 0 || index >= channels.length) return;
-    final groupId = channels[index].offsetBindingGroupId;
-    if (groupId != null) {
-      _setOffsetBindingGroupScale(groupId, scale);
-    } else {
-      channels[index].yScale = scale;
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 缩放通道 Y 轴（滚轮缩放，按比例调整）
-  void zoomChannelYScale(int index, double scaleDelta) {
-    if (index >= 16 && index < 16 + mathChannels.length) {
-      final display = mathChannels[index - 16].display;
-      final newScale = (display.yScale * scaleDelta).clamp(0.001, 1000.0);
-      final groupId = display.offsetBindingGroupId;
-      if (groupId != null) {
-        _setOffsetBindingGroupScale(groupId, newScale);
-      } else {
-        display.yScale = newScale;
-      }
-      _invalidateDisplayChannelCaches();
-      _markChannelConfigChanged();
-      Future.microtask(() => notifyListeners());
-      return;
-    }
-    if (index < 0 || index >= channels.length) return;
-    final newScale = (channels[index].yScale * scaleDelta).clamp(0.001, 1000.0);
-    final groupId = channels[index].offsetBindingGroupId;
-    if (groupId != null) {
-      _setOffsetBindingGroupScale(groupId, newScale);
-    } else {
-      channels[index].yScale = newScale;
-    }
-    _markChannelConfigChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置 众邦电控的通道号
-  void setZobowChannelId(int index, int channelId) {
-    if (_isPlotting || _isStopping) return;
-    if (index < 0 || index >= _parserConfig.zobowChannelCount) return;
-    _parserConfig.zobowChannelIds[index] = channelId & 0xFFFFFFFF;
-    if (index < channels.length) {
-      channels[index].alias = '';
-    }
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置 众邦电控的通道数据类型，并重新解释已缓存的原始帧。
-  Future<bool> setZobowChannelType(
-    int index,
-    DataType type, {
-    PlotImportProgressCallback? onProgress,
-  }) async {
-    if (index < 0 || index >= _parserConfig.zobowChannelCount) return false;
-    if (type != DataType.uint16 && type != DataType.int16) return false;
-    if (_isPlotting || _isStopping) {
-      showStatusMessage('请停止绘图后再修改众邦通道数据类型');
-      return false;
-    }
-    if (index < channels.length) {
-      channels[index].dataType = type;
-    }
-    _markChannelConfigChanged();
-    _resetObservedValueMetadata();
-    if (_parserConfig.zobowChannelTypes[index] == type) return true;
-
-    _parserConfig.zobowChannelTypes[index] = type;
-    _saveSettings();
-
-    final total = _zobowRawFrames.packetCount;
-    if (total > 0) {
-      final visibleStart = _visibleStartIndex;
-      final visibleCount = _dataPoints.length;
-      final stopwatch = Stopwatch()..start();
-      _lodIndex.clear();
-
-      const batchSize = 4096;
-      for (int packetIndex = 0; packetIndex < total; packetIndex++) {
-        final frame = _zobowRawFrames.readPacket(packetIndex);
-        _lodIndex.add(
-          packetIndex,
-          ZobowParser.decodeFrameValues(frame, _parserConfig),
-        );
-        if ((packetIndex + 1) % batchSize == 0 || packetIndex + 1 == total) {
-          onProgress?.call(
-            PlotImportProgress(
-              stage: '重新解释众邦数据',
-              current: packetIndex + 1,
-              total: total,
-            ),
-          );
-          await Future<void>.delayed(Duration.zero);
-        }
-      }
-
-      await _rebuildZobowWindowAsync(
-        visibleStart,
-        visibleCount,
-        onProgress: onProgress,
-      );
-      AppLogger().info(
-        '众邦通道类型转换完成: $total 帧, ${stopwatch.elapsedMilliseconds}ms',
-        category: 'PLOT',
-      );
-    }
-
-    Future.microtask(() => notifyListeners());
-    return true;
-  }
-
-  Future<bool> setFixedFrameChannelType(int index, DataType type) async {
-    if (index < 0 || index >= _parserConfig.channelCount) return false;
-    if (_isPlotting || _isStopping) {
-      showStatusMessage('请停止绘图后再修改固定帧通道数据类型');
-      return false;
-    }
-    channels[index].dataType = type;
-    _markChannelConfigChanged();
-    _resetObservedValueMetadata();
-    if (_parserConfig.fixedFrameChannelTypes[index] == type) return true;
-
-    _parserConfig.fixedFrameChannelTypes[index] = type;
-    _saveSettings();
-    _resetFixedFrameRawFrameBuffer();
-    clearData();
-    Future.microtask(() => notifyListeners());
-    return true;
-  }
-
-  // ========== 显示控制 ==========
-  /// 设置网格显示开关
-  void setShowGrid(bool show) {
-    _showGrid = show;
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置 UI 刷新帧率（30~60 fps）
-  void setRefreshFps(int fps) {
-    _refreshFps = fps.clamp(30, 60);
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setSnapHighlightEnabled(bool value) {
-    if (_snapHighlightEnabled == value) return;
-    _snapHighlightEnabled = value;
-    _markOverlayChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setSnapHighlightDiameter(double value) {
-    final next = value.clamp(6.0, 12.0).toDouble();
-    if ((_snapHighlightDiameter - next).abs() < 1e-9) return;
-    _snapHighlightDiameter = next;
-    _markOverlayChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setSnapHighlightColorMode(String value) {
-    final next = value == 'channel' ? 'channel' : 'cursor';
-    if (_snapHighlightColorMode == next) return;
-    _snapHighlightColorMode = next;
-    _refreshSnapHighlightColors();
-    _markOverlayChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setStatsToolbarEnabled(bool value) {
-    if (_statsToolbarEnabled == value) return;
-    _statsToolbarEnabled = value;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setFollowPositionRatio(double value) {
-    final next = value.clamp(0.5, 0.95).toDouble();
-    if ((_followPositionRatio - next).abs() < 1e-9) return;
-    _followPositionRatio = next;
-    if (_followEnabled && _historyPointCount > 0) {
-      _setViewport(_followViewportForLatestIndex(_latestFollowIndex()));
-      _loadWindowForViewport(force: true);
-    }
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setYFitDisplayRatio(double value) {
-    final next = value.clamp(0.5, 0.95).toDouble();
-    if ((_yFitDisplayRatio - next).abs() < 1e-9) return;
-    _yFitDisplayRatio = next;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置绘图界面字体大小偏移（-3~+6，基于默认字号）
-  void setPlotFontSizeDelta(int delta) {
-    _plotFontSizeDelta = delta.clamp(-3, 6);
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置绘图窗口点数上限（1000000~40000000）
-  void setMaxVisiblePoints(int points) {
-    final next = points.clamp(minVisiblePoints, maxVisiblePointsLimit).toInt();
-    if (next == _maxVisiblePoints) return;
-    _maxVisiblePoints = next;
-
-    if (_historyPointCount > 0) {
-      _setViewport(_limitXRange(viewport).copy());
-      _loadWindowForViewport(force: true);
-    }
-
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置每次开始绘图时丢弃的前置有效数据包数量。
-  ///
-  /// 该设置只影响下一次 startPlotting 后新进入解析链的数据，不处理导入文件。
-  void setDiscardInitialPacketCount(int count) {
-    final next = count.clamp(0, maxDiscardInitialPacketCount).toInt();
-    if (next == _discardInitialPacketCount) return;
-    _discardInitialPacketCount = next;
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置网格密度（sparse/normal/dense）
-  void setGridDensity(String density) {
-    const valid = {'sparse', 'normal', 'dense'};
-    if (valid.contains(density)) {
-      _gridDensity = density;
-      _markChannelConfigChanged();
-      _saveSettings();
-      Future.microtask(() => notifyListeners());
-    }
-  }
-
-  void setPlotBackground(String background) {
-    final next = background == 'light' ? 'light' : 'dark';
-    if (_plotBackground == next) return;
-    _plotBackground = next;
-    _applyPlotBackgroundPalette();
-    _markChannelConfigChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setFloatingPanelOpacity(double opacity) {
-    final next = opacity.clamp(0.0, 1.0);
-    if ((_floatingPanelOpacity - next).abs() < 0.0001) return;
-    _floatingPanelOpacity = next;
-    _markOverlayChanged();
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void setObservationClickToPlace(bool value) {
-    if (_observationClickToPlace == value) return;
-    _observationClickToPlace = value;
-    if (!value) {
-      _observationPlacementActive = false;
-      _observationPreview = null;
-      _markOverlayChanged();
-    }
-    _saveSettings();
-    Future.microtask(() => notifyListeners());
-  }
-
-  void _applyPlotBackgroundPalette() {
-    for (final channel in channels) {
-      channel.color = ChannelConfig.colorForBackground(
-        channel.color,
-        _plotBackground,
-      );
-    }
-    for (final channel in mathChannels) {
-      channel.display.color = ChannelConfig.colorForBackground(
-        channel.display.color,
-        _plotBackground,
-      );
-    }
-    _invalidateDisplayChannelCaches();
-    _refreshSnapHighlightColors();
-  }
-
-  /// 切换 X-X 测量开关
-  ///
-  /// 开启时自动在视口中心初始化两条测量线，间隔为 X 范围的 1/4。
-  void toggleXMeasurement() {
-    _xMeasurementEnabled = !_xMeasurementEnabled;
-    if (_xMeasurementEnabled && _xCursor1 == null) {
-      // 自动初始化两条线，间隔为X范围的1/4
-      final range = viewport.xRange;
-      final center = viewport.xMin + range / 2;
-      _xCursor1 = _snapXToNearestVisiblePoint(center - range / 8);
-      _xCursor2 = _snapXToNearestVisiblePoint(center + range / 8);
-    }
-    if (!_xMeasurementEnabled) {
-      _xCursor1 = null;
-      _xCursor2 = null;
-      _xCursor1SnapHighlights = const [];
-      _xCursor2SnapHighlights = const [];
-      // 如果垂直光标也关闭，清除 cursor
-      if (!_vCursorEnabled) _cursor = null;
-    }
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 切换 Y-Y 测量开关
-  ///
-  /// 开启时自动在视口中心初始化两条测量线，Y2 在上（值更大）。
-  void toggleYMeasurement() {
-    _yMeasurementEnabled = !_yMeasurementEnabled;
-    if (_yMeasurementEnabled && _yCursor1 == null) {
-      // 自动初始化两条线，Y2在上（值更大），间隔为Y范围的1/4
-      final range = viewport.yRange;
-      final center = viewport.yMin + range / 2;
-      _yCursor1 = center - range / 8; // 下方（值小）
-      _yCursor2 = center + range / 8; // 上方（值大）
-    }
-    if (!_yMeasurementEnabled) {
-      _yCursor1 = null;
-      _yCursor2 = null;
-      _yCursor1SnapHighlights = const [];
-      _yCursor2SnapHighlights = const [];
-      // 如果垂直光标也关闭，清除 cursor
-      if (!_vCursorEnabled) _cursor = null;
-    }
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 切换统计测量开关
-  ///
-  /// 开启时默认统计整个波形（当前视口范围）。
-  void toggleStats() {
-    _statsEnabled = !_statsEnabled;
-    if (_statsEnabled && _statsX1 == null) {
-      // 默认统计整个波形，范围设为当前视口
-      _statsX1 = viewport.xMin;
-      _statsX2 = viewport.xMax;
-    }
-    if (!_statsEnabled) {
-      _statsX1 = null;
-      _statsX2 = null;
-      _statsRangeEnabled = false;
-    }
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 切换统计范围开关
-  ///
-  /// 开启时 S1/S2 初始位置在视口 1/4 和 3/4 处；
-  /// 关闭时恢复为整个视口范围。
-  void toggleStatsRange() {
-    if (!_statsEnabled) return;
-    _statsRangeEnabled = !_statsRangeEnabled;
-    if (_statsRangeEnabled) {
-      // S1/S2 初始位置在 1/4 和 3/4 处
-      final range = viewport.xRange;
-      _statsX1 = viewport.xMin + range * 0.25;
-      _statsX2 = viewport.xMin + range * 0.75;
-    } else {
-      // 关闭范围时恢复为整个视口
-      _statsX1 = viewport.xMin;
-      _statsX2 = viewport.xMax;
-    }
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置统计范围左边界
-  void setStatsX1(double x) {
-    _statsX1 = x;
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 设置统计范围右边界
-  void setStatsX2(double x) {
-    _statsX2 = x;
-    _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
-  }
-
-  /// 更新垂直光标（跟随鼠标模式）
-  ///
-  /// - X 值吸附到最近的整数（数据点索引都是整数）
-  /// - 使用二分查找精确匹配数据点，避免线性扫描
-  /// - 未绘制到数据点的区域设置 hasData=false，tooltip 不显示
-  void updateFollowCursor(double x, double y, Offset screenPosition) {
-    _cursor = _buildCursorAtX(x, y: y, screenPosition: screenPosition);
-    _markOverlayChanged();
-    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
-    scheduleMicrotask(notifyListeners);
-  }
-
-  /// 更新光标状态（由外部直接设置）
-  void updateCursor(CursorState? cursor) {
-    _cursor = cursor;
-    _markOverlayChanged();
-    // 使用微任务延迟通知，避免在指针事件回调中直接触发 rebuild
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void addObservation() {
-    final cursorX = _cursor?.x;
-    final sourceX =
-        cursorX != null && viewport.isVisibleX(cursorX)
-            ? cursorX
-            : viewport.xMin + viewport.xRange / 2;
-    _observations.add(_buildCursorAtX(sourceX));
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void startObservationPlacement() {
-    if (displayDataPoints.isEmpty) return;
-    _observationPlacementActive = true;
-    _observationPreview = null;
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void updateObservationPlacement(double x) {
-    if (!_observationPlacementActive) return;
-    _observationPreview = _buildCursorAtX(x);
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void commitObservationPlacement(double x) {
-    if (!_observationPlacementActive) return;
-    _observations.add(_buildCursorAtX(x));
-    _observationPlacementActive = false;
-    _observationPreview = null;
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void updateObservation(int index, double x) {
-    if (index < 0 || index >= _observations.length) return;
-    _observations[index] = _buildCursorAtX(x);
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  void removeObservation(int index) {
-    if (index < 0 || index >= _observations.length) return;
-    _observations.removeAt(index);
-    _markOverlayChanged();
-    scheduleMicrotask(notifyListeners);
-  }
-
-  CursorState _buildCursorAtX(double x, {double? y, Offset? screenPosition}) {
-    final point = _nearestVisiblePointByX(x);
-    final snappedX =
-        point?.index.toDouble() ??
-        x.clamp(viewport.xMin, viewport.xMax).toDouble();
-    final channelValues =
-        point == null ? null : List<double>.from(point.values);
-    final hasData = point != null;
-
-    return CursorState(
-      x: snappedX,
-      y: y,
-      screenPosition: screenPosition,
-      channelValues: channelValues,
-      hasData: hasData,
-    );
-  }
-
-  PlotDataPoint? _nearestVisiblePointByX(double x) {
-    final points = displayDataPoints;
-    if (points.isEmpty) return null;
-    final range = _dataPointRangeByX(viewport.xMin, viewport.xMax);
-    if (range == null) return null;
-
-    int left = range.start;
-    int right = range.end - 1;
-    while (left <= right) {
-      final mid = (left + right) ~/ 2;
-      final midX = points[mid].index.toDouble();
-      if (midX < x) {
-        left = mid + 1;
-      } else if (midX > x) {
-        right = mid - 1;
-      } else {
-        return points[mid];
-      }
-    }
-
-    final candidates = <int>[
-      if (right >= range.start && right < range.end) right,
-      if (left >= range.start && left < range.end) left,
-    ];
-    if (candidates.isEmpty) return null;
-    candidates.sort((a, b) {
-      final da = (points[a].index.toDouble() - x).abs();
-      final db = (points[b].index.toDouble() - x).abs();
-      return da.compareTo(db);
-    });
-    return points[candidates.first];
-  }
-
-  double _snapXToNearestVisiblePoint(double x) {
-    return _nearestVisiblePointByX(x)?.index.toDouble() ??
-        x.clamp(viewport.xMin, viewport.xMax).toDouble();
+    _historyStore.resetFixedFrames(_parserConfig.totalFrameLength);
   }
 
   // ========== x-x / y-y 光标控制 ==========
@@ -3843,21 +3103,33 @@ class PlotViewModel extends BaseViewModel {
 
   void _refreshSnapHighlightColors() {
     if (_xCursor1 != null) {
-      _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+      _xCursor1SnapHighlights = _snapHighlightsForX(
+        _xCursor1!,
+        xMeasurementLine1Color,
+      );
     }
     if (_xCursor2 != null) {
-      _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+      _xCursor2SnapHighlights = _snapHighlightsForX(
+        _xCursor2!,
+        xMeasurementLine2Color,
+      );
     }
-    if (_yCursor1 != null) {
-      _yCursor1SnapHighlights = _snapHighlightForY(_yCursor1!, Colors.cyan);
+    if (_yMeasurementSnapEnabled && _yCursor1 != null) {
+      _yCursor1SnapHighlights = _snapHighlightForY(
+        _yCursor1!,
+        yMeasurementLine1Color,
+      );
     }
-    if (_yCursor2 != null) {
-      _yCursor2SnapHighlights = _snapHighlightForY(_yCursor2!, Colors.yellow);
+    if (_yMeasurementSnapEnabled && _yCursor2 != null) {
+      _yCursor2SnapHighlights = _snapHighlightForY(
+        _yCursor2!,
+        yMeasurementLine2Color,
+      );
     }
   }
 
   void _notifyLater() {
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   void _resetCursorPositions() {
@@ -3873,6 +3145,8 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _extraXMeasurementGroups.clear();
+    _extraYMeasurementGroups.clear();
     _statsX1 = null;
     _statsX2 = null;
     _clearSnapHighlights();
@@ -3881,33 +3155,107 @@ class PlotViewModel extends BaseViewModel {
 
   void setXCursor1(double x) {
     _xCursor1 = _snapXToNearestVisiblePoint(x);
-    _xCursor1SnapHighlights = _snapHighlightsForX(_xCursor1!, Colors.cyan);
+    _xCursor1SnapHighlights = _snapHighlightsForX(
+      _xCursor1!,
+      xMeasurementLine1Color,
+    );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 X2 光标位置（拖动时使用）
   void setXCursor2(double x) {
     _xCursor2 = _snapXToNearestVisiblePoint(x);
-    _xCursor2SnapHighlights = _snapHighlightsForX(_xCursor2!, Colors.yellow);
+    _xCursor2SnapHighlights = _snapHighlightsForX(
+      _xCursor2!,
+      xMeasurementLine2Color,
+    );
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 Y1 光标位置（拖动时使用）
   void setYCursor1(double y) {
     _yCursor1 = y;
-    _yCursor1SnapHighlights = _snapHighlightForY(y, Colors.cyan);
+    _yCursor1SnapHighlights =
+        _yMeasurementSnapEnabled
+            ? _snapHighlightForY(y, yMeasurementLine1Color)
+            : const [];
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 设置 Y2 光标位置（拖动时使用）
   void setYCursor2(double y) {
     _yCursor2 = y;
-    _yCursor2SnapHighlights = _snapHighlightForY(y, Colors.yellow);
+    _yCursor2SnapHighlights =
+        _yMeasurementSnapEnabled
+            ? _snapHighlightForY(y, yMeasurementLine2Color)
+            : const [];
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
+  }
+
+  void setXMeasurementCursor(int groupIndex, int lineIndex, double value) {
+    if (groupIndex == 0) {
+      lineIndex == 0 ? setXCursor1(value) : setXCursor2(value);
+      return;
+    }
+    final index = groupIndex - 1;
+    if (index < 0 || index >= _extraXMeasurementGroups.length) return;
+    final group = _extraXMeasurementGroups[index];
+    _extraXMeasurementGroups[index] =
+        lineIndex == 0
+            ? group.copyWith(cursor1: _snapXToNearestVisiblePoint(value))
+            : group.copyWith(cursor2: _snapXToNearestVisiblePoint(value));
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  void setYMeasurementCursor(int groupIndex, int lineIndex, double value) {
+    if (groupIndex == 0) {
+      lineIndex == 0 ? setYCursor1(value) : setYCursor2(value);
+      return;
+    }
+    final index = groupIndex - 1;
+    if (index < 0 || index >= _extraYMeasurementGroups.length) return;
+    final group = _extraYMeasurementGroups[index];
+    _extraYMeasurementGroups[index] =
+        lineIndex == 0
+            ? group.copyWith(cursor1: value)
+            : group.copyWith(cursor2: value);
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
+  }
+
+  void removeMeasurementGroup({required bool isX, required int groupIndex}) {
+    if (groupIndex < 0) return;
+    final groups = isX ? xMeasurementGroups : yMeasurementGroups;
+    if (groupIndex >= groups.length) return;
+    if (groups.length == 1 || groupIndex == 0) {
+      if (groupIndex == 0 && groups.length > 1) {
+        final replacement = groups[1];
+        if (isX) {
+          _xCursor1 = replacement.cursor1;
+          _xCursor2 = replacement.cursor2;
+          _extraXMeasurementGroups.removeAt(0);
+        } else {
+          _yCursor1 = replacement.cursor1;
+          _yCursor2 = replacement.cursor2;
+          _extraYMeasurementGroups.removeAt(0);
+        }
+      } else {
+        isX ? toggleXMeasurement() : toggleYMeasurement();
+        return;
+      }
+    } else if (isX) {
+      _extraXMeasurementGroups.removeAt(groupIndex - 1);
+    } else {
+      _extraYMeasurementGroups.removeAt(groupIndex - 1);
+    }
+    _refreshSnapHighlightColors();
+    _markOverlayChanged();
+    Future.microtask(notifyListeners);
   }
 
   /// 清除所有光标和测量线
@@ -3916,10 +3264,12 @@ class PlotViewModel extends BaseViewModel {
     _xCursor2 = null;
     _yCursor1 = null;
     _yCursor2 = null;
+    _extraXMeasurementGroups.clear();
+    _extraYMeasurementGroups.clear();
     _clearSnapHighlights();
     _cursor = null;
     _markOverlayChanged();
-    Future.microtask(() => notifyListeners());
+    Future.microtask(notifyListeners);
   }
 
   /// 测量信息文本，显示 X1/X2/Y1/Y2 值和 delta
@@ -3927,21 +3277,40 @@ class PlotViewModel extends BaseViewModel {
     final buffer = StringBuffer();
     bool hasData = false;
 
-    if (_xMeasurementEnabled && _xCursor1 != null && _xCursor2 != null) {
-      final dx = _xCursor2! - _xCursor1!;
-      buffer.writeln('X1 = ${_formatDisplayNumber(_xCursor1!)}');
-      buffer.writeln('X2 = ${_formatDisplayNumber(_xCursor2!)}');
-      buffer.writeln('ΔX = ${_formatDisplayNumber(dx)}');
-      hasData = true;
+    if (_xMeasurementEnabled) {
+      final groups = xMeasurementGroups;
+      for (var i = 0; i < groups.length; i++) {
+        final group = groups[i];
+        final first = i * 2 + 1;
+        final deltaSuffix = groups.length > 1 ? '${i + 1}' : '';
+        if (hasData) buffer.writeln('---');
+        buffer.writeln('X$first = ${_formatDisplayNumber(group.cursor1)}');
+        buffer.writeln(
+          'X${first + 1} = ${_formatDisplayNumber(group.cursor2)}',
+        );
+        buffer.writeln(
+          'ΔX$deltaSuffix = ${_formatDisplayNumber(group.cursor2 - group.cursor1)}',
+        );
+        hasData = true;
+      }
     }
 
-    if (_yMeasurementEnabled && _yCursor1 != null && _yCursor2 != null) {
-      final dy = _yCursor2! - _yCursor1!;
-      if (hasData) buffer.writeln('---');
-      buffer.writeln('Y1 = ${_formatDisplayNumber(_yCursor1!)}');
-      buffer.writeln('Y2 = ${_formatDisplayNumber(_yCursor2!)}');
-      buffer.writeln('ΔY = ${_formatDisplayNumber(dy)}');
-      hasData = true;
+    if (_yMeasurementEnabled) {
+      final groups = yMeasurementGroups;
+      for (var i = 0; i < groups.length; i++) {
+        final group = groups[i];
+        final first = i * 2 + 1;
+        final deltaSuffix = groups.length > 1 ? '${i + 1}' : '';
+        if (hasData) buffer.writeln('---');
+        buffer.writeln('Y$first = ${_formatDisplayNumber(group.cursor1)}');
+        buffer.writeln(
+          'Y${first + 1} = ${_formatDisplayNumber(group.cursor2)}',
+        );
+        buffer.writeln(
+          'ΔY$deltaSuffix = ${_formatDisplayNumber(group.cursor2 - group.cursor1)}',
+        );
+        hasData = true;
+      }
     }
 
     return hasData ? buffer.toString().trim() : null;
@@ -3949,9 +3318,8 @@ class PlotViewModel extends BaseViewModel {
 
   /// 统计测量信息文本，显示各通道最大值、最小值、平均值
   String? get statsText {
-    final points = displayDataPoints;
     final currentChannels = displayChannels;
-    if (!_statsEnabled || points.isEmpty) return null;
+    if (!_statsEnabled || _historyPointCount == 0) return null;
 
     final xMin =
         _statsRangeEnabled && _statsX1 != null && _statsX2 != null
@@ -3964,52 +3332,32 @@ class PlotViewModel extends BaseViewModel {
     final visibleChannelKey =
         currentChannels.map((channel) => channel.visible ? '1' : '0').join();
     final cacheKey =
-        '$_dataRevision|$xMin|$xMax|$_statsRangeEnabled|$visibleChannelKey|$_activeChannelCount';
+        '$_dataRevision|$_channelConfigRevision|$xMin|$xMax|'
+        '$_statsRangeEnabled|$visibleChannelKey|$_activeChannelCount';
     if (_cachedStatsKey == cacheKey) return _cachedStatsText;
 
-    final range = _dataPointRangeByX(xMin, xMax);
-    if (range == null) {
+    final rangeStart = math.max(0, xMin.ceil());
+    final rangeEnd = math.min(_historyPointCount - 1, xMax.floor());
+    if (rangeStart > rangeEnd) {
       _cachedStatsKey = cacheKey;
       _cachedStatsText = null;
       return null;
     }
 
     final buffer = StringBuffer();
-    bool hasVisibleChannel = false;
-    final commonCount = range.end - range.start;
+    final result = _statisticsCalculator.calculate(
+      rangeStart: rangeStart,
+      rangeEnd: rangeEnd,
+      channelCount: currentChannels.length,
+      isChannelVisible: (index) => currentChannels[index].visible,
+      valuesAt: (index) => _displayPointAtHistoryIndex(index)?.values,
+    );
+    final statPrefix = result.approximate ? '约' : '';
 
-    if (commonCount == 0) return null;
-    const exactStatsPointLimit = 100000;
-    final approximate = commonCount > exactStatsPointLimit;
-    final sampleStep =
-        approximate
-            ? (commonCount / exactStatsPointLimit).ceil().clamp(1, commonCount)
-            : 1;
-    final statPrefix = approximate ? '约' : '';
-
-    for (int i = 0; i < currentChannels.length; i++) {
-      if (!currentChannels[i].visible) continue;
-
-      double? maxVal, minVal, sum;
-      int count = 0;
-
-      for (
-        int pointIndex = range.start;
-        pointIndex < range.end;
-        pointIndex += sampleStep
-      ) {
-        final point = points[pointIndex];
-        if (i >= point.channelCount) continue;
-
-        final val = point.values[i];
-        if (!val.isFinite) continue;
-        maxVal = maxVal == null || val > maxVal ? val : maxVal;
-        minVal = minVal == null || val < minVal ? val : minVal;
-        sum = (sum ?? 0) + val;
-        count++;
-      }
-
-      if (count == 0) continue;
+    var hasVisibleChannel = false;
+    for (var i = 0; i < currentChannels.length; i++) {
+      final channelStats = result.channels[i];
+      if (channelStats == null) continue;
       if (hasVisibleChannel) buffer.writeln('---');
       hasVisibleChannel = true;
 
@@ -4018,9 +3366,15 @@ class PlotViewModel extends BaseViewModel {
               ? currentChannels[i].alias
               : 'Ch$i';
       buffer.writeln('$name:');
-      buffer.writeln('  Max: $statPrefix${_formatDisplayNumber(maxVal!)}');
-      buffer.writeln('  Min: $statPrefix${_formatDisplayNumber(minVal!)}');
-      buffer.writeln('  Avg: $statPrefix${_formatDisplayNumber(sum! / count)}');
+      buffer.writeln(
+        '  Max: $statPrefix${_formatDisplayNumber(channelStats.maximum)}',
+      );
+      buffer.writeln(
+        '  Min: $statPrefix${_formatDisplayNumber(channelStats.minimum)}',
+      );
+      buffer.writeln(
+        '  Avg: $statPrefix${_formatDisplayNumber(channelStats.average)}',
+      );
     }
 
     if (!hasVisibleChannel) {
@@ -4031,10 +3385,10 @@ class PlotViewModel extends BaseViewModel {
 
     // 统一显示 N 和 Range
     buffer.writeln('---');
-    buffer.writeln('N: $commonCount');
-    if (approximate) buffer.writeln('Mode: 约 $exactStatsPointLimit samples');
-    final rangeStart = points[range.start].index;
-    final rangeEnd = points[range.end - 1].index;
+    buffer.writeln('N: ${result.rangePointCount}');
+    if (result.approximate) {
+      buffer.writeln('Mode: 约 ${result.sampleLimit} samples');
+    }
     buffer.writeln('Range: $rangeStart ~ $rangeEnd');
 
     _cachedStatsKey = cacheKey;
@@ -4083,32 +3437,295 @@ class PlotViewModel extends BaseViewModel {
     return (start: start, end: end);
   }
 
+  // ========== 数据导入导出 ==========
+  /// 导出候选通道（普通通道 + 已启用的数学通道）。
+  List<ChannelConfig> get exportCandidateChannels =>
+      _importExportService.exportCandidateChannels;
+
+  /// 导出数据到 CSV 文件，委托 [PlotImportExportService]。
+  Future<String?> exportToCsv(
+    String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
+    List<int>? channelIndices,
+    PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
+  }) {
+    return _importExportService.exportToCsv(
+      selectedPath,
+      startIndex: startIndex,
+      endIndex: endIndex,
+      channelIndices: channelIndices,
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 导出数据到 BIN 文件，委托 [PlotImportExportService]。
+  Future<String?> exportToBin(
+    String? selectedPath, {
+    int? startIndex,
+    int? endIndex,
+    List<int>? channelIndices,
+    PlotExportProgressCallback? onProgress,
+    PlotExportCancelToken? cancelToken,
+  }) {
+    return _importExportService.exportToBin(
+      selectedPath,
+      startIndex: startIndex,
+      endIndex: endIndex,
+      channelIndices: channelIndices,
+      onProgress: onProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// 从 CSV 文件导入数据，委托 [PlotImportExportService]。
+  Future<String?> importFromCsv(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromCsv(filePath, onProgress: onProgress);
+  }
+
+  /// 从 BIN 文件导入数据，委托 [PlotImportExportService]。
+  Future<String?> importFromBin(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromBin(filePath, onProgress: onProgress);
+  }
+
+  /// 导入旧版 VisualScope 应用导出的 DAT 数据，委托 [PlotImportExportService]。
+  Future<String?> importFromLegacyDat(
+    String filePath, {
+    PlotImportProgressCallback? onProgress,
+  }) {
+    return _importExportService.importFromLegacyDat(
+      filePath,
+      onProgress: onProgress,
+    );
+  }
+
+  // ========== PlotImportExportHost 窄接口实现 ==========
+  @override
+  String formatRetentionBytes(int bytes) => _formatRetentionBytes(bytes);
+
+  @override
+  List<Map<String, dynamic>> exportObservationsMetadata({
+    required int sourceStart,
+    required int pointCount,
+  }) {
+    if (_observations.isEmpty) return const [];
+    return _observations
+        .where(
+          (observation) =>
+              observation.x >= sourceStart &&
+              observation.x < sourceStart + pointCount,
+        )
+        .map(
+          (observation) => <String, dynamic>{
+            'x': observation.x - sourceStart,
+            if (observation.note.isNotEmpty) 'note': observation.note,
+            if (observation.locked) 'locked': true,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  void beginImportedReplacement() {
+    // 至此预检已完成；导入历史不可用于保持绘图续接，因此先彻底重置实时来源状态。
+    _windowProvider.clear();
+    _historyStore.clear();
+    _resetPlotRetentionState();
+    _importedChannelAddresses = null;
+  }
+
+  @override
+  void setNextIndex(int value) {
+    _nextIndex = value;
+  }
+
+  @override
+  void setActiveChannelCount(int value) {
+    _activeChannelCount = value;
+  }
+
+  @override
+  void clearStartTime() {
+    _startTime = null;
+  }
+
+  @override
+  void applyImportedMetadata(Map<String, dynamic>? metadata, int channelCount) {
+    final importedMathChannels = metadata?['mathChannels'];
+    _replaceMathChannels(
+      importedMathChannels is List
+          ? MathChannelConfig.normalizeList(importedMathChannels)
+          : MathChannelConfig.createDefaults(),
+    );
+    if (metadata == null || metadata.isEmpty) return;
+
+    final names = metadata['channelNames'];
+    if (names is List) {
+      for (
+        int i = 0;
+        i < names.length && i < channelCount && i < channels.length;
+        i++
+      ) {
+        final name = names[i];
+        if (name is String && name.isNotEmpty) {
+          channels[i].alias = name == 'Ch$i' ? '' : name;
+        }
+      }
+    }
+
+    final addresses = metadata['channelAddresses'];
+    if (addresses is List) {
+      _importedChannelAddresses = _applyChannelAddresses(
+        addresses,
+        channelCount,
+      );
+    }
+
+    final ids = metadata['zobowChannelIds'];
+    if (metadata['parserType'] == ParserType.zobow.name && ids is List) {
+      _parserType = ParserType.zobow;
+      _parserConfig.type = ParserType.zobow;
+      _parserConfig.channelCount =
+          channelCount >= ParserConfig.maxZobowChannelCount
+              ? ParserConfig.maxZobowChannelCount
+              : ParserConfig.minZobowChannelCount;
+      _applyChannelAddresses(ids, _parserConfig.zobowChannelCount);
+      AppSettings().parserType = ParserType.zobow.name;
+      _saveSettings();
+    }
+
+    final rAddresses = metadata['rChannelAddresses'];
+    if (metadata['sendProtocolType'] == SendProtocolType.rProtocol.name &&
+        rAddresses is List) {
+      final restoredAddresses = List<String>.filled(
+        SendProtocolConfig.maxChannelCount,
+        '',
+      );
+      for (
+        var i = 0;
+        i < rAddresses.length && i < restoredAddresses.length;
+        i++
+      ) {
+        final address = rAddresses[i];
+        if (address is String) restoredAddresses[i] = address.trim();
+      }
+      _sendProtocolType = SendProtocolType.rProtocol;
+      _sendProtocolConfig
+        ..type = SendProtocolType.rProtocol
+        ..source = ProtocolSource.builtIn
+        ..customProtocolId = null
+        ..rChannelAddresses = restoredAddresses;
+      _saveSettings();
+    }
+  }
+
+  @override
+  Future<void> rebuildParsedWindow(int start, int count) {
+    return _rebuildParsedWindow(start, count);
+  }
+
+  @override
+  void clearViewportHistory() {
+    _viewportHistory.clear();
+    _dragStartViewport = null;
+  }
+
+  @override
+  void resetCursorPositions() {
+    _resetCursorPositions();
+  }
+
+  @override
+  void applyImportedObservations(Map<String, dynamic>? metadata) {
+    final values = metadata?['observations'];
+    if (values is! List) return;
+    for (final item in values) {
+      if (_observations.length >= PlotViewModel.maxObservationCount) break;
+      if (item is! Map) continue;
+      final xValue = item['x'];
+      final x = xValue is num ? xValue.toDouble() : null;
+      if (x == null || !x.isFinite || !canJumpToXIndex(x.round())) continue;
+      final noteValue = item['note'];
+      _observations.add(
+        PlotObservation(
+          cursor: _buildImportedObservationCursorAtX(x),
+          note: noteValue is String ? noteValue : '',
+          locked: item['locked'] == true,
+        ),
+      );
+    }
+  }
+
+  @override
+  void notifyLater() {
+    _notifyLater();
+  }
+
+  CursorState _buildImportedObservationCursorAtX(double x) {
+    final index = x.round();
+    if ((x - index).abs() > 0.000001 || !canJumpToXIndex(index)) {
+      return CursorState(x: x, hasData: false);
+    }
+    final valueCount = _historyStore.parsedValueCountAt(index);
+    if (valueCount <= 0) return CursorState(x: x, hasData: false);
+    return CursorState(
+      x: x,
+      channelValues: [
+        for (var channel = 0; channel < valueCount; channel++)
+          _historyStore.parsedValueAt(index, channel),
+      ],
+      hasData: true,
+    );
+  }
+
+  List<int> _applyChannelAddresses(List<dynamic> values, int channelCount) {
+    final addresses = <int>[];
+    for (
+      int i = 0;
+      i < values.length &&
+          i < channelCount &&
+          i < _parserConfig.zobowChannelIds.length;
+      i++
+    ) {
+      final value = values[i];
+      final address = switch (value) {
+        final int value => value,
+        final num value => value.toInt(),
+        final String value => int.tryParse(
+          value.replaceAll('0x', '').replaceAll('0X', ''),
+          radix: 16,
+        ),
+        _ => null,
+      };
+      if (address != null) {
+        final normalized = address & 0xFFFFFFFF;
+        _parserConfig.zobowChannelIds[i] = normalized;
+        addresses.add(normalized);
+      }
+    }
+    return addresses;
+  }
+
   @override
   void dispose() {
     _disposed = true;
-    _parseSubscription?.cancel();
-    _parseSubscription = null;
-    _sourceManager.stop();
-    _parser?.dispose();
-    _parser = null;
-    _isPlotting = false;
-    _isStopping = false;
-    _stopFuture = null;
+    _windowProvider.dispose();
+    _cancelPendingDragViewportNotification();
+    unawaited(_sessionController.dispose());
     _resetRateState();
-    // 全局单例模式下不重置 serialService.isPlotting
-    // serialService.isPlotting = false;
+    connectionService.releaseActivity(DataActivityOwner.plot);
     _notifyTimer?.cancel();
     _notifyTimer = null;
     _pendingNotifyCount = 0;
     _stopRefreshTimer();
-    _sourceManager.dispose();
     super.dispose();
   }
 }
-
-/// 文本/浮点协议的全量数值历史缓存。
-///
-/// 直接保存 `List<PlotDataPoint>` 会为每个点和每个通道产生大量 Dart 对象，
-/// 百万级数据下 GC 压力很大。这里改用分块的 typed data：
-/// - `_valueChunks` 连续保存每个点最多 16 个 double 值。
-/// - `_countChunks` 记录每个点真实通道数，支持 JustFloat 自动通道数变化。

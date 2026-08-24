@@ -11,6 +11,9 @@ import 'data_parser.dart';
 /// 固定帧协议解析器
 /// 格式：[帧头] + [数据] + [可选 CRC] + [可选帧尾]
 /// 或：[帧头] + [数据] + [可选帧尾] + [可选 CRC]
+/// 可配置帧头、帧尾、校验和与逐通道类型的固定长度接收解析器。
+///
+/// 缓冲区只保留完成下一帧所需的后缀；格式错误后从下一个可能帧头重新同步。
 class FixedFrameParser extends IDataParser {
   final _buffer = <int>[];
   final _controller = StreamController<ParseResult>.broadcast();
@@ -23,62 +26,75 @@ class FixedFrameParser extends IDataParser {
 
   @override
   void feed(Uint8List data) {
-    try {
-      _buffer.addAll(data);
-      _processBuffer();
-    } catch (e) {
-      AppLogger().debug('固定帧协议解析异常: $e', category: 'PARSER');
-    }
-  }
-
-  void _processBuffer() {
-    while (_buffer.length >= config.totalFrameLength) {
-      // 查找帧头
-      final headerIndex = _findFrameHeader();
-      if (headerIndex == -1) {
-        // 未找到帧头，清空缓冲区（保留最后 frameHeaderLength - 1 字节，可能包含部分帧头）
-        final keep = _frameHeaderLength - 1;
-        if (_buffer.length > keep) {
-          _buffer.removeRange(0, _buffer.length - keep);
-        }
-        break;
-      }
-
-      // 丢弃帧头前的数据
-      if (headerIndex > 0) {
-        _buffer.removeRange(0, headerIndex);
-      }
-
-      // 检查是否有完整帧
-      if (_buffer.length < config.totalFrameLength) {
-        break;
-      }
-
-      // 提取一帧
-      final frame = _buffer.sublist(0, config.totalFrameLength);
-      final result = _parseFrame(frame);
-
-      // 移除已处理的数据
-      _buffer.removeRange(0, config.totalFrameLength);
-
+    for (final result in feedBatch(data)) {
       if (!_controller.isClosed) {
         _controller.add(result);
       }
     }
+  }
 
-    // 防止缓冲区无限增长
-    if (_buffer.length > config.totalFrameLength * 100) {
-      _buffer.clear();
-      AppLogger().warning('固定帧协议解析缓冲区溢出，已清空', category: 'PARSER');
+  @override
+  List<ParseResult> feedBatch(Uint8List data) {
+    try {
+      _buffer.addAll(data);
+      return _processBuffer();
+    } catch (e) {
+      AppLogger().debug('固定帧协议解析异常: $e', category: 'PARSER');
+      return const [];
     }
   }
 
+  List<ParseResult> _processBuffer() {
+    final frameLength = config.totalFrameLength;
+    if (frameLength <= 0) {
+      _buffer.clear();
+      AppLogger().warning('固定帧长度无效，已丢弃接收缓冲区', category: 'PARSER');
+      return const [];
+    }
+    final results = <ParseResult>[];
+    var readOffset = 0;
+    while (_buffer.length - readOffset >= frameLength) {
+      // 查找帧头
+      final headerIndex = _findFrameHeader(readOffset);
+      if (headerIndex == -1) {
+        // 未找到帧头，清空缓冲区（保留最后 frameHeaderLength - 1 字节，可能包含部分帧头）
+        final keep = _frameHeaderLength - 1;
+        readOffset = (_buffer.length - keep).clamp(0, _buffer.length);
+        break;
+      }
+
+      readOffset = headerIndex;
+
+      // 检查是否有完整帧
+      if (_buffer.length - readOffset < frameLength) {
+        break;
+      }
+
+      final frame = Uint8List(frameLength);
+      for (var i = 0; i < frame.length; i++) {
+        frame[i] = _buffer[readOffset + i];
+      }
+      results.add(_parseFrame(frame));
+      readOffset += frameLength;
+    }
+    if (readOffset > 0) {
+      _buffer.removeRange(0, readOffset);
+    }
+
+    // 防止缓冲区无限增长
+    if (_buffer.length > frameLength * 100) {
+      _buffer.clear();
+      AppLogger().warning('固定帧协议解析缓冲区溢出，已清空', category: 'PARSER');
+    }
+    return results;
+  }
+
   /// 查找帧头位置
-  int _findFrameHeader() {
-    if (!config.hasFrameHeader) return 0;
+  int _findFrameHeader(int start) {
+    if (!config.hasFrameHeader) return start;
     if (_buffer.length < _frameHeaderLength) return -1;
 
-    for (int i = 0; i <= _buffer.length - _frameHeaderLength; i++) {
+    for (int i = start; i <= _buffer.length - _frameHeaderLength; i++) {
       bool match = true;
       for (int j = 0; j < _frameHeaderLength; j++) {
         if (_buffer[i + j] != config.frameHeader[j]) {
@@ -91,7 +107,7 @@ class FixedFrameParser extends IDataParser {
     return -1;
   }
 
-  ParseResult _parseFrame(List<int> frame) {
+  ParseResult _parseFrame(Uint8List frame) {
     // 校验帧尾
     if (config.hasFrameTail && config.frameTail != null) {
       final tailStart = _frameTailStart;
@@ -118,7 +134,7 @@ class FixedFrameParser extends IDataParser {
       return ParseResult.fail('数据区长度无效');
     }
 
-    final dataBytes = frame.sublist(dataStart, dataEnd);
+    final dataBytes = Uint8List.sublistView(frame, dataStart, dataEnd);
     final expectedBytes = config.dataBytesPerFrame;
 
     if (dataBytes.length < expectedBytes) {
@@ -130,10 +146,7 @@ class FixedFrameParser extends IDataParser {
     int offset = 0;
     for (int ch = 0; ch < config.channelCount; ch++) {
       final type = config.fixedFrameChannelTypeAt(ch);
-      final bytes = Uint8List.fromList(
-        dataBytes.sublist(offset, offset + type.byteSize),
-      );
-      final value = _bytesToValue(bytes, type);
+      final value = _bytesToValue(dataBytes, offset, type);
       values.add(value);
       offset += type.byteSize;
     }
@@ -141,7 +154,7 @@ class FixedFrameParser extends IDataParser {
     return ParseResult.ok(
       values,
       bytesConsumed: config.totalFrameLength,
-      rawBytes: Uint8List.fromList(frame),
+      rawBytes: frame,
     );
   }
 
@@ -149,49 +162,37 @@ class FixedFrameParser extends IDataParser {
   static List<double> decodeFrameValues(Uint8List frame, ParserConfig config) {
     final dataStart = config.hasFrameHeader ? config.frameHeaderLength : 0;
     final dataEnd = dataStart + config.dataBytesPerFrame;
-    final dataBytes = frame.sublist(dataStart, dataEnd);
+    final dataBytes = Uint8List.sublistView(frame, dataStart, dataEnd);
     final values = <double>[];
     int offset = 0;
     for (int ch = 0; ch < config.channelCount; ch++) {
       final type = config.fixedFrameChannelTypeAt(ch);
       if (offset + type.byteSize > dataBytes.length) break;
-      final bytes = Uint8List.fromList(
-        dataBytes.sublist(offset, offset + type.byteSize),
-      );
-      values.add(_bytesToValue(bytes, type));
+      values.add(_bytesToValue(dataBytes, offset, type));
       offset += type.byteSize;
     }
     return values;
   }
 
-  static double _bytesToValue(Uint8List bytes, DataType type) {
+  static double _bytesToValue(Uint8List bytes, int offset, DataType type) {
+    final data = ByteData.sublistView(bytes);
     switch (type) {
       case DataType.uint8:
-        return bytes[0].toDouble();
+        return bytes[offset].toDouble();
       case DataType.uint16:
-        return ByteData.sublistView(
-          bytes,
-        ).getUint16(0, Endian.little).toDouble();
+        return data.getUint16(offset, Endian.little).toDouble();
       case DataType.uint32:
-        return ByteData.sublistView(
-          bytes,
-        ).getUint32(0, Endian.little).toDouble();
+        return data.getUint32(offset, Endian.little).toDouble();
       case DataType.int8:
-        return ByteData.sublistView(bytes).getInt8(0).toDouble();
+        return data.getInt8(offset).toDouble();
       case DataType.int16:
-        return ByteData.sublistView(
-          bytes,
-        ).getInt16(0, Endian.little).toDouble();
+        return data.getInt16(offset, Endian.little).toDouble();
       case DataType.int32:
-        return ByteData.sublistView(
-          bytes,
-        ).getInt32(0, Endian.little).toDouble();
+        return data.getInt32(offset, Endian.little).toDouble();
       case DataType.float:
-        return ByteData.sublistView(
-          bytes,
-        ).getFloat32(0, Endian.little).toDouble();
+        return data.getFloat32(offset, Endian.little).toDouble();
       case DataType.double:
-        return ByteData.sublistView(bytes).getFloat64(0, Endian.little);
+        return data.getFloat64(offset, Endian.little);
     }
   }
 
@@ -216,12 +217,12 @@ class FixedFrameParser extends IDataParser {
           : 0);
 
   /// 校验和验证
-  bool _verifyChecksum(List<int> frame) {
+  bool _verifyChecksum(Uint8List frame) {
     final checksumStart = _checksumStart;
     final checksumBytes = config.effectiveChecksumBytes;
     final dataStart = _frameHeaderLength;
     final dataEnd = dataStart + config.dataBytesPerFrame;
-    final dataBytes = Uint8List.fromList(frame.sublist(dataStart, dataEnd));
+    final dataBytes = Uint8List.sublistView(frame, dataStart, dataEnd);
 
     if (config.checksumType == ChecksumType.sum8) {
       final expected = dataBytes.fold<int>(0, (sum, byte) => sum + byte) & 0xFF;
@@ -247,7 +248,7 @@ class FixedFrameParser extends IDataParser {
     };
   }
 
-  int _readChecksum(List<int> frame, int start, int length) {
+  int _readChecksum(Uint8List frame, int start, int length) {
     int value = 0;
     for (int i = 0; i < length; i++) {
       final index =

@@ -13,7 +13,7 @@ void main() {
 
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       final line = '100.0,200.0,300.0,400.0\n';
       final bytes = Uint8List.fromList(line.codeUnits);
@@ -58,7 +58,7 @@ void main() {
 
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       final line = '100.0,200.0,300.0,400.0\n';
       final bytes = Uint8List.fromList(line.codeUnits);
@@ -105,7 +105,7 @@ void main() {
     test('解析器不丢数据 - 连续发送1000包', () async {
       final parser = FireWaterParser();
       final results = <dynamic>[];
-      final subscription = parser.outputStream.listen((r) => results.add(r));
+      final subscription = parser.outputStream.listen(results.add);
 
       final line = '1.0,2.0,3.0,4.0\n';
       final bytes = Uint8List.fromList(line.codeUnits);

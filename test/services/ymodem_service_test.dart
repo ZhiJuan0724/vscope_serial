@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -27,6 +28,7 @@ void main() {
       final sentPackets = <Uint8List>[];
       var eotCount = 0;
       var headerSeen = false;
+      var firstDataBlockAttempts = 0;
 
       service = YmodemService(
         packetTimeout: const Duration(milliseconds: 200),
@@ -56,6 +58,10 @@ void main() {
                   ]),
                 );
               } else {
+                if (block == 1 && firstDataBlockAttempts++ == 0) {
+                  // 模拟数据块 ACK 丢失，发送端应超时后重发同一个块。
+                  return;
+                }
                 service.addIncomingBytes(
                   Uint8List.fromList([YmodemService.ack]),
                 );
@@ -70,9 +76,10 @@ void main() {
       await sendFuture;
 
       expect(service.status.phase, YmodemPhase.completed);
+      expect(service.status.retryCount, greaterThanOrEqualTo(1));
       expect(
-        sentPackets.any((packet) => packet.length > 1 && packet[1] == 1),
-        isTrue,
+        sentPackets.where((packet) => packet.length > 1 && packet[1] == 1),
+        hasLength(2),
       );
       expect(
         sentPackets.where(
@@ -254,12 +261,240 @@ void main() {
       expect(service.status.phase, YmodemPhase.completed);
     });
 
+    test(
+      'retries CRC errors and ACKs duplicate blocks without rewriting',
+      () async {
+        late YmodemService service;
+        final temp = await Directory.systemTemp.createTemp('ymodem-retry-');
+        addTearDown(() => temp.delete(recursive: true));
+        final payload = Uint8List(128)..fillRange(0, 128, YmodemService.eof);
+        payload.setRange(0, 4, [1, 2, 3, 4]);
+        final validPacket = YmodemService.buildDataPacketForTest(payload, 1);
+        final corruptPacket = Uint8List.fromList(validPacket)
+          ..[validPacket.length - 1] ^= 0xFF;
+        var ackCount = 0;
+        var corruptSent = false;
+        var validSent = false;
+
+        service = YmodemService(
+          packetTimeout: const Duration(milliseconds: 200),
+          sendBytes: (data) {
+            Future.microtask(() {
+              for (final byte in data) {
+                if (byte == YmodemService.crcRequest && ackCount == 0) {
+                  service.addIncomingBytes(
+                    YmodemService.buildHeaderPacketForTest('retry.bin', 4),
+                  );
+                } else if (byte == YmodemService.crcRequest && ackCount == 1) {
+                  corruptSent = true;
+                  service.addIncomingBytes(corruptPacket);
+                } else if (byte == YmodemService.crcRequest && ackCount >= 4) {
+                  service.addIncomingBytes(
+                    YmodemService.buildHeaderPacketForTest('', 0),
+                  );
+                } else if (byte == YmodemService.nak) {
+                  if (corruptSent && !validSent) {
+                    validSent = true;
+                    service.addIncomingBytes(validPacket);
+                  } else {
+                    service.addIncomingBytes(
+                      Uint8List.fromList([YmodemService.eot]),
+                    );
+                  }
+                } else if (byte == YmodemService.ack) {
+                  ackCount++;
+                  if (ackCount == 2) {
+                    // 模拟数据块 ACK 丢失，发送方重发同一个块。
+                    service.addIncomingBytes(validPacket);
+                  } else if (ackCount == 3) {
+                    service.addIncomingBytes(
+                      Uint8List.fromList([YmodemService.eot]),
+                    );
+                  }
+                }
+              }
+            });
+          },
+        );
+
+        final file = await service.receiveFile(temp);
+
+        expect(file, isNotNull);
+        expect(file!.readAsBytesSync(), [1, 2, 3, 4]);
+        expect(service.status.retryCount, greaterThanOrEqualTo(1));
+        expect(service.status.phase, YmodemPhase.completed);
+      },
+    );
+
+    test('receives packets split across many input chunks', () async {
+      late YmodemService service;
+      final temp = await Directory.systemTemp.createTemp('ymodem-fragmented-');
+      addTearDown(() => temp.delete(recursive: true));
+      final payload = Uint8List(128)..fillRange(0, 128, YmodemService.eof);
+      payload.setRange(0, 3, [7, 8, 9]);
+      var crcRequests = 0;
+      var ackCount = 0;
+
+      void feedFragmented(Uint8List packet) {
+        for (var offset = 0; offset < packet.length; offset += 7) {
+          service.addIncomingBytes(
+            Uint8List.sublistView(
+              packet,
+              offset,
+              (offset + 7).clamp(0, packet.length),
+            ),
+          );
+        }
+      }
+
+      service = YmodemService(
+        packetTimeout: const Duration(milliseconds: 200),
+        sendBytes: (data) {
+          Future.microtask(() {
+            for (final byte in data) {
+              if (byte == YmodemService.crcRequest) {
+                crcRequests++;
+                if (crcRequests == 1) {
+                  feedFragmented(
+                    YmodemService.buildHeaderPacketForTest('fragmented.bin', 3),
+                  );
+                } else if (crcRequests == 2) {
+                  feedFragmented(
+                    YmodemService.buildDataPacketForTest(payload, 1),
+                  );
+                } else if (crcRequests == 3) {
+                  feedFragmented(YmodemService.buildHeaderPacketForTest('', 0));
+                }
+              } else if (byte == YmodemService.ack) {
+                ackCount++;
+                if (ackCount == 2) {
+                  service.addIncomingBytes(
+                    Uint8List.fromList([YmodemService.eot]),
+                  );
+                }
+              } else if (byte == YmodemService.nak) {
+                service.addIncomingBytes(
+                  Uint8List.fromList([YmodemService.eot]),
+                );
+              }
+            }
+          });
+        },
+      );
+
+      final file = await service.receiveFile(temp);
+
+      expect(file?.readAsBytesSync(), [7, 8, 9]);
+      expect(File('${file!.path}.part').existsSync(), isFalse);
+      expect(service.status.phase, YmodemPhase.completed);
+    });
+
+    test(
+      'input high-water overflow sends CAN and fails the transfer',
+      () async {
+        final sent = <int>[];
+        final temp = await Directory.systemTemp.createTemp('ymodem-overload-');
+        addTearDown(() => temp.delete(recursive: true));
+        final service = YmodemService(
+          inputHighWaterBytes: 16,
+          packetTimeout: const Duration(seconds: 1),
+          sendBytes: sent.addAll,
+        );
+
+        final receiveFuture = service.receiveFile(temp);
+        await waitUntilActive(service);
+        service.addIncomingBytes(Uint8List(17));
+
+        await expectLater(receiveFuture, throwsA(isA<YmodemException>()));
+        expect(sent.where((byte) => byte == YmodemService.can), hasLength(4));
+        expect(service.status.phase, YmodemPhase.failed);
+        expect(service.status.message, contains('输入过载'));
+        expect(await temp.list().toList(), isEmpty);
+      },
+    );
+
+    test('rejects a receive header larger than 4 GiB', () async {
+      late YmodemService service;
+      final temp = await Directory.systemTemp.createTemp('ymodem-size-');
+      addTearDown(() => temp.delete(recursive: true));
+      var headerSent = false;
+      service = YmodemService(
+        packetTimeout: const Duration(milliseconds: 200),
+        sendBytes: (data) {
+          if (!headerSent && data.contains(YmodemService.crcRequest)) {
+            headerSent = true;
+            Future.microtask(
+              () => service.addIncomingBytes(
+                YmodemService.buildHeaderPacketForTest(
+                  'too-large.bin',
+                  YmodemService.maxFileSize + 1,
+                ),
+              ),
+            );
+          }
+        },
+      );
+
+      await expectLater(
+        service.receiveFile(temp),
+        throwsA(
+          isA<YmodemException>().having(
+            (error) => error.message,
+            'message',
+            contains('4 GiB'),
+          ),
+        ),
+      );
+      expect(await temp.list().toList(), isEmpty);
+    });
+
+    test('cancelled receive removes the part file and final target', () async {
+      late YmodemService service;
+      final temp = await Directory.systemTemp.createTemp(
+        'ymodem-receive-cancel-',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final dataRequested = Completer<void>();
+      var crcRequests = 0;
+      service = YmodemService(
+        packetTimeout: const Duration(seconds: 1),
+        sendBytes: (data) {
+          Future.microtask(() {
+            for (final byte in data) {
+              if (byte != YmodemService.crcRequest) continue;
+              crcRequests++;
+              if (crcRequests == 1) {
+                service.addIncomingBytes(
+                  YmodemService.buildHeaderPacketForTest('partial.bin', 128),
+                );
+              } else if (!dataRequested.isCompleted) {
+                dataRequested.complete();
+              }
+            }
+          });
+        },
+      );
+
+      final receiveFuture = service.receiveFile(temp);
+      await dataRequested.future;
+      final target = File('${temp.path}/partial.bin');
+      final part = File('${target.path}.part');
+      expect(await part.exists(), isTrue);
+
+      await service.cancel();
+      await expectLater(receiveFuture, throwsA(isA<YmodemException>()));
+
+      expect(await target.exists(), isFalse);
+      expect(await part.exists(), isFalse);
+      expect(service.status.phase, YmodemPhase.cancelled);
+    });
+
     test('cancel sends CAN bytes and marks transfer cancelled', () async {
       late YmodemService service;
       final sent = <int>[];
       service = YmodemService(
         packetTimeout: const Duration(seconds: 1),
-        sendBytes: (data) => sent.addAll(data),
+        sendBytes: sent.addAll,
       );
       final temp = await Directory.systemTemp.createTemp('ymodem-cancel-');
       addTearDown(() => temp.delete(recursive: true));

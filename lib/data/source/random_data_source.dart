@@ -3,6 +3,7 @@ import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
+import '../../core/constants/plot_configuration.dart';
 import 'data_source.dart';
 
 /// 内部随机数据源
@@ -22,7 +23,9 @@ class RandomDataSource implements IDataSource {
   final double maxValue;
 
   /// 目标生成频率（Hz）
-  final double frequencyHz;
+  double _frequencyHz;
+
+  double get frequencyHz => _frequencyHz;
 
   /// 兼容旧调用的生成间隔（毫秒），高频模式下可能小于 1ms，不能直接作为 Timer 间隔。
   double get intervalMs => 1000.0 / frequencyHz;
@@ -37,14 +40,17 @@ class RandomDataSource implements IDataSource {
 
   /// Isolate 实例
   Isolate? _isolate;
+  StreamSubscription<dynamic>? _receiveSubscription;
+  Completer<void>? _readyCompleter;
+  int _generation = 0;
 
   RandomDataSource({
     this.channelCount = 4,
-    this.minValue = 0.0,
-    this.maxValue = 32768.0,
+    this.minValue = PlotConfiguration.randomSourceDefaultMin,
+    this.maxValue = PlotConfiguration.randomSourceDefaultMax,
     double? frequencyHz,
     int? intervalMs,
-  }) : frequencyHz = (frequencyHz ??
+  }) : _frequencyHz = (frequencyHz ??
                (intervalMs == null ? 10.0 : 1000.0 / intervalMs))
            .clamp(1.0, 100000.0);
 
@@ -58,31 +64,42 @@ class RandomDataSource implements IDataSource {
   String get name => '随机数据';
 
   @override
-  void start() {
+  Future<void> start() async {
     if (_isolate != null) return;
 
+    final generation = ++_generation;
     _receivePort = ReceivePort();
-    _receivePort!.listen(_handleMessage);
+    _readyCompleter = Completer<void>();
+    _receiveSubscription = _receivePort!.listen(
+      (message) => _handleMessage(message, generation),
+    );
 
     final initData = _IsolateInitData(
       sendPort: _receivePort!.sendPort,
       channelCount: channelCount,
       minValue: minValue,
       maxValue: maxValue,
-      frequencyHz: frequencyHz,
+      frequencyHz: _frequencyHz,
     );
 
-    Isolate.spawn(_isolateEntry, initData).then((isolate) {
-      _isolate = isolate;
-    });
+    final isolate = await Isolate.spawn(_isolateEntry, initData);
+    if (generation != _generation) {
+      isolate.kill(priority: Isolate.immediate);
+      return;
+    }
+    _isolate = isolate;
+    await _readyCompleter!.future.timeout(const Duration(seconds: 2));
   }
 
-  void _handleMessage(dynamic message) {
+  void _handleMessage(dynamic message, int generation) {
+    if (generation != _generation) return;
     if (message is SendPort) {
       // Isolate 启动完成，获取通信端口
       _sendPort = message;
       // 发送开始命令
       _sendPort!.send('start');
+      final ready = _readyCompleter;
+      if (ready != null && !ready.isCompleted) ready.complete();
     } else if (message is Uint8List) {
       // 收到生成的数据
       if (!_controller.isClosed) {
@@ -92,18 +109,33 @@ class RandomDataSource implements IDataSource {
   }
 
   @override
-  void stop() {
+  Future<void> stop() async {
+    _generation++;
     _sendPort?.send('stop');
     _isolate?.kill(priority: Isolate.immediate);
     _isolate = null;
     _sendPort = null;
+    await _receiveSubscription?.cancel();
+    _receiveSubscription = null;
     _receivePort?.close();
     _receivePort = null;
+    _readyCompleter = null;
   }
 
-  void dispose() {
-    stop();
-    _controller.close();
+  /// 在线更新生成频率，不重建 isolate、订阅或波形相位。
+  Future<void> updateFrequency(double value) async {
+    _frequencyHz = value.clamp(1.0, 100000.0);
+    if (_isolate == null) return;
+    final sendPort = _sendPort;
+    if (sendPort == null) {
+      await _readyCompleter?.future.timeout(const Duration(seconds: 2));
+    }
+    _sendPort?.send(<Object>['frequency', _frequencyHz]);
+  }
+
+  Future<void> dispose() async {
+    await stop();
+    await _controller.close();
   }
 
   /// Isolate 入口函数
@@ -114,22 +146,31 @@ class RandomDataSource implements IDataSource {
     final generator = _DataGenerator(initData);
     Timer? timer;
 
+    void startTimer() {
+      timer?.cancel();
+      final tickMs =
+          generator.targetFrequencyHz <= 1000
+              ? (1000 / generator.targetFrequencyHz).round().clamp(1, 1000)
+              : 1;
+      timer = Timer.periodic(
+        Duration(milliseconds: tickMs),
+        (_) => generator.generateForTick(tickMs),
+      );
+      generator.generateForTick(tickMs);
+    }
+
     receivePort.listen((message) {
       if (message == 'start') {
-        timer?.cancel();
-        final tickMs =
-            initData.frequencyHz <= 1000
-                ? (1000 / initData.frequencyHz).round().clamp(1, 1000)
-                : 1;
-        timer = Timer.periodic(
-          Duration(milliseconds: tickMs),
-          (_) => generator.generateForTick(tickMs),
-        );
-        // 立即生成第一批，避免启动后等待一个周期才有数据。
-        generator.generateForTick(tickMs);
+        startTimer();
       } else if (message == 'stop') {
         timer?.cancel();
         timer = null;
+      } else if (message is List &&
+          message.length == 2 &&
+          message.first == 'frequency' &&
+          message[1] is num) {
+        generator.updateFrequency((message[1] as num).toDouble());
+        startTimer();
       }
     });
   }
@@ -161,7 +202,7 @@ class _DataGenerator {
 
   late final List<double> _phaseOffsets;
   late final List<double> _frequencies;
-  final double _targetFrequencyHz;
+  double _targetFrequencyHz;
   double _packetRemainder = 0;
   double _time = 0;
   final _random = Random();
@@ -177,6 +218,13 @@ class _DataGenerator {
       (i) => (i * pi / channelCount) + _random.nextDouble() * 0.5,
     );
     _frequencies = List.generate(channelCount, (i) => 0.05 + (i + 1) * 0.02);
+  }
+
+  double get targetFrequencyHz => _targetFrequencyHz;
+
+  void updateFrequency(double value) {
+    _targetFrequencyHz = value.clamp(1.0, 100000.0);
+    _packetRemainder = 0;
   }
 
   void generateForTick(int tickMs) {

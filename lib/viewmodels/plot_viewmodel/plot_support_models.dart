@@ -1,61 +1,40 @@
 part of '../plot_viewmodel.dart';
 
-/// PlotViewModel 内部使用的历史数据缓冲和速率采样模型。
-/// - 当前绘图窗口需要回看时，通过 [valuesAt] 临时还原单点 List。
-class _ParsedValueHistory {
-  static const int _chunkPointCount = 4096;
-  static const int _maxChannels = 16;
+/// 数学通道显示点使用的只读组合视图。
+///
+/// 普通通道值直接引用原始点，只有数学结果单独分配，避免每启用一个数学
+/// 通道就为当前窗口内的每个点复制全部普通通道值。
+class _CombinedChannelValues extends ListBase<double> {
+  final List<double> rawValues;
+  final int rawChannelCount;
+  final List<double> mathValues;
 
-  final List<Float64List> _valueChunks = [];
-  final List<Uint8List> _countChunks = [];
+  _CombinedChannelValues({
+    required this.rawValues,
+    required this.rawChannelCount,
+    required this.mathValues,
+  });
 
-  int _length = 0;
-  int _maxChannelCount = 0;
+  @override
+  int get length => rawChannelCount + mathValues.length;
 
-  bool get isEmpty => _length == 0;
-  int get length => _length;
-  int get maxChannelCount => _maxChannelCount;
-
-  void clear() {
-    _valueChunks.clear();
-    _countChunks.clear();
-    _length = 0;
-    _maxChannelCount = 0;
+  @override
+  set length(int value) {
+    throw UnsupportedError('combined channel values are read-only');
   }
 
-  void add(List<double> values) {
-    final chunkIndex = _length ~/ _chunkPointCount;
-    final chunkOffset = _length % _chunkPointCount;
-    if (chunkIndex == _valueChunks.length) {
-      _valueChunks.add(Float64List(_chunkPointCount * _maxChannels));
-      _countChunks.add(Uint8List(_chunkPointCount));
+  @override
+  double operator [](int index) {
+    RangeError.checkValidIndex(index, this);
+    if (index < rawChannelCount) {
+      return index < rawValues.length ? rawValues[index] : double.nan;
     }
-
-    final count = values.length.clamp(0, _maxChannels).toInt();
-    _countChunks[chunkIndex][chunkOffset] = count;
-    final base = chunkOffset * _maxChannels;
-    final chunk = _valueChunks[chunkIndex];
-    for (int i = 0; i < count; i++) {
-      chunk[base + i] = values[i];
-    }
-
-    if (count > _maxChannelCount) _maxChannelCount = count;
-    _length++;
+    return mathValues[index - rawChannelCount];
   }
 
-  List<double> valuesAt(int index) {
-    RangeError.checkValueInInterval(index, 0, _length - 1, 'index');
-    final chunkIndex = index ~/ _chunkPointCount;
-    final chunkOffset = index % _chunkPointCount;
-    final count = _countChunks[chunkIndex][chunkOffset];
-    final base = chunkOffset * _maxChannels;
-    final chunk = _valueChunks[chunkIndex];
-
-    return List<double>.generate(
-      count,
-      (i) => chunk[base + i],
-      growable: false,
-    );
+  @override
+  void operator []=(int index, double value) {
+    throw UnsupportedError('combined channel values are read-only');
   }
 }
 
@@ -82,10 +61,11 @@ class _RateBucket {
 /// 将字符串解析为 ParserType
 ParserType _parserTypeFromString(String value) {
   return switch (value) {
+    'fireWater' => ParserType.fireWater,
     'fixedFrame' => ParserType.fixedFrame,
     'zobow' => ParserType.zobow,
     'justFloat' => ParserType.justFloat,
-    _ => ParserType.fireWater,
+    _ => ParserType.zobow,
   };
 }
 
